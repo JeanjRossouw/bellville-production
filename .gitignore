@@ -1,0 +1,6 @@
+.DS_Store
+Thumbs.db
+*.fetched
+.vscode/
+.idea/
+node_modules/
