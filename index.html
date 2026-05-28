@@ -661,7 +661,16 @@
       
       <div id="bom-editor"></div>
     </div>
-    
+
+    <div class="card">
+      <div class="card-title">💰 Raw Material Costs</div>
+      <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
+        The single place to maintain material prices. Every material from the library with its unit and cost per unit.
+        Editing a cost here updates all BOM and cut-list costs immediately. (Add / remove materials and manage stock in the Materials Library below.)
+      </p>
+      <div id="raw-material-costs"></div>
+    </div>
+
     <div class="card">
       <div class="card-title">📦 Materials Library</div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
@@ -1957,6 +1966,13 @@
   .sig-block { text-align: center; }
   .sig-line { border-bottom: 1.5px solid #000; height: 25px; margin-bottom: 3px; }
   .sig-label { font-size: 9px; text-transform: uppercase; font-weight: bold; }
+  .cutlist-block { border: 2px solid #000; padding: 8px; margin-bottom: 8px; }
+  .cutlist-heading { font-size: 13px; font-weight: 900; letter-spacing: 0.03em; border-bottom: 1px solid #000; padding-bottom: 4px; margin-bottom: 6px; }
+  .cut-timber { margin-bottom: 6px; }
+  .cut-timber-title { font-weight: bold; font-size: 12px; text-decoration: underline; }
+  .cut-list { margin: 2px 0 2px 18px; }
+  .cut-list li { font-size: 11px; line-height: 1.5; }
+  .cut-total { font-size: 11px; font-weight: bold; margin-top: 2px; }
   .no-print { padding: 10px; text-align: right; background: #f0f0f0; }
   @media print {
     .no-print { display: none; }
@@ -2017,7 +2033,8 @@
       <div class="field-value">${order.status.toUpperCase()}</div>
     </div>
   </div>
-  
+  ${cutListPrintBlock(order.product, order.qty)}
+
   <div class="notes">
     <div class="field-label">Notes / Special Instructions</div>
     ${order.notes ? `<div style="margin-top:8px; font-size:13px; line-height:1.6; white-space:pre-wrap">${order.notes.replace(/</g, '&lt;')}</div>` : ''}
@@ -3081,6 +3098,7 @@
     }
     
     renderTemplateEditor();
+    renderRawMaterialCosts();
     renderMaterialsLibrary();
     renderProductBomTable();
   }
@@ -3208,6 +3226,7 @@
       const hasCustom = Object.keys(p.materials || {}).length > 0;
       if (overwrite || !hasCustom) {
         p.materials = JSON.parse(JSON.stringify(template));
+        if (hasCutList(p)) applyCutListToBom(biz, name); // keep cut-list timber ownership
         applied++;
       }
     });
@@ -3229,10 +3248,11 @@
     if (!confirm(`Reset "${prodName}" to "${prod.category}" template?`)) return;
     snapshotState();
     prod.materials = JSON.parse(JSON.stringify(template));
+    if (hasCutList(prod)) applyCutListToBom(biz, prodName); // keep cut-list timber ownership
     saveData();
     renderProductBomTable();
   }
-  
+
   window.renderTemplateEditor = renderTemplateEditor;
   window.updateTemplate = updateTemplate;
   window.applyTemplateToCategory = applyTemplateToCategory;
@@ -3319,14 +3339,26 @@
       }
       const isEmpty = Object.keys(prodMats).length === 0;
       const isCustom = hasTemplate && !matchesTemplate && !isEmpty;
-      
+      const cut = hasCutList(prod);
+      const pn = prodName.replace(/'/g, "\\'");
+
       const cells = mats.map(m => {
         const qty = prodMats[m.id] || 0;
         totalCost += qty * (m.cost || 0);
+        const isTimber = TIMBER_NAMES.includes((m.name || '').trim());
+        if (cut && isTimber) {
+          // Cut list owns timber — read-only, computed from the cutting list
+          return `
+            <td style="padding:6px; border:1px solid var(--border); text-align:center; background:#eef2ff; font-size:12px" title="From cut list — edit in the Cutting List below this row">
+              <span style="font-weight:600">${qty ? qty.toFixed(3) : '—'}</span>
+              <div style="font-size:8px; color:var(--text-muted)">from cut list</div>
+            </td>
+          `;
+        }
         return `
           <td style="padding:0; border:1px solid var(--border)">
             <input type="number" step="0.01" value="${qty || ''}" placeholder="0"
-              onchange="updateProductBom('${prodName.replace(/'/g, "\\'")}', '${m.id}', parseFloat(this.value) || 0)"
+              onchange="updateProductBom('${pn}', '${m.id}', parseFloat(this.value) || 0)"
               style="width:100%; padding:6px; border:none; text-align:center; background:transparent; font-size:12px">
           </td>
         `;
@@ -3349,10 +3381,12 @@
           ${cells}
           <td style="padding:0.5rem; border:1px solid var(--border); text-align:right; font-weight:600; background:var(--bg)">R${totalCost.toFixed(2)}</td>
           <td style="padding:0.5rem; border:1px solid var(--border); text-align:center; white-space:nowrap">
-            ${hasTemplate ? `<button class="btn btn-sm" onclick="resetProductToTemplate('${prodName.replace(/'/g, "\\'")}')" title="Reset to template" style="padding:2px 6px; font-size:10px">↺</button>` : ''}
-            <button class="btn btn-sm btn-danger" onclick="deleteProductBom('${prodName.replace(/'/g, "\\'")}')" style="padding:2px 6px; font-size:10px">✕</button>
+            <button class="btn btn-sm" onclick="toggleCutList('${pn}')" title="Edit cutting list" style="padding:2px 6px; font-size:10px; ${cut ? 'background:#dbeafe; border-color:#3b82f6; color:#1e40af' : ''}">✂️${(prod.cutList || []).length ? ' ' + prod.cutList.length : ''}</button>
+            ${hasTemplate ? `<button class="btn btn-sm" onclick="resetProductToTemplate('${pn}')" title="Reset to template" style="padding:2px 6px; font-size:10px">↺</button>` : ''}
+            <button class="btn btn-sm btn-danger" onclick="deleteProductBom('${pn}')" style="padding:2px 6px; font-size:10px">✕</button>
           </td>
         </tr>
+        ${expandedCutList === prodName ? `<tr><td colspan="${mats.length + 3}" style="padding:0; border:1px solid var(--border)">${cutListEditorHtml(prodName, prod)}</td></tr>` : ''}
       `;
     }).join('');
     
@@ -3419,7 +3453,16 @@
   
   function updateProductBom(prodName, matId, qty) {
     const biz = currentData();
-    if (!biz.productBoms[prodName]) return;
+    const prod = biz.productBoms[prodName];
+    if (!prod) return;
+    // Cut list owns timber: ignore manual edits to timber materials when a cut list exists
+    if (hasCutList(prod)) {
+      const mat = (biz.materialsLibrary || []).find(m => m.id === matId);
+      if (mat && TIMBER_NAMES.includes((mat.name || '').trim())) {
+        renderProductBomTable();
+        return;
+      }
+    }
     snapshotState();
     if (!biz.productBoms[prodName].materials) biz.productBoms[prodName].materials = {};
     if (qty === 0 || isNaN(qty)) {
@@ -3454,6 +3497,254 @@
     renderProductBomTable();
   }
   
+  // ============================================
+  // CUT LIST + RAW MATERIAL COSTS
+  // ============================================
+  const TIMBER_NAMES = ['76 Pine', '152 Pine'];
+  let expandedCutList = null; // prodName currently expanded in the BOM grid
+
+  // True if a product owns its timber via a non-empty cut list
+  function hasCutList(prod) {
+    return !!(prod && Array.isArray(prod.cutList) && prod.cutList.length > 0);
+  }
+
+  // Find a timber material's id by name in this business's library
+  function findTimberMatId(biz, timberName) {
+    const mat = (biz.materialsLibrary || []).find(m => (m.name || '').trim() === timberName);
+    return mat ? mat.id : null;
+  }
+
+  // Per-unit metres for one timber = sum(lengthMm * qty) / 1000
+  function cutListMetres(cutList, timberName) {
+    return (cutList || [])
+      .filter(r => r.timber === timberName)
+      .reduce((sum, r) => sum + ((parseFloat(r.lengthMm) || 0) * (parseFloat(r.qty) || 0)) / 1000, 0);
+  }
+
+  // Cut list OWNS timber: write computed metres into the product's BOM materials
+  function applyCutListToBom(biz, prodName) {
+    const prod = biz.productBoms?.[prodName];
+    if (!prod || !hasCutList(prod)) return; // no cut list => timber stays manually editable
+    if (!prod.materials) prod.materials = {};
+    TIMBER_NAMES.forEach(timber => {
+      const matId = findTimberMatId(biz, timber);
+      if (!matId) return;
+      const metres = Math.round(cutListMetres(prod.cutList, timber) * 1000) / 1000;
+      if (metres > 0) prod.materials[matId] = metres;
+      else delete prod.materials[matId];
+    });
+  }
+
+  function renderRawMaterialCosts() {
+    const el = document.getElementById('raw-material-costs');
+    if (!el) return;
+    const biz = currentData();
+    const mats = biz.materialsLibrary || [];
+    if (mats.length === 0) {
+      el.innerHTML = '<div class="empty">No materials yet — add some in the Materials Library below.</div>';
+      return;
+    }
+    el.innerHTML = `
+      <div style="overflow-x:auto; border:1px solid var(--border); border-radius:8px">
+        <table style="width:100%; border-collapse:collapse; font-size:13px">
+          <thead>
+            <tr style="background:var(--bg); text-align:left">
+              <th style="padding:0.5rem; border:1px solid var(--border)">Material</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); width:140px">Unit</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); width:200px">Cost per unit (R)</th>
+            </tr>
+          </thead>
+          <tbody>
+          ${mats.map((m, i) => `
+            <tr>
+              <td style="padding:0.5rem; border:1px solid var(--border); font-weight:600">${m.name || ''}</td>
+              <td style="padding:0.5rem; border:1px solid var(--border); color:var(--text-muted)">${m.unit || ''}</td>
+              <td style="padding:0; border:1px solid var(--border)">
+                <input type="number" step="0.01" value="${m.cost || 0}" onchange="updateMaterial(${i}, 'cost', parseFloat(this.value) || 0)" style="width:100%; padding:8px; border:none; text-align:right; background:transparent">
+              </td>
+            </tr>
+          `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function toggleCutList(prodName) {
+    expandedCutList = (expandedCutList === prodName) ? null : prodName;
+    renderProductBomTable();
+  }
+
+  function addCutListRow(prodName) {
+    const biz = currentData();
+    const prod = biz.productBoms?.[prodName];
+    if (!prod) return;
+    snapshotState();
+    if (!Array.isArray(prod.cutList)) prod.cutList = [];
+    prod.cutList.push({ timber: '76 Pine', lengthMm: 0, qty: 1, part: '' });
+    applyCutListToBom(biz, prodName);
+    saveData();
+    renderProductBomTable();
+  }
+
+  function updateCutListRow(prodName, idx, field, value) {
+    const biz = currentData();
+    const prod = biz.productBoms?.[prodName];
+    if (!prod || !Array.isArray(prod.cutList) || !prod.cutList[idx]) return;
+    snapshotState();
+    if (field === 'lengthMm' || field === 'qty') value = parseFloat(value) || 0;
+    prod.cutList[idx][field] = value;
+    applyCutListToBom(biz, prodName);
+    saveData();
+    renderProductBomTable();
+  }
+
+  function deleteCutListRow(prodName, idx) {
+    const biz = currentData();
+    const prod = biz.productBoms?.[prodName];
+    if (!prod || !Array.isArray(prod.cutList)) return;
+    snapshotState();
+    prod.cutList.splice(idx, 1);
+    if (prod.cutList.length === 0) {
+      delete prod.cutList; // revert to manual timber behaviour
+    } else {
+      applyCutListToBom(biz, prodName);
+    }
+    saveData();
+    renderProductBomTable();
+  }
+
+  // Inline cut list editor shown under a product row in the BOM grid
+  function cutListEditorHtml(prodName, prod) {
+    const cutList = prod.cutList || [];
+    const pn = prodName.replace(/'/g, "\\'");
+    const esc = s => String(s == null ? '' : s).replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    const m76 = cutListMetres(cutList, '76 Pine');
+    const m152 = cutListMetres(cutList, '152 Pine');
+    const rowsHtml = cutList.map((r, i) => `
+      <tr>
+        <td style="padding:2px; border:1px solid var(--border)">
+          <select onchange="updateCutListRow('${pn}', ${i}, 'timber', this.value)" style="width:110px; padding:4px; font-size:12px">
+            <option value="76 Pine" ${r.timber === '76 Pine' ? 'selected' : ''}>76 Pine</option>
+            <option value="152 Pine" ${r.timber === '152 Pine' ? 'selected' : ''}>152 Pine</option>
+          </select>
+        </td>
+        <td style="padding:2px; border:1px solid var(--border)">
+          <input type="number" step="1" value="${r.lengthMm || ''}" placeholder="0" onchange="updateCutListRow('${pn}', ${i}, 'lengthMm', this.value)" style="width:90px; padding:4px; font-size:12px; text-align:right">
+        </td>
+        <td style="padding:2px; border:1px solid var(--border)">
+          <input type="number" step="1" value="${r.qty || ''}" placeholder="0" onchange="updateCutListRow('${pn}', ${i}, 'qty', this.value)" style="width:70px; padding:4px; font-size:12px; text-align:right">
+        </td>
+        <td style="padding:2px; border:1px solid var(--border)">
+          <input value="${esc(r.part)}" placeholder="e.g. Side rail" onchange="updateCutListRow('${pn}', ${i}, 'part', this.value)" style="width:100%; min-width:140px; padding:4px; font-size:12px">
+        </td>
+        <td style="padding:2px; border:1px solid var(--border); text-align:center">
+          <button class="btn btn-sm btn-danger" onclick="deleteCutListRow('${pn}', ${i})" style="padding:2px 6px; font-size:10px">✕</button>
+        </td>
+      </tr>
+    `).join('');
+    return `
+      <div style="padding:0.75rem; background:var(--bg)">
+        <div style="font-weight:700; font-size:13px; margin-bottom:0.5rem">✂️ Cutting List — ${prodName}</div>
+        <table style="border-collapse:collapse; font-size:12px; background:var(--surface)">
+          <thead>
+            <tr style="text-align:left; background:var(--bg)">
+              <th style="padding:4px; border:1px solid var(--border)">Timber</th>
+              <th style="padding:4px; border:1px solid var(--border)">Length (mm)</th>
+              <th style="padding:4px; border:1px solid var(--border)">Qty</th>
+              <th style="padding:4px; border:1px solid var(--border); min-width:160px">Part</th>
+              <th style="padding:4px; border:1px solid var(--border); width:40px"></th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml || '<tr><td colspan="5" style="padding:6px; color:var(--text-muted)">No cut list rows yet. Add a row to start.</td></tr>'}</tbody>
+        </table>
+        <div style="margin-top:0.5rem; display:flex; gap:1rem; align-items:center; flex-wrap:wrap">
+          <button class="btn btn-sm" onclick="addCutListRow('${pn}')">+ Add row</button>
+          <span style="font-size:12px; font-weight:700">76 Pine: ${m76.toFixed(2)}m</span>
+          <span style="font-size:12px; font-weight:700">152 Pine: ${m152.toFixed(2)}m</span>
+          <span style="font-size:11px; color:var(--text-muted)">These metres auto-fill the BOM timber quantities (read-only there).</span>
+        </div>
+      </div>
+    `;
+  }
+
+  // Build a print-ready CUTTING LIST block for an order's product (empty string if none)
+  function cutListPrintBlock(prodName, orderQty) {
+    const biz = currentData();
+    const prod = biz.productBoms?.[prodName];
+    if (!prod || !hasCutList(prod)) return '';
+    const qty = parseInt(orderQty) || 1;
+    let body = '';
+    TIMBER_NAMES.forEach(timber => {
+      const rows = (prod.cutList || []).filter(r => r.timber === timber);
+      if (rows.length === 0) return;
+      const perUnit = cutListMetres(prod.cutList, timber);
+      const grand = perUnit * qty;
+      body += `
+        <div class="cut-timber">
+          <div class="cut-timber-title">${timber}</div>
+          <ul class="cut-list">
+            ${rows.map(r => `<li>${(parseFloat(r.qty) || 0)} x ${(parseFloat(r.lengthMm) || 0)}mm — ${(r.part || '').replace(/</g, '&lt;') || '—'}</li>`).join('')}
+          </ul>
+          <div class="cut-total">Total ${timber}: ${perUnit.toFixed(2)}m x ${qty} = ${grand.toFixed(2)}m</div>
+        </div>`;
+    });
+    if (!body) return '';
+    return `
+      <div class="cutlist-block">
+        <div class="cutlist-heading">CUTTING LIST — ${prodName} x ${qty}</div>
+        ${body}
+      </div>`;
+  }
+
+  // Standalone print of just the cut list (for the cutter)
+  function printCutList(orderId) {
+    const order = currentData().orders.find(o => o.id === orderId);
+    if (!order) return;
+    const block = cutListPrintBlock(order.product, order.qty);
+    if (!block) { toast('No cut list for this product', 'info'); return; }
+    const bizName = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<title>Cut List #${order.invoice}</title>
+<style>
+  @page { size: A4; margin: 10mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Arial', sans-serif; color: #000 !important; }
+  body { color: #000; background: #fff; font-size: 12px; padding: 4px; }
+  .header { border-bottom: 2px solid #000; padding-bottom: 6px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+  .biz-name { font-size: 16px; font-weight: 900; letter-spacing: 0.05em; }
+  .job-title { font-size: 13px; font-weight: bold; }
+  .meta { font-size: 11px; margin-bottom: 10px; }
+  .cutlist-block { border: 2px solid #000; padding: 10px; }
+  .cutlist-heading { font-size: 15px; font-weight: 900; border-bottom: 1px solid #000; padding-bottom: 5px; margin-bottom: 8px; }
+  .cut-timber { margin-bottom: 10px; }
+  .cut-timber-title { font-weight: bold; font-size: 13px; text-decoration: underline; }
+  .cut-list { margin: 4px 0 4px 20px; }
+  .cut-list li { font-size: 12px; line-height: 1.6; }
+  .cut-total { font-size: 12px; font-weight: bold; margin-top: 4px; }
+  .no-print { padding: 10px; text-align: right; background: #f0f0f0; }
+  @media print { .no-print { display: none; } }
+</style>
+</head>
+<body>
+  <div class="no-print">
+    <button onclick="window.print()" style="padding:8px 16px; font-weight:bold; cursor:pointer; background:#000; color:#fff; border:none">🖨️ PRINT</button>
+    <button onclick="window.close()" style="padding:8px 16px; cursor:pointer; margin-left:8px">CLOSE</button>
+  </div>
+  <div class="header">
+    <div class="biz-name">${bizName[activeBiz] || ''}</div>
+    <div class="job-title">CUT LIST</div>
+  </div>
+  <div class="meta">Order #${order.invoice} &nbsp;|&nbsp; ${order.customer || ''} &nbsp;|&nbsp; Due: ${order.dueDate || '—'}</div>
+  ${block}
+</body>
+</html>`;
+    const win = window.open('', '_blank');
+    win.document.write(html);
+    win.document.close();
+  }
+
   // Expose to global
   window.renderBomSection = renderBomSection;
   window.renderProductBomTable = renderProductBomTable;
@@ -3463,7 +3754,12 @@
   window.updateProductBom = updateProductBom;
   window.addNewProductBom = addNewProductBom;
   window.deleteProductBom = deleteProductBom;
-  
+  window.toggleCutList = toggleCutList;
+  window.addCutListRow = addCutListRow;
+  window.updateCutListRow = updateCutListRow;
+  window.deleteCutListRow = deleteCutListRow;
+  window.printCutList = printCutList;
+
   function updateOrderStatusForBiz(biz, orderId, newStatus) {
     const order = data[biz]?.orders?.find(o => o.id === orderId);
     if (order) {
@@ -3931,7 +4227,8 @@
       const due = new Date(o.dueDate);
       const daysLeft = isNaN(due.getTime()) ? 0 : Math.ceil((due - today) / (1000 * 60 * 60 * 24));
       const isUrgent = daysLeft <= 7 && daysLeft > 0;
-      
+      const orderHasCutList = hasCutList(currentData().productBoms?.[o.product]);
+
       return `
         <div class="order-card">
           <div style="display:flex; gap:0.75rem; align-items:flex-start">
@@ -3998,6 +4295,7 @@
           ` : ''}
           <div style="display:flex; gap:0.5rem; flex-wrap:wrap">
             <button class="btn btn-sm btn-primary" onclick="printJobCard('${o.id}')">🖨️ PRINT JOB CARD</button>
+            ${orderHasCutList ? `<button class="btn btn-sm" onclick="printCutList('${o.id}')">✂️ PRINT CUT LIST</button>` : ''}
             ${o.phone ? `<button class="btn btn-sm" style="background:#25D366; color:#fff; border-color:#25D366" onclick="notifyClient('${o.id}')">📱 NOTIFY CLIENT</button>` : ''}
             <button class="btn btn-sm" onclick="notifyAllStaff('${o.id}')">👷 NOTIFY STAFF</button>
             <button class="btn btn-sm btn-danger" onclick="deleteOrder('${o.id}')">DELETE</button>
