@@ -907,9 +907,11 @@
     render();
     if (typeof populateProductDatalist === 'function') populateProductDatalist();
   }
-  
-  switchBiz('bellville');
-  
+
+  // NOTE: initial switchBiz('bellville') is invoked at the very end of this
+  // script, after all module-level declarations are initialized, to avoid
+  // temporal-dead-zone errors (render() reads state declared further down).
+
   // Tab name array — order MUST match the order of .tab buttons in the DOM.
   // Used by showSection and applyRolePermissions for positional tab lookup.
   const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'costs', 'staff', 'materials', 'schedule', 'planner'];
@@ -5428,9 +5430,12 @@
   window.toggleLoginMode = toggleLoginMode;
   window.doLogout = doLogout;
   
+  // Initial render — now that every module-level variable above is initialized
+  switchBiz('bellville');
+
   // Start Firebase
   waitForFirebase();
-  
+
 </script>
 
 </div> <!-- end main-app -->
