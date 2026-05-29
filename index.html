@@ -4930,7 +4930,7 @@
   }
   
   function renderSchedule() {
-    const orders = currentData().orders.filter(o => o.status !== 'delivered').sort((a, b) => {
+    const orders = currentData().orders.filter(o => o.status !== 'delivered' && o.status !== 'done').sort((a, b) => {
       const dateA = a.dueDate ? new Date(a.dueDate).getTime() : 0;
       const dateB = b.dueDate ? new Date(b.dueDate).getTime() : 0;
       return dateA - dateB;
