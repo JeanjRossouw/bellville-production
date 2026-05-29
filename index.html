@@ -809,7 +809,10 @@
     <div class="card">
       <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
         <span>🗓️ PRODUCTION PLANNER</span>
-        <span style="font-size:11px; color:var(--text-muted)">Drag cards between weeks · or tap <strong>⋮</strong> to schedule</span>
+        <span style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap">
+          <span style="font-size:11px; color:var(--text-muted)">Drag cards between weeks · or tap <strong>⋮</strong> to schedule</span>
+          <button class="btn btn-sm" onclick="printPlanner()">🖨️ Print Planner</button>
+        </span>
       </div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
         Active orders only (pending and in-production). Orders scheduled to a past week show in <strong>Current</strong>.
@@ -4900,6 +4903,117 @@
     `;
   }
   window.planItemCard = planItemCard;
+
+  // Printable version of the 4-week planner board
+  function printPlanner() {
+    const biz = activeBiz;
+    const bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
+    const bd = currentData();
+    const orders = (bd.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done');
+
+    const todayMonday = getMondayOf(new Date());
+    const weeks = [0, 1, 2, 3].map(i => _addDaysIso(todayMonday, i * 7));
+    const buckets = Object.fromEntries(weeks.map(w => [w, []]));
+    const beyond = [];
+    const unscheduled = [];
+    orders.forEach(o => {
+      if (!o.planWeek) { unscheduled.push(o); return; }
+      if (buckets[o.planWeek]) { buckets[o.planWeek].push(o); return; }
+      if (o.planWeek < weeks[0]) buckets[weeks[0]].push(o);
+      else beyond.push(o);
+    });
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const byDue = (a, b) => (a.dueDate ? new Date(a.dueDate).getTime() : Infinity) - (b.dueDate ? new Date(b.dueDate).getTime() : Infinity);
+    Object.values(buckets).forEach(arr => arr.sort(byDue));
+    beyond.sort((a, b) => (a.planWeek || '').localeCompare(b.planWeek || ''));
+    unscheduled.sort(byDue);
+
+    const showFabric = !HIDE_FABRIC_FROM.includes(currentRole);
+    const item = (o) => {
+      const due = o.dueDate ? new Date(o.dueDate + 'T00:00:00') : null;
+      const daysLeft = due && !isNaN(due.getTime()) ? Math.ceil((due - today) / 86400000) : null;
+      const overdue = daysLeft !== null && daysLeft < 0;
+      const prodLabel = (o.category ? '[' + o.category + '] ' : '') + (o.product || '') + (o.qty > 1 ? ' × ' + o.qty : '');
+      return `
+        <div class="item${overdue ? ' overdue' : ''}">
+          <div class="inv">#${_escape(o.invoice || o.id)}</div>
+          <div class="prod">${_escape(prodLabel)}</div>
+          <div class="meta">${_escape(o.customer || '')}</div>
+          ${showFabric && o.fabric ? `<div class="meta fab">🎨 ${_escape(o.fabric)}</div>` : ''}
+          ${o.dueDate ? `<div class="due">Due ${_escape(o.dueDate)}${overdue ? ' (' + Math.abs(daysLeft) + 'd overdue)' : daysLeft === 0 ? ' (today)' : ' (' + daysLeft + 'd)'}</div>` : ''}
+        </div>`;
+    };
+
+    const colLabels = ['Current', 'Next week', 'In 2 weeks', 'In 3 weeks'];
+    const cols = weeks.map((w, i) => `
+      <div class="col">
+        <div class="col-h">${colLabels[i]}<span>${_formatWeekShort(w)} · ${buckets[w].length}</span></div>
+        ${buckets[w].map(item).join('') || '<div class="empty">—</div>'}
+      </div>`).join('');
+
+    const extra = (title, arr) => arr.length ? `
+      <div class="extra">
+        <div class="extra-h">${title} (${arr.length})</div>
+        <div class="extra-body">${arr.map(item).join('')}</div>
+      </div>` : '';
+
+    const todayStr = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' });
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<title>Planner — ${bizNames[biz]}</title>
+<style>
+  @page { size: A4 landscape; margin: 8mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; color: #000; }
+  body { background: #fff; font-size: 10px; }
+  .header { border-bottom: 2px solid #000; padding-bottom: 6px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+  .biz-name { font-size: 16px; font-weight: 900; letter-spacing: 0.05em; }
+  .title { font-size: 12px; font-weight: bold; text-align: right; }
+  .date { font-size: 9px; color: #555; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .col { border: 1px solid #999; border-radius: 4px; overflow: hidden; }
+  .col-h { background: #000; color: #fff; padding: 4px 6px; font-weight: bold; font-size: 10px; display: flex; justify-content: space-between; align-items: baseline; }
+  .col-h span { font-weight: normal; font-size: 8px; }
+  .item { border-bottom: 1px solid #ddd; padding: 4px 6px; page-break-inside: avoid; }
+  .item.overdue { background: #fee2e2; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .inv { font-weight: bold; font-size: 10px; }
+  .prod { font-size: 10px; }
+  .meta { font-size: 9px; color: #333; }
+  .meta.fab { font-weight: bold; }
+  .due { font-size: 8px; color: #555; }
+  .empty { padding: 6px; color: #999; text-align: center; }
+  .extra { margin-top: 8px; border: 1px solid #999; border-radius: 4px; }
+  .extra-h { background: #eee; padding: 4px 6px; font-weight: bold; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .extra-body { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 6px; }
+  .extra-body .item { border: 1px solid #ddd; border-radius: 3px; }
+  .no-print { padding: 12px; text-align: right; background: #f0f0f0; }
+  @media print { .no-print { display: none; } }
+</style>
+</head>
+<body>
+  <div class="no-print">
+    <button onclick="window.print()" style="padding:8px 16px; font-weight:bold; cursor:pointer; background:#000; color:#fff; border:none; border-radius:4px">🖨️ PRINT</button>
+    <button onclick="window.close()" style="padding:8px 16px; cursor:pointer; margin-left:8px">CLOSE</button>
+  </div>
+  <div class="header">
+    <div>
+      <div class="biz-name">${bizNames[biz]}</div>
+      <div class="date">Production Planner · ${todayStr}</div>
+    </div>
+    <div class="title">4-WEEK PLAN</div>
+  </div>
+  <div class="grid">${cols}</div>
+  ${extra('📆 Scheduled beyond 3 weeks', beyond)}
+  ${extra('📥 Unscheduled', unscheduled)}
+</body>
+</html>`;
+
+    const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Click the pop-up icon in the address bar and allow pop-ups for this site, then try Print again.'); return; }
+    win.document.write(html);
+    win.document.close();
+  }
+  window.printPlanner = printPlanner;
 
   // ----- Drag handlers (desktop) -----
   function planDragStart(e, orderId) {
