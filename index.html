@@ -3996,6 +3996,19 @@
     renderOrders();
   }
 
+  // Re-link an order to a BOM product (fixes category, weight and material cost)
+  function updateOrderProduct(orderId, value) {
+    const order = currentData().orders.find(o => o.id === orderId);
+    if (!order || !value) return;
+    snapshotState();
+    order.product = value;
+    const bom = currentData().productBoms && currentData().productBoms[value];
+    if (bom && bom.category) order.category = bom.category; // inherit category so weight/cost resolve
+    saveData();
+    render();
+  }
+  window.updateOrderProduct = updateOrderProduct;
+
   function renderCostSettings() {
     const el = document.getElementById('cost-settings');
     if (!el) return;
@@ -4848,6 +4861,7 @@
   function renderOrders() {
     let orders = currentData().orders.filter(o => o.status !== 'delivered' && o.status !== 'done');
     const today = new Date();
+    const bomProducts = Object.keys(currentData().productBoms || {}).sort();
     
     // Apply search filter
     const searchInput = document.getElementById('order-search');
@@ -4902,6 +4916,19 @@
           <div style="font-size:11px; color:var(--text-muted); margin-bottom:0.75rem">
             Order: ${o.orderDate} | Due: <input type="date" value="${o.dueDate}" onchange="updateDueDate('${o.id}', this.value)" style="display:inline-block; width:auto; padding:2px 6px; font-size:11px; background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:4px">
           </div>
+          ${(() => {
+            const matched = !!(currentData().productBoms && currentData().productBoms[o.product]);
+            const opts = bomProducts.map(p => `<option value="${p.replace(/"/g, '&quot;')}" ${p === o.product ? 'selected' : ''}>${p}</option>`).join('');
+            const currentOpt = matched ? '' : `<option value="${(o.product || '').replace(/"/g, '&quot;')}" selected>${o.product || '(none)'} — unmatched</option>`;
+            return `
+          <div style="margin-bottom:0.75rem; display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap">
+            <label style="font-size:11px; color:var(--text-muted)">Product (BOM link):</label>
+            <select onchange="updateOrderProduct('${o.id}', this.value)" style="max-width:280px; padding:4px 6px; font-size:12px; background:var(--surface); border:1px solid ${matched ? 'var(--border)' : '#dc2626'}; color:var(--text); border-radius:4px">
+              ${currentOpt}${opts}
+            </select>
+            ${matched ? '' : '<span style="font-size:11px; color:#dc2626; font-weight:600">⚠️ not matched — pick the right product</span>'}
+          </div>`;
+          })()}
           ${canSeeCosts() ? `
           <div style="margin-bottom:0.75rem; display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap">
             <label style="font-size:11px; color:var(--text-muted)">Selling price / unit (R):</label>
