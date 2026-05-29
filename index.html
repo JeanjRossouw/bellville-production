@@ -262,6 +262,7 @@
     <button class="tab" onclick="showSection('finished')">✅ Finished</button>
     <button class="tab" onclick="showSection('fabric')">Fabric Orders</button>
     <button class="tab" onclick="showSection('bom')">🔧 BOM</button>
+    <button class="tab" onclick="showSection('costs')">💵 Costs</button>
     <button class="tab" onclick="showSection('staff')">Staff</button>
     <button class="tab" onclick="showSection('materials')">Materials</button>
     <button class="tab" onclick="showSection('schedule')">Schedule</button>
@@ -378,6 +379,10 @@
         <div class="f2" style="min-width:80px">
           <label>Qty</label>
           <input id="intake-qty" type="number" value="1" min="1">
+        </div>
+        <div class="f1" style="min-width:140px">
+          <label>Selling price / unit (R) <span style="color:var(--text-muted); font-weight:normal">(incl. VAT)</span></label>
+          <input id="intake-price" type="number" step="0.01" placeholder="0.00 (optional)">
         </div>
       </div>
       <div class="row">
@@ -680,7 +685,18 @@
       <button class="btn" onclick="addNewMaterial()" style="margin-top:1rem">+ Add Material</button>
     </div>
   </div>
-  
+
+  <!-- COST SETTINGS SECTION (owner / admin only) -->
+  <div id="section-costs" class="section">
+    <div class="card">
+      <div class="card-title">💵 Cost Settings</div>
+      <p style="font-size:13px; color:var(--text-muted)">
+        Drives true-cost, profit and margin across products and orders. Material prices live in the BOM tab → Raw Material Costs.
+      </p>
+    </div>
+    <div id="cost-settings"></div>
+  </div>
+
   <div id="section-staff" class="section">
     <div class="card">
       <div class="card-title">ADD STAFF MEMBER</div>
@@ -896,7 +912,7 @@
   
   // Tab name array — order MUST match the order of .tab buttons in the DOM.
   // Used by showSection and applyRolePermissions for positional tab lookup.
-  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner'];
+  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'costs', 'staff', 'materials', 'schedule', 'planner'];
 
   function showSection(sec) {
     document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
@@ -906,6 +922,7 @@
     });
     if (sec === 'calendar') renderCalendar();
     if (sec === 'bom') renderBomSection();
+    if (sec === 'costs') renderCostSettings();
     if (sec === 'materials') renderInventory();
     if (sec === 'intake') populateProductDatalist();
     if (sec === 'done') renderDoneOrders();
@@ -1116,7 +1133,9 @@
       if (SKIP_CODES.includes(code)) continue;
       if (qty === 0) continue;
       
-      const li = { product: description, qty, fabric: '', code };
+      // Unit price is the decimal token immediately after the qty (CODE DESC QTY PRICE DISC VAT TOTAL)
+      const unitPrice = parseFloat((tokens[qtyIdx + 1] || '').replace(/\s/g, '')) || 0;
+      const li = { product: description, qty, fabric: '', code, price: unitPrice };
       lineItems.push(li);
       lastProduct = li;
     }
@@ -1180,7 +1199,8 @@
           status: 'pending',
           startDate: null,
           paymentStatus: p.paymentStatus || 'deposit',
-          outstanding: 0
+          outstanding: 0,
+          sellingPrice: li.price || 0
         });
         added++;
       });
@@ -1562,6 +1582,7 @@
     const category = activeBiz === 'pinkfoot' ? document.getElementById('intake-category').value : '';
     const paymentStatus = document.getElementById('intake-payment')?.value || 'deposit';
     const outstanding = parseFloat(document.getElementById('intake-outstanding')?.value) || 0;
+    const sellingPrice = parseFloat(document.getElementById('intake-price')?.value) || 0;
     
     if (!invoice || !customer || !product) {
       document.getElementById('order-status').innerHTML = '✗ Fill in invoice, customer, and product';
@@ -1598,7 +1619,8 @@
       status: 'pending',
       startDate: null,
       paymentStatus,
-      outstanding
+      outstanding,
+      sellingPrice
     };
 
     snapshotState();
@@ -1611,6 +1633,7 @@
     document.getElementById('intake-fabric').value = '';
     document.getElementById('intake-product').value = '';
     document.getElementById('intake-qty').value = '1';
+    if (document.getElementById('intake-price')) document.getElementById('intake-price').value = '';
     if (document.getElementById('intake-category')) document.getElementById('intake-category').value = '';
     if (document.getElementById('intake-payment')) document.getElementById('intake-payment').value = 'deposit';
     if (document.getElementById('intake-outstanding')) document.getElementById('intake-outstanding').value = '';
@@ -1763,12 +1786,15 @@
       if (oldStatus === 'in-production' && newStatus === 'pending') {
         try { restoreMaterialsForOrder(activeBiz, order); } catch (e) { console.warn('Restoration failed:', e); }
       }
-      
+
+      // Freeze (or release) cost snapshot on Done/Delivered transition
+      try { applyCostFreezeOnStatusChange(activeBiz, order, oldStatus, newStatus); } catch (e) { console.warn('Cost freeze failed:', e); }
+
       saveData();
       render();
     }
   }
-  
+
   function printProductionList() {
     const biz = activeBiz;
     const bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
@@ -2123,6 +2149,7 @@
         if (oldStatus === 'in-production' && newStatus === 'pending') {
           try { restoreMaterialsForOrder(activeBiz, order); } catch (e) { console.warn('Bulk restoration failed:', e); }
         }
+        try { applyCostFreezeOnStatusChange(activeBiz, order, oldStatus, newStatus); } catch (e) { console.warn('Bulk cost freeze failed:', e); }
       }
       if (newDueDate) order.dueDate = newDueDate;
       if (newFabricStatus && order.fabric) order.fabricStatus = newFabricStatus;
@@ -2697,6 +2724,7 @@
                 </div>
               `}
               ${o.notes ? `<div style="margin-top:0.5rem; padding:0.5rem; background:#FEF3C7; border-left:3px solid #F59E0B; font-size:12px">📝 ${o.notes}</div>` : ''}
+              ${canSeeCosts() ? orderCostingHtml(activeBiz, o) : ''}
             </div>
             <div style="display:flex; flex-direction:column; gap:0.4rem; align-items:flex-end">
               <select onchange="updateOrderStatus('${o.id}', this.value)" style="width:160px">
@@ -3293,6 +3321,8 @@
     const biz = currentData();
     const mats = biz.materialsLibrary || [];
     const products = biz.productBoms || {};
+    const showCost = canSeeCosts();
+    const extraCols = showCost ? 3 : 0;
     const filterCat = document.getElementById('bom-category')?.value || '';
     const searchQuery = (document.getElementById('bom-search')?.value || '').toLowerCase();
     
@@ -3380,13 +3410,21 @@
           </td>
           ${cells}
           <td style="padding:0.5rem; border:1px solid var(--border); text-align:right; font-weight:600; background:var(--bg)">R${totalCost.toFixed(2)}</td>
+          ${showCost ? (() => {
+            const tc = computeTrueCost(activeBiz, prodName);
+            const be = breakEvenPrice(activeBiz, tc.trueCost);
+            return `
+            <td style="padding:0.5rem; border:1px solid var(--border); text-align:right; background:var(--bg); color:var(--text-muted)">R${tc.labourOverheadShare.toFixed(2)}${tc.weightMissing ? ' <span title="No unit weight for this category — using 1" style="color:#92400e">⚠️</span>' : ''}</td>
+            <td style="padding:0.5rem; border:1px solid var(--border); text-align:right; font-weight:700; background:var(--bg)">R${tc.trueCost.toFixed(2)}</td>
+            <td style="padding:0.5rem; border:1px solid var(--border); text-align:right; background:var(--bg)" title="${isVatRegistered(activeBiz) ? 'True cost grossed up by 15% VAT' : 'True cost (not VAT-registered)'}">R${be.toFixed(2)}</td>`;
+          })() : ''}
           <td style="padding:0.5rem; border:1px solid var(--border); text-align:center; white-space:nowrap">
             <button class="btn btn-sm" onclick="toggleCutList('${pn}')" title="Edit cutting list" style="padding:2px 6px; font-size:10px; ${cut ? 'background:#dbeafe; border-color:#3b82f6; color:#1e40af' : ''}">✂️${(prod.cutList || []).length ? ' ' + prod.cutList.length : ''}</button>
             ${hasTemplate ? `<button class="btn btn-sm" onclick="resetProductToTemplate('${pn}')" title="Reset to template" style="padding:2px 6px; font-size:10px">↺</button>` : ''}
             <button class="btn btn-sm btn-danger" onclick="deleteProductBom('${pn}')" style="padding:2px 6px; font-size:10px">✕</button>
           </td>
         </tr>
-        ${expandedCutList === prodName ? `<tr><td colspan="${mats.length + 3}" style="padding:0; border:1px solid var(--border)">${cutListEditorHtml(prodName, prod)}</td></tr>` : ''}
+        ${expandedCutList === prodName ? `<tr><td colspan="${mats.length + 3 + extraCols}" style="padding:0; border:1px solid var(--border)">${cutListEditorHtml(prodName, prod)}</td></tr>` : ''}
       `;
     }).join('');
     
@@ -3397,7 +3435,12 @@
             <tr style="background:var(--bg)">
               <th style="padding:0.5rem; border:1px solid var(--border); min-width:200px; position:sticky; left:0; background:var(--bg); z-index:3; text-align:left">Product</th>
               ${headerCols}
-              <th style="padding:0.5rem; border:1px solid var(--border); background:var(--bg)">Cost</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); background:var(--bg)" title="Material cost (sum of BOM materials)">Material</th>
+              ${showCost ? `
+              <th style="padding:0.5rem; border:1px solid var(--border); background:var(--bg)" title="Labour + overhead share for this category">Labour+OH</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); background:var(--bg)" title="Material + labour/overhead">True Cost</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); background:var(--bg)" title="Break-even price${isVatRegistered(activeBiz) ? ' (incl. 15% VAT)' : ''}">Break-even</th>
+              ` : ''}
               <th style="padding:0.5rem; border:1px solid var(--border); background:var(--bg)"></th>
             </tr>
           </thead>
@@ -3745,6 +3788,340 @@
     win.document.close();
   }
 
+  // ============================================
+  // PROFIT ENGINE — cost settings + true cost / profit / margin
+  // ============================================
+  const VAT_RATE = 0.15;       // 15% VAT
+  const WEEKS_PER_MONTH = 4.33;
+
+  function defaultCostSettings() {
+    return {
+      monthlyOverhead: 40600,
+      overheadSplit: { bellville: 60, pinkfoot: 40, repticube: 0 },
+      weeklyLabour: { bellville: 23550, pinkfoot: 13350, repticube: 0 },
+      weeklyWeightedPieces: { bellville: 20, pinkfoot: 8, repticube: 1 },
+      vatRegistered: { bellville: true, pinkfoot: false, repticube: false },
+      unitWeights: {
+        bellville: { 'Corner': 2, 'Daybed': 1.5, '3 Seater': 1.2, 'Sofa': 1.2, 'Feroche': 1.2, '2 Seater': 1, 'Chair': 1, 'Feroche Chair': 1, 'Bed': 1, 'Bed Box': 0.75, 'Dining Chair': 0.5, 'Ottoman': 0.5, 'Headboard': 0.4 },
+        pinkfoot: { 'Cot': 1, 'Compactum': 1 },
+        repticube: {}
+      }
+    };
+  }
+
+  // Lazily create + backfill data.costSettings (cloud-synced as part of `data`)
+  function ensureCostSettings() {
+    const d = defaultCostSettings();
+    if (!data.costSettings || typeof data.costSettings !== 'object') data.costSettings = d;
+    const cs = data.costSettings;
+    if (typeof cs.monthlyOverhead !== 'number') cs.monthlyOverhead = d.monthlyOverhead;
+    ['overheadSplit', 'weeklyLabour', 'weeklyWeightedPieces', 'vatRegistered', 'unitWeights'].forEach(k => {
+      if (!cs[k] || typeof cs[k] !== 'object') cs[k] = d[k];
+    });
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      if (typeof cs.overheadSplit[b] !== 'number') cs.overheadSplit[b] = d.overheadSplit[b];
+      if (typeof cs.weeklyLabour[b] !== 'number') cs.weeklyLabour[b] = d.weeklyLabour[b];
+      if (typeof cs.weeklyWeightedPieces[b] !== 'number') cs.weeklyWeightedPieces[b] = d.weeklyWeightedPieces[b];
+      if (typeof cs.vatRegistered[b] !== 'boolean') cs.vatRegistered[b] = d.vatRegistered[b];
+      if (!cs.unitWeights[b] || typeof cs.unitWeights[b] !== 'object') cs.unitWeights[b] = d.unitWeights[b];
+    });
+    return cs;
+  }
+
+  function isVatRegistered(biz) { return !!ensureCostSettings().vatRegistered[biz]; }
+
+  // materialCost = sum of BOM materials (qty x unit cost). Empty BOM => 0.
+  function productMaterialCost(biz, prodName) {
+    const b = data[biz];
+    const prod = b && b.productBoms && b.productBoms[prodName];
+    if (!prod || !prod.materials) return 0;
+    const mats = b.materialsLibrary || [];
+    let sum = 0;
+    Object.entries(prod.materials).forEach(([id, qty]) => {
+      const m = mats.find(x => x.id === id);
+      if (m) sum += (parseFloat(qty) || 0) * (parseFloat(m.cost) || 0);
+    });
+    return sum;
+  }
+
+  // Category weight — missing => treat as 1 and flag it
+  function categoryWeightInfo(biz, category) {
+    const cs = ensureCostSettings();
+    const raw = cs.unitWeights[biz] ? cs.unitWeights[biz][category] : undefined;
+    if (typeof raw === 'number' && !isNaN(raw)) return { weight: raw, missing: false };
+    return { weight: 1, missing: true };
+  }
+
+  // weeklyOverhead, weeklyFixed and cost per weight point (guards divide-by-zero)
+  function costPerWeightPoint(biz) {
+    const cs = ensureCostSettings();
+    const labour = parseFloat(cs.weeklyLabour[biz]) || 0;
+    const weeklyOverhead = ((parseFloat(cs.monthlyOverhead) || 0) * (parseFloat(cs.overheadSplit[biz]) || 0) / 100) / WEEKS_PER_MONTH;
+    const weeklyFixed = labour + weeklyOverhead;
+    const pieces = parseFloat(cs.weeklyWeightedPieces[biz]) || 0;
+    if (pieces <= 0) return { weeklyOverhead, weeklyFixed, perPoint: 0, piecesZero: true };
+    return { weeklyOverhead, weeklyFixed, perPoint: weeklyFixed / pieces, piecesZero: false };
+  }
+
+  // True cost for one unit of a product
+  function computeTrueCost(biz, prodName) {
+    const prod = data[biz] && data[biz].productBoms && data[biz].productBoms[prodName];
+    const category = prod ? (prod.category || '') : '';
+    const materialCost = productMaterialCost(biz, prodName);
+    const cw = categoryWeightInfo(biz, category);
+    const cp = costPerWeightPoint(biz);
+    const labourOverheadShare = cp.perPoint * cw.weight;
+    return {
+      materialCost,
+      labourOverheadShare,
+      trueCost: materialCost + labourOverheadShare,
+      weight: cw.weight,
+      weightMissing: cw.missing,
+      category,
+      piecesZero: cp.piecesZero
+    };
+  }
+
+  // Break-even price = true cost, grossed up by VAT if the business is VAT-registered
+  function breakEvenPrice(biz, trueCost) {
+    return isVatRegistered(biz) ? trueCost * (1 + VAT_RATE) : trueCost;
+  }
+
+  // Profit on a selling price. Bellville strips VAT; PinkFoot/ReptiCube do not.
+  function computeProfit(biz, sellingPrice, trueCost) {
+    const sp = parseFloat(sellingPrice) || 0;
+    const netPrice = isVatRegistered(biz) ? sp / (1 + VAT_RATE) : sp;
+    const profit = netPrice - trueCost;
+    const margin = netPrice > 0 ? profit / netPrice : 0;   // guard divide-by-zero
+    return { sellingPrice: sp, netPrice, profit, margin, marginValid: netPrice > 0 };
+  }
+
+  // Costing for an order: frozen snapshot for done/delivered, otherwise live
+  function orderCosting(biz, order) {
+    if ((order.status === 'done' || order.status === 'delivered') && order.costSnapshot) {
+      return Object.assign({ frozen: true }, order.costSnapshot);
+    }
+    const tc = computeTrueCost(biz, order.product);
+    const pr = computeProfit(biz, order.sellingPrice, tc.trueCost);
+    return {
+      frozen: false,
+      materialCost: tc.materialCost,
+      labourOverheadShare: tc.labourOverheadShare,
+      trueCost: tc.trueCost,
+      weight: tc.weight,
+      weightMissing: tc.weightMissing,
+      vatRegistered: isVatRegistered(biz),
+      sellingPrice: pr.sellingPrice,
+      netPrice: pr.netPrice,
+      profit: pr.profit,
+      margin: pr.margin,
+      marginValid: pr.marginValid
+    };
+  }
+
+  function buildCostSnapshot(biz, order) {
+    const c = orderCosting(biz, order); // computed live (snapshot not yet set at this point)
+    return {
+      materialCost: c.materialCost,
+      labourOverheadShare: c.labourOverheadShare,
+      trueCost: c.trueCost,
+      weight: c.weight,
+      weightMissing: c.weightMissing,
+      vatRegistered: c.vatRegistered,
+      sellingPrice: c.sellingPrice,
+      netPrice: c.netPrice,
+      profit: c.profit,
+      margin: c.margin,
+      marginValid: c.marginValid,
+      frozenAt: new Date().toISOString()
+    };
+  }
+
+  // Freeze on entering done/delivered; unfreeze (go live again) on returning to active
+  function applyCostFreezeOnStatusChange(biz, order, oldStatus, newStatus) {
+    const done = s => s === 'done' || s === 'delivered';
+    if (done(newStatus) && !done(oldStatus)) {
+      order.costSnapshot = buildCostSnapshot(biz, order);
+    } else if (!done(newStatus) && done(oldStatus)) {
+      delete order.costSnapshot;
+    }
+  }
+
+  // Whether the current user may see financial figures (same access as the Costs tab)
+  function canSeeCosts() {
+    return typeof canSeeTab === 'function' ? canSeeTab('costs') : true;
+  }
+
+  const money = n => 'R' + (Number(n) || 0).toFixed(2);
+
+  // Compact costing block for an order card (frozen or live)
+  function orderCostingHtml(biz, order) {
+    const c = orderCosting(biz, order);
+    const marginPct = c.marginValid ? (c.margin * 100).toFixed(1) + '%' : '—';
+    const pc = c.profit >= 0 ? '#166534' : '#991b1b';
+    const tag = c.frozen
+      ? '<span title="Frozen when marked Done/Delivered — unaffected by later settings changes" style="background:#e0e7ff; color:#3730a3; padding:1px 6px; border-radius:3px; font-size:9px; font-weight:700">🔒 FROZEN</span>'
+      : '<span title="Live — recalculated from current cost settings" style="background:#dcfce7; color:#166534; padding:1px 6px; border-radius:3px; font-size:9px; font-weight:700">LIVE</span>';
+    const noPrice = !c.sellingPrice;
+    return `
+      <div style="margin-top:0.5rem; padding:0.5rem 0.6rem; background:rgba(0,0,0,0.04); border:1px solid var(--border); border-radius:6px; font-size:12px">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px">
+          <span style="font-weight:700; font-size:11px; letter-spacing:0.03em; color:var(--text-muted)">💵 COSTING</span>
+          ${tag}
+        </div>
+        <div>True cost: <b>${money(c.trueCost)}</b> <span style="color:var(--text-muted)">(materials ${money(c.materialCost)} + labour/oh ${money(c.labourOverheadShare)})</span>${c.weightMissing ? ' <span title="No unit weight set for this category — using 1" style="color:#92400e">⚠️ weight 1</span>' : ''}</div>
+        <div>Selling: <b>${money(c.sellingPrice)}</b> ${c.vatRegistered ? `<span style="color:var(--text-muted)">incl. VAT → net ${money(c.netPrice)}</span>` : '<span style="color:var(--text-muted)">(not VAT-registered)</span>'}</div>
+        ${noPrice
+          ? '<div style="color:var(--text-muted)">Enter a selling price to see profit.</div>'
+          : `<div>Profit: <b style="color:${pc}">${money(c.profit)}</b> &nbsp;·&nbsp; Margin: <b style="color:${pc}">${marginPct}</b></div>`}
+      </div>`;
+  }
+
+  function updateSellingPrice(orderId, value) {
+    const order = currentData().orders.find(o => o.id === orderId);
+    if (!order) return;
+    snapshotState();
+    order.sellingPrice = parseFloat(value) || 0;
+    saveData();
+    renderOrders();
+  }
+
+  function renderCostSettings() {
+    const el = document.getElementById('cost-settings');
+    if (!el) return;
+    const cs = ensureCostSettings();
+    const bizes = [['bellville', 'Bellville'], ['pinkfoot', 'PinkFoot'], ['repticube', 'ReptiCube']];
+    const ro = (typeof isReadOnly === 'function' && isReadOnly()) ? 'disabled' : '';
+
+    // Per-business derived readout
+    const derivedRows = bizes.map(([b, label]) => {
+      const cp = costPerWeightPoint(b);
+      return `
+        <tr>
+          <td style="padding:0.5rem; border:1px solid var(--border); font-weight:600">${label}</td>
+          <td style="padding:0.5rem; border:1px solid var(--border); text-align:right">${money(cp.weeklyOverhead)}</td>
+          <td style="padding:0.5rem; border:1px solid var(--border); text-align:right">${money(cp.weeklyFixed)}</td>
+          <td style="padding:0.5rem; border:1px solid var(--border); text-align:right">${cp.piecesZero ? '<span title="Weekly weighted pieces is 0 — set it above" style="color:#991b1b">n/a (÷0)</span>' : money(cp.perPoint)}</td>
+        </tr>`;
+    }).join('');
+
+    const bizCol = (b, field, type) => {
+      if (type === 'checkbox') {
+        return `<td style="padding:0.4rem; border:1px solid var(--border); text-align:center"><input type="checkbox" ${cs[field][b] ? 'checked' : ''} ${ro} onchange="updateCostSetting('${field}', '${b}', this.checked)" style="width:18px; height:18px"></td>`;
+      }
+      return `<td style="padding:0; border:1px solid var(--border)"><input type="number" step="0.01" value="${cs[field][b]}" ${ro} onchange="updateCostSetting('${field}', '${b}', parseFloat(this.value) || 0)" style="width:100%; padding:8px; border:none; text-align:right; background:transparent"></td>`;
+    };
+
+    const perBizTable = `
+      <table style="width:100%; border-collapse:collapse; font-size:13px">
+        <thead>
+          <tr style="background:var(--bg); text-align:left">
+            <th style="padding:0.5rem; border:1px solid var(--border)">Setting</th>
+            ${bizes.map(([, l]) => `<th style="padding:0.5rem; border:1px solid var(--border); text-align:right">${l}</th>`).join('')}
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td style="padding:0.5rem; border:1px solid var(--border); font-weight:600">Weekly labour total (R)</td>${bizes.map(([b]) => bizCol(b, 'weeklyLabour')).join('')}</tr>
+          <tr><td style="padding:0.5rem; border:1px solid var(--border); font-weight:600">Overhead split (%)</td>${bizes.map(([b]) => bizCol(b, 'overheadSplit')).join('')}</tr>
+          <tr><td style="padding:0.5rem; border:1px solid var(--border); font-weight:600">Weekly weighted pieces</td>${bizes.map(([b]) => bizCol(b, 'weeklyWeightedPieces')).join('')}</tr>
+          <tr><td style="padding:0.5rem; border:1px solid var(--border); font-weight:600">VAT-registered (15%)</td>${bizes.map(([b]) => bizCol(b, 'vatRegistered', 'checkbox')).join('')}</tr>
+        </tbody>
+      </table>`;
+
+    // Unit-weight tables per business that has any categories
+    const weightTables = bizes.map(([b, label]) => {
+      const prodBoms = (data[b] && data[b].productBoms) || {};
+      const cats = [...new Set(Object.values(prodBoms).map(p => p.category).filter(Boolean))];
+      // include any categories already in settings even if no products
+      Object.keys(cs.unitWeights[b] || {}).forEach(c => { if (!cats.includes(c)) cats.push(c); });
+      cats.sort();
+      if (cats.length === 0) return '';
+      const rows = cats.map(cat => {
+        const w = cs.unitWeights[b] && cs.unitWeights[b][cat];
+        const missing = !(typeof w === 'number' && !isNaN(w));
+        return `
+          <tr>
+            <td style="padding:0.5rem; border:1px solid var(--border)">${cat}${missing ? ' <span title="No weight set — cost uses 1" style="color:#92400e">⚠️</span>' : ''}</td>
+            <td style="padding:0; border:1px solid var(--border)"><input type="number" step="0.05" value="${missing ? '' : w}" placeholder="1" ${ro} onchange="updateUnitWeight('${b}', '${cat.replace(/'/g, "\\'")}', this.value)" style="width:100%; padding:8px; border:none; text-align:right; background:transparent"></td>
+          </tr>`;
+      }).join('');
+      return `
+        <div style="margin-bottom:1rem">
+          <h3 style="font-size:14px; margin:0 0 0.4rem">${label} — unit weight per category</h3>
+          <table style="width:100%; max-width:480px; border-collapse:collapse; font-size:13px">
+            <thead><tr style="background:var(--bg); text-align:left"><th style="padding:0.5rem; border:1px solid var(--border)">Category</th><th style="padding:0.5rem; border:1px solid var(--border); width:140px; text-align:right">Weight</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div class="card">
+        <div class="card-title">⚙️ Labour, Overhead & VAT</div>
+        <div class="row" style="margin-bottom:1rem">
+          <div class="f1" style="max-width:320px">
+            <label>Shared monthly overheads total (R)</label>
+            <input type="number" step="0.01" value="${cs.monthlyOverhead}" ${ro} onchange="updateCostSetting('monthlyOverhead', null, parseFloat(this.value) || 0)">
+          </div>
+        </div>
+        ${perBizTable}
+        <p style="font-size:11px; color:var(--text-muted); margin-top:0.6rem">
+          weeklyOverhead = monthlyOverhead × split% ÷ 4.33 &nbsp;·&nbsp; cost/weight-point = (weeklyLabour + weeklyOverhead) ÷ weekly weighted pieces
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📊 Calculated (per business)</div>
+        <table style="width:100%; border-collapse:collapse; font-size:13px">
+          <thead>
+            <tr style="background:var(--bg); text-align:left">
+              <th style="padding:0.5rem; border:1px solid var(--border)">Business</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); text-align:right">Weekly overhead</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); text-align:right">Weekly fixed</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); text-align:right">Cost / weight-point</th>
+            </tr>
+          </thead>
+          <tbody>${derivedRows}</tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card-title">⚖️ Unit Weight per Category</div>
+        <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
+          Heavier / more labour-intensive items carry more of the weekly fixed cost. Categories with no weight set are treated as 1 (flagged ⚠️).
+        </p>
+        ${weightTables || '<div class="empty">No product categories yet.</div>'}
+      </div>
+    `;
+  }
+
+  function updateCostSetting(field, biz, value) {
+    const cs = ensureCostSettings();
+    snapshotState();
+    if (biz === null) cs[field] = value;
+    else cs[field][biz] = value;
+    saveData();
+    renderCostSettings();
+    render(); // refresh live order costings
+  }
+
+  function updateUnitWeight(biz, category, value) {
+    const cs = ensureCostSettings();
+    snapshotState();
+    if (!cs.unitWeights[biz]) cs.unitWeights[biz] = {};
+    const v = parseFloat(value);
+    if (value === '' || isNaN(v)) delete cs.unitWeights[biz][category];
+    else cs.unitWeights[biz][category] = v;
+    saveData();
+    renderCostSettings();
+    render();
+  }
+
+  window.renderCostSettings = renderCostSettings;
+  window.updateCostSetting = updateCostSetting;
+  window.updateUnitWeight = updateUnitWeight;
+  window.updateSellingPrice = updateSellingPrice;
+
   // Expose to global
   window.renderBomSection = renderBomSection;
   window.renderProductBomTable = renderProductBomTable;
@@ -3781,12 +4158,14 @@
       if (oldStatus === 'in-production' && newStatus === 'pending') {
         try { restoreMaterialsForOrder(biz, order); } catch (e) { console.warn('Restoration failed:', e); }
       }
-      
+
+      try { applyCostFreezeOnStatusChange(biz, order, oldStatus, newStatus); } catch (e) { console.warn('Cost freeze failed:', e); }
+
       saveData();
       render();
     }
   }
-  
+
   function setDeliveryDate(biz, orderId, date) {
     const order = data[biz]?.orders?.find(o => o.id === orderId);
     if (order) {
@@ -4004,8 +4383,10 @@
     snapshotState();
     const order = currentData().orders.find(o => o.id === orderId);
     if (order) {
+      const oldStatus = order.status;
       order.status = 'done';
       order.deliveredDate = null;
+      try { applyCostFreezeOnStatusChange(activeBiz, order, oldStatus, 'done'); } catch (e) { console.warn('Cost freeze failed:', e); }
       saveData();
       render();
       toast('Order moved back to ACTIVE ORDERS', 'success');
@@ -4264,8 +4645,15 @@
           <div style="font-size:11px; color:var(--text-muted); margin-bottom:0.75rem">
             Order: ${o.orderDate} | Due: <input type="date" value="${o.dueDate}" onchange="updateDueDate('${o.id}', this.value)" style="display:inline-block; width:auto; padding:2px 6px; font-size:11px; background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:4px">
           </div>
-          
-          <div style="margin-bottom:0.75rem; padding:0.75rem; background:var(--bg); border-radius:6px; border:1px solid var(--border)">
+          ${canSeeCosts() ? `
+          <div style="margin-bottom:0.75rem; display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap">
+            <label style="font-size:11px; color:var(--text-muted)">Selling price / unit (R):</label>
+            <input type="number" step="0.01" value="${o.sellingPrice || ''}" placeholder="0.00" onchange="updateSellingPrice('${o.id}', this.value)" style="width:120px; padding:4px 6px; font-size:12px; background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:4px">
+          </div>
+          ${orderCostingHtml(activeBiz, o)}
+          ` : ''}
+
+          <div style="margin-bottom:0.75rem; margin-top:0.75rem; padding:0.75rem; background:var(--bg); border-radius:6px; border:1px solid var(--border)">
             <label style="font-size:11px; color:var(--text-muted); margin-bottom:0.4rem; display:flex; justify-content:space-between; align-items:center">
               📝 Notes / Special Requests
               ${o.notes && o.notesUpdatedBy ? `<span style="font-size:10px; color:var(--text-muted); font-style:italic">Last updated by ${o.notesUpdatedBy}</span>` : ''}
@@ -4768,7 +5156,7 @@
   
   // Role permissions: which tabs each role can see
   const ROLE_PERMISSIONS = {
-    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner'],
+    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'costs', 'staff', 'materials', 'schedule', 'planner'],
     sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished'],
     factory: ['dashboard', 'orders', 'done', 'calendar', 'bom', 'schedule', 'planner'],
     dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'finished'],
