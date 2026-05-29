@@ -1940,15 +1940,16 @@
     </thead>
     <tbody>${rows}</tbody>
   </table>
-  
+
   <div class="footer">
     <div>Printed: ${new Date().toLocaleString('en-ZA')}</div>
     <div>${orders.length} order${orders.length !== 1 ? 's' : ''} listed</div>
   </div>
 </body>
 </html>`;
-    
+
     const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Click the pop-up icon in the address bar and allow pop-ups for this site, then try Print again.'); return; }
     win.document.write(html);
     win.document.close();
   }
@@ -2080,12 +2081,13 @@
   </div>
 </body>
 </html>`;
-    
+
     const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Click the pop-up icon in the address bar and allow pop-ups for this site, then try Print again.'); return; }
     win.document.write(html);
     win.document.close();
   }
-  
+
   function updateDueDate(orderId, newDate) {
     const order = currentData().orders.find(o => o.id === orderId);
     if (order) {
@@ -3786,6 +3788,7 @@
 </body>
 </html>`;
     const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Click the pop-up icon in the address bar and allow pop-ups for this site, then try Print again.'); return; }
     win.document.write(html);
     win.document.close();
   }
@@ -4884,6 +4887,7 @@
           <div class="pc-inv">#${inv}</div>
           <div class="pc-prod">${_escape(prodLabel)}</div>
           <div class="pc-cust">👤 ${_escape(o.customer)}</div>
+          ${o.fabric && !HIDE_FABRIC_FROM.includes(currentRole) ? `<div class="pc-cust">🎨 ${_escape(o.fabric)}</div>` : ''}
           ${dueText ? `<div class="pc-due">${_escape(dueText)}</div>` : ''}
           ${showPlanDate ? `<div class="pc-due">📅 Week of ${_escape(o.planWeek)}</div>` : ''}
         </div>
