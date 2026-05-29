@@ -5102,6 +5102,7 @@
     ` : '';
 
     const html = `
+      ${capacityPlannerHtml(weeks, buckets, colLabels)}
       <div class="plan-grid">${colsHtml}</div>
       ${beyondHtml}
       <div class="card">
@@ -5406,6 +5407,150 @@
     win.document.close();
   }
   window.printWeekMaterials = printWeekMaterials;
+
+  // ============================================
+  // CAPACITY PLANNER (Bellville only) — reads profit-engine unit weights
+  // ============================================
+  let capacityWeekIndex = 0; // which of the 4 planner weeks the summary analyses
+  let capPanelOpen = false;   // settings panel open/closed
+
+  const DEFAULT_CAPACITY_STAGES = [
+    { key: 'frameCutting', name: 'Frame Cutting', capacity: 30, workers: 'Ricardo' },
+    { key: 'frameMaking', name: 'Frame Making', capacity: 22.5, workers: 'Stanley' },
+    { key: 'liningUp', name: 'Lining Up', capacity: 27.5, workers: 'Blessing' },
+    { key: 'foamingUp', name: 'Foaming Up', capacity: 27.5, workers: 'Baba' },
+    { key: 'foamCutting', name: 'Foam Cutting/Dacron', capacity: 35, workers: 'Samuel' },
+    { key: 'upholstering', name: 'Upholstering', capacity: 35, workers: 'Ashraf + Stephan' },
+    { key: 'sewing', name: 'Sewing', capacity: 22.5, workers: 'Sharon + Yammy' },
+    { key: 'fabricCutting', name: 'Fabric Cutting', capacity: 27.5, workers: 'Agatha' },
+    { key: 'finishing', name: 'Finishing', capacity: 30, workers: 'Unus + Harry' }
+  ];
+  const DEFAULT_ERIC = { capacity: 15, products: ['Daybed Pillay', 'Sofa Pillay Pine', 'Sofa Pillay Ash/Oak', 'Woodland Daybed', 'Skyler Daybed', 'Oak Sofa'] };
+
+  function ensureCapacitySettings() {
+    if (!data.capacitySettings || !Array.isArray(data.capacitySettings.stages) || data.capacitySettings.stages.length === 0) {
+      data.capacitySettings = { stages: JSON.parse(JSON.stringify(DEFAULT_CAPACITY_STAGES)) };
+    } else {
+      const byKey = Object.fromEntries(data.capacitySettings.stages.map(s => [s.key, s]));
+      DEFAULT_CAPACITY_STAGES.forEach(d => {
+        if (!byKey[d.key]) data.capacitySettings.stages.push(JSON.parse(JSON.stringify(d)));
+        else if (!byKey[d.key].name) { byKey[d.key].name = d.name; byKey[d.key].workers = d.workers; }
+      });
+    }
+    if (!data.ericSettings || typeof data.ericSettings !== 'object') data.ericSettings = JSON.parse(JSON.stringify(DEFAULT_ERIC));
+    if (typeof data.ericSettings.capacity !== 'number') data.ericSettings.capacity = DEFAULT_ERIC.capacity;
+    if (!Array.isArray(data.ericSettings.products)) data.ericSettings.products = DEFAULT_ERIC.products.slice();
+    return data.capacitySettings;
+  }
+
+  function _capTokens(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean); }
+  function _matchesEric(product) {
+    const prodTokens = new Set(_capTokens(product));
+    return (data.ericSettings.products || []).some(entry => {
+      const et = _capTokens(entry);
+      return et.length > 0 && et.every(t => prodTokens.has(t));
+    });
+  }
+  // Load for a set of orders: total weighted pieces (weight × qty) + Eric oak-frame count
+  function _capLoad(orders) {
+    let totalWeight = 0, ericCount = 0;
+    (orders || []).forEach(o => {
+      const qty = parseInt(o.qty) || 1;
+      const cat = (data.bellville.productBoms && data.bellville.productBoms[o.product] ? data.bellville.productBoms[o.product].category : '') || o.category || '';
+      totalWeight += (categoryWeightInfo('bellville', cat).weight) * qty; // same source as profit engine; missing => 1
+      if (_matchesEric(o.product)) ericCount += qty;
+    });
+    return { totalWeight, ericCount };
+  }
+
+  function setCapacityWeek(i) { capacityWeekIndex = parseInt(i) || 0; renderPlanner(); }
+  function toggleCapPanel() { capPanelOpen = !capPanelOpen; renderPlanner(); }
+  function updateCapacityStage(key, value) { ensureCapacitySettings(); snapshotState(); const s = data.capacitySettings.stages.find(x => x.key === key); if (s) s.capacity = parseFloat(value) || 0; saveData(); renderPlanner(); }
+  function updateEricCapacity(value) { ensureCapacitySettings(); snapshotState(); data.ericSettings.capacity = parseFloat(value) || 0; saveData(); renderPlanner(); }
+  function updateEricProducts(value) { ensureCapacitySettings(); snapshotState(); data.ericSettings.products = String(value).split('\n').map(s => s.trim()).filter(Boolean); saveData(); renderPlanner(); }
+  window.setCapacityWeek = setCapacityWeek;
+  window.toggleCapPanel = toggleCapPanel;
+  window.updateCapacityStage = updateCapacityStage;
+  window.updateEricCapacity = updateEricCapacity;
+  window.updateEricProducts = updateEricProducts;
+
+  // Returns the capacity summary HTML for the selected week ('' for non-Bellville)
+  function capacityPlannerHtml(weeks, buckets, colLabels) {
+    if (activeBiz !== 'bellville') return '';
+    ensureCapacitySettings();
+    const idx = Math.min(Math.max(0, capacityWeekIndex), weeks.length - 1);
+    const wk = weeks[idx];
+    const orders = buckets[wk] || [];
+    const { totalWeight, ericCount } = _capLoad(orders);
+    const stages = data.capacitySettings.stages;
+    const eric = data.ericSettings;
+    const ericCap = parseFloat(eric.capacity) || 0;
+
+    const colour = pct => (pct >= 100 ? '#dc2626' : pct >= 80 ? '#d97706' : '#16a34a');
+    const pctOf = (load, cap) => cap > 0 ? (load / cap * 100) : (load > 0 ? Infinity : 0);
+    const bar = (pct, col) => `<div style="background:var(--bg); border-radius:4px; height:9px; overflow:hidden; flex:1; min-width:60px"><div style="height:100%; width:${Math.min(100, isFinite(pct) ? pct : 100)}%; background:${col}"></div></div>`;
+
+    const rows = stages.map(s => { const cap = parseFloat(s.capacity) || 0; return { name: s.name, workers: s.workers, cap, load: totalWeight, pct: pctOf(totalWeight, cap) }; });
+    rows.sort((a, b) => (isFinite(b.pct) ? b.pct : 1e9) - (isFinite(a.pct) ? a.pct : 1e9)); // busiest/over first
+
+    const rowHtml = r => {
+      const col = colour(r.pct);
+      const pctTxt = r.cap > 0 ? (isFinite(r.pct) ? r.pct.toFixed(0) + '%' : '∞') : (r.load > 0 ? 'no cap' : '0%');
+      return `<div style="display:flex; align-items:center; gap:0.5rem; padding:3px 0; font-size:12px">
+        <div style="width:200px; flex-shrink:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis"><strong>${r.name}</strong> <span style="color:var(--text-muted); font-size:10px">${r.workers || ''}</span></div>
+        ${bar(r.pct, col)}
+        <div style="width:110px; text-align:right; flex-shrink:0">${r.load.toFixed(1)} / ${r.cap} <strong style="color:${col}">${pctTxt}</strong></div>
+      </div>`;
+    };
+
+    const ericPct = pctOf(ericCount, ericCap);
+    const ericCol = colour(ericPct);
+    const ericRow = `<div style="display:flex; align-items:center; gap:0.5rem; padding:3px 0; font-size:12px; border-top:1px dashed var(--border); margin-top:4px">
+        <div style="width:200px; flex-shrink:0"><strong>Eric — Oak Frames</strong> <span style="color:var(--text-muted); font-size:10px">parallel workshop</span></div>
+        ${bar(ericPct, ericCol)}
+        <div style="width:110px; text-align:right; flex-shrink:0">${ericCount} / ${ericCap} <strong style="color:${ericCol}">${ericCap > 0 ? (isFinite(ericPct) ? ericPct.toFixed(0) + '%' : '∞') : (ericCount > 0 ? 'no cap' : '0%')}</strong></div>
+      </div>`;
+
+    const overloaded = rows.filter(r => r.load > r.cap).map(r => `${r.name} (over by ${(r.load - r.cap).toFixed(1)})`);
+    if (ericCount > ericCap) overloaded.push(`Eric (over by ${(ericCount - ericCap)})`);
+    const verdict = overloaded.length
+      ? `<div style="margin-top:0.6rem; padding:0.5rem 0.75rem; background:#fef2f2; border:1px solid #fecaca; border-radius:6px; color:#b91c1c; font-weight:700; font-size:13px">⛔ OVERLOADED: ${overloaded.join(', ')}</div>`
+      : `<div style="margin-top:0.6rem; padding:0.5rem 0.75rem; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; color:#166534; font-weight:700; font-size:13px">✅ Week achievable</div>`;
+
+    const weekOptions = weeks.map((w, i) => `<option value="${i}" ${i === idx ? 'selected' : ''}>${colLabels[i]} (${_formatWeekShort(w)})</option>`).join('');
+
+    const settingsPanel = capPanelOpen ? `
+      <div style="margin-top:0.75rem; padding:0.75rem; background:var(--bg); border-radius:6px; font-size:12px">
+        <div style="font-weight:700; margin-bottom:0.4rem">Stage weekly capacity (pieces/week)</div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:0.4rem">
+          ${stages.map(s => `<label style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem">${s.name}<input type="number" step="0.5" value="${s.capacity}" onchange="updateCapacityStage('${s.key}', this.value)" style="width:80px; padding:3px 5px"></label>`).join('')}
+        </div>
+        <div style="display:flex; gap:1rem; align-items:flex-start; margin-top:0.75rem; flex-wrap:wrap">
+          <label style="display:flex; align-items:center; gap:0.5rem; font-weight:700">Eric oak-frame capacity / week<input type="number" step="1" value="${eric.capacity}" onchange="updateEricCapacity(this.value)" style="width:80px; padding:3px 5px"></label>
+        </div>
+        <div style="margin-top:0.6rem">
+          <div style="font-weight:700; margin-bottom:0.25rem">Products needing an Eric oak frame (one per line; matched by words in the product name)</div>
+          <textarea onchange="updateEricProducts(this.value)" style="width:100%; min-height:90px; padding:0.5rem; font-family:inherit; font-size:12px; border:1px solid var(--border); border-radius:4px">${(eric.products || []).join('\n')}</textarea>
+        </div>
+      </div>` : '';
+
+    return `
+      <div class="card" style="border-left:4px solid var(--accent)">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.5rem">
+          <div class="card-title" style="margin:0">🏭 Capacity — ${colLabels[idx]}</div>
+          <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
+            <select onchange="setCapacityWeek(this.value)" style="padding:4px 8px; font-size:12px">${weekOptions}</select>
+            <button class="btn btn-sm" onclick="toggleCapPanel()">⚙️ Capacity settings</button>
+          </div>
+        </div>
+        <div style="font-size:11px; color:var(--text-muted); margin-bottom:0.5rem">${orders.length} order${orders.length !== 1 ? 's' : ''} · total weighted load ${totalWeight.toFixed(1)} pieces. Bars: green &lt;80% · amber 80–99% · red ≥100%.</div>
+        ${rows.map(rowHtml).join('')}
+        ${ericRow}
+        ${verdict}
+        ${settingsPanel}
+      </div>`;
+  }
+  window.capacityPlannerHtml = capacityPlannerHtml;
 
   // ----- Drag handlers (desktop) -----
   function planDragStart(e, orderId) {
