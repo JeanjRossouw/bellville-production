@@ -271,6 +271,7 @@
   
   <!-- DASHBOARD -->
   <div id="section-dashboard" class="section active">
+    <div id="command-centre"></div>
     <div class="card">
       <div class="card-title">STATUS</div>
       <div class="grid3">
@@ -824,6 +825,7 @@
 
 <script>
   let activeBiz = 'bellville';
+  let currentRole = null; // declared early so render()/canSeeTab never hit a temporal-dead-zone
   let data = {
     bellville: { orders: [], products: {}, inventory: {}, staff: [] },
     repticube: { orders: [], products: {}, inventory: {}, staff: [] },
@@ -4401,7 +4403,223 @@
     }
   }
   
+  // ============================================
+  // OWNER'S COMMAND CENTRE (reads profit-engine values; admin only)
+  // ============================================
+  let dashScope = 'business'; // 'business' | 'all'
+  function setDashScope(s) { dashScope = s; renderCommandCentre(); }
+  window.setDashScope = setDashScope;
+
+  function _todayIsoLocal() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  function _rand0(n) { return 'R' + Math.round(Number(n) || 0).toLocaleString('en-ZA'); }
+
+  // Businesses in the current scope
+  function dashBizList() {
+    return dashScope === 'all' ? ['bellville', 'pinkfoot', 'repticube'] : [activeBiz];
+  }
+  function dashOrders() {
+    const out = [];
+    dashBizList().forEach(b => (data[b]?.orders || []).forEach(o => out.push({ biz: b, o })));
+    return out;
+  }
+  // Completion date for done/delivered: deliveredDate, else snapshot freeze date, else dueDate
+  function _completionDate(o) {
+    if (o.deliveredDate) return String(o.deliveredDate).slice(0, 10);
+    if (o.costSnapshot && o.costSnapshot.frozenAt) return String(o.costSnapshot.frozenAt).slice(0, 10);
+    return o.dueDate ? String(o.dueDate).slice(0, 10) : null;
+  }
+
+  // Aggregate completed orders (done/delivered) whose completion date is within [mon,sun]
+  // Reads profit-engine values via orderCosting (frozen for done/delivered). Totals scale by qty.
+  function _weekSummary(monIso, sunIso) {
+    let pieces = 0, weighted = 0, revenue = 0, cost = 0;
+    dashOrders().forEach(({ biz, o }) => {
+      if (o.status !== 'done' && o.status !== 'delivered') return;
+      const cd = _completionDate(o);
+      if (!cd || cd < monIso || cd > sunIso) return;
+      const qty = parseInt(o.qty) || 1;
+      const c = orderCosting(biz, o);
+      pieces += qty;
+      weighted += (Number(c.weight) || 1) * qty;
+      revenue += (Number(c.netPrice) || 0) * qty;   // netPrice already strips VAT per business
+      cost += (Number(c.trueCost) || 0) * qty;
+    });
+    const profit = revenue - cost;
+    const margin = revenue > 0 ? profit / revenue : 0;
+    return { pieces, weighted, revenue, cost, profit, margin, marginValid: revenue > 0 };
+  }
+
+  // Per-business low stock (replicates material-requirements logic for any biz)
+  function _materialRequirementsFor(biz) {
+    const bd = data[biz]; const required = {};
+    (bd?.orders || []).forEach(o => {
+      if (o.status === 'delivered' || o.status === 'done' || o.materialsDeducted) return;
+      const prodBom = bd.productBoms?.[o.product];
+      if (!prodBom || !prodBom.materials) return;
+      const qty = parseFloat(o.qty || 1);
+      Object.entries(prodBom.materials).forEach(([id, per]) => { required[id] = (required[id] || 0) + per * qty; });
+    });
+    return required;
+  }
+  function _lowStockFor(biz) {
+    const mats = data[biz]?.materialsLibrary || [];
+    const req = _materialRequirementsFor(biz);
+    return mats.filter(m => {
+      const stock = parseFloat(m.stock || 0), r = parseFloat(req[m.id] || 0), ro = parseFloat(m.reorderPoint || 0);
+      return stock <= 0 || r > stock || (ro > 0 && stock <= ro);
+    }).map(m => ({ name: m.name, unit: m.unit, stock: parseFloat(m.stock || 0), biz }));
+  }
+
+  function _delta(cur, prev, higherIsGood) {
+    if (!isFinite(cur)) cur = 0; if (!isFinite(prev)) prev = 0;
+    if (prev === 0 && cur === 0) return '<span style="font-size:10px; color:var(--text-muted)">— vs last wk</span>';
+    let txt, up;
+    if (prev === 0) { up = cur > 0; txt = 'new'; }
+    else { const ch = (cur - prev) / Math.abs(prev) * 100; up = ch >= 0; txt = Math.abs(ch).toFixed(0) + '%'; }
+    const good = higherIsGood === false ? !up : up;
+    const col = good ? '#16a34a' : '#dc2626';
+    return `<span style="font-size:10px; color:${col}; font-weight:600">${up ? '▲' : '▼'} ${txt} vs last wk</span>`;
+  }
+
+  function _trendSvg(weeks) {
+    const W = 600, H = 150, pad = 18;
+    const max = Math.max(1, ...weeks.map(w => Math.abs(w.profit)));
+    const zeroY = pad + (H - pad * 2) / 2;
+    const bw = (W - pad * 2) / weeks.length;
+    const bars = weeks.map((w, i) => {
+      const bh = (Math.abs(w.profit) / max) * ((H - pad * 2) / 2);
+      const xx = pad + i * bw + 3;
+      const yy = w.profit >= 0 ? zeroY - bh : zeroY;
+      const col = w.profit >= 0 ? '#16a34a' : '#dc2626';
+      return `<rect x="${xx}" y="${yy}" width="${Math.max(2, bw - 6)}" height="${Math.max(1, bh)}" rx="2" fill="${col}"><title>${w.label}: ${_rand0(w.profit)}</title></rect>
+        <text x="${xx + (bw - 6) / 2}" y="${H - 4}" font-size="8" text-anchor="middle" fill="#888">${w.label}</text>`;
+    }).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:100%; height:auto; display:block">
+      <line x1="${pad}" y1="${zeroY}" x2="${W - pad}" y2="${zeroY}" stroke="#ccc" stroke-width="1"/>${bars}</svg>`;
+  }
+
+  function renderCommandCentre() {
+    const el = document.getElementById('command-centre');
+    if (!el) return;
+    if (!canSeeCosts()) { el.innerHTML = ''; return; } // owner / admin only
+    ensureCostSettings();
+
+    const thisMon = getMondayOf(new Date());
+    if (!thisMon) { el.innerHTML = ''; return; }
+    const thisSun = _addDaysIso(thisMon, 6);
+    const lastMon = _addDaysIso(thisMon, -7);
+    const lastSun = _addDaysIso(thisMon, -1);
+    const todayIso = _todayIsoLocal();
+
+    const wk = _weekSummary(thisMon, thisSun);
+    const lw = _weekSummary(lastMon, lastSun);
+
+    // Money + production flags + top performers (single pass)
+    let unpaidCount = 0, outstanding = 0, overdue = 0, dueThisWeek = 0, fabricNotRec = 0;
+    const completed = [];
+    dashOrders().forEach(({ biz, o }) => {
+      if (o.paymentStatus && o.paymentStatus !== 'paid') { unpaidCount++; outstanding += parseFloat(o.outstanding) || 0; }
+      const active = o.status !== 'done' && o.status !== 'delivered';
+      if (active && o.dueDate && o.dueDate < todayIso) overdue++;
+      if (active && o.dueDate && o.dueDate >= thisMon && o.dueDate <= thisSun) dueThisWeek++;
+      if (active && o.fabric && (o.fabricStatus || 'waiting') !== 'received') fabricNotRec++;
+      if (o.status === 'done' || o.status === 'delivered') {
+        const cd = _completionDate(o);
+        if (cd && cd >= thisMon && cd <= thisSun) {
+          const qty = parseInt(o.qty) || 1;
+          const c = orderCosting(biz, o);
+          completed.push({ biz, name: o.product || '', inv: o.invoice || o.id, profit: (Number(c.profit) || 0) * qty, margin: c.marginValid ? c.margin : null });
+        }
+      }
+    });
+    const lowList = dashBizList().flatMap(_lowStockFor);
+    const top = [...completed].sort((a, b) => b.profit - a.profit).slice(0, 5);
+    const losses = completed.filter(x => x.margin !== null && x.margin < 0).sort((a, b) => a.margin - b.margin).slice(0, 5);
+
+    const trend = [];
+    for (let i = 7; i >= 0; i--) { const mon = _addDaysIso(thisMon, -7 * i); const s = _weekSummary(mon, _addDaysIso(mon, 6)); trend.push({ label: mon.slice(8, 10) + '/' + mon.slice(5, 7), profit: s.profit }); }
+
+    const mpct = (m, valid) => valid ? (m * 100).toFixed(1) + '%' : '—';
+    const profitCol = n => n >= 0 ? '#16a34a' : '#dc2626';
+    const big = (label, value, sub, accent) => `
+      <div class="card" style="margin:0; padding:0.85rem 1rem">
+        <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted)">${label}</div>
+        <div style="font-size:24px; font-weight:800; color:${accent || 'var(--text)'}; line-height:1.15; margin-top:2px">${value}</div>
+        ${sub ? `<div style="margin-top:3px">${sub}</div>` : ''}
+      </div>`;
+    const flag = (label, value, accent, sub) => `
+      <div class="card" style="margin:0; padding:0.85rem 1rem">
+        <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted)">${label}</div>
+        <div style="font-size:24px; font-weight:800; color:${accent}; line-height:1.15; margin-top:2px">${value}</div>
+        ${sub ? `<div style="font-size:11px; color:var(--text-muted); margin-top:2px">${sub}</div>` : ''}
+      </div>`;
+    const grid = inner => `<div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:0.75rem">${inner}</div>`;
+    const noData = wk.pieces === 0;
+
+    const html = `
+      <div class="card" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem">
+        <div class="card-title" style="margin:0">📊 Owner's Command Centre</div>
+        <div style="display:flex; gap:0.4rem; background:var(--bg); padding:3px; border-radius:8px">
+          <button class="btn btn-sm" onclick="setDashScope('business')" style="${dashScope === 'business' ? 'background:var(--accent); color:#fff; border-color:var(--accent)' : 'background:transparent'}">This Business</button>
+          <button class="btn btn-sm" onclick="setDashScope('all')" style="${dashScope === 'all' ? 'background:var(--accent); color:#fff; border-color:var(--accent)' : 'background:transparent'}">All Combined</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📅 This Week ${noData ? '<span style="font-size:11px; font-weight:normal; color:var(--text-muted)">— no completions yet this week</span>' : ''}</div>
+        ${grid(`
+          ${big('Pieces completed', wk.pieces, `<span style="font-size:11px; color:var(--text-muted)">weighted ${wk.weighted.toFixed(1)}</span> · ${_delta(wk.pieces, lw.pieces, true)}`)}
+          ${big('Revenue (net)', _rand0(wk.revenue), _delta(wk.revenue, lw.revenue, true))}
+          ${big('True cost', _rand0(wk.cost), _delta(wk.cost, lw.cost, false))}
+          ${big('Profit', _rand0(wk.profit), _delta(wk.profit, lw.profit, true), profitCol(wk.profit))}
+          ${big('Margin', mpct(wk.margin, wk.marginValid), _delta(wk.margin * 100, lw.margin * 100, true), profitCol(wk.profit))}
+        `)}
+      </div>
+
+      <div class="card">
+        <div class="card-title">🚩 Money & Production Flags</div>
+        ${grid(`
+          ${flag('Unpaid / partial', unpaidCount, unpaidCount ? '#dc2626' : '#16a34a', 'Outstanding: ' + _rand0(outstanding))}
+          ${flag('Overdue (not done)', overdue, overdue ? '#dc2626' : '#16a34a', 'past due date')}
+          ${flag('Due this week', dueThisWeek, dueThisWeek ? '#d97706' : '#16a34a', 'not yet done')}
+          ${flag('Fabric not received', fabricNotRec, fabricNotRec ? '#d97706' : '#16a34a', 'active orders')}
+          ${flag('Low stock materials', lowList.length, lowList.length ? '#dc2626' : '#16a34a', lowList.length ? 'see list below' : 'all in stock')}
+        `)}
+        ${lowList.length ? `<div style="margin-top:0.75rem; font-size:12px">
+          <div style="font-weight:600; margin-bottom:0.25rem">Top low-stock items</div>
+          ${lowList.slice(0, 5).map(m => `<div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid var(--border)"><span>${m.name}${dashScope === 'all' ? ' <span style=\"color:var(--text-muted); font-size:10px\">(' + m.biz + ')</span>' : ''}</span><span style="color:${m.stock <= 0 ? '#dc2626' : '#d97706'}; font-weight:600">${m.stock.toFixed(2)} ${m.unit || ''}</span></div>`).join('')}
+        </div>` : ''}
+      </div>
+
+      <div class="card">
+        <div class="card-title">🏆 Top Performers (this week)</div>
+        ${completed.length === 0 ? '<div class="empty">No completed orders yet this week</div>' : `
+          <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:1rem">
+            <div>
+              <div style="font-size:12px; font-weight:700; color:#16a34a; margin-bottom:0.4rem">Most profitable</div>
+              ${top.map(t => `<div style="display:flex; justify-content:space-between; gap:0.5rem; padding:4px 0; border-bottom:1px solid var(--border); font-size:12px"><span>#${t.inv} ${t.name}</span><span style="white-space:nowrap; font-weight:600; color:${profitCol(t.profit)}">${_rand0(t.profit)} · ${mpct(t.margin, t.margin !== null)}</span></div>`).join('')}
+            </div>
+            <div>
+              <div style="font-size:12px; font-weight:700; color:#dc2626; margin-bottom:0.4rem">Completed at a loss</div>
+              ${losses.length ? losses.map(t => `<div style="display:flex; justify-content:space-between; gap:0.5rem; padding:4px 0; border-bottom:1px solid var(--border); font-size:12px; background:#fef2f2"><span>#${t.inv} ${t.name}</span><span style="white-space:nowrap; font-weight:600; color:#dc2626">${_rand0(t.profit)} · ${mpct(t.margin, true)}</span></div>`).join('') : '<div style="font-size:12px; color:var(--text-muted)">None — nothing sold at a loss 🎉</div>'}
+            </div>
+          </div>`}
+      </div>
+
+      <div class="card">
+        <div class="card-title">📈 Weekly Profit — last 8 weeks ${dashScope === 'all' ? '(all businesses)' : ''}</div>
+        ${_trendSvg(trend)}
+      </div>
+    `;
+    el.innerHTML = html;
+  }
+  window.renderCommandCentre = renderCommandCentre;
+
   function renderDashboard() {
+    try { renderCommandCentre(); } catch (e) { console.warn('Command centre render failed:', e); }
     const orders = currentData().orders;
     const pending = orders.filter(o => o.status === 'pending').length;
     const producing = orders.filter(o => o.status === 'in-production').length;
@@ -5286,8 +5504,8 @@
     }, 200);
   }
   
-  let currentRole = null;
-  
+  // currentRole is declared near the top of the script (early init)
+
   // Role permissions: which tabs each role can see
   const ROLE_PERMISSIONS = {
     admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'costs', 'staff', 'materials', 'schedule', 'planner'],
