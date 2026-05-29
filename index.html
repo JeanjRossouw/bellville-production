@@ -4945,47 +4945,55 @@
     };
 
     const colLabels = ['Current', 'Next week', 'In 2 weeks', 'In 3 weeks'];
-    const cols = weeks.map((w, i) => `
-      <div class="col">
-        <div class="col-h">${colLabels[i]}<span>${_formatWeekShort(w)} · ${buckets[w].length}</span></div>
-        ${buckets[w].map(item).join('') || '<div class="empty">—</div>'}
-      </div>`).join('');
-
-    const extra = (title, arr) => arr.length ? `
-      <div class="extra">
-        <div class="extra-h">${title} (${arr.length})</div>
-        <div class="extra-body">${arr.map(item).join('')}</div>
-      </div>` : '';
-
     const todayStr = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' });
+
+    // One page per week
+    const page = (label, sub, arr, first) => `
+      <section class="week-page${first ? ' first' : ''}">
+        <div class="page-head">
+          <div>
+            <div class="biz-name">${bizNames[biz]}</div>
+            <div class="date">Production Planner · ${todayStr}</div>
+          </div>
+          <div class="wk">
+            <div class="wk-label">${label}</div>
+            ${sub ? `<div class="wk-sub">${sub}</div>` : ''}
+            <div class="wk-count">${arr.length} order${arr.length !== 1 ? 's' : ''}</div>
+          </div>
+        </div>
+        <div class="items">${arr.map(item).join('') || '<div class="empty">No orders this week</div>'}</div>
+      </section>`;
+
+    let pages = weeks.map((w, i) => page(colLabels[i], _formatWeekShort(w), buckets[w], i === 0)).join('');
+    if (beyond.length) pages += page('Scheduled beyond 3 weeks', '', beyond, false);
+    if (unscheduled.length) pages += page('Unscheduled', '', unscheduled, false);
+
     const html = `<!DOCTYPE html>
 <html>
 <head>
 <title>Planner — ${bizNames[biz]}</title>
 <style>
-  @page { size: A4 landscape; margin: 8mm; }
+  @page { size: A4 portrait; margin: 12mm; }
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; color: #000; }
-  body { background: #fff; font-size: 10px; }
-  .header { border-bottom: 2px solid #000; padding-bottom: 6px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
-  .biz-name { font-size: 16px; font-weight: 900; letter-spacing: 0.05em; }
-  .title { font-size: 12px; font-weight: bold; text-align: right; }
-  .date { font-size: 9px; color: #555; }
-  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-  .col { border: 1px solid #999; border-radius: 4px; overflow: hidden; }
-  .col-h { background: #000; color: #fff; padding: 4px 6px; font-weight: bold; font-size: 10px; display: flex; justify-content: space-between; align-items: baseline; }
-  .col-h span { font-weight: normal; font-size: 8px; }
-  .item { border-bottom: 1px solid #ddd; padding: 4px 6px; page-break-inside: avoid; }
+  body { background: #fff; font-size: 12px; }
+  .week-page { page-break-before: always; }
+  .week-page.first { page-break-before: avoid; }
+  .page-head { border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: flex-start; }
+  .biz-name { font-size: 18px; font-weight: 900; letter-spacing: 0.05em; }
+  .date { font-size: 10px; color: #555; margin-top: 2px; }
+  .wk { text-align: right; }
+  .wk-label { font-size: 18px; font-weight: 900; }
+  .wk-sub { font-size: 11px; color: #555; }
+  .wk-count { font-size: 11px; font-weight: bold; margin-top: 2px; }
+  .items { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .item { border: 1px solid #999; border-radius: 5px; padding: 7px 9px; page-break-inside: avoid; }
   .item.overdue { background: #fee2e2; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .inv { font-weight: bold; font-size: 10px; }
-  .prod { font-size: 10px; }
-  .meta { font-size: 9px; color: #333; }
+  .inv { font-weight: bold; font-size: 13px; }
+  .prod { font-size: 13px; margin: 1px 0; }
+  .meta { font-size: 11px; color: #333; }
   .meta.fab { font-weight: bold; }
-  .due { font-size: 8px; color: #555; }
-  .empty { padding: 6px; color: #999; text-align: center; }
-  .extra { margin-top: 8px; border: 1px solid #999; border-radius: 4px; }
-  .extra-h { background: #eee; padding: 4px 6px; font-weight: bold; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .extra-body { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 6px; }
-  .extra-body .item { border: 1px solid #ddd; border-radius: 3px; }
+  .due { font-size: 10px; color: #555; margin-top: 2px; }
+  .empty { grid-column: 1 / -1; padding: 14px; color: #999; text-align: center; }
   .no-print { padding: 12px; text-align: right; background: #f0f0f0; }
   @media print { .no-print { display: none; } }
 </style>
@@ -4994,17 +5002,9 @@
   <div class="no-print">
     <button onclick="window.print()" style="padding:8px 16px; font-weight:bold; cursor:pointer; background:#000; color:#fff; border:none; border-radius:4px">🖨️ PRINT</button>
     <button onclick="window.close()" style="padding:8px 16px; cursor:pointer; margin-left:8px">CLOSE</button>
+    <span style="font-size:11px; color:#555; margin-left:10px">Each week prints on its own page.</span>
   </div>
-  <div class="header">
-    <div>
-      <div class="biz-name">${bizNames[biz]}</div>
-      <div class="date">Production Planner · ${todayStr}</div>
-    </div>
-    <div class="title">4-WEEK PLAN</div>
-  </div>
-  <div class="grid">${cols}</div>
-  ${extra('📆 Scheduled beyond 3 weeks', beyond)}
-  ${extra('📥 Unscheduled', unscheduled)}
+  ${pages}
 </body>
 </html>`;
 
