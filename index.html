@@ -4929,39 +4929,58 @@
     unscheduled.sort(byDue);
 
     const showFabric = !HIDE_FABRIC_FROM.includes(currentRole);
-    const item = (o) => {
-      const due = o.dueDate ? new Date(o.dueDate + 'T00:00:00') : null;
-      const daysLeft = due && !isNaN(due.getTime()) ? Math.ceil((due - today) / 86400000) : null;
-      const overdue = daysLeft !== null && daysLeft < 0;
-      const prodLabel = (o.category ? '[' + o.category + '] ' : '') + (o.product || '') + (o.qty > 1 ? ' × ' + o.qty : '');
-      return `
-        <div class="item${overdue ? ' overdue' : ''}">
-          <div class="inv">#${_escape(o.invoice || o.id)}</div>
-          <div class="prod">${_escape(prodLabel)}</div>
-          <div class="meta">${_escape(o.customer || '')}</div>
-          ${showFabric && o.fabric ? `<div class="meta fab">🎨 ${_escape(o.fabric)}</div>` : ''}
-          ${o.dueDate ? `<div class="due">Due ${_escape(o.dueDate)}${overdue ? ' (' + Math.abs(daysLeft) + 'd overdue)' : daysLeft === 0 ? ' (today)' : ' (' + daysLeft + 'd)'}</div>` : ''}
-        </div>`;
-    };
-
     const colLabels = ['Current', 'Next week', 'In 2 weeks', 'In 3 weeks'];
+    const statusLabel = { 'pending': 'PENDING', 'in-production': 'IN PRODUCTION', 'done': 'DONE' };
     const todayStr = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' });
 
-    // One page per week
+    const rowsFor = (arr) => arr.map((o, i) => {
+      const due = o.dueDate ? new Date(o.dueDate + 'T00:00:00') : null;
+      const daysLeft = due && !isNaN(due.getTime()) ? Math.ceil((due - today) / 86400000) : null;
+      const urgencyMark = daysLeft !== null && daysLeft < 0 ? ' ⚠️ OVERDUE' : daysLeft !== null && daysLeft <= 7 ? ' ⏰' : '';
+      let fabricStatusText = '—', fabricBg = '';
+      if (o.fabric) {
+        const fs = o.fabricStatus || 'waiting';
+        if (o.fabricOOS) { fabricStatusText = '🔴 OUT OF STOCK' + (o.fabricStockETA ? ' (ETA ' + o.fabricStockETA + ')' : ''); fabricBg = 'background:#fee2e2;'; }
+        else if (fs === 'received') { fabricStatusText = '✅ RECEIVED'; fabricBg = 'background:#d1fae5;'; }
+        else if (fs === 'ordered') { fabricStatusText = '📦 ORDERED'; fabricBg = 'background:#fef3c7;'; }
+        else { fabricStatusText = '⏳ WAITING'; fabricBg = 'background:#fee2e2;'; }
+      }
+      return `
+        <tr>
+          <td>${i + 1}</td>
+          <td style="font-weight:bold; font-size:13px">#${_escape(o.invoice || o.id)}</td>
+          <td>${_escape(o.orderDate || '—')}</td>
+          <td>${_escape(o.product || '')}${o.category ? ' [' + _escape(o.category) + ']' : ''}</td>
+          ${showFabric ? `<td>${_escape(o.fabric || '—')}</td><td style="${fabricBg} font-weight:bold; font-size:10px">${fabricStatusText}</td>` : ''}
+          <td style="text-align:center">${o.qty || 1}</td>
+          <td>${_escape(o.customer || '')}</td>
+          <td><strong>${statusLabel[o.status] || o.status}</strong></td>
+          <td>${_escape(o.dueDate || '—')}${urgencyMark}</td>
+          <td>${_escape(o.notes || '')}</td>
+        </tr>`;
+    }).join('');
+
+    // One page per week, each as a Production-List-style table
     const page = (label, sub, arr, first) => `
       <section class="week-page${first ? ' first' : ''}">
-        <div class="page-head">
+        <div class="header">
           <div>
             <div class="biz-name">${bizNames[biz]}</div>
             <div class="date">Production Planner · ${todayStr}</div>
           </div>
-          <div class="wk">
-            <div class="wk-label">${label}</div>
-            ${sub ? `<div class="wk-sub">${sub}</div>` : ''}
-            <div class="wk-count">${arr.length} order${arr.length !== 1 ? 's' : ''}</div>
-          </div>
+          <div class="title">${label}${sub ? `<div class="wk-sub">${sub}</div>` : ''}<div class="wk-sub">${arr.length} order${arr.length !== 1 ? 's' : ''}</div></div>
         </div>
-        <div class="items">${arr.map(item).join('') || '<div class="empty">No orders this week</div>'}</div>
+        ${arr.length ? `
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>Invoice</th><th>Order Date</th><th>Product</th>
+              ${showFabric ? '<th>Fabric</th><th>Fabric Status</th>' : ''}
+              <th>Qty</th><th>Customer</th><th>Status</th><th>Due Date</th><th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>${rowsFor(arr)}</tbody>
+        </table>` : '<div class="empty">No orders this week</div>'}
       </section>`;
 
     let pages = weeks.map((w, i) => page(colLabels[i], _formatWeekShort(w), buckets[w], i === 0)).join('');
@@ -4973,27 +4992,22 @@
 <head>
 <title>Planner — ${bizNames[biz]}</title>
 <style>
-  @page { size: A4 portrait; margin: 12mm; }
+  @page { size: A4 landscape; margin: 10mm; }
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; color: #000; }
-  body { background: #fff; font-size: 12px; }
+  body { background: #fff; font-size: 11px; }
   .week-page { page-break-before: always; }
   .week-page.first { page-break-before: avoid; }
-  .page-head { border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: flex-start; }
+  .header { border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: flex-start; }
   .biz-name { font-size: 18px; font-weight: 900; letter-spacing: 0.05em; }
   .date { font-size: 10px; color: #555; margin-top: 2px; }
-  .wk { text-align: right; }
-  .wk-label { font-size: 18px; font-weight: 900; }
-  .wk-sub { font-size: 11px; color: #555; }
-  .wk-count { font-size: 11px; font-weight: bold; margin-top: 2px; }
-  .items { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .item { border: 1px solid #999; border-radius: 5px; padding: 7px 9px; page-break-inside: avoid; }
-  .item.overdue { background: #fee2e2; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .inv { font-weight: bold; font-size: 13px; }
-  .prod { font-size: 13px; margin: 1px 0; }
-  .meta { font-size: 11px; color: #333; }
-  .meta.fab { font-weight: bold; }
-  .due { font-size: 10px; color: #555; margin-top: 2px; }
-  .empty { grid-column: 1 / -1; padding: 14px; color: #999; text-align: center; }
+  .title { font-size: 16px; font-weight: 900; text-align: right; }
+  .wk-sub { font-size: 10px; font-weight: normal; color: #555; }
+  table { width: 100%; border-collapse: collapse; font-size: 10px; }
+  th, td { padding: 5px 6px; border: 1px solid #999; text-align: left; vertical-align: top; }
+  th { background: #000; color: #fff; font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  tr:nth-child(even) { background: #fafafa; }
+  td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .empty { padding: 20px; color: #999; text-align: center; border: 1px solid #ddd; }
   .no-print { padding: 12px; text-align: right; background: #f0f0f0; }
   @media print { .no-print { display: none; } }
 </style>
