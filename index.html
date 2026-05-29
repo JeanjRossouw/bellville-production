@@ -628,6 +628,7 @@
   
   <!-- BOM SECTION -->
   <div id="section-bom" class="section">
+    <div id="product-matching"></div>
     <div class="card">
       <div class="card-title">📋 Category Templates</div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
@@ -3138,8 +3139,92 @@
     renderRawMaterialCosts();
     renderMaterialsLibrary();
     renderProductBomTable();
+    renderProductMatching();
   }
-  
+
+  // Bulk product matching: link unmatched order products to a BOM, or create one
+  function renderProductMatching() {
+    const el = document.getElementById('product-matching');
+    if (!el) return;
+    const bizKey = activeBiz;
+    const bd = currentData();
+    const counts = {};
+    (bd.orders || []).forEach(o => {
+      if (o.status === 'done' || o.status === 'delivered') return;
+      if (!productMatched(bizKey, o.product)) {
+        const key = o.product || '(blank)';
+        counts[key] = (counts[key] || 0) + 1;
+      }
+    });
+    const names = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+    if (names.length === 0) { el.innerHTML = ''; return; }
+
+    const bomProducts = Object.keys(bd.productBoms || {}).sort();
+    const cats = [...new Set([
+      ...Object.values(bd.productBoms || {}).map(p => p.category).filter(Boolean),
+      ...Object.keys((data.costSettings && data.costSettings.unitWeights && data.costSettings.unitWeights[bizKey]) || {})
+    ])].sort();
+    const escAttr = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const rows = names.map(name => `
+      <div style="display:flex; align-items:center; gap:0.75rem; padding:6px 0; border-bottom:1px solid var(--border); flex-wrap:wrap">
+        <div style="flex:1; min-width:180px"><strong>${escAttr(name)}</strong> <span style="color:var(--text-muted); font-size:11px">${counts[name]} order${counts[name] !== 1 ? 's' : ''}</span></div>
+        <select data-biz="${bizKey}" data-name="${escAttr(name)}" onchange="resolveUnmatched(this)" style="max-width:320px; padding:5px 8px; font-size:12px">
+          <option value="">— choose action —</option>
+          <optgroup label="Link to existing product">
+            ${bomProducts.map(p => `<option value="LINK::${escAttr(p)}">${escAttr(p)}</option>`).join('')}
+          </optgroup>
+          <optgroup label="Create new product as category">
+            ${cats.map(c => `<option value="NEW::${escAttr(c)}">Create as ${escAttr(c)}</option>`).join('')}
+            <option value="NEW::__custom__">Create as new category…</option>
+          </optgroup>
+        </select>
+      </div>`).join('');
+
+    el.innerHTML = `
+      <div class="card" style="border-left:4px solid #d97706">
+        <div class="card-title">🔗 Product Matching (${names.length} unmatched)</div>
+        <p style="font-size:13px; color:var(--text-muted); margin-bottom:0.75rem">
+          These ${bizKey} order products don't match a BOM, so they're not counted in materials, weight or cost.
+          <strong>Link</strong> each to an existing product (updates all its orders), or <strong>Create</strong> a BOM product (pick a category; its orders match instantly — add materials in the table below afterwards).
+        </p>
+        ${rows}
+      </div>`;
+  }
+
+  function resolveUnmatched(sel) {
+    const bizKey = sel.dataset.biz;
+    const name = sel.dataset.name;
+    const v = sel.value;
+    if (!v) return;
+    const bd = data[bizKey];
+    if (!bd) return;
+    snapshotState();
+    if (v.indexOf('LINK::') === 0) {
+      const target = v.slice(6);
+      const cat = (bd.productBoms && bd.productBoms[target] && bd.productBoms[target].category) || '';
+      let n = 0;
+      (bd.orders || []).forEach(o => { if (o.product === name) { o.product = target; if (cat) o.category = cat; n++; } });
+      saveData(); renderBomSection(); render();
+      toast(`Linked ${n} order${n !== 1 ? 's' : ''} of "${name}" → ${target}`, 'success');
+    } else if (v.indexOf('NEW::') === 0) {
+      let cat = v.slice(5);
+      if (cat === '__custom__') {
+        cat = (prompt('New category name for "' + name + '":') || '').trim();
+        if (!cat) { sel.value = ''; return; }
+      }
+      if (!bd.productBoms) bd.productBoms = {};
+      if (!bd.productBoms[name]) bd.productBoms[name] = { category: cat, materials: {} };
+      else bd.productBoms[name].category = cat;
+      let n = 0;
+      (bd.orders || []).forEach(o => { if (o.product === name) { o.category = cat; n++; } });
+      saveData(); renderBomSection(); render();
+      toast(`Created "${name}" (${cat}); matched ${n} order${n !== 1 ? 's' : ''}`, 'success');
+    }
+  }
+  window.renderProductMatching = renderProductMatching;
+  window.resolveUnmatched = resolveUnmatched;
+
   function renderTemplateEditor() {
     const biz = currentData();
     const cat = document.getElementById('bom-template-category')?.value;
