@@ -5652,6 +5652,7 @@
           <div class="card-title" style="margin:0">🏭 Capacity — ${colLabels[idx]}</div>
           <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
             <select onchange="setCapacityWeek(this.value)" style="padding:4px 8px; font-size:12px">${weekOptions}</select>
+            <button class="btn btn-sm" onclick="printWorkerJobCards('${wk}', '${colLabels[idx]}')">🖨️ Worker job cards</button>
             <button class="btn btn-sm" onclick="toggleCapPanel()">⚙️ Capacity settings</button>
           </div>
         </div>
@@ -5663,6 +5664,88 @@
       </div>`;
   }
   window.capacityPlannerHtml = capacityPlannerHtml;
+
+  // Print one job-card sheet per worker/stage for the selected week
+  function printWorkerJobCards(weekIso, label) {
+    if (activeBiz !== 'bellville') { alert('Worker job cards are for Bellville.'); return; }
+    ensureCapacitySettings();
+    const biz = 'bellville';
+    const orders = ordersForPlanWeek(biz, weekIso);
+    if (orders.length === 0) { alert('No orders scheduled in this week yet.'); return; }
+    const range = (typeof _formatWeekShort === 'function') ? _formatWeekShort(weekIso) : weekIso;
+    const stages = data.capacitySettings.stages;
+    const byDue = (a, b) => (a.dueDate ? new Date(a.dueDate).getTime() : Infinity) - (b.dueDate ? new Date(b.dueDate).getTime() : Infinity);
+    const sorted = [...orders].sort(byDue);
+
+    const rowsFor = list => list.map((o, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td style="font-weight:bold">#${_escape(o.invoice || o.id)}</td>
+        <td>${_escape(o.product || '')}${o.category ? ' [' + _escape(o.category) + ']' : ''}</td>
+        <td>${_escape(o.fabric || '—')}</td>
+        <td style="text-align:center">${o.qty || 1}</td>
+        <td>${_escape(o.dueDate || '—')}</td>
+        <td class="chk"></td>
+      </tr>`).join('');
+
+    const page = (title, who, list, first) => `
+      <section class="wc${first ? ' first' : ''}">
+        <div class="head">
+          <div><div class="biz">BELLVILLE FURNITURE</div><div class="sub">Job Card · ${label} · ${range}</div></div>
+          <div class="stage">${title}<div class="who">${who || ''}</div></div>
+        </div>
+        ${list.length ? `<table>
+          <thead><tr><th>#</th><th>Invoice</th><th>Product</th><th>Fabric</th><th>Qty</th><th>Due</th><th>Done</th></tr></thead>
+          <tbody>${rowsFor(list)}</tbody></table>` : '<div class="empty">No items for this stage this week</div>'}
+        <div class="sign">Worker: __________________________   Date: ______________   Checked by: __________________________</div>
+      </section>`;
+
+    let pages = stages.map((s, i) => page(s.name, s.workers, sorted, i === 0)).join('');
+    const ericOrders = sorted.filter(o => _matchesEric(o.product));
+    pages += page('Eric — Oak Frames', 'parallel workshop', ericOrders, false);
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<title>Worker Job Cards — ${label} — Bellville</title>
+<style>
+  @page { size: A4 portrait; margin: 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; color: #000; }
+  body { background: #fff; font-size: 12px; }
+  .wc { page-break-before: always; }
+  .wc.first { page-break-before: avoid; }
+  .head { border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: flex-start; }
+  .biz { font-size: 16px; font-weight: 900; letter-spacing: 0.05em; }
+  .sub { font-size: 10px; color: #555; margin-top: 2px; }
+  .stage { font-size: 20px; font-weight: 900; text-align: right; }
+  .who { font-size: 12px; font-weight: normal; color: #333; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { padding: 7px 8px; border: 1px solid #999; text-align: left; }
+  th { background: #000; color: #fff; text-transform: uppercase; font-size: 10px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  td.chk { width: 44px; text-align: center; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .empty { padding: 16px; color: #999; text-align: center; border: 1px solid #ddd; }
+  .sign { margin-top: 24px; font-size: 11px; color: #333; }
+  .no-print { padding: 12px; text-align: right; background: #f0f0f0; }
+  @media print { .no-print { display: none; } }
+</style>
+</head>
+<body>
+  <div class="no-print">
+    <button onclick="window.print()" style="padding:8px 16px; font-weight:bold; cursor:pointer; background:#000; color:#fff; border:none; border-radius:4px">🖨️ PRINT</button>
+    <button onclick="window.close()" style="padding:8px 16px; cursor:pointer; margin-left:8px">CLOSE</button>
+    <span style="font-size:11px; color:#555; margin-left:10px">One page per worker/stage.</span>
+  </div>
+  ${pages}
+</body>
+</html>`;
+
+    const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Click the pop-up icon in the address bar and allow pop-ups for this site, then try again.'); return; }
+    win.document.write(html);
+    win.document.close();
+  }
+  window.printWorkerJobCards = printWorkerJobCards;
 
   // ----- Drag handlers (desktop) -----
   function planDragStart(e, orderId) {
