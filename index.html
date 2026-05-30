@@ -5527,15 +5527,15 @@
   let capPanelOpen = false;   // settings panel open/closed
 
   const DEFAULT_CAPACITY_STAGES = [
-    { key: 'frameCutting', name: 'Frame Cutting', capacity: 30, workers: 'Ricardo' },
-    { key: 'frameMaking', name: 'Frame Making', capacity: 22.5, workers: 'Stanley' },
-    { key: 'liningUp', name: 'Lining Up', capacity: 27.5, workers: 'Blessing' },
-    { key: 'foamingUp', name: 'Foaming Up', capacity: 27.5, workers: 'Baba' },
-    { key: 'foamCutting', name: 'Foam Cutting/Dacron', capacity: 35, workers: 'Samuel' },
-    { key: 'upholstering', name: 'Upholstering', capacity: 35, workers: 'Ashraf + Stephan' },
-    { key: 'sewing', name: 'Sewing', capacity: 22.5, workers: 'Sharon + Yammy' },
-    { key: 'fabricCutting', name: 'Fabric Cutting', capacity: 27.5, workers: 'Agatha' },
-    { key: 'finishing', name: 'Finishing', capacity: 30, workers: 'Unus + Harry' }
+    { key: 'frameCutting', name: 'Frame Cutting', capacity: 30, workers: 'Ricardo', exclude: [] },
+    { key: 'frameMaking', name: 'Frame Making', capacity: 22.5, workers: 'Stanley', exclude: ['Headboard'] },
+    { key: 'liningUp', name: 'Lining Up', capacity: 27.5, workers: 'Blessing', exclude: [] },
+    { key: 'foamingUp', name: 'Foaming Up', capacity: 27.5, workers: 'Baba', exclude: [] },
+    { key: 'foamCutting', name: 'Foam Cutting/Dacron', capacity: 35, workers: 'Samuel', exclude: [] },
+    { key: 'upholstering', name: 'Upholstering', capacity: 35, workers: 'Ashraf + Stephan', exclude: [] },
+    { key: 'sewing', name: 'Sewing', capacity: 22.5, workers: 'Sharon + Yammy', exclude: ['Headboard', 'Ottoman'] },
+    { key: 'fabricCutting', name: 'Fabric Cutting', capacity: 27.5, workers: 'Agatha', exclude: [] },
+    { key: 'finishing', name: 'Finishing', capacity: 30, workers: 'Unus + Harry', exclude: [] }
   ];
   const DEFAULT_ERIC = { capacity: 15, products: ['Daybed Pillay', 'Sofa Pillay Pine', 'Sofa Pillay Ash/Oak', 'Woodland Daybed', 'Skyler Daybed', 'Oak Sofa'] };
 
@@ -5546,7 +5546,10 @@
       const byKey = Object.fromEntries(data.capacitySettings.stages.map(s => [s.key, s]));
       DEFAULT_CAPACITY_STAGES.forEach(d => {
         if (!byKey[d.key]) data.capacitySettings.stages.push(JSON.parse(JSON.stringify(d)));
-        else if (!byKey[d.key].name) { byKey[d.key].name = d.name; byKey[d.key].workers = d.workers; }
+        else {
+          if (!byKey[d.key].name) { byKey[d.key].name = d.name; byKey[d.key].workers = d.workers; }
+          if (!Array.isArray(byKey[d.key].exclude)) byKey[d.key].exclude = (d.exclude || []).slice(); // backfill stage exclusions
+        }
       });
     }
     if (!data.ericSettings || typeof data.ericSettings !== 'object') data.ericSettings = JSON.parse(JSON.stringify(DEFAULT_ERIC));
@@ -5563,16 +5566,28 @@
       return et.length > 0 && et.every(t => prodTokens.has(t));
     });
   }
-  // Load for a set of orders: total weighted pieces (weight × qty) + Eric oak-frame count
+  function _orderCategory(o) {
+    return (data.bellville.productBoms && data.bellville.productBoms[o.product] ? data.bellville.productBoms[o.product].category : '') || o.category || '';
+  }
+  // Does a stage skip this category? (case-insensitive exact match)
+  function _stageExcludes(stage, cat) {
+    const c = String(cat || '').trim().toLowerCase();
+    return (stage.exclude || []).some(x => String(x).trim().toLowerCase() === c);
+  }
+  // Per-stage weighted load for a set of orders (a product only loads stages it goes through)
   function _capLoad(orders) {
+    const stages = data.capacitySettings.stages;
+    const stageLoad = {}; stages.forEach(s => stageLoad[s.key] = 0);
     let totalWeight = 0, ericCount = 0;
     (orders || []).forEach(o => {
       const qty = parseInt(o.qty) || 1;
-      const cat = (data.bellville.productBoms && data.bellville.productBoms[o.product] ? data.bellville.productBoms[o.product].category : '') || o.category || '';
-      totalWeight += (categoryWeightInfo('bellville', cat).weight) * qty; // same source as profit engine; missing => 1
+      const cat = _orderCategory(o);
+      const w = (categoryWeightInfo('bellville', cat).weight) * qty; // same source as profit engine; missing => 1
+      totalWeight += w;
+      stages.forEach(s => { if (!_stageExcludes(s, cat)) stageLoad[s.key] += w; });
       if (_matchesEric(o.product)) ericCount += qty;
     });
-    return { totalWeight, ericCount };
+    return { totalWeight, ericCount, stageLoad };
   }
 
   function setCapacityWeek(i) { capacityWeekIndex = parseInt(i) || 0; renderPlanner(); }
@@ -5580,6 +5595,8 @@
   function updateCapacityStage(key, value) { ensureCapacitySettings(); snapshotState(); const s = data.capacitySettings.stages.find(x => x.key === key); if (s) s.capacity = parseFloat(value) || 0; saveData(); renderPlanner(); }
   function updateEricCapacity(value) { ensureCapacitySettings(); snapshotState(); data.ericSettings.capacity = parseFloat(value) || 0; saveData(); renderPlanner(); }
   function updateEricProducts(value) { ensureCapacitySettings(); snapshotState(); data.ericSettings.products = String(value).split('\n').map(s => s.trim()).filter(Boolean); saveData(); renderPlanner(); }
+  function updateStageExclude(key, value) { ensureCapacitySettings(); snapshotState(); const s = data.capacitySettings.stages.find(x => x.key === key); if (s) s.exclude = String(value).split(',').map(x => x.trim()).filter(Boolean); saveData(); renderPlanner(); }
+  window.updateStageExclude = updateStageExclude;
   window.setCapacityWeek = setCapacityWeek;
   window.toggleCapPanel = toggleCapPanel;
   window.updateCapacityStage = updateCapacityStage;
@@ -5593,7 +5610,7 @@
     const idx = Math.min(Math.max(0, capacityWeekIndex), weeks.length - 1);
     const wk = weeks[idx];
     const orders = buckets[wk] || [];
-    const { totalWeight, ericCount } = _capLoad(orders);
+    const { totalWeight, ericCount, stageLoad } = _capLoad(orders);
     const stages = data.capacitySettings.stages;
     const eric = data.ericSettings;
     const ericCap = parseFloat(eric.capacity) || 0;
@@ -5602,14 +5619,14 @@
     const pctOf = (load, cap) => cap > 0 ? (load / cap * 100) : (load > 0 ? Infinity : 0);
     const bar = (pct, col) => `<div style="background:var(--bg); border-radius:4px; height:9px; overflow:hidden; flex:1; min-width:60px"><div style="height:100%; width:${Math.min(100, isFinite(pct) ? pct : 100)}%; background:${col}"></div></div>`;
 
-    const rows = stages.map(s => { const cap = parseFloat(s.capacity) || 0; return { name: s.name, workers: s.workers, cap, load: totalWeight, pct: pctOf(totalWeight, cap) }; });
+    const rows = stages.map(s => { const cap = parseFloat(s.capacity) || 0; const load = stageLoad[s.key] || 0; return { name: s.name, workers: s.workers, cap, load, pct: pctOf(load, cap), skip: (s.exclude || []) }; });
     rows.sort((a, b) => (isFinite(b.pct) ? b.pct : 1e9) - (isFinite(a.pct) ? a.pct : 1e9)); // busiest/over first
 
     const rowHtml = r => {
       const col = colour(r.pct);
       const pctTxt = r.cap > 0 ? (isFinite(r.pct) ? r.pct.toFixed(0) + '%' : '∞') : (r.load > 0 ? 'no cap' : '0%');
       return `<div style="display:flex; align-items:center; gap:0.5rem; padding:3px 0; font-size:12px">
-        <div style="width:200px; flex-shrink:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis"><strong>${r.name}</strong> <span style="color:var(--text-muted); font-size:10px">${r.workers || ''}</span></div>
+        <div style="width:200px; flex-shrink:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis"><strong>${r.name}</strong> <span style="color:var(--text-muted); font-size:10px">${r.workers || ''}</span>${r.skip.length ? `<span style="color:var(--text-muted); font-size:9px" title="Skips: ${r.skip.join(', ')}"> · skips ${r.skip.join(', ')}</span>` : ''}</div>
         ${bar(r.pct, col)}
         <div style="width:110px; text-align:right; flex-shrink:0">${r.load.toFixed(1)} / ${r.cap} <strong style="color:${col}">${pctTxt}</strong></div>
       </div>`;
@@ -5633,9 +5650,13 @@
 
     const settingsPanel = capPanelOpen ? `
       <div style="margin-top:0.75rem; padding:0.75rem; background:var(--bg); border-radius:6px; font-size:12px">
-        <div style="font-weight:700; margin-bottom:0.4rem">Stage weekly capacity (pieces/week)</div>
-        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:0.4rem">
-          ${stages.map(s => `<label style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem">${s.name}<input type="number" step="0.5" value="${s.capacity}" onchange="updateCapacityStage('${s.key}', this.value)" style="width:80px; padding:3px 5px"></label>`).join('')}
+        <div style="font-weight:700; margin-bottom:0.4rem">Stage capacity & which categories skip the stage</div>
+        <div style="display:grid; grid-template-columns:1fr; gap:0.35rem">
+          ${stages.map(s => `<div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
+            <span style="width:150px; flex-shrink:0; font-weight:600">${s.name}</span>
+            <label style="font-size:11px; display:flex; align-items:center; gap:0.3rem">cap/wk <input type="number" step="0.5" value="${s.capacity}" onchange="updateCapacityStage('${s.key}', this.value)" style="width:70px; padding:3px 5px"></label>
+            <label style="font-size:11px; display:flex; align-items:center; gap:0.3rem; flex:1; min-width:220px">skip categories <input value="${(s.exclude || []).join(', ').replace(/"/g, '&quot;')}" onchange="updateStageExclude('${s.key}', this.value)" placeholder="e.g. Headboard, Ottoman" style="flex:1; min-width:140px; max-width:280px; padding:3px 5px"></label>
+          </div>`).join('')}
         </div>
         <div style="display:flex; gap:1rem; align-items:flex-start; margin-top:0.75rem; flex-wrap:wrap">
           <label style="display:flex; align-items:center; gap:0.5rem; font-weight:700">Eric oak-frame capacity / week<input type="number" step="1" value="${eric.capacity}" onchange="updateEricCapacity(this.value)" style="width:80px; padding:3px 5px"></label>
@@ -5700,7 +5721,7 @@
         <div class="sign">Worker: __________________________   Date: ______________   Checked by: __________________________</div>
       </section>`;
 
-    let pages = stages.map((s, i) => page(s.name, s.workers, sorted, i === 0)).join('');
+    let pages = stages.map((s, i) => page(s.name, s.workers, sorted.filter(o => !_stageExcludes(s, _orderCategory(o))), i === 0)).join('');
     const ericOrders = sorted.filter(o => _matchesEric(o.product));
     pages += page('Eric — Oak Frames', 'parallel workshop', ericOrders, false);
 
