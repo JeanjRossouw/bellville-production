@@ -256,6 +256,7 @@
     <button class="tab active" onclick="showSection('dashboard')">Dashboard</button>
     <button class="tab" onclick="showSection('intake')">New Order</button>
     <button class="tab" onclick="showSection('orders')">Active Orders</button>
+    <button class="tab" onclick="showSection('stations')">🏭 Stations</button>
     <button class="tab" onclick="showSection('done')">🎁 Done (Ready)</button>
     <button class="tab" onclick="showSection('calendar')">📅 Calendar</button>
     <button class="tab" onclick="showSection('dispatch')">🚚 Dispatch (All)</button>
@@ -485,7 +486,16 @@
       <div id="orders-list"><div class="empty">No orders</div></div>
     </div>
   </div>
-  
+
+  <!-- STATIONS (shop-floor per-division done buttons) -->
+  <div id="section-stations" class="section">
+    <div class="card">
+      <div class="card-title">🏭 Stations — Shop Floor</div>
+      <p style="font-size:13px; color:var(--text-muted)">Pick your station, then press <strong>DONE</strong> on each piece as you finish it. It moves to the next station automatically and everyone's screen updates.</p>
+    </div>
+    <div id="stations-content"></div>
+  </div>
+
   <!-- DONE (READY FOR DELIVERY) -->
   <div id="section-done" class="section">
     <div class="card">
@@ -920,7 +930,7 @@
 
   // Tab name array — order MUST match the order of .tab buttons in the DOM.
   // Used by showSection and applyRolePermissions for positional tab lookup.
-  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'costs', 'staff', 'materials', 'schedule', 'planner'];
+  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'stations', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'costs', 'staff', 'materials', 'schedule', 'planner'];
 
   function showSection(sec) {
     document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
@@ -931,6 +941,7 @@
     if (sec === 'calendar') renderCalendar();
     if (sec === 'bom') renderBomSection();
     if (sec === 'costs') renderCostSettings();
+    if (sec === 'stations') renderStations();
     if (sec === 'materials') renderInventory();
     if (sec === 'intake') populateProductDatalist();
     if (sec === 'done') renderDoneOrders();
@@ -2664,6 +2675,7 @@
   function renderImmediate() {
     renderDashboard();
     renderOrders();
+    if (typeof renderStations === 'function') renderStations();
     renderDoneOrders();
     renderDispatch();
     renderFinished();
@@ -4123,6 +4135,99 @@
     renderOrders();
   }
   window.toggleOrderStage = toggleOrderStage;
+
+  // ----- Stations (shop-floor) view -----
+  let stationStage = null;
+  function setStationStage(s) { stationStage = s; renderStations(); }
+  window.setStationStage = setStationStage;
+
+  // Full division list for a business (for the station selector)
+  function getProductionStages(biz) {
+    if (biz === 'bellville') { try { ensureCapacitySettings(); return (data.capacitySettings.stages || []).map(s => s.name); } catch (e) { return []; } }
+    return _DEFAULT_STAGES_BY_BIZ[biz] || [];
+  }
+  // The stage an order is currently waiting at (first not-done in its own stage list); null if finished
+  function _orderCurrentStage(biz, o) {
+    const stages = getProductionStagesForOrder(biz, o);
+    if (!stages.length) return null;
+    return stages.find(s => !(o.stageDone && o.stageDone[s])) || null;
+  }
+  function ordersAtStage(biz, stageName) {
+    return (data[biz] && data[biz].orders ? data[biz].orders : []).filter(o => {
+      if (o.status === 'done' || o.status === 'delivered') return false;
+      return _orderCurrentStage(biz, o) === stageName;
+    });
+  }
+
+  // Worker presses DONE → mark stage complete, advance status, auto-finish when last stage
+  function completeStage(orderId, stage) {
+    const biz = activeBiz;
+    const o = currentData().orders.find(x => x.id === orderId);
+    if (!o) return;
+    snapshotState();
+    const oldStatus = o.status;
+    if (!o.stageDone || typeof o.stageDone !== 'object') o.stageDone = {};
+    o.stageDone[stage] = true;
+    if (o.status === 'pending') {
+      o.status = 'in-production';
+      if (!o.startDate) o.startDate = new Date().toISOString().split('T')[0];
+      try { deductMaterialsForOrder(biz, o); } catch (e) { console.warn('Deduction failed:', e); }
+    }
+    const stages = getProductionStagesForOrder(biz, o);
+    const allDone = stages.length && stages.every(s => o.stageDone[s]);
+    if (allDone) o.status = 'done';
+    if (o.status !== oldStatus) { try { applyCostFreezeOnStatusChange(biz, o, oldStatus, o.status); } catch (e) { console.warn('Cost freeze failed:', e); } }
+    saveData();
+    render();
+    toast(allDone ? `#${o.invoice || o.id} complete → moved to Done` : `${stage} done for #${o.invoice || o.id}`, 'success', 1500);
+  }
+  window.completeStage = completeStage;
+
+  function renderStations() {
+    const el = document.getElementById('stations-content');
+    if (!el) return;
+    const biz = activeBiz;
+    const allStages = getProductionStages(biz);
+    if (!allStages.length) { el.innerHTML = '<div class="empty">No production stages defined for this business.</div>'; return; }
+    if (!stationStage || allStages.indexOf(stationStage) === -1) stationStage = allStages[0];
+    const escJs = s => String(s).replace(/'/g, "\\'");
+    const escHtml = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const counts = {}; allStages.forEach(s => counts[s] = ordersAtStage(biz, s).length);
+    const stageBtns = allStages.map(s => {
+      const sel = s === stationStage;
+      return `<button onclick="setStationStage('${escJs(s)}')" style="border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'}; background:${sel ? 'var(--accent)' : 'var(--surface)'}; color:${sel ? '#fff' : 'var(--text)'}; border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; font-weight:${sel ? '700' : '500'}">${escHtml(s)} <span style="opacity:0.8">(${counts[s]})</span></button>`;
+    }).join('');
+
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const queue = ordersAtStage(biz, stationStage).sort((a, b) => (a.dueDate ? new Date(a.dueDate).getTime() : Infinity) - (b.dueDate ? new Date(b.dueDate).getTime() : Infinity));
+    const cards = queue.map(o => {
+      const stages = getProductionStagesForOrder(biz, o);
+      const doneCount = stages.filter(s => o.stageDone && o.stageDone[s]).length;
+      const due = o.dueDate ? new Date(o.dueDate + 'T00:00:00') : null;
+      const daysLeft = due && !isNaN(due.getTime()) ? Math.ceil((due - today) / 86400000) : null;
+      const overdue = daysLeft !== null && daysLeft < 0;
+      return `<div class="order-card" style="display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap; ${overdue ? 'border-left:4px solid #dc2626' : ''}">
+        <div style="flex:1; min-width:200px">
+          <div style="font-weight:700; font-size:15px">#${escHtml(o.invoice || o.id)} — ${escHtml(o.product || '')}${o.qty > 1 ? ' × ' + o.qty : ''}</div>
+          <div style="font-size:12px; color:var(--text-muted)">${escHtml(o.customer || '')}${o.fabric ? ' · 🎨 ' + escHtml(o.fabric) : ''}</div>
+          <div style="font-size:11px; color:${overdue ? '#dc2626' : 'var(--text-muted)'}; margin-top:2px">Due ${escHtml(o.dueDate || '—')}${daysLeft !== null ? (overdue ? ` (${Math.abs(daysLeft)}d overdue)` : ` (${daysLeft}d)`) : ''} · progress ${doneCount}/${stages.length}</div>
+        </div>
+        <button onclick="completeStage('${o.id}', '${escJs(stationStage)}')" style="background:#16a34a; color:#fff; border:none; border-radius:8px; padding:0.9rem 1.6rem; font-size:15px; font-weight:800; cursor:pointer; white-space:nowrap">✓ DONE</button>
+      </div>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div class="card">
+        <div style="font-size:11px; color:var(--text-muted); margin-bottom:0.5rem">Tap your station — number shows how many pieces are waiting there now.</div>
+        <div style="display:flex; gap:0.4rem; flex-wrap:wrap">${stageBtns}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">${escHtml(stationStage)} — ${queue.length} waiting</div>
+        ${cards || '<div class="empty">Nothing waiting at this station right now 🎉</div>'}
+      </div>`;
+  }
+  window.renderStations = renderStations;
 
   function orderStageTrackerHtml(biz, o) {
     const stages = getProductionStagesForOrder(biz, o);
@@ -6089,12 +6194,12 @@
 
   // Role permissions: which tabs each role can see
   const ROLE_PERMISSIONS = {
-    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'costs', 'staff', 'materials', 'schedule', 'planner'],
+    admin: ['dashboard', 'intake', 'orders', 'stations', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'costs', 'staff', 'materials', 'schedule', 'planner'],
     sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished'],
-    factory: ['dashboard', 'orders', 'done', 'calendar', 'bom', 'schedule', 'planner'],
+    factory: ['dashboard', 'orders', 'stations', 'done', 'calendar', 'bom', 'schedule', 'planner'],
     dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'finished'],
     fabric: ['dashboard', 'calendar', 'fabric'],
-    manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner']
+    manager: ['dashboard', 'intake', 'orders', 'stations', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner']
   };
   
   // Roles that should NOT see fabric ordering info on dashboard or order cards
