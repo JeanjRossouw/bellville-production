@@ -4094,6 +4094,65 @@
   }
   window.updateOrderProduct = updateOrderProduct;
 
+  // ----- Per-stage (division) production progress on each order -----
+  const _DEFAULT_STAGES_BY_BIZ = {
+    pinkfoot: ['Cut Wood', 'Assemble', 'Sand', 'Primer', 'Sand 2nd', 'Final Paint', 'Final Assemble', 'Spot Check', 'Pack'],
+    repticube: ['CNC Board', 'CNC Windows', 'Sand Board', 'Fit Window', 'Clean', 'Pack']
+  };
+  // The manufacturing divisions an order passes through (Bellville uses the capacity
+  // stages and honours per-stage category skips; others use a default stage list).
+  function getProductionStagesForOrder(biz, o) {
+    if (biz === 'bellville') {
+      try {
+        ensureCapacitySettings();
+        const cat = _orderCategory(o);
+        return (data.capacitySettings.stages || []).filter(s => !_stageExcludes(s, cat)).map(s => s.name);
+      } catch (e) { return []; }
+    }
+    return _DEFAULT_STAGES_BY_BIZ[biz] || [];
+  }
+
+  function toggleOrderStage(orderId, stage) {
+    const o = currentData().orders.find(x => x.id === orderId);
+    if (!o) return;
+    snapshotState();
+    if (!o.stageDone || typeof o.stageDone !== 'object') o.stageDone = {};
+    if (o.stageDone[stage]) delete o.stageDone[stage];
+    else o.stageDone[stage] = true;
+    saveData();
+    renderOrders();
+  }
+  window.toggleOrderStage = toggleOrderStage;
+
+  function orderStageTrackerHtml(biz, o) {
+    const stages = getProductionStagesForOrder(biz, o);
+    if (!stages.length) return '';
+    const done = (o.stageDone && typeof o.stageDone === 'object') ? o.stageDone : {};
+    const doneCount = stages.filter(s => done[s]).length;
+    const currentIdx = stages.findIndex(s => !done[s]); // first not-done = where it is now
+    const escJs = s => String(s).replace(/'/g, "\\'");
+    const escHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const chips = stages.map((s, i) => {
+      const isDone = !!done[s];
+      const isCurrent = !isDone && i === currentIdx;
+      const style = isDone
+        ? 'background:#16a34a; color:#fff; border-color:#16a34a'
+        : isCurrent
+          ? 'background:#fff7ed; color:#9a3412; border-color:#f59e0b; font-weight:700'
+          : 'background:var(--surface); color:var(--text-muted); border-color:var(--border)';
+      return `<button onclick="toggleOrderStage('${o.id}', '${escJs(s)}')" title="${isDone ? 'Done — click to undo' : 'Mark ' + escHtml(s) + ' done'}" style="border:1px solid; border-radius:14px; padding:2px 9px; font-size:11px; cursor:pointer; ${style}">${isDone ? '✓ ' : isCurrent ? '▶ ' : ''}${escHtml(s)}</button>`;
+    }).join('');
+    const allDone = doneCount === stages.length;
+    return `
+      <div style="margin-bottom:0.75rem; padding:0.6rem 0.7rem; background:var(--bg); border:1px solid var(--border); border-radius:6px">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem">
+          <span style="font-size:11px; font-weight:700; letter-spacing:0.03em; color:var(--text-muted)">🏗️ PRODUCTION PROGRESS</span>
+          <span style="font-size:11px; font-weight:700; color:${allDone ? '#16a34a' : 'var(--text)'}">${doneCount}/${stages.length}${allDone ? ' ✓ all stages' : currentIdx >= 0 ? ' · at: ' + escHtml(stages[currentIdx]) : ''}</span>
+        </div>
+        <div style="display:flex; gap:0.35rem; flex-wrap:wrap">${chips}</div>
+      </div>`;
+  }
+
   function renderCostSettings() {
     const el = document.getElementById('cost-settings');
     if (!el) return;
@@ -5014,6 +5073,7 @@
             ${matched ? '' : '<span style="font-size:11px; color:#dc2626; font-weight:600">⚠️ not matched — pick the right product</span>'}
           </div>`;
           })()}
+          ${orderStageTrackerHtml(activeBiz, o)}
           ${canSeeCosts() ? `
           <div style="margin-bottom:0.75rem; display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap">
             <label style="font-size:11px; color:var(--text-muted)">Selling price / unit (R):</label>
