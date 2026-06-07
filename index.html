@@ -200,12 +200,31 @@
       <label>Password</label>
       <input type="password" id="login-password" placeholder="••••••••" style="margin-bottom:1rem">
       <button class="btn btn-primary" onclick="doLogin()" style="width:100%; margin-bottom:0.5rem">SIGN IN</button>
+      <button class="btn" onclick="showStationLogin()" style="width:100%; margin-bottom:0.5rem; font-size:11px">🏭 STATION LOGIN</button>
       <button class="btn" onclick="toggleLoginMode()" style="width:100%; font-size:10px">Need an account? CREATE ONE</button>
+    </div>
+
+    <div id="station-mode" style="display:none">
+      <h2 style="font-size:16px; text-align:center; margin-bottom:1rem">🏭 Station Login</h2>
+      <label>Business</label>
+      <select id="station-login-biz" onchange="populateStationLoginStations()" style="margin-bottom:1rem">
+        <option value="bellville">Bellville</option>
+        <option value="pinkfoot">PinkFoot</option>
+        <option value="repticube">ReptiCube</option>
+      </select>
+      <label>Station / Department</label>
+      <select id="station-login-station" style="margin-bottom:1rem"></select>
+      <label>Station password</label>
+      <input type="password" id="station-login-pin" placeholder="••••••" style="margin-bottom:1rem">
+      <button class="btn btn-primary" onclick="doStationLogin()" style="width:100%; margin-bottom:0.5rem">SIGN IN TO STATION</button>
+      <button class="btn" onclick="showStaffLogin()" style="width:100%; font-size:10px">← Staff login</button>
     </div>
     
     <div id="signup-mode" style="display:none">
-      <label>Email</label>
-      <input type="email" id="signup-email" placeholder="you@bellvillefurniture.co.za" style="margin-bottom:1rem">
+      <div id="signup-email-block">
+        <label>Email</label>
+        <input type="email" id="signup-email" placeholder="you@bellvillefurniture.co.za" style="margin-bottom:1rem">
+      </div>
       <label>Password (min 6 chars)</label>
       <input type="password" id="signup-password" placeholder="••••••••" style="margin-bottom:1rem">
       <label>Your Role</label>
@@ -6451,13 +6470,9 @@
   }
   
   async function doSignup() {
-    const email = document.getElementById('signup-email').value.trim();
+    let email = document.getElementById('signup-email').value.trim();
     const password = document.getElementById('signup-password').value;
     const role = document.getElementById('signup-role').value;
-    if (!email || password.length < 6) {
-      document.getElementById('auth-status').textContent = 'Email + password (min 6 chars) required';
-      return;
-    }
     if (!role) {
       document.getElementById('auth-status').textContent = 'Please select your role';
       return;
@@ -6470,6 +6485,11 @@
         document.getElementById('auth-status').textContent = 'Pick a business and station for this department login';
         return;
       }
+      email = stationEmail(extra.biz, extra.station); // derive — floor only needs station + password
+    }
+    if (!email || password.length < 6) {
+      document.getElementById('auth-status').textContent = 'Email + password (min 6 chars) required';
+      return;
     }
     document.getElementById('auth-status').textContent = '⏳ Creating account...';
     try {
@@ -6486,6 +6506,8 @@
   function toggleLoginMode() {
     const loginMode = document.getElementById('login-mode');
     const signupMode = document.getElementById('signup-mode');
+    const stationMode = document.getElementById('station-mode');
+    if (stationMode) stationMode.style.display = 'none';
     if (loginMode.style.display === 'none') {
       loginMode.style.display = 'block';
       signupMode.style.display = 'none';
@@ -6495,6 +6517,49 @@
     }
     document.getElementById('auth-status').textContent = '';
   }
+
+  // Deterministic per-station account email (so the floor only types a password)
+  function stationEmail(biz, station) {
+    const slug = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    return `${slug(biz)}-${slug(station)}@stations.local`;
+  }
+  function showStationLogin() {
+    document.getElementById('login-mode').style.display = 'none';
+    document.getElementById('signup-mode').style.display = 'none';
+    document.getElementById('station-mode').style.display = 'block';
+    document.getElementById('auth-status').textContent = '';
+    populateStationLoginStations();
+  }
+  function showStaffLogin() {
+    document.getElementById('station-mode').style.display = 'none';
+    document.getElementById('signup-mode').style.display = 'none';
+    document.getElementById('login-mode').style.display = 'block';
+    document.getElementById('auth-status').textContent = '';
+  }
+  function populateStationLoginStations() {
+    const biz = document.getElementById('station-login-biz') ? document.getElementById('station-login-biz').value : 'bellville';
+    const sel = document.getElementById('station-login-station');
+    if (!sel) return;
+    const stages = (typeof getProductionStages === 'function') ? getProductionStages(biz) : [];
+    sel.innerHTML = stages.map(s => `<option value="${String(s).replace(/"/g, '&quot;')}">${s}</option>`).join('') || '<option value="">(no stations)</option>';
+  }
+  async function doStationLogin() {
+    const biz = document.getElementById('station-login-biz').value;
+    const station = document.getElementById('station-login-station').value;
+    const pin = document.getElementById('station-login-pin').value;
+    if (!biz || !station || !pin) { document.getElementById('auth-status').textContent = 'Pick a station and enter its password'; return; }
+    document.getElementById('auth-status').textContent = '⏳ Signing in...';
+    try {
+      await window.firebaseFns.signIn(window.firebaseAuth, stationEmail(biz, station), pin);
+      document.getElementById('auth-status').textContent = '';
+    } catch (err) {
+      document.getElementById('auth-status').textContent = '✗ ' + (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found' ? 'Wrong station password (or station not set up yet)' : err.message);
+    }
+  }
+  window.showStationLogin = showStationLogin;
+  window.showStaffLogin = showStaffLogin;
+  window.populateStationLoginStations = populateStationLoginStations;
+  window.doStationLogin = doStationLogin;
   
   async function doLogout() {
     if (confirm('Sign out?')) {
@@ -6511,7 +6576,9 @@
   function onSignupRoleChange() {
     const role = document.getElementById('signup-role').value;
     const block = document.getElementById('signup-station-block');
+    const emailBlock = document.getElementById('signup-email-block');
     if (block) block.style.display = (role === 'station') ? 'block' : 'none';
+    if (emailBlock) emailBlock.style.display = (role === 'station') ? 'none' : 'block'; // station email is auto-derived
     if (role === 'station') populateSignupStations();
   }
   function populateSignupStations() {
