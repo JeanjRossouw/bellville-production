@@ -209,7 +209,7 @@
       <label>Password (min 6 chars)</label>
       <input type="password" id="signup-password" placeholder="••••••••" style="margin-bottom:1rem">
       <label>Your Role</label>
-      <select id="signup-role" style="margin-bottom:1rem">
+      <select id="signup-role" onchange="onSignupRoleChange()" style="margin-bottom:1rem">
         <option value="">-- Select your role --</option>
         <option value="admin">Admin (full access)</option>
         <option value="sales">Sales Staff</option>
@@ -217,7 +217,18 @@
         <option value="dispatch">Dispatch / Driver</option>
         <option value="fabric">Fabric Buyer</option>
         <option value="manager">Manager (view only)</option>
+        <option value="station">🏭 Station / Department (single station)</option>
       </select>
+      <div id="signup-station-block" style="display:none">
+        <label>Business</label>
+        <select id="signup-biz" onchange="populateSignupStations()" style="margin-bottom:1rem">
+          <option value="bellville">Bellville</option>
+          <option value="pinkfoot">PinkFoot</option>
+          <option value="repticube">ReptiCube</option>
+        </select>
+        <label>Station / Department</label>
+        <select id="signup-station" style="margin-bottom:1rem"></select>
+      </div>
       <button class="btn btn-primary" onclick="doSignup()" style="width:100%; margin-bottom:0.5rem">CREATE ACCOUNT</button>
       <button class="btn" onclick="toggleLoginMode()" style="width:100%; font-size:10px">Already have an account? SIGN IN</button>
     </div>
@@ -233,7 +244,7 @@
 <header>
   <div style="display:flex; align-items:center; gap:1rem">
     <h1>Production Manager</h1>
-    <div style="display:flex; gap:0.25rem; background:rgba(255,255,255,0.05); padding:0.5rem; border:1px solid var(--border)">
+    <div id="biz-switcher" style="display:flex; gap:0.25rem; background:rgba(255,255,255,0.05); padding:0.5rem; border:1px solid var(--border)">
       <button class="btn" style="padding:0.5rem 1rem; font-size:11px" onclick="switchBiz('bellville')" id="btn-bellville">Bellville</button>
       <button class="btn" style="padding:0.5rem 1rem; font-size:11px" onclick="switchBiz('repticube')" id="btn-repticube">ReptiCube</button>
       <button class="btn" style="padding:0.5rem 1rem; font-size:11px" onclick="switchBiz('pinkfoot')" id="btn-pinkfoot">PinkFoot</button>
@@ -837,6 +848,8 @@
 <script>
   let activeBiz = 'bellville';
   let currentRole = null; // declared early so render()/canSeeTab never hit a temporal-dead-zone
+  let currentStation = null;    // for 'station' department logins: their locked station name
+  let currentStationBiz = null; // for 'station' logins: their business
   let data = {
     bellville: { orders: [], products: {}, inventory: {}, staff: [] },
     repticube: { orders: [], products: {}, inventory: {}, staff: [] },
@@ -4189,15 +4202,23 @@
     const biz = activeBiz;
     const allStages = getProductionStages(biz);
     if (!allStages.length) { el.innerHTML = '<div class="empty">No production stages defined for this business.</div>'; return; }
-    if (!stationStage || allStages.indexOf(stationStage) === -1) stationStage = allStages[0];
     const escJs = s => String(s).replace(/'/g, "\\'");
     const escHtml = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+    // Department logins are locked to their own station; everyone else can switch
+    const locked = currentRole === 'station' && currentStation && allStages.indexOf(currentStation) !== -1;
+    if (locked) stationStage = currentStation;
+    else if (!stationStage || allStages.indexOf(stationStage) === -1) stationStage = allStages[0];
+
     const counts = {}; allStages.forEach(s => counts[s] = ordersAtStage(biz, s).length);
-    const stageBtns = allStages.map(s => {
-      const sel = s === stationStage;
-      return `<button onclick="setStationStage('${escJs(s)}')" style="border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'}; background:${sel ? 'var(--accent)' : 'var(--surface)'}; color:${sel ? '#fff' : 'var(--text)'}; border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; font-weight:${sel ? '700' : '500'}">${escHtml(s)} <span style="opacity:0.8">(${counts[s]})</span></button>`;
-    }).join('');
+    const selectorCard = locked ? '' : `
+      <div class="card">
+        <div style="font-size:11px; color:var(--text-muted); margin-bottom:0.5rem">Tap your station — number shows how many pieces are waiting there now.</div>
+        <div style="display:flex; gap:0.4rem; flex-wrap:wrap">${allStages.map(s => {
+          const sel = s === stationStage;
+          return `<button onclick="setStationStage('${escJs(s)}')" style="border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'}; background:${sel ? 'var(--accent)' : 'var(--surface)'}; color:${sel ? '#fff' : 'var(--text)'}; border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; font-weight:${sel ? '700' : '500'}">${escHtml(s)} <span style="opacity:0.8">(${counts[s]})</span></button>`;
+        }).join('')}</div>
+      </div>`;
 
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const queue = ordersAtStage(biz, stationStage).sort((a, b) => (a.dueDate ? new Date(a.dueDate).getTime() : Infinity) - (b.dueDate ? new Date(b.dueDate).getTime() : Infinity));
@@ -4218,12 +4239,9 @@
     }).join('');
 
     el.innerHTML = `
+      ${selectorCard}
       <div class="card">
-        <div style="font-size:11px; color:var(--text-muted); margin-bottom:0.5rem">Tap your station — number shows how many pieces are waiting there now.</div>
-        <div style="display:flex; gap:0.4rem; flex-wrap:wrap">${stageBtns}</div>
-      </div>
-      <div class="card">
-        <div class="card-title">${escHtml(stationStage)} — ${queue.length} waiting</div>
+        <div class="card-title">${escHtml(stationStage)} — ${queue.length} waiting${locked ? '' : ''}</div>
         ${cards || '<div class="empty">Nothing waiting at this station right now 🎉</div>'}
       </div>`;
   }
@@ -6199,7 +6217,8 @@
     factory: ['dashboard', 'orders', 'stations', 'done', 'calendar', 'bom', 'schedule', 'planner'],
     dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'finished'],
     fabric: ['dashboard', 'calendar', 'fabric'],
-    manager: ['dashboard', 'intake', 'orders', 'stations', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner']
+    manager: ['dashboard', 'intake', 'orders', 'stations', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner'],
+    station: ['stations']
   };
   
   // Roles that should NOT see fabric ordering info on dashboard or order cards
@@ -6259,9 +6278,13 @@
     if (fabricCard) fabricCard.style.display = hideFabricOrdering ? 'none' : '';
     if (oosCard) oosCard.style.display = '';  // Everyone sees OOS
     
+    // Station/department logins are locked to one business — hide the switcher
+    const bizSwitch = document.getElementById('biz-switcher');
+    if (bizSwitch) bizSwitch.style.display = (currentRole === 'station') ? 'none' : '';
+
     // Show role indicator
     const roleEl = document.getElementById('current-role');
-    if (roleEl) roleEl.textContent = currentRole.toUpperCase();
+    if (roleEl) roleEl.textContent = currentRole === 'station' && currentStation ? ('STATION · ' + currentStation.toUpperCase()) : currentRole.toUpperCase();
   }
   
   function initAuth() {
@@ -6274,20 +6297,30 @@
           const userDocRef = window.firebaseFns.doc(window.firebaseDb, 'users', user.uid);
           const userSnap = await window.firebaseFns.getDoc(userDocRef);
           if (userSnap.exists()) {
-            currentRole = userSnap.data().role || 'admin';
+            const ud = userSnap.data();
+            currentRole = ud.role || 'admin';
+            currentStation = ud.station || null;
+            currentStationBiz = ud.biz || null;
           } else {
             // No role record — treat as admin (legacy user)
             currentRole = 'admin';
+            currentStation = null; currentStationBiz = null;
           }
         } catch (err) {
           console.warn('Could not load user role:', err);
           currentRole = 'admin';
+          currentStation = null; currentStationBiz = null;
         }
-        
+
         document.getElementById('login-overlay').style.display = 'none';
         document.getElementById('main-app').style.display = 'block';
         document.getElementById('current-user-email').textContent = user.email;
+        if (currentRole === 'station') {
+          if (currentStationBiz) switchBiz(currentStationBiz); // lock to their business
+          if (currentStation) stationStage = currentStation;   // lock to their station
+        }
         applyRolePermissions();
+        if (currentRole === 'station') showSection('stations');
         startSync();
       } else {
         currentUser = null;
@@ -6429,12 +6462,21 @@
       document.getElementById('auth-status').textContent = 'Please select your role';
       return;
     }
+    const extra = {};
+    if (role === 'station') {
+      extra.biz = document.getElementById('signup-biz').value;
+      extra.station = document.getElementById('signup-station').value;
+      if (!extra.biz || !extra.station) {
+        document.getElementById('auth-status').textContent = 'Pick a business and station for this department login';
+        return;
+      }
+    }
     document.getElementById('auth-status').textContent = '⏳ Creating account...';
     try {
       const userCred = await window.firebaseFns.createUser(window.firebaseAuth, email, password);
       // Save role to Firestore
       const userDoc = window.firebaseFns.doc(window.firebaseDb, 'users', userCred.user.uid);
-      await window.firebaseFns.setDoc(userDoc, { email, role, createdAt: new Date().toISOString() });
+      await window.firebaseFns.setDoc(userDoc, Object.assign({ email, role, createdAt: new Date().toISOString() }, extra));
       document.getElementById('auth-status').textContent = '';
     } catch (err) {
       document.getElementById('auth-status').textContent = '✗ ' + (err.code === 'auth/email-already-in-use' ? 'Email already in use' : err.message);
@@ -6464,6 +6506,23 @@
   window.doLogin = doLogin;
   window.doSignup = doSignup;
   window.toggleLoginMode = toggleLoginMode;
+
+  // Signup: show station/business pickers only for the Station role
+  function onSignupRoleChange() {
+    const role = document.getElementById('signup-role').value;
+    const block = document.getElementById('signup-station-block');
+    if (block) block.style.display = (role === 'station') ? 'block' : 'none';
+    if (role === 'station') populateSignupStations();
+  }
+  function populateSignupStations() {
+    const biz = document.getElementById('signup-biz') ? document.getElementById('signup-biz').value : 'bellville';
+    const sel = document.getElementById('signup-station');
+    if (!sel) return;
+    const stages = (typeof getProductionStages === 'function') ? getProductionStages(biz) : [];
+    sel.innerHTML = stages.map(s => `<option value="${String(s).replace(/"/g, '&quot;')}">${s}</option>`).join('') || '<option value="">(no stations)</option>';
+  }
+  window.onSignupRoleChange = onSignupRoleChange;
+  window.populateSignupStations = populateSignupStations;
   window.doLogout = doLogout;
   
   // Initial render — now that every module-level variable above is initialized
