@@ -4188,12 +4188,35 @@
     if (!stages.length) return null;
     return stages.find(s => !(o.stageDone && o.stageDone[s])) || null;
   }
+  function _isStartStage(biz, stageName) {
+    if (biz !== 'bellville') return false;
+    try { const s = (data.capacitySettings.stages || []).find(x => x.name === stageName); return !!(s && s.start); } catch (e) { return false; }
+  }
   function ordersAtStage(biz, stageName) {
+    const isStart = _isStartStage(biz, stageName);
     return (data[biz] && data[biz].orders ? data[biz].orders : []).filter(o => {
       if (o.status === 'done' || o.status === 'delivered') return false;
-      return _orderCurrentStage(biz, o) === stageName;
+      const stages = getProductionStagesForOrder(biz, o);
+      if (stages.indexOf(stageName) === -1) return false;        // product doesn't use this stage
+      if (o.stageDone && o.stageDone[stageName]) return false;   // already done here
+      if (isStart) return true;                                  // starting point — show all active orders in parallel
+      return _orderCurrentStage(biz, o) === stageName;           // otherwise sequential (first not-done)
     });
   }
+
+  // Admin: clear all per-station progress on active orders (current business) to start over
+  function resetAllStationProgress() {
+    if (currentRole !== 'admin') { alert('Only admin can reset station progress.'); return; }
+    const biz = activeBiz;
+    const active = (currentData().orders || []).filter(o => o.status !== 'done' && o.status !== 'delivered');
+    if (!confirm(`Clear station progress for all ${active.length} active ${biz} order(s)? Every piece restarts from the beginning. This does not delete orders.`)) return;
+    snapshotState();
+    active.forEach(o => { o.stageDone = {}; });
+    saveData();
+    render();
+    toast(`Reset station progress for ${active.length} order(s)`, 'success');
+  }
+  window.resetAllStationProgress = resetAllStationProgress;
 
   // Worker presses DONE → mark stage complete, advance status, auto-finish when last stage
   function completeStage(orderId, stage) {
@@ -4236,10 +4259,14 @@
     const counts = {}; allStages.forEach(s => counts[s] = ordersAtStage(biz, s).length);
     const selectorCard = locked ? '' : `
       <div class="card">
-        <div style="font-size:11px; color:var(--text-muted); margin-bottom:0.5rem">Tap your station — number shows how many pieces are waiting there now.</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.5rem">
+          <span style="font-size:11px; color:var(--text-muted)">Tap your station — number shows how many pieces are waiting there now.</span>
+          ${currentRole === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="resetAllStationProgress()" title="Clear progress on all active orders and start over">↺ Reset all progress</button>` : ''}
+        </div>
         <div style="display:flex; gap:0.4rem; flex-wrap:wrap">${allStages.map(s => {
           const sel = s === stationStage;
-          return `<button onclick="setStationStage('${escJs(s)}')" style="border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'}; background:${sel ? 'var(--accent)' : 'var(--surface)'}; color:${sel ? '#fff' : 'var(--text)'}; border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; font-weight:${sel ? '700' : '500'}">${escHtml(s)} <span style="opacity:0.8">(${counts[s]})</span></button>`;
+          const isStart = _isStartStage(biz, s);
+          return `<button onclick="setStationStage('${escJs(s)}')" style="border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'}; background:${sel ? 'var(--accent)' : 'var(--surface)'}; color:${sel ? '#fff' : 'var(--text)'}; border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; font-weight:${sel ? '700' : '500'}">${isStart ? '▶ ' : ''}${escHtml(s)} <span style="opacity:0.8">(${counts[s]})</span></button>`;
         }).join('')}</div>
       </div>`;
 
@@ -5733,14 +5760,14 @@
   let capPanelOpen = false;   // settings panel open/closed
 
   const DEFAULT_CAPACITY_STAGES = [
-    { key: 'frameCutting', name: 'Frame Cutting', capacity: 30, workers: 'Ricardo', exclude: [] },
+    { key: 'frameCutting', name: 'Frame Cutting', capacity: 30, workers: 'Ricardo', exclude: [], start: true },
     { key: 'frameMaking', name: 'Frame Making', capacity: 22.5, workers: 'Stanley', exclude: ['Headboard'] },
     { key: 'liningUp', name: 'Lining Up', capacity: 27.5, workers: 'Blessing', exclude: [] },
     { key: 'foamingUp', name: 'Foaming Up', capacity: 27.5, workers: 'Baba', exclude: [] },
     { key: 'foamCutting', name: 'Foam Cutting/Dacron', capacity: 35, workers: 'Samuel', exclude: [] },
     { key: 'upholstering', name: 'Upholstering', capacity: 35, workers: 'Ashraf + Stephan', exclude: [] },
     { key: 'sewing', name: 'Sewing', capacity: 22.5, workers: 'Sharon + Yammy', exclude: ['Headboard', 'Ottoman'] },
-    { key: 'fabricCutting', name: 'Fabric Cutting', capacity: 27.5, workers: 'Agatha', exclude: [] },
+    { key: 'fabricCutting', name: 'Fabric Cutting', capacity: 27.5, workers: 'Agatha', exclude: [], start: true },
     { key: 'finishing', name: 'Finishing', capacity: 30, workers: 'Unus + Harry', exclude: [] }
   ];
   const DEFAULT_ERIC = { capacity: 15, products: ['Daybed Pillay', 'Sofa Pillay Pine', 'Sofa Pillay Ash/Oak', 'Woodland Daybed', 'Skyler Daybed', 'Oak Sofa'] };
@@ -5755,6 +5782,7 @@
         else {
           if (!byKey[d.key].name) { byKey[d.key].name = d.name; byKey[d.key].workers = d.workers; }
           if (!Array.isArray(byKey[d.key].exclude)) byKey[d.key].exclude = (d.exclude || []).slice(); // backfill stage exclusions
+          if (typeof byKey[d.key].start !== 'boolean') byKey[d.key].start = !!d.start; // backfill starting-point flag
         }
       });
     }
@@ -5802,7 +5830,9 @@
   function updateEricCapacity(value) { ensureCapacitySettings(); snapshotState(); data.ericSettings.capacity = parseFloat(value) || 0; saveData(); renderPlanner(); }
   function updateEricProducts(value) { ensureCapacitySettings(); snapshotState(); data.ericSettings.products = String(value).split('\n').map(s => s.trim()).filter(Boolean); saveData(); renderPlanner(); }
   function updateStageExclude(key, value) { ensureCapacitySettings(); snapshotState(); const s = data.capacitySettings.stages.find(x => x.key === key); if (s) s.exclude = String(value).split(',').map(x => x.trim()).filter(Boolean); saveData(); renderPlanner(); }
+  function updateStageStart(key, checked) { ensureCapacitySettings(); snapshotState(); const s = data.capacitySettings.stages.find(x => x.key === key); if (s) s.start = !!checked; saveData(); render(); }
   window.updateStageExclude = updateStageExclude;
+  window.updateStageStart = updateStageStart;
   window.setCapacityWeek = setCapacityWeek;
   window.toggleCapPanel = toggleCapPanel;
   window.updateCapacityStage = updateCapacityStage;
@@ -5861,7 +5891,8 @@
           ${stages.map(s => `<div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
             <span style="width:150px; flex-shrink:0; font-weight:600">${s.name}</span>
             <label style="font-size:11px; display:flex; align-items:center; gap:0.3rem">cap/wk <input type="number" step="0.5" value="${s.capacity}" onchange="updateCapacityStage('${s.key}', this.value)" style="width:70px; padding:3px 5px"></label>
-            <label style="font-size:11px; display:flex; align-items:center; gap:0.3rem; flex:1; min-width:220px">skip categories <input value="${(s.exclude || []).join(', ').replace(/"/g, '&quot;')}" onchange="updateStageExclude('${s.key}', this.value)" placeholder="e.g. Headboard, Ottoman" style="flex:1; min-width:140px; max-width:280px; padding:3px 5px"></label>
+            <label style="font-size:11px; display:flex; align-items:center; gap:0.3rem" title="A starting point shows ALL active orders in parallel (not just the next in sequence)"><input type="checkbox" ${s.start ? 'checked' : ''} onchange="updateStageStart('${s.key}', this.checked)" style="width:15px; height:15px"> start point</label>
+            <label style="font-size:11px; display:flex; align-items:center; gap:0.3rem; flex:1; min-width:200px">skip categories <input value="${(s.exclude || []).join(', ').replace(/"/g, '&quot;')}" onchange="updateStageExclude('${s.key}', this.value)" placeholder="e.g. Headboard, Ottoman" style="flex:1; min-width:120px; max-width:260px; padding:3px 5px"></label>
           </div>`).join('')}
         </div>
         <div style="display:flex; gap:1rem; align-items:flex-start; margin-top:0.75rem; flex-wrap:wrap">
