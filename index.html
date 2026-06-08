@@ -4208,23 +4208,29 @@
     if (biz === 'bellville') { try { ensureCapacitySettings(); return (data.capacitySettings.stages || []).map(s => s.name); } catch (e) { return []; } }
     return _DEFAULT_STAGES_BY_BIZ[biz] || [];
   }
-  // The stage an order is currently waiting at (first not-done in its own stage list); null if finished
+  // The stage an order is currently waiting at (first not-done in its sequential stage list);
+  // null if finished. Independent/separate departments are skipped — they don't gate the flow.
   function _orderCurrentStage(biz, o) {
     const stages = getProductionStagesForOrder(biz, o);
     if (!stages.length) return null;
-    return stages.find(s => !(o.stageDone && o.stageDone[s])) || null;
+    return stages.find(s => !_isSeparateStage(biz, s) && !(o.stageDone && o.stageDone[s])) || null;
   }
   function _isStartStage(biz, stageName) {
     if (biz !== 'bellville') return false;
     try { const s = (data.capacitySettings.stages || []).find(x => x.name === stageName); return !!(s && s.start); } catch (e) { return false; }
   }
+  // An independent department that runs in parallel and is NOT part of the sequential flow.
+  function _isSeparateStage(biz, stageName) {
+    if (biz !== 'bellville') return false;
+    try { const s = (data.capacitySettings.stages || []).find(x => x.name === stageName); return !!(s && s.separate); } catch (e) { return false; }
+  }
   function ordersAtStage(biz, stageName) {
-    const isStart = _isStartStage(biz, stageName);
+    const isParallel = _isStartStage(biz, stageName) || _isSeparateStage(biz, stageName);
     return stationPoolOrders(biz).filter(o => {
       const stages = getProductionStagesForOrder(biz, o);
       if (stages.indexOf(stageName) === -1) return false;        // product doesn't use this stage
       if (o.stageDone && o.stageDone[stageName]) return false;   // already done here
-      if (isStart) return true;                                  // starting point — show all active orders in parallel
+      if (isParallel) return true;                               // start point / separate dept — show all active orders in parallel
       return _orderCurrentStage(biz, o) === stageName;           // otherwise sequential (first not-done)
     });
   }
@@ -4288,11 +4294,22 @@
           <span style="font-size:11px; color:var(--text-muted)">Tap your station — number shows how many pieces are waiting there now.</span>
           ${currentRole === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="resetAllStationProgress()" title="Clear progress on all active orders and start over">↺ Reset all progress</button>` : ''}
         </div>
-        <div style="display:flex; gap:0.4rem; flex-wrap:wrap">${allStages.map(s => {
-          const sel = s === stationStage;
-          const isStart = _isStartStage(biz, s);
-          return `<button onclick="setStationStage('${escJs(s)}')" style="border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'}; background:${sel ? 'var(--accent)' : 'var(--surface)'}; color:${sel ? '#fff' : 'var(--text)'}; border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; font-weight:${sel ? '700' : '500'}">${isStart ? '▶ ' : ''}${escHtml(s)} <span style="opacity:0.8">(${counts[s]})</span></button>`;
-        }).join('')}</div>
+        <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center">${(() => {
+          const stageBtn = s => {
+            const sel = s === stationStage;
+            const mark = _isSeparateStage(biz, s) ? '◆ ' : (_isStartStage(biz, s) ? '▶ ' : '');
+            return `<button onclick="setStationStage('${escJs(s)}')" style="border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'}; background:${sel ? 'var(--accent)' : 'var(--surface)'}; color:${sel ? '#fff' : 'var(--text)'}; border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; font-weight:${sel ? '700' : '500'}">${mark}${escHtml(s)} <span style="opacity:0.8">(${counts[s]})</span></button>`;
+          };
+          const flow = allStages.filter(s => !_isSeparateStage(biz, s));
+          const separate = allStages.filter(s => _isSeparateStage(biz, s));
+          let out = flow.map(stageBtn).join('');
+          if (separate.length) {
+            out += `<span style="width:1px; height:24px; background:var(--border); margin:0 4px"></span>`
+                 + `<span style="font-size:10px; color:var(--text-muted); font-weight:700" title="Independent departments — worked in parallel, not part of the sequential flow">◆ SEPARATE</span>`
+                 + separate.map(stageBtn).join('');
+          }
+          return out;
+        })()}</div>
       </div>`;
 
     const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -5827,7 +5844,7 @@
     { key: 'frameMaking', name: 'Frame Making', capacity: 22.5, workers: 'Stanley', exclude: ['Headboard'] },
     { key: 'liningUp', name: 'Lining Up', capacity: 27.5, workers: 'Blessing', exclude: [] },
     { key: 'foamingUp', name: 'Foaming Up', capacity: 27.5, workers: 'Baba', exclude: [] },
-    { key: 'foamCutting', name: 'Foam Cutting/Dacron', capacity: 35, workers: 'Samuel', exclude: [] },
+    { key: 'foamCutting', name: 'Foam Cutting/Dacron', capacity: 35, workers: 'Samuel', exclude: [], separate: true },
     { key: 'upholstering', name: 'Upholstering', capacity: 35, workers: 'Ashraf + Stephan', exclude: [] },
     { key: 'sewing', name: 'Sewing', capacity: 22.5, workers: 'Sharon + Yammy', exclude: ['Headboard', 'Ottoman'] },
     { key: 'fabricCutting', name: 'Fabric Cutting', capacity: 27.5, workers: 'Agatha', exclude: [], start: true },
@@ -5846,6 +5863,7 @@
           if (!byKey[d.key].name) { byKey[d.key].name = d.name; byKey[d.key].workers = d.workers; }
           if (!Array.isArray(byKey[d.key].exclude)) byKey[d.key].exclude = (d.exclude || []).slice(); // backfill stage exclusions
           if (typeof byKey[d.key].start !== 'boolean') byKey[d.key].start = !!d.start; // backfill starting-point flag
+          if (typeof byKey[d.key].separate !== 'boolean') byKey[d.key].separate = !!d.separate; // backfill independent-department flag
         }
       });
     }
@@ -5894,6 +5912,8 @@
   function updateEricProducts(value) { ensureCapacitySettings(); snapshotState(); data.ericSettings.products = String(value).split('\n').map(s => s.trim()).filter(Boolean); saveData(); renderPlanner(); }
   function updateStageExclude(key, value) { ensureCapacitySettings(); snapshotState(); const s = data.capacitySettings.stages.find(x => x.key === key); if (s) s.exclude = String(value).split(',').map(x => x.trim()).filter(Boolean); saveData(); renderPlanner(); }
   function updateStageStart(key, checked) { ensureCapacitySettings(); snapshotState(); const s = data.capacitySettings.stages.find(x => x.key === key); if (s) s.start = !!checked; saveData(); render(); }
+  function updateStageSeparate(key, checked) { ensureCapacitySettings(); snapshotState(); const s = data.capacitySettings.stages.find(x => x.key === key); if (s) s.separate = !!checked; saveData(); render(); }
+  window.updateStageSeparate = updateStageSeparate;
   window.updateStageExclude = updateStageExclude;
   window.updateStageStart = updateStageStart;
   window.setCapacityWeek = setCapacityWeek;
@@ -5955,6 +5975,7 @@
             <span style="width:150px; flex-shrink:0; font-weight:600">${s.name}</span>
             <label style="font-size:11px; display:flex; align-items:center; gap:0.3rem">cap/wk <input type="number" step="0.5" value="${s.capacity}" onchange="updateCapacityStage('${s.key}', this.value)" style="width:70px; padding:3px 5px"></label>
             <label style="font-size:11px; display:flex; align-items:center; gap:0.3rem" title="A starting point shows ALL active orders in parallel (not just the next in sequence)"><input type="checkbox" ${s.start ? 'checked' : ''} onchange="updateStageStart('${s.key}', this.checked)" style="width:15px; height:15px"> start point</label>
+            <label style="font-size:11px; display:flex; align-items:center; gap:0.3rem" title="A separate department runs in parallel and is NOT part of the sequential flow — it never blocks other stations"><input type="checkbox" ${s.separate ? 'checked' : ''} onchange="updateStageSeparate('${s.key}', this.checked)" style="width:15px; height:15px"> ◆ separate</label>
             <label style="font-size:11px; display:flex; align-items:center; gap:0.3rem; flex:1; min-width:200px">skip categories <input value="${(s.exclude || []).join(', ').replace(/"/g, '&quot;')}" onchange="updateStageExclude('${s.key}', this.value)" placeholder="e.g. Headboard, Ottoman" style="flex:1; min-width:120px; max-width:260px; padding:3px 5px"></label>
           </div>`).join('')}
         </div>
