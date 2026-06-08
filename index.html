@@ -5418,13 +5418,15 @@
 
     const biz = currentData();
     const active = o => o.status !== 'delivered' && o.status !== 'done';
-    // Rocking chairs are built in Bellville production: excluded from week columns everywhere,
-    // and gathered (across all businesses) onto Bellville's separate rocking-chair list.
+    // Non-rocking orders for this business flow through the week columns normally.
     const orders = (biz.orders || []).filter(o => active(o) && !isRockingOrder(o));
-    const rockingChairs = []; // [{ o, biz }]
+    // Rocking chairs are built in Bellville production: gathered across all businesses onto
+    // Bellville's planner. They are schedulable into the week columns just like any order;
+    // unscheduled ones wait in the dedicated 🪑 pool. Other businesses don't plan rockers.
+    const rockers = [];
     if (activeBiz === 'bellville') {
       ['bellville', 'pinkfoot', 'repticube'].forEach(b => (data[b] && data[b].orders ? data[b].orders : []).forEach(o => {
-        if (active(o) && isRockingOrder(o)) rockingChairs.push({ o, biz: b });
+        if (active(o) && isRockingOrder(o)) rockers.push(o);
       }));
     }
 
@@ -5435,8 +5437,9 @@
     const buckets = Object.fromEntries(weeks.map(w => [w, []]));
     const beyond = [];
     const unscheduled = [];
-    orders.forEach(o => {
-      if (!o.planWeek) { unscheduled.push(o); return; }
+    const rockingPool = []; // unscheduled rocking chairs (scheduled ones go into the week columns)
+    const placeInWeek = (o, unscheduledPool) => {
+      if (!o.planWeek) { unscheduledPool.push(o); return; }
       if (buckets[o.planWeek]) { buckets[o.planWeek].push(o); return; }
       if (o.planWeek < weeks[0]) {
         // scheduled to a past week — show in Current visually (without mutating planWeek)
@@ -5444,7 +5447,9 @@
       } else {
         beyond.push(o);
       }
-    });
+    };
+    orders.forEach(o => placeInWeek(o, unscheduled));
+    rockers.forEach(o => placeInWeek(o, rockingPool));
 
     const byDue = (a, b) => {
       const da = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
@@ -5454,6 +5459,7 @@
     Object.values(buckets).forEach(arr => arr.sort(byDue));
     beyond.sort((a, b) => (a.planWeek || '').localeCompare(b.planWeek || ''));
     unscheduled.sort(byDue);
+    rockingPool.sort(byDue);
 
     const colLabels = ['Current', 'Next week', 'In 2 weeks', 'In 3 weeks'];
 
@@ -5481,25 +5487,13 @@
       </div>
     ` : '';
 
-    rockingChairs.sort((a, b) => byDue(a.o, b.o));
-    const rockingCard = (o, ownerBiz) => {
-      const stages = getProductionStagesForOrder('bellville', o);
-      const done = stages.filter(s => o.stageDone && o.stageDone[s]).length;
-      return `<div class="plan-card" style="cursor:default">
-        <div class="pc-body">
-          <div class="pc-inv">#${_escape(o.invoice || o.id)} <span style="font-size:9px; color:var(--text-muted)">${ownerBiz}</span></div>
-          <div class="pc-prod">${_escape(o.product || '')}${o.qty > 1 ? ' × ' + o.qty : ''}</div>
-          <div class="pc-cust">👤 ${_escape(o.customer || '')}</div>
-          ${o.fabric ? `<div class="pc-cust">🎨 ${_escape(o.fabric)}</div>` : ''}
-          <div class="pc-due">${o.dueDate ? 'Due ' + _escape(o.dueDate) : ''} · ${done}/${stages.length}</div>
-        </div>
-      </div>`;
-    };
-    const rockingHtml = rockingChairs.length ? `
+    // Unscheduled rocking chairs sit in their own pool; drag them onto a week to schedule.
+    // Dropping back here unschedules. Scheduled rockers appear in the week columns above.
+    const rockingHtml = (activeBiz === 'bellville' && rockers.length) ? `
       <div class="card" style="margin-bottom:1rem; border-left:4px solid #9333ea">
-        <div class="card-title">🪑 ROCKING CHAIRS — Bellville production (${rockingChairs.length})</div>
-        <div class="plan-pool">
-          ${rockingChairs.map(r => rockingCard(r.o, r.biz)).join('')}
+        <div class="card-title">🪑 ROCKING CHAIRS — Bellville production · drag onto a week to schedule (${rockingPool.length} unscheduled)</div>
+        <div class="plan-pool" ondragover="planDragOverUnscheduled(event)" ondragleave="planDragLeave(event)" ondrop="planDropUnscheduled(event)">
+          ${rockingPool.map(o => planItemCard(o)).join('') || '<div class="empty" style="padding:0.75rem 0; font-size:11px">All rocking chairs scheduled into weeks above</div>'}
         </div>
       </div>
     ` : '';
@@ -5535,6 +5529,8 @@
 
     const inv = _escape(o.invoice || o.id);
     const prodLabel = (o.category ? '[' + o.category + '] ' : '') + (o.product || '') + (o.qty > 1 ? ' × ' + o.qty : '');
+    const rockerTag = (activeBiz === 'bellville' && isRockingOrder(o))
+      ? ` <span style="background:#f3e8ff; color:#7e22ce; padding:0 5px; border-radius:3px; font-size:9px; font-weight:700">🪑 ${((findOrderAnyBiz(o.id) || {}).biz || '').toUpperCase()}</span>` : '';
 
     return `
       <div class="plan-card ${overdueCls} ${statusCls}" draggable="true"
@@ -5542,7 +5538,7 @@
            ondragstart="planDragStart(event, '${_escape(o.id)}')"
            ondragend="planDragEnd(event)">
         <div class="pc-body">
-          <div class="pc-inv">#${inv}</div>
+          <div class="pc-inv">#${inv}${rockerTag}</div>
           <div class="pc-prod">${_escape(prodLabel)}</div>
           <div class="pc-cust">👤 ${_escape(o.customer)}</div>
           ${o.fabric && !HIDE_FABRIC_FROM.includes(currentRole) ? `<div class="pc-cust">🎨 ${_escape(o.fabric)}</div>` : ''}
@@ -6113,7 +6109,7 @@
 
   // ----- Mutation: shared by drag handlers AND tap menu -----
   function setPlanWeek(orderId, mondayIso) {
-    const order = currentData().orders.find(o => o.id === orderId);
+    const order = (findOrderAnyBiz(orderId) || {}).o;
     if (!order) { closePlanMenu(); return; }
     // Normalize: null/'' = unschedule. Anything else gets snapped to Monday.
     let normalized = null;
@@ -6143,7 +6139,7 @@
 
   function openPlanMenu(orderId, anchorEl) {
     closePlanMenu();
-    const order = currentData().orders.find(o => o.id === orderId);
+    const order = (findOrderAnyBiz(orderId) || {}).o;
     if (!order) return;
 
     const w0 = getMondayOf(new Date());
