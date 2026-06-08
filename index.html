@@ -5391,7 +5391,14 @@
     if (!grid) return; // section never mounted
 
     const biz = currentData();
-    const orders = (biz.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done');
+    const allActive = (biz.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done');
+    // Rocking chairs are planned on their own separate list
+    const isRocking = o => {
+      const cat = (biz.productBoms && biz.productBoms[o.product] ? biz.productBoms[o.product].category : '') || o.category || '';
+      return cat.toLowerCase().indexOf('rocking') !== -1 || (o.product || '').toLowerCase().match(/rocking|rocker/);
+    };
+    const rockingChairs = allActive.filter(isRocking);
+    const orders = allActive.filter(o => !isRocking(o));
 
     const todayMonday = getMondayOf(new Date());
     const weeks = [0, 1, 2, 3].map(i => _addDaysIso(todayMonday, i * 7));
@@ -5446,9 +5453,20 @@
       </div>
     ` : '';
 
+    rockingChairs.sort(byDue);
+    const rockingHtml = rockingChairs.length ? `
+      <div class="card" style="margin-bottom:1rem; border-left:4px solid #9333ea">
+        <div class="card-title">🪑 ROCKING CHAIRS (${rockingChairs.length})</div>
+        <div class="plan-pool">
+          ${rockingChairs.map(o => planItemCard(o)).join('')}
+        </div>
+      </div>
+    ` : '';
+
     const html = `
       ${capacityPlannerHtml(weeks, buckets, colLabels)}
       <div class="plan-grid">${colsHtml}</div>
+      ${rockingHtml}
       ${beyondHtml}
       <div class="card">
         <div class="card-title">📥 UNSCHEDULED (${unscheduled.length})</div>
