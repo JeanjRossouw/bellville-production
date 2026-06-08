@@ -4191,8 +4191,9 @@
     const o = found.o;
     snapshotState();
     if (!o.stageDone || typeof o.stageDone !== 'object') o.stageDone = {};
-    if (o.stageDone[stage]) delete o.stageDone[stage];
-    else o.stageDone[stage] = true;
+    if (!o.stageDoneAt || typeof o.stageDoneAt !== 'object') o.stageDoneAt = {};
+    if (o.stageDone[stage]) { delete o.stageDone[stage]; delete o.stageDoneAt[stage]; }
+    else { o.stageDone[stage] = true; o.stageDoneAt[stage] = new Date().toISOString(); }
     saveData();
     render();
   }
@@ -4258,6 +4259,8 @@
     const oldStatus = o.status;
     if (!o.stageDone || typeof o.stageDone !== 'object') o.stageDone = {};
     o.stageDone[stage] = true;
+    if (!o.stageDoneAt || typeof o.stageDoneAt !== 'object') o.stageDoneAt = {};
+    o.stageDoneAt[stage] = new Date().toISOString(); // when this department finished — feeds the daily report
     if (o.status === 'pending') {
       o.status = 'in-production';
       if (!o.startDate) o.startDate = new Date().toISOString().split('T')[0];
@@ -4292,7 +4295,10 @@
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.5rem">
           <span style="font-size:11px; color:var(--text-muted)">Tap your station — number shows how many pieces are waiting there now.</span>
-          ${currentRole === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="resetAllStationProgress()" title="Clear progress on all active orders and start over">↺ Reset all progress</button>` : ''}
+          <span style="display:flex; gap:0.4rem">
+            <button class="btn btn-sm" onclick="departmentReport(30)" title="Printable report of what each department completed per day">📊 Daily report</button>
+            ${currentRole === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="resetAllStationProgress()" title="Clear progress on all active orders and start over">↺ Reset all progress</button>` : ''}
+          </span>
         </div>
         <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center">${(() => {
           const stageBtn = s => {
@@ -4339,6 +4345,119 @@
       </div>`;
   }
   window.renderStations = renderStations;
+
+  // All orders produced at this business (any status), so the report can include finished work.
+  function _productionOrdersAll(biz) {
+    let pool = [];
+    if (biz === 'bellville') {
+      ['bellville', 'pinkfoot', 'repticube'].forEach(b => (data[b] && data[b].orders ? data[b].orders : []).forEach(o => {
+        if (b === 'bellville' || isRockingOrder(o)) pool.push(o);
+      }));
+    } else {
+      pool = (data[biz] && data[biz].orders ? data[biz].orders : []).filter(o => !isRockingOrder(o));
+    }
+    return pool;
+  }
+
+  // Printable report: units each department completed per day (uses stageDoneAt timestamps).
+  function departmentReport(daysBack) {
+    daysBack = daysBack || 30;
+    const biz = activeBiz;
+    const bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
+    const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const localDay = iso => { const d = new Date(iso); if (isNaN(d)) return null; const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0'); return `${y}-${m}-${dd}`; };
+
+    const cutoff = new Date(); cutoff.setHours(0, 0, 0, 0); cutoff.setDate(cutoff.getDate() - (daysBack - 1));
+    const cutoffStr = localDay(cutoff.toISOString());
+
+    // Gather completion events: { day, stage, qty, order }
+    const events = [];
+    _productionOrdersAll(biz).forEach(o => {
+      const at = o.stageDoneAt;
+      if (!at || typeof at !== 'object') return;
+      Object.keys(at).forEach(stage => {
+        const day = localDay(at[stage]);
+        if (!day || day < cutoffStr) return;
+        events.push({ day, stage, qty: o.qty || 1, order: o });
+      });
+    });
+
+    // Department column order: current stages first, then any historical stage names found
+    const stageOrder = getProductionStages(biz).slice();
+    events.forEach(e => { if (stageOrder.indexOf(e.stage) === -1) stageOrder.push(e.stage); });
+
+    const days = Array.from(new Set(events.map(e => e.day))).sort().reverse(); // newest first
+    const todayStr = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' });
+
+    // matrix[day][stage] = units; rowTot[day]; colTot[stage]; grand
+    const matrix = {}; const rowTot = {}; const colTot = {}; let grand = 0;
+    stageOrder.forEach(s => colTot[s] = 0);
+    days.forEach(d => { matrix[d] = {}; rowTot[d] = 0; stageOrder.forEach(s => matrix[d][s] = 0); });
+    events.forEach(e => { matrix[e.day][e.stage] += e.qty; rowTot[e.day] += e.qty; colTot[e.stage] += e.qty; grand += e.qty; });
+
+    const fmtDayHdr = d => { const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' }); };
+
+    const matrixRows = days.length ? days.map(d => `
+      <tr>
+        <td style="font-weight:bold; white-space:nowrap">${esc(fmtDayHdr(d))}</td>
+        ${stageOrder.map(s => `<td style="text-align:center${matrix[d][s] ? '' : '; color:#bbb'}">${matrix[d][s] || ''}</td>`).join('')}
+        <td style="text-align:center; font-weight:bold; background:#f1f5f9">${rowTot[d]}</td>
+      </tr>`).join('') : `<tr><td colspan="${stageOrder.length + 2}" class="empty">No completions recorded in the last ${daysBack} days.</td></tr>`;
+
+    // Detailed breakdown: per day → per department → orders
+    const detail = days.map(d => {
+      const byStage = stageOrder.map(s => {
+        const items = events.filter(e => e.day === d && e.stage === s);
+        if (!items.length) return '';
+        const rows = items.map(e => `<li>#${esc(e.order.invoice || e.order.id)} — ${esc(e.order.product || '')}${e.order.qty > 1 ? ' ×' + e.order.qty : ''} <span style="color:#666">(${esc(e.order.customer || '')})</span>${(biz === 'bellville' && isRockingOrder(e.order)) ? ' 🪑' : ''}</li>`).join('');
+        return `<div class="det-stage"><div class="det-stage-h">${esc(s)} — ${items.reduce((a, e) => a + e.qty, 0)} unit(s)</div><ul>${rows}</ul></div>`;
+      }).join('');
+      return `<section class="det-day"><h3>${esc(fmtDayHdr(d))} <span style="font-weight:400; color:#666">· ${rowTot[d]} unit(s)</span></h3>${byStage}</section>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html><html><head><title>Department Daily Report — ${bizNames[biz] || biz}</title>
+<style>
+  @page { size: A4 landscape; margin: 10mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; color: #000; }
+  body { padding: 4px; }
+  .header { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:3px solid #000; padding-bottom:6px; margin-bottom:10px; }
+  .biz-name { font-size:20px; font-weight:800; }
+  .date { font-size:12px; color:#444; }
+  .title { font-size:16px; font-weight:700; text-align:right; }
+  table { width:100%; border-collapse:collapse; margin-bottom:18px; }
+  th, td { border:1px solid #999; padding:4px 6px; font-size:11px; }
+  thead th { background:#1f2937; color:#fff; font-size:10px; text-transform:uppercase; }
+  tfoot td { font-weight:bold; background:#e5e7eb; }
+  .empty { text-align:center; color:#666; padding:14px; font-style:italic; }
+  .det-day { margin-bottom:14px; page-break-inside:avoid; }
+  .det-day h3 { font-size:14px; border-bottom:1px solid #999; padding-bottom:3px; margin-bottom:6px; }
+  .det-stage { margin:4px 0 8px 8px; }
+  .det-stage-h { font-weight:700; font-size:12px; }
+  .det-stage ul { margin:2px 0 0 22px; }
+  .det-stage li { font-size:11px; margin:1px 0; }
+  .sec-title { font-size:14px; font-weight:800; margin:6px 0; border-bottom:2px solid #000; padding-bottom:3px; }
+  @media print { .no-print { display:none; } }
+</style></head><body>
+  <div class="header">
+    <div><div class="biz-name">${bizNames[biz] || biz}</div><div class="date">Department Daily Report · generated ${todayStr}</div></div>
+    <div class="title">What each department completed<br>per day — last ${daysBack} days</div>
+  </div>
+  <button class="no-print" onclick="window.print()" style="padding:8px 16px; font-size:14px; font-weight:700; margin-bottom:10px; cursor:pointer">🖨️ Print / Save PDF</button>
+  <div class="sec-title">Units completed per department per day</div>
+  <table>
+    <thead><tr><th>Day</th>${stageOrder.map(s => `<th>${esc(s)}</th>`).join('')}<th>Total</th></tr></thead>
+    <tbody>${matrixRows}</tbody>
+    <tfoot><tr><td>TOTAL</td>${stageOrder.map(s => `<td style="text-align:center">${colTot[s] || 0}</td>`).join('')}<td style="text-align:center">${grand}</td></tr></tfoot>
+  </table>
+  ${days.length ? `<div class="sec-title">Detailed breakdown</div>${detail}` : ''}
+  <p style="font-size:10px; color:#666; margin-top:10px">Counts are units (order qty) marked done at each department. Only completions recorded after this feature was deployed appear here.</p>
+</body></html>`;
+
+    const w = window.open('', '_blank');
+    if (!w) { alert('Please allow pop-ups to view the report.'); return; }
+    w.document.write(html); w.document.close();
+  }
+  window.departmentReport = departmentReport;
 
   function orderStageTrackerHtml(biz, o) {
     const stages = getProductionStagesForOrder(biz, o);
