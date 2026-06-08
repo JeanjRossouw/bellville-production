@@ -4296,7 +4296,7 @@
         <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.5rem">
           <span style="font-size:11px; color:var(--text-muted)">Tap your station — number shows how many pieces are waiting there now.</span>
           <span style="display:flex; gap:0.4rem">
-            <button class="btn btn-sm" onclick="departmentReport(30)" title="Printable report of what each department completed per day">📊 Daily report</button>
+            <button class="btn btn-sm" onclick="openStationReport()" title="Report of what each department completed, by date range">📊 Daily report</button>
             ${currentRole === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="resetAllStationProgress()" title="Clear progress on all active orders and start over">↺ Reset all progress</button>` : ''}
           </span>
         </div>
@@ -4339,6 +4339,7 @@
 
     el.innerHTML = `
       ${selectorCard}
+      ${stationReportOpen ? stationReportPanelHtml(biz) : ''}
       <div class="card">
         <div class="card-title">${escHtml(stationStage)} — ${queue.length} waiting${locked ? '' : ''}</div>
         ${cards || '<div class="empty">Nothing waiting at this station right now 🎉</div>'}
@@ -4359,63 +4360,145 @@
     return pool;
   }
 
-  // Printable report: units each department completed per day (uses stageDoneAt timestamps).
-  function departmentReport(daysBack) {
-    daysBack = daysBack || 30;
-    const biz = activeBiz;
-    const bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
-    const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const localDay = iso => { const d = new Date(iso); if (isNaN(d)) return null; const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0'); return `${y}-${m}-${dd}`; };
+  // ----- Department daily report (what each department completed, by date range) -----
+  let stationReportOpen = false;
+  let reportFrom = null, reportTo = null;   // 'YYYY-MM-DD' (inclusive); null = open-ended
+  let reportPreset = 'last7';
 
-    const cutoff = new Date(); cutoff.setHours(0, 0, 0, 0); cutoff.setDate(cutoff.getDate() - (daysBack - 1));
-    const cutoffStr = localDay(cutoff.toISOString());
+  function _localDayStr(date) {
+    const d = (date instanceof Date) ? date : new Date(date);
+    if (isNaN(d.getTime())) return null;
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
 
-    // Gather completion events: { day, stage, qty, order }
+  // Build the report dataset for a business between fromStr..toStr (inclusive; null = unbounded)
+  function _deptReportData(biz, fromStr, toStr) {
     const events = [];
     _productionOrdersAll(biz).forEach(o => {
       const at = o.stageDoneAt;
       if (!at || typeof at !== 'object') return;
       Object.keys(at).forEach(stage => {
-        const day = localDay(at[stage]);
-        if (!day || day < cutoffStr) return;
+        const day = _localDayStr(new Date(at[stage]));
+        if (!day) return;
+        if (fromStr && day < fromStr) return;
+        if (toStr && day > toStr) return;
         events.push({ day, stage, qty: o.qty || 1, order: o });
       });
     });
-
-    // Department column order: current stages first, then any historical stage names found
     const stageOrder = getProductionStages(biz).slice();
     events.forEach(e => { if (stageOrder.indexOf(e.stage) === -1) stageOrder.push(e.stage); });
-
     const days = Array.from(new Set(events.map(e => e.day))).sort().reverse(); // newest first
-    const todayStr = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' });
-
-    // matrix[day][stage] = units; rowTot[day]; colTot[stage]; grand
-    const matrix = {}; const rowTot = {}; const colTot = {}; let grand = 0;
+    const matrix = {}, rowTot = {}, colTot = {}; let grand = 0;
     stageOrder.forEach(s => colTot[s] = 0);
     days.forEach(d => { matrix[d] = {}; rowTot[d] = 0; stageOrder.forEach(s => matrix[d][s] = 0); });
     events.forEach(e => { matrix[e.day][e.stage] += e.qty; rowTot[e.day] += e.qty; colTot[e.stage] += e.qty; grand += e.qty; });
+    return { events, stageOrder, days, matrix, rowTot, colTot, grand };
+  }
 
-    const fmtDayHdr = d => { const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' }); };
-
-    const matrixRows = days.length ? days.map(d => `
+  // Shared matrix + detail markup (inline styles so it works on-screen and in the print window)
+  function _deptReportTablesHtml(biz, R) {
+    const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const fmtDayHdr = d => new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' });
+    if (!R.days.length) return `<p style="padding:14px; text-align:center; color:#666; font-style:italic">No completions recorded in this date range.</p>`;
+    const matrixRows = R.days.map(d => `
       <tr>
-        <td style="font-weight:bold; white-space:nowrap">${esc(fmtDayHdr(d))}</td>
-        ${stageOrder.map(s => `<td style="text-align:center${matrix[d][s] ? '' : '; color:#bbb'}">${matrix[d][s] || ''}</td>`).join('')}
-        <td style="text-align:center; font-weight:bold; background:#f1f5f9">${rowTot[d]}</td>
-      </tr>`).join('') : `<tr><td colspan="${stageOrder.length + 2}" class="empty">No completions recorded in the last ${daysBack} days.</td></tr>`;
-
-    // Detailed breakdown: per day → per department → orders
-    const detail = days.map(d => {
-      const byStage = stageOrder.map(s => {
-        const items = events.filter(e => e.day === d && e.stage === s);
+        <td style="border:1px solid #999; padding:4px 6px; font-weight:bold; white-space:nowrap">${esc(fmtDayHdr(d))}</td>
+        ${R.stageOrder.map(s => `<td style="border:1px solid #999; padding:4px 6px; text-align:center${R.matrix[d][s] ? '' : '; color:#bbb'}">${R.matrix[d][s] || ''}</td>`).join('')}
+        <td style="border:1px solid #999; padding:4px 6px; text-align:center; font-weight:bold; background:#f1f5f9">${R.rowTot[d]}</td>
+      </tr>`).join('');
+    const matrixTable = `
+      <table style="width:100%; border-collapse:collapse; margin-bottom:14px">
+        <thead><tr>
+          <th style="border:1px solid #999; padding:4px 6px; background:#1f2937; color:#fff; font-size:10px; text-transform:uppercase">Day</th>
+          ${R.stageOrder.map(s => `<th style="border:1px solid #999; padding:4px 6px; background:#1f2937; color:#fff; font-size:10px; text-transform:uppercase">${esc(s)}</th>`).join('')}
+          <th style="border:1px solid #999; padding:4px 6px; background:#1f2937; color:#fff; font-size:10px; text-transform:uppercase">Total</th>
+        </tr></thead>
+        <tbody>${matrixRows}</tbody>
+        <tfoot><tr>
+          <td style="border:1px solid #999; padding:4px 6px; font-weight:bold; background:#e5e7eb">TOTAL</td>
+          ${R.stageOrder.map(s => `<td style="border:1px solid #999; padding:4px 6px; text-align:center; font-weight:bold; background:#e5e7eb">${R.colTot[s] || 0}</td>`).join('')}
+          <td style="border:1px solid #999; padding:4px 6px; text-align:center; font-weight:bold; background:#e5e7eb">${R.grand}</td>
+        </tr></tfoot>
+      </table>`;
+    const detail = R.days.map(d => {
+      const byStage = R.stageOrder.map(s => {
+        const items = R.events.filter(e => e.day === d && e.stage === s);
         if (!items.length) return '';
-        const rows = items.map(e => `<li>#${esc(e.order.invoice || e.order.id)} — ${esc(e.order.product || '')}${e.order.qty > 1 ? ' ×' + e.order.qty : ''} <span style="color:#666">(${esc(e.order.customer || '')})</span>${(biz === 'bellville' && isRockingOrder(e.order)) ? ' 🪑' : ''}</li>`).join('');
-        return `<div class="det-stage"><div class="det-stage-h">${esc(s)} — ${items.reduce((a, e) => a + e.qty, 0)} unit(s)</div><ul>${rows}</ul></div>`;
+        const rows = items.map(e => `<li style="font-size:11px; margin:1px 0">#${esc(e.order.invoice || e.order.id)} — ${esc(e.order.product || '')}${e.order.qty > 1 ? ' ×' + e.order.qty : ''} <span style="color:#777">(${esc(e.order.customer || '')})</span>${(biz === 'bellville' && isRockingOrder(e.order)) ? ' 🪑' : ''}</li>`).join('');
+        return `<div style="margin:4px 0 8px 8px"><div style="font-weight:700; font-size:12px">${esc(s)} — ${items.reduce((a, e) => a + e.qty, 0)} unit(s)</div><ul style="margin:2px 0 0 22px">${rows}</ul></div>`;
       }).join('');
-      return `<section class="det-day"><h3>${esc(fmtDayHdr(d))} <span style="font-weight:400; color:#666">· ${rowTot[d]} unit(s)</span></h3>${byStage}</section>`;
+      return `<section style="margin-bottom:14px; page-break-inside:avoid"><h3 style="font-size:14px; border-bottom:1px solid #999; padding-bottom:3px; margin-bottom:6px">${esc(fmtDayHdr(d))} <span style="font-weight:400; color:#666">· ${R.rowTot[d]} unit(s)</span></h3>${byStage}</section>`;
     }).join('');
+    return `${matrixTable}<div style="font-size:14px; font-weight:800; margin:6px 0; border-bottom:2px solid #000; padding-bottom:3px">Detailed breakdown</div>${detail}`;
+  }
 
-    const html = `<!DOCTYPE html><html><head><title>Department Daily Report — ${bizNames[biz] || biz}</title>
+  function _reportRangeLabel() {
+    if (reportFrom && reportTo) return reportFrom === reportTo ? reportFrom : `${reportFrom} → ${reportTo}`;
+    if (reportFrom) return `from ${reportFrom}`;
+    if (reportTo) return `up to ${reportTo}`;
+    return 'all time';
+  }
+
+  function openStationReport() { stationReportOpen = true; if (reportPreset && !reportFrom && !reportTo) setReportPreset(reportPreset); else renderStations(); }
+  function closeStationReport() { stationReportOpen = false; renderStations(); }
+  window.openStationReport = openStationReport;
+  window.closeStationReport = closeStationReport;
+
+  function setReportPreset(p) {
+    reportPreset = p;
+    const today = _localDayStr(new Date());
+    if (p === 'today') { reportFrom = today; reportTo = today; }
+    else if (p === 'yesterday') { const y = _addDaysIso(today, -1); reportFrom = y; reportTo = y; }
+    else if (p === 'week') { const mon = getMondayOf(new Date()); reportFrom = mon; reportTo = _addDaysIso(mon, 6); }
+    else if (p === 'lastweek') { const mon = _addDaysIso(getMondayOf(new Date()), -7); reportFrom = mon; reportTo = _addDaysIso(mon, 6); }
+    else if (p === 'last7') { reportFrom = _addDaysIso(today, -6); reportTo = today; }
+    else if (p === 'last30') { reportFrom = _addDaysIso(today, -29); reportTo = today; }
+    else if (p === 'month') { const d = new Date(); reportFrom = _localDayStr(new Date(d.getFullYear(), d.getMonth(), 1)); reportTo = today; }
+    else if (p === 'all') { reportFrom = null; reportTo = null; }
+    renderStations();
+  }
+  window.setReportPreset = setReportPreset;
+  function setReportFrom(v) { reportFrom = v || null; reportPreset = 'custom'; renderStations(); }
+  function setReportTo(v) { reportTo = v || null; reportPreset = 'custom'; renderStations(); }
+  window.setReportFrom = setReportFrom;
+  window.setReportTo = setReportTo;
+
+  // Inline report panel (controls + tables) shown inside the Stations view
+  function stationReportPanelHtml(biz) {
+    const presets = [
+      ['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'This week'], ['lastweek', 'Last week'],
+      ['last7', 'Last 7 days'], ['last30', 'Last 30 days'], ['month', 'This month'], ['all', 'All time']
+    ];
+    const presetBtns = presets.map(([k, label]) => {
+      const sel = reportPreset === k;
+      return `<button onclick="setReportPreset('${k}')" style="border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'}; background:${sel ? 'var(--accent)' : 'var(--surface)'}; color:${sel ? '#fff' : 'var(--text)'}; border-radius:6px; padding:5px 9px; font-size:11px; cursor:pointer; font-weight:${sel ? '700' : '500'}">${label}</button>`;
+    }).join('');
+    const R = _deptReportData(biz, reportFrom, reportTo);
+    return `
+      <div class="card" style="border-left:4px solid #2563eb">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem">
+          <span class="card-title" style="margin:0">📊 Department report — ${_escape(_reportRangeLabel())} · ${R.grand} unit(s)</span>
+          <span style="display:flex; gap:0.4rem">
+            <button class="btn btn-sm" onclick="printDepartmentReport()" title="Open a printable version of this report">🖨️ Print / PDF</button>
+            <button class="btn btn-sm" onclick="closeStationReport()">✕ Close</button>
+          </span>
+        </div>
+        <div style="display:flex; gap:0.35rem; flex-wrap:wrap; margin-bottom:0.5rem">${presetBtns}</div>
+        <div style="display:flex; gap:0.8rem; flex-wrap:wrap; align-items:center; margin-bottom:0.8rem; font-size:12px">
+          <label style="display:flex; align-items:center; gap:0.3rem">From <input type="date" value="${reportFrom || ''}" onchange="setReportFrom(this.value)" style="padding:3px 5px"></label>
+          <label style="display:flex; align-items:center; gap:0.3rem">To <input type="date" value="${reportTo || ''}" onchange="setReportTo(this.value)" style="padding:3px 5px"></label>
+        </div>
+        <div style="overflow-x:auto">${_deptReportTablesHtml(biz, R)}</div>
+      </div>`;
+  }
+
+  // Printable version of the currently-selected report range
+  function printDepartmentReport() {
+    const biz = activeBiz;
+    const bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
+    const R = _deptReportData(biz, reportFrom, reportTo);
+    const todayStr = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' });
+    const html = `<!DOCTYPE html><html><head><title>Department Report — ${bizNames[biz] || biz}</title>
 <style>
   @page { size: A4 landscape; margin: 10mm; }
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; color: #000; }
@@ -4424,40 +4507,21 @@
   .biz-name { font-size:20px; font-weight:800; }
   .date { font-size:12px; color:#444; }
   .title { font-size:16px; font-weight:700; text-align:right; }
-  table { width:100%; border-collapse:collapse; margin-bottom:18px; }
-  th, td { border:1px solid #999; padding:4px 6px; font-size:11px; }
-  thead th { background:#1f2937; color:#fff; font-size:10px; text-transform:uppercase; }
-  tfoot td { font-weight:bold; background:#e5e7eb; }
-  .empty { text-align:center; color:#666; padding:14px; font-style:italic; }
-  .det-day { margin-bottom:14px; page-break-inside:avoid; }
-  .det-day h3 { font-size:14px; border-bottom:1px solid #999; padding-bottom:3px; margin-bottom:6px; }
-  .det-stage { margin:4px 0 8px 8px; }
-  .det-stage-h { font-weight:700; font-size:12px; }
-  .det-stage ul { margin:2px 0 0 22px; }
-  .det-stage li { font-size:11px; margin:1px 0; }
-  .sec-title { font-size:14px; font-weight:800; margin:6px 0; border-bottom:2px solid #000; padding-bottom:3px; }
   @media print { .no-print { display:none; } }
 </style></head><body>
   <div class="header">
-    <div><div class="biz-name">${bizNames[biz] || biz}</div><div class="date">Department Daily Report · generated ${todayStr}</div></div>
-    <div class="title">What each department completed<br>per day — last ${daysBack} days</div>
+    <div><div class="biz-name">${bizNames[biz] || biz}</div><div class="date">Department Report · generated ${todayStr}</div></div>
+    <div class="title">What each department completed<br>${_escape(_reportRangeLabel())} · ${R.grand} unit(s)</div>
   </div>
   <button class="no-print" onclick="window.print()" style="padding:8px 16px; font-size:14px; font-weight:700; margin-bottom:10px; cursor:pointer">🖨️ Print / Save PDF</button>
-  <div class="sec-title">Units completed per department per day</div>
-  <table>
-    <thead><tr><th>Day</th>${stageOrder.map(s => `<th>${esc(s)}</th>`).join('')}<th>Total</th></tr></thead>
-    <tbody>${matrixRows}</tbody>
-    <tfoot><tr><td>TOTAL</td>${stageOrder.map(s => `<td style="text-align:center">${colTot[s] || 0}</td>`).join('')}<td style="text-align:center">${grand}</td></tr></tfoot>
-  </table>
-  ${days.length ? `<div class="sec-title">Detailed breakdown</div>${detail}` : ''}
+  ${_deptReportTablesHtml(biz, R)}
   <p style="font-size:10px; color:#666; margin-top:10px">Counts are units (order qty) marked done at each department. Only completions recorded after this feature was deployed appear here.</p>
 </body></html>`;
-
     const w = window.open('', '_blank');
     if (!w) { alert('Please allow pop-ups to view the report.'); return; }
     w.document.write(html); w.document.close();
   }
-  window.departmentReport = departmentReport;
+  window.printDepartmentReport = printDepartmentReport;
 
   function orderStageTrackerHtml(biz, o) {
     const stages = getProductionStagesForOrder(biz, o);
