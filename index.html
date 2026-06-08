@@ -40,12 +40,14 @@
     // Expose to global so non-module code can use them
     window.firebaseAuth = auth;
     window.firebaseDb = db;
+    window.firebaseConfig = firebaseConfig;
     window.firebaseFns = {
       signIn: signInWithEmailAndPassword,
       createUser: createUserWithEmailAndPassword,
       signOut,
       onAuthStateChanged,
-      doc, setDoc, getDoc, onSnapshot
+      doc, setDoc, getDoc, onSnapshot,
+      initializeApp, getAuth, getFirestore
     };
     
     // Trigger app init once Firebase is ready
@@ -740,6 +742,7 @@
   </div>
 
   <div id="section-staff" class="section">
+    <div id="station-logins-admin"></div>
     <div class="card">
       <div class="card-title">ADD STAFF MEMBER</div>
       <div class="row">
@@ -2628,6 +2631,7 @@
   }
   
   function renderStaff() {
+    try { renderStationLoginsAdmin(); } catch (e) { console.warn('Station logins panel failed:', e); }
     const staff = currentData().staff || [];
     const html = staff.map(s => `
       <div class="order-card">
@@ -6560,6 +6564,86 @@
   window.showStaffLogin = showStaffLogin;
   window.populateStationLoginStations = populateStationLoginStations;
   window.doStationLogin = doStationLogin;
+
+  // ----- Admin: create all station logins at once (without logging the admin out) -----
+  const _pwSlug = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+  function renderStationLoginsAdmin() {
+    const el = document.getElementById('station-logins-admin');
+    if (!el) return;
+    if (currentRole !== 'admin') { el.innerHTML = ''; return; }
+    const biz = activeBiz;
+    const stages = (typeof getProductionStages === 'function') ? getProductionStages(biz) : [];
+    const accounts = data.stationAccounts || {};
+    const rows = stages.map(s => {
+      const exists = !!accounts[stationEmail(biz, s)];
+      return `<div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; padding:4px 0; border-bottom:1px solid var(--border)">
+        <span style="width:180px; font-weight:600">${s}</span>
+        <input type="text" id="stpw-${_pwSlug(s)}" placeholder="password (min 6)" autocomplete="off" style="width:170px; padding:4px 6px">
+        <span style="font-size:11px; color:${exists ? '#16a34a' : 'var(--text-muted)'}">${exists ? '✓ created' : 'not created'}</span>
+      </div>`;
+    }).join('');
+    el.innerHTML = `
+      <div class="card" style="border-left:4px solid var(--accent)">
+        <div class="card-title">🏭 Station Logins — ${biz} (admin)</div>
+        <p style="font-size:12px; color:var(--text-muted)">Set a password for each station and create them all at once — <strong>you stay logged in</strong>. Already-created stations are marked ✓ and skipped. Switch business (top) to set up PinkFoot / ReptiCube. The floor signs in via <strong>🏭 Station Login</strong> with just the station + password.</p>
+        <div style="display:flex; gap:0.5rem; align-items:center; margin:0.5rem 0; flex-wrap:wrap">
+          <input type="text" id="stpw-all" placeholder="set all to…" autocomplete="off" style="width:170px; padding:4px 6px">
+          <button class="btn btn-sm" onclick="fillAllStationPw()">Apply to all</button>
+        </div>
+        ${rows || '<div class="empty">No stations defined for this business.</div>'}
+        <button class="btn btn-primary" style="margin-top:0.75rem" onclick="createAllStationLogins()">Create all station logins</button>
+        <div id="station-create-status" style="font-size:12px; margin-top:0.5rem; color:var(--text-muted)"></div>
+      </div>`;
+  }
+
+  function fillAllStationPw() {
+    const v = (document.getElementById('stpw-all') || {}).value || '';
+    (getProductionStages(activeBiz) || []).forEach(s => { const el = document.getElementById('stpw-' + _pwSlug(s)); if (el) el.value = v; });
+  }
+
+  async function createAllStationLogins() {
+    if (currentRole !== 'admin') return;
+    const biz = activeBiz;
+    const st = document.getElementById('station-create-status');
+    const jobs = (getProductionStages(biz) || [])
+      .map(s => ({ station: s, pw: ((document.getElementById('stpw-' + _pwSlug(s)) || {}).value || '').trim() }))
+      .filter(j => j.pw);
+    if (!jobs.length) { if (st) st.textContent = 'Enter at least one password (min 6 chars).'; return; }
+    const tooShort = jobs.filter(j => j.pw.length < 6);
+    if (tooShort.length) { if (st) st.textContent = 'Min 6 chars needed for: ' + tooShort.map(j => j.station).join(', '); return; }
+    if (st) st.textContent = '⏳ Creating…';
+    // Secondary Firebase app so the admin's own session is untouched
+    let secAuth, secDb;
+    try {
+      let secApp = window._stationCreatorApp;
+      if (!secApp) { secApp = window.firebaseFns.initializeApp(window.firebaseConfig, 'station-creator'); window._stationCreatorApp = secApp; }
+      secAuth = window.firebaseFns.getAuth(secApp);
+      secDb = window.firebaseFns.getFirestore(secApp);
+    } catch (e) { if (st) st.textContent = '✗ Could not start creator: ' + e.message; return; }
+    if (!data.stationAccounts) data.stationAccounts = {};
+    let created = 0, existed = 0, failed = 0;
+    for (const j of jobs) {
+      const email = stationEmail(biz, j.station);
+      try {
+        const cred = await window.firebaseFns.createUser(secAuth, email, j.pw);
+        await window.firebaseFns.setDoc(window.firebaseFns.doc(secDb, 'users', cred.user.uid), { email, role: 'station', biz, station: j.station, createdAt: new Date().toISOString() });
+        data.stationAccounts[email] = true; created++;
+      } catch (e) {
+        if (e.code === 'auth/email-already-in-use') { data.stationAccounts[email] = true; existed++; }
+        else { failed++; console.warn('Station create failed:', j.station, e); }
+      }
+    }
+    try { await window.firebaseFns.signOut(secAuth); } catch (e) {}
+    snapshotState();
+    saveData();
+    renderStationLoginsAdmin();
+    if (st) st.textContent = `Done: ${created} created, ${existed} already existed${failed ? `, ${failed} failed (see console)` : ''}.`;
+    toast(`Station logins: ${created} created, ${existed} existed${failed ? ', ' + failed + ' failed' : ''}`, failed ? 'warn' : 'success', 4000);
+  }
+  window.renderStationLoginsAdmin = renderStationLoginsAdmin;
+  window.fillAllStationPw = fillAllStationPw;
+  window.createAllStationLogins = createAllStationLogins;
   
   async function doLogout() {
     if (confirm('Sign out?')) {
