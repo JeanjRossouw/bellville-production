@@ -5560,7 +5560,15 @@
     const biz = activeBiz;
     const bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
     const bd = currentData();
-    const orders = (bd.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done');
+    const active = o => o.status !== 'delivered' && o.status !== 'done';
+    // Mirror the on-screen planner: non-rockers from this business, plus (for Bellville)
+    // every rocking chair across all businesses, since rockers are built in Bellville.
+    const orders = (bd.orders || []).filter(o => active(o) && !isRockingOrder(o));
+    if (biz === 'bellville') {
+      ['bellville', 'pinkfoot', 'repticube'].forEach(b => (data[b] && data[b].orders ? data[b].orders : []).forEach(o => {
+        if (active(o) && isRockingOrder(o)) orders.push(o);
+      }));
+    }
 
     const todayMonday = getMondayOf(new Date());
     const weeks = [0, 1, 2, 3].map(i => _addDaysIso(todayMonday, i * 7));
@@ -5601,7 +5609,7 @@
           <td>${i + 1}</td>
           <td style="font-weight:bold; font-size:13px">#${_escape(o.invoice || o.id)}</td>
           <td>${_escape(o.orderDate || '—')}</td>
-          <td>${_escape(o.product || '')}${o.category ? ' [' + _escape(o.category) + ']' : ''}</td>
+          <td>${_escape(o.product || '')}${o.category ? ' [' + _escape(o.category) + ']' : ''}${(biz === 'bellville' && isRockingOrder(o)) ? ' 🪑 ' + _escape(((findOrderAnyBiz(o.id) || {}).biz || '').toUpperCase()) : ''}</td>
           ${showFabric ? `<td>${_escape(o.fabric || '—')}</td><td style="${fabricBg} font-weight:bold; font-size:10px">${fabricStatusText}</td>` : ''}
           <td style="text-align:center">${o.qty || 1}</td>
           <td>${_escape(o.customer || '')}</td>
