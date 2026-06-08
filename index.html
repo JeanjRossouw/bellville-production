@@ -4147,28 +4147,54 @@
     pinkfoot: ['Cut Wood', 'Assemble', 'Sand', 'Primer', 'Sand 2nd', 'Final Paint', 'Final Assemble', 'Spot Check', 'Pack'],
     repticube: ['CNC Board', 'CNC Windows', 'Sand Board', 'Fit Window', 'Clean', 'Pack']
   };
-  // The manufacturing divisions an order passes through (Bellville uses the capacity
-  // stages and honours per-stage category skips; others use a default stage list).
-  function getProductionStagesForOrder(biz, o) {
+  // Rocking chairs are built in Bellville production regardless of which business owns the order
+  function isRockingOrder(o) {
+    return /rocking|rocker/i.test(o.category || '') || /rocking|rocker/i.test(o.product || '');
+  }
+  function findOrderAnyBiz(id) {
+    for (const b of ['bellville', 'pinkfoot', 'repticube']) {
+      const arr = data[b] && data[b].orders;
+      if (arr) { const o = arr.find(x => x.id === id); if (o) return { biz: b, o }; }
+    }
+    return null;
+  }
+  // Active orders worked at a given business's stations (Bellville also gets all rockers)
+  function stationPoolOrders(biz) {
+    let pool = [];
     if (biz === 'bellville') {
+      ['bellville', 'pinkfoot', 'repticube'].forEach(b => (data[b] && data[b].orders ? data[b].orders : []).forEach(o => {
+        if (b === 'bellville' || isRockingOrder(o)) pool.push(o);
+      }));
+    } else {
+      pool = (data[biz] && data[biz].orders ? data[biz].orders : []).filter(o => !isRockingOrder(o));
+    }
+    return pool.filter(o => o.status !== 'done' && o.status !== 'delivered');
+  }
+
+  // The manufacturing divisions an order passes through. Rockers always use Bellville's
+  // stages (built there); Bellville uses capacity stages + category skips; others a default list.
+  function getProductionStagesForOrder(biz, o) {
+    const prodBiz = isRockingOrder(o) ? 'bellville' : biz;
+    if (prodBiz === 'bellville') {
       try {
         ensureCapacitySettings();
         const cat = _orderCategory(o);
         return (data.capacitySettings.stages || []).filter(s => !_stageExcludes(s, cat)).map(s => s.name);
       } catch (e) { return []; }
     }
-    return _DEFAULT_STAGES_BY_BIZ[biz] || [];
+    return _DEFAULT_STAGES_BY_BIZ[prodBiz] || [];
   }
 
   function toggleOrderStage(orderId, stage) {
-    const o = currentData().orders.find(x => x.id === orderId);
-    if (!o) return;
+    const found = findOrderAnyBiz(orderId);
+    if (!found) return;
+    const o = found.o;
     snapshotState();
     if (!o.stageDone || typeof o.stageDone !== 'object') o.stageDone = {};
     if (o.stageDone[stage]) delete o.stageDone[stage];
     else o.stageDone[stage] = true;
     saveData();
-    renderOrders();
+    render();
   }
   window.toggleOrderStage = toggleOrderStage;
 
@@ -4194,8 +4220,7 @@
   }
   function ordersAtStage(biz, stageName) {
     const isStart = _isStartStage(biz, stageName);
-    return (data[biz] && data[biz].orders ? data[biz].orders : []).filter(o => {
-      if (o.status === 'done' || o.status === 'delivered') return false;
+    return stationPoolOrders(biz).filter(o => {
       const stages = getProductionStagesForOrder(biz, o);
       if (stages.indexOf(stageName) === -1) return false;        // product doesn't use this stage
       if (o.stageDone && o.stageDone[stageName]) return false;   // already done here
@@ -4204,12 +4229,12 @@
     });
   }
 
-  // Admin: clear all per-station progress on active orders (current business) to start over
+  // Admin: clear all per-station progress on this business's station pool to start over
   function resetAllStationProgress() {
     if (currentRole !== 'admin') { alert('Only admin can reset station progress.'); return; }
     const biz = activeBiz;
-    const active = (currentData().orders || []).filter(o => o.status !== 'done' && o.status !== 'delivered');
-    if (!confirm(`Clear station progress for all ${active.length} active ${biz} order(s)? Every piece restarts from the beginning. This does not delete orders.`)) return;
+    const active = stationPoolOrders(biz);
+    if (!confirm(`Clear station progress for all ${active.length} active order(s) at ${biz}? Every piece restarts from the beginning. This does not delete orders.`)) return;
     snapshotState();
     active.forEach(o => { o.stageDone = {}; });
     saveData();
@@ -4220,9 +4245,9 @@
 
   // Worker presses DONE → mark stage complete, advance status, auto-finish when last stage
   function completeStage(orderId, stage) {
-    const biz = activeBiz;
-    const o = currentData().orders.find(x => x.id === orderId);
-    if (!o) return;
+    const found = findOrderAnyBiz(orderId);
+    if (!found) return;
+    const biz = found.biz, o = found.o;
     snapshotState();
     const oldStatus = o.status;
     if (!o.stageDone || typeof o.stageDone !== 'object') o.stageDone = {};
@@ -4278,9 +4303,10 @@
       const due = o.dueDate ? new Date(o.dueDate + 'T00:00:00') : null;
       const daysLeft = due && !isNaN(due.getTime()) ? Math.ceil((due - today) / 86400000) : null;
       const overdue = daysLeft !== null && daysLeft < 0;
+      const rockerTag = (biz === 'bellville' && isRockingOrder(o)) ? ' <span style="background:#f3e8ff; color:#7e22ce; padding:1px 6px; border-radius:3px; font-size:9px; font-weight:700">🪑 ' + ((findOrderAnyBiz(o.id) || {}).biz || '').toUpperCase() + '</span>' : '';
       return `<div class="order-card" style="display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap; ${overdue ? 'border-left:4px solid #dc2626' : ''}">
         <div style="flex:1; min-width:200px">
-          <div style="font-weight:700; font-size:15px">#${escHtml(o.invoice || o.id)} — ${escHtml(o.product || '')}${o.qty > 1 ? ' × ' + o.qty : ''}</div>
+          <div style="font-weight:700; font-size:15px">#${escHtml(o.invoice || o.id)} — ${escHtml(o.product || '')}${o.qty > 1 ? ' × ' + o.qty : ''}${rockerTag}</div>
           <div style="font-size:12px; color:var(--text-muted)">${escHtml(o.customer || '')}${o.fabric ? ' · 🎨 ' + escHtml(o.fabric) : ''}</div>
           <div style="font-size:11px; color:${overdue ? '#dc2626' : 'var(--text-muted)'}; margin-top:2px">Due ${escHtml(o.dueDate || '—')}${daysLeft !== null ? (overdue ? ` (${Math.abs(daysLeft)}d overdue)` : ` (${daysLeft}d)`) : ''} · progress ${doneCount}/${stages.length}</div>
         </div>
@@ -5391,14 +5417,16 @@
     if (!grid) return; // section never mounted
 
     const biz = currentData();
-    const allActive = (biz.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done');
-    // Rocking chairs are planned on their own separate list
-    const isRocking = o => {
-      const cat = (biz.productBoms && biz.productBoms[o.product] ? biz.productBoms[o.product].category : '') || o.category || '';
-      return cat.toLowerCase().indexOf('rocking') !== -1 || (o.product || '').toLowerCase().match(/rocking|rocker/);
-    };
-    const rockingChairs = allActive.filter(isRocking);
-    const orders = allActive.filter(o => !isRocking(o));
+    const active = o => o.status !== 'delivered' && o.status !== 'done';
+    // Rocking chairs are built in Bellville production: excluded from week columns everywhere,
+    // and gathered (across all businesses) onto Bellville's separate rocking-chair list.
+    const orders = (biz.orders || []).filter(o => active(o) && !isRockingOrder(o));
+    const rockingChairs = []; // [{ o, biz }]
+    if (activeBiz === 'bellville') {
+      ['bellville', 'pinkfoot', 'repticube'].forEach(b => (data[b] && data[b].orders ? data[b].orders : []).forEach(o => {
+        if (active(o) && isRockingOrder(o)) rockingChairs.push({ o, biz: b });
+      }));
+    }
 
     const todayMonday = getMondayOf(new Date());
     const weeks = [0, 1, 2, 3].map(i => _addDaysIso(todayMonday, i * 7));
@@ -5453,12 +5481,25 @@
       </div>
     ` : '';
 
-    rockingChairs.sort(byDue);
+    rockingChairs.sort((a, b) => byDue(a.o, b.o));
+    const rockingCard = (o, ownerBiz) => {
+      const stages = getProductionStagesForOrder('bellville', o);
+      const done = stages.filter(s => o.stageDone && o.stageDone[s]).length;
+      return `<div class="plan-card" style="cursor:default">
+        <div class="pc-body">
+          <div class="pc-inv">#${_escape(o.invoice || o.id)} <span style="font-size:9px; color:var(--text-muted)">${ownerBiz}</span></div>
+          <div class="pc-prod">${_escape(o.product || '')}${o.qty > 1 ? ' × ' + o.qty : ''}</div>
+          <div class="pc-cust">👤 ${_escape(o.customer || '')}</div>
+          ${o.fabric ? `<div class="pc-cust">🎨 ${_escape(o.fabric)}</div>` : ''}
+          <div class="pc-due">${o.dueDate ? 'Due ' + _escape(o.dueDate) : ''} · ${done}/${stages.length}</div>
+        </div>
+      </div>`;
+    };
     const rockingHtml = rockingChairs.length ? `
       <div class="card" style="margin-bottom:1rem; border-left:4px solid #9333ea">
-        <div class="card-title">🪑 ROCKING CHAIRS (${rockingChairs.length})</div>
+        <div class="card-title">🪑 ROCKING CHAIRS — Bellville production (${rockingChairs.length})</div>
         <div class="plan-pool">
-          ${rockingChairs.map(o => planItemCard(o)).join('')}
+          ${rockingChairs.map(r => rockingCard(r.o, r.biz)).join('')}
         </div>
       </div>
     ` : '';
