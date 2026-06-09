@@ -872,6 +872,7 @@
   let activeBiz = 'bellville';
   let currentRole = null; // declared early so render()/canSeeTab never hit a temporal-dead-zone
   let currentStation = null;    // for 'station' department logins: their locked station name
+  let currentStationRole = null;// for role-based 'station' logins: unlocks all stages of this role
   let currentStationBiz = null; // for 'station' logins: their business
   let data = {
     bellville: { orders: [], products: {}, inventory: {}, staff: [] },
@@ -4451,16 +4452,26 @@
     const escJs = s => String(s).replace(/'/g, "\\'");
     const escHtml = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-    // Department logins are locked to their own station; everyone else can switch
-    const locked = currentRole === 'station' && currentStation && allStages.indexOf(currentStation) !== -1;
-    if (locked) stationStage = currentStation;
-    else if (!stationStage || allStages.indexOf(stationStage) === -1) stationStage = allStages[0];
+    // Which stations this view may show:
+    //  • admin/manager → all stages (full selector)
+    //  • role login (e.g. Carpenter) → all stages of that role (a small selector to switch between them)
+    //  • single-station login → just that one stage (fully locked)
+    let scopeStages = allStages;
+    if (currentRole === 'station') {
+      if (currentStationRole) scopeStages = allStages.filter(s => (stageRole(biz, s) || '').toLowerCase() === String(currentStationRole).toLowerCase());
+      else if (currentStation) scopeStages = allStages.filter(s => s === currentStation);
+      if (!scopeStages.length) scopeStages = allStages; // safety: never strand a station login with nothing
+    }
+    const locked = currentRole === 'station' && scopeStages.length === 1;   // single station → no selector
+    const restricted = currentRole === 'station' && scopeStages.length > 1;  // role login → limited selector
+    if (locked) stationStage = scopeStages[0];
+    else if (!stationStage || scopeStages.indexOf(stationStage) === -1) stationStage = scopeStages[0];
 
     const counts = {}; allStages.forEach(s => counts[s] = ordersAtStage(biz, s).length);
     const selectorCard = locked ? '' : `
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.5rem">
-          <span style="font-size:11px; color:var(--text-muted)">Tap your station — number shows how many pieces are waiting there now.</span>
+          <span style="font-size:11px; color:var(--text-muted)">${restricted ? 'Your stations — tap to switch between them. Number shows pieces waiting.' : 'Tap your station — number shows how many pieces are waiting there now.'}</span>
           <span style="display:flex; gap:0.4rem">
             <button class="btn btn-sm" onclick="openStationReport()" title="Report of what each department completed, by date range">📊 Daily report</button>
             ${currentRole === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="resetAllStationProgress()" title="Clear progress on all active orders and start over">↺ Reset all progress</button>` : ''}
@@ -4472,8 +4483,8 @@
             const mark = _isSeparateStage(biz, s) ? '◆ ' : (_isStartStage(biz, s) ? '▶ ' : '');
             return `<button onclick="setStationStage('${escJs(s)}')" style="border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'}; background:${sel ? 'var(--accent)' : 'var(--surface)'}; color:${sel ? '#fff' : 'var(--text)'}; border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; font-weight:${sel ? '700' : '500'}">${mark}${escHtml(s)} <span style="opacity:0.8">(${counts[s]})</span></button>`;
           };
-          const flow = allStages.filter(s => !_isSeparateStage(biz, s));
-          const separate = allStages.filter(s => _isSeparateStage(biz, s));
+          const flow = scopeStages.filter(s => !_isSeparateStage(biz, s));
+          const separate = scopeStages.filter(s => _isSeparateStage(biz, s));
           let out = flow.map(stageBtn).join('');
           if (separate.length) {
             out += `<span style="width:1px; height:24px; background:var(--border); margin:0 4px"></span>`
@@ -7008,7 +7019,7 @@
 
     // Show role indicator
     const roleEl = document.getElementById('current-role');
-    if (roleEl) roleEl.textContent = currentRole === 'station' && currentStation ? ('STATION · ' + currentStation.toUpperCase()) : currentRole.toUpperCase();
+    if (roleEl) roleEl.textContent = currentRole === 'station' ? ('STATION · ' + String(currentStationRole || currentStation || '').toUpperCase()) : currentRole.toUpperCase();
   }
   
   function initAuth() {
@@ -7024,16 +7035,17 @@
             const ud = userSnap.data();
             currentRole = ud.role || 'admin';
             currentStation = ud.station || null;
+            currentStationRole = ud.stationRole || null;
             currentStationBiz = ud.biz || null;
           } else {
             // No role record — treat as admin (legacy user)
             currentRole = 'admin';
-            currentStation = null; currentStationBiz = null;
+            currentStation = null; currentStationRole = null; currentStationBiz = null;
           }
         } catch (err) {
           console.warn('Could not load user role:', err);
           currentRole = 'admin';
-          currentStation = null; currentStationBiz = null;
+          currentStation = null; currentStationRole = null; currentStationBiz = null;
         }
 
         document.getElementById('login-overlay').style.display = 'none';
@@ -7185,12 +7197,15 @@
     const extra = {};
     if (role === 'station') {
       extra.biz = document.getElementById('signup-biz').value;
-      extra.station = document.getElementById('signup-station').value;
-      if (!extra.biz || !extra.station) {
+      const stationVal = document.getElementById('signup-station').value;
+      if (!extra.biz || !stationVal) {
         document.getElementById('auth-status').textContent = 'Pick a business and station for this department login';
         return;
       }
-      email = stationEmail(extra.biz, extra.station); // derive — floor only needs station + password
+      // "role-<Role>" selections are role logins covering all that role's stations
+      if (stationVal.indexOf('role-') === 0) extra.stationRole = stationVal.slice(5);
+      else extra.station = stationVal;
+      email = stationEmail(extra.biz, stationVal); // derive — floor only needs station + password
     }
     if (!email || password.length < 6) {
       document.getElementById('auth-status').textContent = 'Email + password (min 6 chars) required';
@@ -7245,8 +7260,21 @@
     const biz = document.getElementById('station-login-biz') ? document.getElementById('station-login-biz').value : 'bellville';
     const sel = document.getElementById('station-login-station');
     if (!sel) return;
+    sel.innerHTML = _stationOptionsHtml(biz);
+  }
+  // Shared <option> list: per-stage stations + a group of role logins (cover multiple stations)
+  function _stationOptionsHtml(biz) {
+    const esc = s => String(s).replace(/"/g, '&quot;');
     const stages = (typeof getProductionStages === 'function') ? getProductionStages(biz) : [];
-    sel.innerHTML = stages.map(s => `<option value="${String(s).replace(/"/g, '&quot;')}">${s}</option>`).join('') || '<option value="">(no stations)</option>';
+    let html = stages.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    const map = (typeof bizRoleStageMap === 'function') ? bizRoleStageMap(biz) : {};
+    const roles = Object.keys(map).filter(r => map[r].length >= 2);
+    if (roles.length) {
+      html += `<optgroup label="Role logins (cover multiple stations)">` +
+        roles.map(r => `<option value="role-${esc(r)}">👥 ${esc(r)} — ${map[r].map(esc).join(', ')}</option>`).join('') +
+        `</optgroup>`;
+    }
+    return html || '<option value="">(no stations)</option>';
   }
   async function doStationLogin() {
     const biz = document.getElementById('station-login-biz').value;
@@ -7284,6 +7312,7 @@
         <span style="font-size:11px; color:${exists ? '#16a34a' : 'var(--text-muted)'}">${exists ? '✓ created' : 'not created'}</span>
       </div>`;
     }).join('');
+    const roleLoginRows = _roleLoginRowsHtml(biz);
     el.innerHTML = `
       <div class="card" style="border-left:4px solid var(--accent)">
         <div class="card-title">🏭 Station Logins — ${biz} (admin)</div>
@@ -7295,7 +7324,36 @@
         ${rows || '<div class="empty">No stations defined for this business.</div>'}
         <button class="btn btn-primary" style="margin-top:0.75rem" onclick="createAllStationLogins()">Create all station logins</button>
         <div id="station-create-status" style="font-size:12px; margin-top:0.5rem; color:var(--text-muted)"></div>
+        ${roleLoginRows}
       </div>`;
+  }
+
+  // Roles that span ≥2 stages (e.g. Carpenter → Assemble + Final Assembly) — one login covers all of them
+  function bizRoleStageMap(biz) {
+    const m = {};
+    (getProductionStages(biz) || []).forEach(s => { const r = stageRole(biz, s); if (r) (m[r] = m[r] || []).push(s); });
+    return m;
+  }
+  function _roleLoginRowsHtml(biz) {
+    const map = bizRoleStageMap(biz);
+    const roles = Object.keys(map).filter(r => map[r].length >= 2); // only roles worth grouping
+    if (!roles.length) return '';
+    const accounts = data.stationAccounts || {};
+    const rows = roles.map(r => {
+      const exists = !!accounts[stationEmail(biz, 'role-' + r)];
+      return `<div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; padding:4px 0; border-bottom:1px solid var(--border)">
+        <span style="width:180px; font-weight:600">${_escape(r)} <span style="font-weight:400; color:var(--text-muted); font-size:11px">(${map[r].map(_escape).join(', ')})</span></span>
+        <input type="text" id="rolepw-${_pwSlug(r)}" placeholder="password (min 6)" autocomplete="off" style="width:170px; padding:4px 6px">
+        <span style="font-size:11px; color:${exists ? '#16a34a' : 'var(--text-muted)'}">${exists ? '✓ created' : 'not created'}</span>
+      </div>`;
+    }).join('');
+    return `<div style="margin-top:1rem; padding-top:0.75rem; border-top:2px dashed var(--border)">
+      <div style="font-weight:700; margin-bottom:0.25rem">👥 Role logins — one login per role, covers all its stations</div>
+      <p style="font-size:12px; color:var(--text-muted)">A carpenter (or sander/sprayer) who works at two stations signs in <strong>once</strong> here and taps between their stations. Each person still picks their own name on the floor.</p>
+      ${rows}
+      <button class="btn btn-primary" style="margin-top:0.75rem" onclick="createRoleStationLogins()">Create role logins</button>
+      <div id="role-create-status" style="font-size:12px; margin-top:0.5rem; color:var(--text-muted)"></div>
+    </div>`;
   }
 
   function fillAllStationPw() {
@@ -7342,9 +7400,49 @@
     if (st) st.textContent = `Done: ${created} created, ${existed} already existed${failed ? `, ${failed} failed (see console)` : ''}.`;
     toast(`Station logins: ${created} created, ${existed} existed${failed ? ', ' + failed + ' failed' : ''}`, failed ? 'warn' : 'success', 4000);
   }
+  async function createRoleStationLogins() {
+    if (currentRole !== 'admin') return;
+    const biz = activeBiz;
+    const st = document.getElementById('role-create-status');
+    const map = bizRoleStageMap(biz);
+    const jobs = Object.keys(map).filter(r => map[r].length >= 2)
+      .map(r => ({ role: r, pw: ((document.getElementById('rolepw-' + _pwSlug(r)) || {}).value || '').trim() }))
+      .filter(j => j.pw);
+    if (!jobs.length) { if (st) st.textContent = 'Enter at least one password (min 6 chars).'; return; }
+    const tooShort = jobs.filter(j => j.pw.length < 6);
+    if (tooShort.length) { if (st) st.textContent = 'Min 6 chars needed for: ' + tooShort.map(j => j.role).join(', '); return; }
+    if (st) st.textContent = '⏳ Creating…';
+    let secAuth, secDb;
+    try {
+      let secApp = window._stationCreatorApp;
+      if (!secApp) { secApp = window.firebaseFns.initializeApp(window.firebaseConfig, 'station-creator'); window._stationCreatorApp = secApp; }
+      secAuth = window.firebaseFns.getAuth(secApp);
+      secDb = window.firebaseFns.getFirestore(secApp);
+    } catch (e) { if (st) st.textContent = '✗ Could not start creator: ' + e.message; return; }
+    if (!data.stationAccounts) data.stationAccounts = {};
+    let created = 0, existed = 0, failed = 0;
+    for (const j of jobs) {
+      const email = stationEmail(biz, 'role-' + j.role);
+      try {
+        const cred = await window.firebaseFns.createUser(secAuth, email, j.pw);
+        await window.firebaseFns.setDoc(window.firebaseFns.doc(secDb, 'users', cred.user.uid), { email, role: 'station', biz, stationRole: j.role, createdAt: new Date().toISOString() });
+        data.stationAccounts[email] = true; created++;
+      } catch (e) {
+        if (e.code === 'auth/email-already-in-use') { data.stationAccounts[email] = true; existed++; }
+        else { failed++; console.warn('Role login create failed:', j.role, e); }
+      }
+    }
+    try { await window.firebaseFns.signOut(secAuth); } catch (e) {}
+    snapshotState();
+    saveData();
+    renderStationLoginsAdmin();
+    if (st) st.textContent = `Done: ${created} created, ${existed} already existed${failed ? `, ${failed} failed (see console)` : ''}.`;
+    toast(`Role logins: ${created} created, ${existed} existed${failed ? ', ' + failed + ' failed' : ''}`, failed ? 'warn' : 'success', 4000);
+  }
   window.renderStationLoginsAdmin = renderStationLoginsAdmin;
   window.fillAllStationPw = fillAllStationPw;
   window.createAllStationLogins = createAllStationLogins;
+  window.createRoleStationLogins = createRoleStationLogins;
   
   async function doLogout() {
     if (confirm('Sign out?')) {
@@ -7370,8 +7468,7 @@
     const biz = document.getElementById('signup-biz') ? document.getElementById('signup-biz').value : 'bellville';
     const sel = document.getElementById('signup-station');
     if (!sel) return;
-    const stages = (typeof getProductionStages === 'function') ? getProductionStages(biz) : [];
-    sel.innerHTML = stages.map(s => `<option value="${String(s).replace(/"/g, '&quot;')}">${s}</option>`).join('') || '<option value="">(no stations)</option>';
+    sel.innerHTML = _stationOptionsHtml(biz);
   }
   window.onSignupRoleChange = onSignupRoleChange;
   window.populateSignupStations = populateSignupStations;
