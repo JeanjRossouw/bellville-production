@@ -50,7 +50,27 @@
     
     // Trigger app init once Firebase is ready
     window.dispatchEvent(new Event('firebase-ready'));
-  </script>
+
+    // Safety net: if the main script's call to waitForFirebase() never ran
+    // (e.g. a parse-time throw further down the file aborted execution before
+    // reaching line ~4990), kick off auth init from here. This runs in a
+    // separate <script> context so a main-script throw can't prevent it.
+    // Function declarations at classic-script top level are exposed on window,
+    // so window.waitForFirebase / window.initAuth are accessible by name.
+    setTimeout(() => {
+      try {
+        if (typeof window.waitForFirebase === 'function') {
+          window.waitForFirebase();
+        } else if (typeof window.initAuth === 'function') {
+          window.initAuth();
+        } else {
+          console.error('Auth init: neither waitForFirebase nor initAuth is defined — main script likely failed to parse.');
+        }
+      } catch (e) {
+        console.error('Backup auth init failed:', e);
+      }
+    }, 300);
+</script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     
@@ -228,6 +248,25 @@
 
 <div id="toast-stack"></div>
 
+<!-- FULLSCREEN DASHBOARD VIEW — only shown when URL has ?dashboard=1 -->
+<div id="dashboard-only-view" style="display:none; position:fixed; inset:0; background:#0f0f0f; color:#fff; z-index:9000; overflow:auto; padding:1.5rem 2rem; font-family:Arial,sans-serif">
+  <div style="display:flex; justify-content:space-between; align-items:flex-end; border-bottom:2px solid #444; padding-bottom:1rem; margin-bottom:1.5rem">
+    <div>
+      <div style="font-size:11px; color:#888; letter-spacing:0.15em; text-transform:uppercase">Bellville Group · Live Operations</div>
+      <div style="font-size:32px; font-weight:900; letter-spacing:0.05em; margin-top:0.25rem">PRODUCTION DASHBOARD</div>
+    </div>
+    <div style="text-align:right">
+      <div id="dash-only-clock" style="font-size:40px; font-weight:900; font-variant-numeric:tabular-nums; line-height:1">--:--:--</div>
+      <div id="dash-only-date" style="font-size:13px; color:#888; margin-top:0.25rem">—</div>
+    </div>
+  </div>
+  <div id="dash-only-content"></div>
+  <div style="margin-top:2rem; text-align:center; font-size:11px; color:#555">
+    <button onclick="window.close()" style="padding:0.4rem 1rem; background:transparent; color:#888; border:1px solid #444; border-radius:4px; cursor:pointer; font-size:11px">✕ CLOSE</button>
+    <span style="margin-left:1rem">Live data via Firestore · Updates automatically</span>
+  </div>
+</div>
+
 <div id="main-app" style="display:none">
 
 <header>
@@ -270,8 +309,19 @@
   
   <!-- DASHBOARD -->
   <div id="section-dashboard" class="section active">
+    <div class="card" id="dash-live-overview" style="border-color:#1F1E1D; border-width:2px">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>🌐 LIVE OVERVIEW — ALL BUSINESSES</span>
+        <div style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap">
+          <span id="dash-live-updated" style="font-size:10px; color:var(--text-muted); font-weight:normal"></span>
+          <button class="btn btn-sm" onclick="openDashboardWindow()" title="Open the dashboard in a new browser window — drag onto a second monitor for live wall-display">🖥️ Open on second screen</button>
+        </div>
+      </div>
+      <div id="dash-live-content"></div>
+    </div>
+
     <div class="card">
-      <div class="card-title">STATUS</div>
+      <div class="card-title">STATUS (current biz)</div>
       <div class="grid3">
         <div class="metric">
           <div class="metric-label">Pending</div>
@@ -622,46 +672,67 @@
   
   <!-- BOM SECTION -->
   <div id="section-bom" class="section">
-    <div class="card">
-      <div class="card-title">📋 Category Templates</div>
+    <div class="card" id="repticube-defaults-card" style="display:none; background:#fefce8; border-color:#facc15">
+      <div class="card-title">📥 Load ReptiCube Defaults</div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
-        Set master BOM for each category once. Click "Apply to All" to copy template to every product in that category. You can still customize individual products afterwards.
+        Adds the 22 default materials and 14 SKU BOMs (RC30 → RCA180) sourced from your costing sheet.
+        <strong>Safe:</strong> existing materials and products will not be overwritten — only missing ones are added.
+        Products that exist but have no BOM yet will have their default BOM filled in.
       </p>
-      
-      <div class="row" style="margin-bottom:1rem">
-        <div class="f1">
-          <label>Edit template for category</label>
-          <select id="bom-template-category" onchange="renderTemplateEditor()">
-            <option value="">-- Select category --</option>
-          </select>
-        </div>
-      </div>
-      
-      <div id="bom-template-editor"></div>
+      <button class="btn btn-primary" onclick="loadRepticubeDefaults()">📥 Load Defaults Now</button>
     </div>
-    
-    <div class="card">
-      <div class="card-title">🔧 Product BOMs</div>
+
+    <div class="card" id="pinkfoot-defaults-card" style="display:none; background:#fdf2f8; border-color:#f9a8d4">
+      <div class="card-title">📥 Load PinkFoot Defaults</div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
-        All products with their custom material quantities. Modified products show 🔧. Empty rows = uses template by default.
+        Adds <strong>38 materials</strong> (boards, fasteners, finishes, consumables, packaging) and
+        <strong>42 products</strong> across Compactum / Cot / Rocking Chair / Foot stool categories, sourced from your costing sheet and updated catalogue.
+        Per-product BOMs and cutlists start empty — fill them in via the BOM tab as you have time, or send a separate costing sheet for each product.
+        <br><strong>Safe:</strong> existing materials and products are not overwritten — only missing ones are added (deduped by name).
       </p>
-      
+      <button class="btn btn-primary" onclick="loadPinkfootDefaults()">📥 Load Defaults Now</button>
+    </div>
+
+    <div class="card" id="reconcile-card" style="background:#eff6ff; border-color:#93c5fd">
+      <div class="card-title">🔄 Reconcile Catalogue with Defaults</div>
+      <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
+        Brings your live data in line with the latest defaults for the active biz. In one pass:
+        renames migrated products (and the orders linked to them), moves products to updated categories
+        (Feroche → Sofa, Feroche Chair → Chair on Bellville), adds missing products, and flags products
+        no longer in defaults for deletion. <strong>Snapshot-backed</strong> — single Ctrl+Z reverts the whole operation.
+        You'll see a preview with counts and exact rename/removal lists before anything is applied.
+      </p>
+      <button class="btn btn-primary" onclick="reconcileCatalogue()">🔄 Reconcile Now</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>🔧 Edit Product</span>
+        <button class="btn btn-primary" onclick="addNewProductFromEditor()">+ New Product</button>
+      </div>
+      <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
+        Pick one product, set its materials and cutting list, see live cost.
+        The total cost from this editor feeds into your weekly material requirements.
+      </p>
+
       <div class="row" style="margin-bottom:1rem">
         <div class="f1">
-          <label>Filter by Category</label>
-          <select id="bom-category" onchange="renderProductBomTable()">
+          <label>Filter by category</label>
+          <select id="prod-editor-cat" onchange="renderProductEditor()">
             <option value="">-- All categories --</option>
           </select>
         </div>
-        <div class="f1">
-          <label>Search product</label>
-          <input id="bom-search" placeholder="e.g., Lisa, California..." oninput="renderProductBomTable()">
+        <div class="f2" style="min-width:260px">
+          <label>Product</label>
+          <select id="prod-editor-product" onchange="renderProductEditor()">
+            <option value="">-- Select product --</option>
+          </select>
         </div>
       </div>
-      
-      <div id="bom-editor"></div>
+
+      <div id="product-editor"></div>
     </div>
-    
+
     <div class="card">
       <div class="card-title">📦 Materials Library</div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
@@ -730,6 +801,31 @@
     </div>
     
     <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>📅 MATERIAL NEEDS BY WEEK</span>
+        <span id="weekly-needs-summary" style="font-size:11px; color:var(--text-muted)"></span>
+      </div>
+      <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
+        How much of each material you'll need each week, based on orders scheduled in the Planner.
+        Updates live. Schedule more orders to see them appear in upcoming weeks.
+      </p>
+      <div id="weekly-needs-table"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>🔗 BOM COVERAGE — orders not linked to a BOM</span>
+        <span id="bom-coverage-summary" style="font-size:11px; color:var(--text-muted)"></span>
+      </div>
+      <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
+        Active orders whose Product name doesn't exactly match a BOM key.
+        These won't auto-deduct stock when moved to In Production.
+        Click <strong>Fix</strong> to jump to the order and pick the right product from the dropdown.
+      </p>
+      <div id="bom-coverage-list"></div>
+    </div>
+
+    <div class="card">
       <div class="card-title">📋 STOCK MOVEMENTS (Last 50)</div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
         Audit trail — purchases, production deductions, manual adjustments.
@@ -737,7 +833,7 @@
       <div id="stock-movements"></div>
     </div>
   </div>
-  
+
   <!-- STOCK IN MODAL -->
   <div id="stock-in-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; align-items:center; justify-content:center; padding:1rem">
     <div style="max-width:500px; width:100%; background:#fff; border-radius:12px; padding:2rem; max-height:90vh; overflow-y:auto">
@@ -784,7 +880,12 @@
     <div class="card">
       <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
         <span>🗓️ PRODUCTION PLANNER</span>
-        <span style="font-size:11px; color:var(--text-muted)">Drag cards between weeks · or tap <strong>⋮</strong> to schedule</span>
+        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
+          <span style="font-size:11px; color:var(--text-muted); margin-right:0.5rem">Drag cards between weeks · or tap <strong>⋮</strong> to schedule</span>
+          <button class="btn" id="planner-mat-btn" onclick="printWeeklyMaterialRequirements()" title="Per-week raw materials forecast based on each order's BOM">📊 Materials by Week</button>
+          <button class="btn" onclick="printPlannerSheetByWeek()" title="One A4 portrait page per week — for handing to individual foremen">🖨️ Print Per Week</button>
+          <button class="btn btn-primary" onclick="printPlannerSheet()" title="All 4 weeks on one A4 landscape page — overview">🖨️ Print Plan</button>
+        </div>
       </div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
         Active orders only (pending and in-production). Orders scheduled to a past week show in <strong>Current</strong>.
@@ -801,6 +902,30 @@
     repticube: { orders: [], products: {}, inventory: {}, staff: [] },
     pinkfoot: { orders: [], products: {}, inventory: {}, staff: [] }
   };
+
+  // Auth & sync state — declared at top of script so they're guaranteed to be
+  // initialized before any async callback fires. (Previously these lived next
+  // to the Firebase code ~line 4700; if anything earlier in the script threw
+  // at parse time, these stayed in temporal-dead-zone and the auth listener
+  // crashed with "Cannot access 'currentUser' before initialization".)
+  let currentUser = null;
+  let currentRole = null;
+  let firebaseReady = false;
+  let unsubscribe = null;
+  let saveTimeout = null;
+  let lastSyncedPayload = '';
+
+  // Render-pipeline state — MUST be declared before switchBiz('bellville') runs
+  // at the bottom of this section, because switchBiz calls render() which reads
+  // renderScheduled. Previously declared next to the render() function definition
+  // ~line 2635, which caused a parse-time TDZ crash that aborted the entire script
+  // before reaching auth/load/sync initialization.
+  let renderScheduled = false;
+
+  // Tab name array — order MUST match the order of .tab buttons in the DOM.
+  // Used by showSection and applyRolePermissions. Declared at top so it's
+  // initialized regardless of where in the script execution lands.
+  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner'];
   
   // Undo history (last 20 states)
   let history = [];
@@ -865,30 +990,88 @@
   window.toast = toast;
 
   function currentData() { return data[activeBiz]; }
+
+  // Resolve which BOM (if any) an order is linked to. Returns the BOM key
+  // string if linked, otherwise null. Resolution priority:
+  //   1. order.bomKey explicitly set (user picked via the per-order BOM dropdown)
+  //   2. order.product exactly matches a BOM key (legacy direct-name linking)
+  // This separation lets users keep the original invoice product text (e.g.
+  // "Reptile Cube 30 Standard") while still linking to a BOM (e.g. "RC30").
+  function getBomKeyForOrder(order, bizData) {
+    if (!order) return null;
+    const biz = bizData || currentData();
+    const boms = (biz && biz.productBoms) || {};
+    if (order.bomKey && boms[order.bomKey]) return order.bomKey;
+    if (order.product && boms[order.product]) return order.product;
+    return null;
+  }
+  window.getBomKeyForOrder = getBomKeyForOrder;
   
+  // Tabs that are ONLY relevant for a specific biz. Empty array = no restrictions
+  // (all role-allowed tabs visible on all businesses). The infrastructure stays in
+  // place so this is easy to re-restrict later by adding tab names back.
+  const REPTICUBE_ONLY_TABS = [];
+
+  // Combined tab/section visibility — driven by BOTH role permissions AND the
+  // active biz's allowed feature set. Called from switchBiz AND applyRolePermissions.
+  function applyTabVisibility() {
+    const roleTabs = (currentRole && typeof ROLE_PERMISSIONS !== 'undefined' && ROLE_PERMISSIONS[currentRole])
+      ? ROLE_PERMISSIONS[currentRole]
+      : TAB_NAMES; // pre-login or unknown role: assume all
+    const isReptiCube = activeBiz === 'repticube';
+
+    document.querySelectorAll('.tab').forEach((tab, i) => {
+      const tabName = TAB_NAMES[i];
+      if (!tabName) return;
+      const roleAllows = roleTabs.includes(tabName);
+      const bizAllows = isReptiCube || !REPTICUBE_ONLY_TABS.includes(tabName);
+      tab.style.display = (roleAllows && bizAllows) ? '' : 'none';
+    });
+
+    // Low-stock card and Materials-by-Week button: shown on all biz (gracefully
+    // display "no BOM data" when no BOMs are set up — useful once Bellville BOMs land).
+    const lowStockCard = document.getElementById('dash-low-stock-card');
+    if (lowStockCard) lowStockCard.style.display = '';
+    const matWeekBtn = document.getElementById('planner-mat-btn');
+    if (matWeekBtn) matWeekBtn.style.display = '';
+    // Load ReptiCube Defaults helper stays ReptiCube-only — it's specifically
+    // for the ReptiCube SKU set and would be confusing on other biz.
+    const repDefaultsCard = document.getElementById('repticube-defaults-card');
+    if (repDefaultsCard) repDefaultsCard.style.display = isReptiCube ? '' : 'none';
+    const pfDefaultsCard = document.getElementById('pinkfoot-defaults-card');
+    if (pfDefaultsCard) pfDefaultsCard.style.display = (activeBiz === 'pinkfoot') ? '' : 'none';
+
+    // If the currently-active tab just got hidden, fall back to the first allowed one
+    const activeTabEl = document.querySelector('.tab.active');
+    if (activeTabEl && activeTabEl.style.display === 'none') {
+      const fallback = roleTabs.find(t => isReptiCube || !REPTICUBE_ONLY_TABS.includes(t)) || 'dashboard';
+      showSection(fallback);
+    }
+  }
+
   function switchBiz(biz) {
     activeBiz = biz;
     document.querySelectorAll('header .btn').forEach((btn, i) => {
       btn.style.background = ['bellville', 'repticube', 'pinkfoot'][i] === biz ? 'var(--accent)' : 'transparent';
       btn.style.color = ['bellville', 'repticube', 'pinkfoot'][i] === biz ? '#0f0f0f' : 'var(--text)';
     });
-    
+
     // Show category dropdown only for PinkFoot
     const categoryRow = document.getElementById('category-row');
     if (categoryRow) {
       categoryRow.style.display = biz === 'pinkfoot' ? 'block' : 'none';
     }
-    
+
+    // Tabs and BOM-related UI depend on the active biz
+    applyTabVisibility();
+
     render();
     if (typeof populateProductDatalist === 'function') populateProductDatalist();
   }
   
   switchBiz('bellville');
   
-  // Tab name array — order MUST match the order of .tab buttons in the DOM.
-  // Used by showSection and applyRolePermissions for positional tab lookup.
-  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner'];
-
+  // TAB_NAMES is declared at the top of the script (TDZ safety).
   function showSection(sec) {
     document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
     document.getElementById('section-' + sec).classList.add('active');
@@ -1273,26 +1456,288 @@
     document.getElementById('inventory-list').innerHTML = html;
     
     renderStockMovements();
+    renderBomCoverage();
+    renderMaterialNeedsByWeek();
   }
+
+  // On-screen weekly material requirements matrix for the Materials tab.
+  // Materials in rows, weeks in columns. Cells = qty needed that week (per orders
+  // scheduled in the Planner). Rows with any shortfall highlight in yellow.
+  // Mirrors the print version (printWeeklyMaterialRequirements) but always-visible.
+  function renderMaterialNeedsByWeek() {
+    const tableEl = document.getElementById('weekly-needs-table');
+    const sumEl = document.getElementById('weekly-needs-summary');
+    if (!tableEl) return;
+
+    const biz = currentData();
+    const mats = biz.materialsLibrary || [];
+    if (mats.length === 0) {
+      tableEl.innerHTML = '<div class="empty" style="padding:1rem">No materials in library yet.</div>';
+      if (sumEl) sumEl.textContent = '';
+      return;
+    }
+
+    // Same bucketing as the planner / print forecast — keep consistent
+    if (typeof getMondayOf !== 'function' || typeof _addDaysIso !== 'function') {
+      tableEl.innerHTML = '<div class="empty" style="padding:1rem">Planner helpers not ready — try refreshing.</div>';
+      return;
+    }
+    const todayMonday = getMondayOf(new Date());
+    const weeks = [0, 1, 2, 3].map(i => _addDaysIso(todayMonday, i * 7));
+    const orders = (biz.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done');
+
+    const buckets = Object.fromEntries(weeks.map(w => [w, []]));
+    orders.forEach(o => {
+      if (!o.planWeek) return;
+      if (buckets[o.planWeek]) buckets[o.planWeek].push(o);
+      else if (o.planWeek < weeks[0]) buckets[weeks[0]].push(o); // past-scheduled rolls into current
+    });
+
+    // For each week, compute material needs (skip orders whose materials were already deducted)
+    const needsByWeek = {}; // weekIso → { matId: qtyNeeded }
+    weeks.forEach(w => {
+      const req = {};
+      buckets[w].forEach(o => {
+        if (o.materialsDeducted) return;
+        const bomKey = getBomKeyForOrder(o, biz);
+        const prodBom = bomKey ? biz.productBoms[bomKey] : null;
+        if (!prodBom) return;
+        const qty = parseFloat(o.qty || 1);
+        // Materials map (hardware, finishes)
+        Object.entries(prodBom.materials || {}).forEach(([matId, perUnit]) => {
+          req[matId] = (req[matId] || 0) + (perUnit * qty);
+        });
+        // Cut list (timber/sheets converted to qty per material)
+        if (typeof _cutListConsumption === 'function') {
+          const cutCons = _cutListConsumption(prodBom, biz);
+          Object.entries(cutCons).forEach(([matId, perUnit]) => {
+            req[matId] = (req[matId] || 0) + (perUnit * qty);
+          });
+        }
+      });
+      needsByWeek[w] = req;
+    });
+
+    // Pick only materials that are needed in at least one week (don't clutter with unused stuff)
+    const usedMatIds = new Set();
+    Object.values(needsByWeek).forEach(req => Object.keys(req).forEach(id => usedMatIds.add(id)));
+
+    if (usedMatIds.size === 0) {
+      const totalOrders = weeks.reduce((s, w) => s + buckets[w].length, 0);
+      tableEl.innerHTML = `<div class="empty" style="padding:1rem">${totalOrders === 0 ? 'No orders scheduled in the next 4 weeks. Schedule some in the Planner.' : 'Orders are scheduled but none have BOM data set up — fill in BOMs on the BOM tab to see materials forecasts here.'}</div>`;
+      if (sumEl) sumEl.textContent = '';
+      return;
+    }
+
+    // Build rows — totals first, sorted by biggest shortfall, then largest total need
+    const rows = [...usedMatIds].map(matId => {
+      const mat = mats.find(m => m.id === matId);
+      const perWeek = weeks.map(w => needsByWeek[w][matId] || 0);
+      const total = perWeek.reduce((a, b) => a + b, 0);
+      const stock = mat ? parseFloat(mat.stock || 0) : 0;
+      const shortfall = Math.max(0, total - stock);
+      return { mat, matId, perWeek, total, stock, shortfall };
+    }).sort((a, b) => {
+      if (b.shortfall !== a.shortfall) return b.shortfall - a.shortfall;
+      return b.total - a.total;
+    });
+
+    const colHeaders = ['Current', '+1 week', '+2 weeks', '+3 weeks'];
+    const weekLabels = weeks.map(_formatWeekShort);
+
+    const totalShort = rows.filter(r => r.shortfall > 0).length;
+    if (sumEl) {
+      sumEl.textContent = `${rows.length} material${rows.length !== 1 ? 's' : ''} needed · ${totalShort} short of stock`;
+      sumEl.style.color = totalShort > 0 ? 'var(--accent)' : 'var(--success)';
+      sumEl.style.fontWeight = '600';
+    }
+
+    const html = `
+      <div style="overflow-x:auto">
+        <table style="width:100%; border-collapse:collapse; font-size:12px">
+          <thead>
+            <tr style="background:var(--bg)">
+              <th style="padding:0.5rem; border:1px solid var(--border); text-align:left">Material</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); width:60px">Unit</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); width:80px; text-align:right">Stock</th>
+              ${colHeaders.map((h, i) => `
+                <th style="padding:0.5rem; border:1px solid var(--border); width:90px; text-align:right">
+                  ${h}<br><span style="font-size:9px; font-weight:normal; color:var(--text-muted)">${weekLabels[i]}</span>
+                </th>`).join('')}
+              <th style="padding:0.5rem; border:1px solid var(--border); width:80px; text-align:right">4-wk Total</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); width:80px; text-align:right">Short</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr style="${r.shortfall > 0 ? 'background:#fef3c7' : ''}">
+                <td style="padding:0.5rem; border:1px solid var(--border); font-weight:600">${_escape(r.mat?.name || '(' + r.matId + ')')}</td>
+                <td style="padding:0.5rem; border:1px solid var(--border); color:var(--text-muted)">${_escape(r.mat?.unit || '—')}</td>
+                <td style="padding:0.5rem; border:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums">${r.stock.toFixed(2)}</td>
+                ${r.perWeek.map(qty => `<td style="padding:0.5rem; border:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums; color:${qty > 0 ? 'var(--text)' : 'var(--text-muted)'}">${qty > 0 ? qty.toFixed(2) : '—'}</td>`).join('')}
+                <td style="padding:0.5rem; border:1px solid var(--border); text-align:right; font-weight:600; font-variant-numeric:tabular-nums">${r.total.toFixed(2)}</td>
+                <td style="padding:0.5rem; border:1px solid var(--border); text-align:right; font-weight:${r.shortfall > 0 ? '700' : 'normal'}; color:${r.shortfall > 0 ? '#991b1b' : 'inherit'}; font-variant-numeric:tabular-nums">${r.shortfall > 0 ? r.shortfall.toFixed(2) : '—'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>`;
+    tableEl.innerHTML = html;
+  }
+  window.renderMaterialNeedsByWeek = renderMaterialNeedsByWeek;
+
+  // Lists every active order whose Product field doesn't exactly match a key
+  // in productBoms — these orders won't auto-deduct stock on in-production.
+  // Each row has a "Fix" button that jumps to Active Orders pre-filtered to
+  // the offending invoice so the user can rename via the existing datalist input.
+  function renderBomCoverage() {
+    const listEl = document.getElementById('bom-coverage-list');
+    const sumEl = document.getElementById('bom-coverage-summary');
+    if (!listEl) return;
+
+    const biz = currentData();
+    const bomKeys = new Set(Object.keys(biz.productBoms || {}));
+    const orders = (biz.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done');
+
+    if (bomKeys.size === 0) {
+      listEl.innerHTML = '<div class="empty" style="padding:1rem">No BOMs defined yet — set up products in the BOM tab first.</div>';
+      if (sumEl) sumEl.textContent = '';
+      return;
+    }
+
+    // An order is "linked" if either:
+    //   - explicitly via order.bomKey (set by the per-order picker), OR
+    //   - implicitly via order.product matching a BOM key
+    const unlinked = orders.filter(o => !getBomKeyForOrder(o, biz));
+    const linked = orders.length - unlinked.length;
+
+    if (sumEl) {
+      sumEl.textContent = `${linked} linked · ${unlinked.length} unlinked · ${orders.length} active`;
+      sumEl.style.color = unlinked.length === 0 ? 'var(--success)' : 'var(--accent)';
+      sumEl.style.fontWeight = '600';
+    }
+
+    if (unlinked.length === 0) {
+      listEl.innerHTML = '<div class="empty" style="padding:1rem; color:var(--success)">🎉 Every active order is linked to a BOM. Stock will deduct automatically on In Production.</div>';
+      return;
+    }
+
+    // Group by current product name so duplicates from the same raw text are shown together
+    const groups = {};
+    unlinked.forEach(o => {
+      const key = (o.product || '').trim() || '(blank)';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(o);
+    });
+
+    // Suggest the closest BOM match for each group (simple substring/case-insensitive heuristic)
+    const bomKeyList = [...bomKeys];
+    const suggestMatch = (raw) => {
+      if (!raw) return null;
+      const r = raw.toLowerCase();
+      // Exact case-insensitive
+      const ci = bomKeyList.find(k => k.toLowerCase() === r);
+      if (ci) return ci;
+      // BOM key is contained in raw (e.g. raw="RC30 Standard" → key "RC30")
+      const contained = bomKeyList.find(k => r.includes(k.toLowerCase()));
+      if (contained) return contained;
+      // Raw is contained in BOM key (e.g. raw="Lisa" → key "Daybed — Lisa")
+      const containing = bomKeyList.find(k => k.toLowerCase().includes(r));
+      if (containing) return containing;
+      return null;
+    };
+
+    const rowsHtml = Object.entries(groups)
+      .sort((a, b) => b[1].length - a[1].length)
+      .map(([raw, list]) => {
+        const sample = list[0];
+        const suggestion = suggestMatch(raw);
+        const invList = list.slice(0, 5).map(o => '#' + (o.invoice || o.id)).join(', ') + (list.length > 5 ? ' +' + (list.length - 5) + ' more' : '');
+        return `
+          <div style="padding:0.75rem; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap">
+            <div style="flex:1; min-width:240px">
+              <div style="font-weight:600">${_escape(raw)}</div>
+              <div style="font-size:11px; color:var(--text-muted); margin-top:2px">
+                ${list.length} order${list.length !== 1 ? 's' : ''}: ${_escape(invList)}
+              </div>
+              ${suggestion ? `<div style="font-size:11px; color:var(--info); margin-top:4px">💡 Suggested BOM: <strong>${_escape(suggestion)}</strong> (links without changing order text)</div>` : '<div style="font-size:11px; color:var(--warn); margin-top:4px">⚠️ No close match — you may need to add this product to the BOM</div>'}
+            </div>
+            <div style="display:flex; gap:0.4rem; flex-wrap:wrap">
+              ${suggestion ? `<button class="btn btn-sm btn-primary" onclick="applyBomNameToOrders('${_escape(raw).replace(/'/g, "\\'")}', '${_escape(suggestion).replace(/'/g, "\\'")}')">🔗 Link all ${list.length} to "${_escape(suggestion)}"</button>` : ''}
+              <button class="btn btn-sm" onclick="jumpToOrder('${_escape(sample.invoice || sample.id).replace(/'/g, "\\'")}')">→ Open order</button>
+            </div>
+          </div>`;
+      }).join('');
+
+    listEl.innerHTML = rowsHtml;
+  }
+  window.renderBomCoverage = renderBomCoverage;
+
+  // Bulk-link every active order whose product matches oldName → BOM newName.
+  // Sets order.bomKey — does NOT rename order.product. Snapshot-backed.
+  function applyBomNameToOrders(oldName, newName) {
+    const biz = currentData();
+    const orders = (biz.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done' && (o.product || '').trim() === oldName);
+    if (orders.length === 0) {
+      toast('No matching orders found', 'warn');
+      return;
+    }
+    if (!confirm(`Link ${orders.length} order${orders.length !== 1 ? 's' : ''} (currently "${oldName}") to BOM "${newName}"?\n\nThe original order text stays unchanged — only the BOM link is set, so stock deducts automatically when they move to In Production.`)) {
+      return;
+    }
+    snapshotState();
+    orders.forEach(o => { o.bomKey = newName; });
+    saveData();
+    render();
+    if (typeof renderBomCoverage === 'function') renderBomCoverage();
+    toast(`Linked ${orders.length} order${orders.length !== 1 ? 's' : ''} to BOM "${newName}" · order text unchanged`, 'success', 3000);
+  }
+  window.applyBomNameToOrders = applyBomNameToOrders;
+
+  // Jump to Active Orders tab with the search field pre-filled to the offending invoice.
+  function jumpToOrder(invoice) {
+    showSection('orders');
+    setTimeout(() => {
+      const searchEl = document.getElementById('order-search');
+      if (searchEl) {
+        searchEl.value = invoice;
+        searchEl.dispatchEvent(new Event('input'));
+        searchEl.focus();
+      }
+    }, 100);
+  }
+  window.jumpToOrder = jumpToOrder;
   
   function calculateMaterialRequirements() {
-    // Calculate total material needed across all pending + in-production orders that haven't been deducted yet
+    // Total material needed across pending + in-production orders not yet deducted.
+    // Includes BOTH the materials map (hardware/finishes) AND cut list (timber/sheets
+    // converted to qty per material via _cutListConsumption).
     const biz = currentData();
     const required = {};
-    
+
     (biz.orders || []).forEach(o => {
-      // Skip orders that are done, delivered, or already deducted
       if (o.status === 'delivered' || o.status === 'done' || o.materialsDeducted) return;
-      
-      const prodBom = biz.productBoms?.[o.product];
-      if (!prodBom || !prodBom.materials) return;
-      
+
+      const bomKey = getBomKeyForOrder(o, biz);
+      const prodBom = bomKey ? biz.productBoms[bomKey] : null;
+      if (!prodBom) return;
+
       const qty = parseFloat(o.qty || 1);
-      Object.entries(prodBom.materials).forEach(([matId, perUnit]) => {
+
+      // Materials map contribution (hardware, finishes, consumables)
+      Object.entries(prodBom.materials || {}).forEach(([matId, perUnit]) => {
         required[matId] = (required[matId] || 0) + (perUnit * qty);
       });
+
+      // Cut list contribution (timber/sheets — converted to material qty)
+      if (typeof _cutListConsumption === 'function') {
+        const cutCons = _cutListConsumption(prodBom, biz);
+        Object.entries(cutCons).forEach(([matId, perUnit]) => {
+          required[matId] = (required[matId] || 0) + (perUnit * qty);
+        });
+      }
     });
-    
+
     return required;
   }
   
@@ -1423,16 +1868,38 @@
     renderInventory();
   }
   
+  // Build a combined per-material consumption map for one product: materials map
+  // (hardware/finishes) + cut list (timber/sheets converted to qty). Used by
+  // both the deduct and restore helpers so the two stay symmetric.
+  function _combinedProductConsumption(prodBom, bizData) {
+    const out = {};
+    if (!prodBom) return out;
+    Object.entries(prodBom.materials || {}).forEach(([matId, qty]) => {
+      out[matId] = (out[matId] || 0) + parseFloat(qty || 0);
+    });
+    if (typeof _cutListConsumption === 'function') {
+      const cutCons = _cutListConsumption(prodBom, bizData);
+      Object.entries(cutCons).forEach(([matId, qty]) => {
+        out[matId] = (out[matId] || 0) + parseFloat(qty || 0);
+      });
+    }
+    return out;
+  }
+
   function deductMaterialsForOrder(biz, order) {
     // Called when an order moves to "in production"
     if (order.materialsDeducted) return; // Already deducted
     const bizData = data[biz];
     if (!bizData) return;
-    const prodBom = bizData.productBoms?.[order.product];
-    if (!prodBom || !prodBom.materials) return;
+    const bomKey = getBomKeyForOrder(order, bizData);
+    const prodBom = bomKey ? bizData.productBoms[bomKey] : null;
+    if (!prodBom) return;
+
+    const combined = _combinedProductConsumption(prodBom, bizData);
+    if (Object.keys(combined).length === 0) return;
 
     const orderQty = parseFloat(order.qty || 1);
-    Object.entries(prodBom.materials).forEach(([matId, perUnit]) => {
+    Object.entries(combined).forEach(([matId, perUnit]) => {
       const mat = (bizData.materialsLibrary || []).find(m => m.id === matId);
       if (!mat) return;
       const deduction = perUnit * orderQty;
@@ -1445,15 +1912,21 @@
   }
 
   function restoreMaterialsForOrder(biz, order, reasonSuffix) {
-    // Called when an order is moved OUT of in-production back to pending OR is deleted while in-production
+    // Called when an order is moved OUT of in-production back to pending OR is deleted while in-production.
+    // IMPORTANT: this uses the CURRENT BOM/cut-list state. If those were edited after the order was
+    // marked materialsDeducted, restore will mirror current state rather than the historical deduction.
     if (!order.materialsDeducted) return;
     const bizData = data[biz];
     if (!bizData) return;
-    const prodBom = bizData.productBoms?.[order.product];
-    if (!prodBom || !prodBom.materials) return;
+    const bomKey = getBomKeyForOrder(order, bizData);
+    const prodBom = bomKey ? bizData.productBoms[bomKey] : null;
+    if (!prodBom) return;
+
+    const combined = _combinedProductConsumption(prodBom, bizData);
+    if (Object.keys(combined).length === 0) return;
 
     const orderQty = parseFloat(order.qty || 1);
-    Object.entries(prodBom.materials).forEach(([matId, perUnit]) => {
+    Object.entries(combined).forEach(([matId, perUnit]) => {
       const mat = (bizData.materialsLibrary || []).find(m => m.id === matId);
       if (!mat) return;
       const restoration = perUnit * orderQty;
@@ -1760,80 +2233,14 @@
     }
   }
   
-  function printProductionList() {
-    const biz = activeBiz;
-    const bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
-    
-    // Get all active orders (not delivered, not done)
-    let orders = (data[biz]?.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done');
-    
-    if (orders.length === 0) {
-      alert('No orders in production. Pending and In Production orders only.');
-      return;
-    }
-    
-    // Sort by status, then due date
-    const statusOrder = { 'in-production': 1, 'pending': 2 };
-    orders.sort((a, b) => {
-      const sa = statusOrder[a.status] || 99;
-      const sb = statusOrder[b.status] || 99;
-      if (sa !== sb) return sa - sb;
-      const dateA = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
-      const dateB = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
-      return dateA - dateB;
-    });
-    
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const statusLabel = { 'pending': 'PENDING', 'in-production': 'IN PRODUCTION', 'done': 'DONE' };
-    
-    const rows = orders.map((o, i) => {
-      const due = o.dueDate ? new Date(o.dueDate) : null;
-      const daysLeft = due && !isNaN(due.getTime()) ? Math.ceil((due - today) / (1000 * 60 * 60 * 24)) : null;
-      const urgencyMark = daysLeft !== null && daysLeft < 0 ? ' ⚠️ OVERDUE' : daysLeft !== null && daysLeft <= 7 ? ' ⏰' : '';
-      
-      // Fabric status display
-      let fabricStatusText = '—';
-      let fabricBg = '';
-      if (o.fabric) {
-        const fs = o.fabricStatus || 'waiting';
-        if (o.fabricOOS) { fabricStatusText = '🔴 OUT OF STOCK' + (o.fabricStockETA ? ' (ETA ' + o.fabricStockETA + ')' : ''); fabricBg = 'background:#fee2e2;'; }
-        else if (fs === 'received') { fabricStatusText = '✅ RECEIVED'; fabricBg = 'background:#d1fae5;'; }
-        else if (fs === 'ordered') { fabricStatusText = '📦 ORDERED'; fabricBg = 'background:#fef3c7;'; }
-        else { fabricStatusText = '⏳ WAITING'; fabricBg = 'background:#fee2e2;'; }
-      }
-      
-      return `
-        <tr>
-          <td>${i + 1}</td>
-          <td style="font-weight:bold; font-size:14px">#${o.invoice || o.id}</td>
-          <td>${o.orderDate || '—'}</td>
-          <td>${o.product || ''}${o.category ? ' [' + o.category + ']' : ''}</td>
-          <td>${o.fabric || '—'}</td>
-          <td style="${fabricBg} font-weight:bold; font-size:10px">${fabricStatusText}</td>
-          <td style="text-align:center">${o.qty || 1}</td>
-          <td>${o.customer || ''}</td>
-          <td><strong>${statusLabel[o.status] || o.status}</strong></td>
-          <td>${o.dueDate || '—'}${urgencyMark}</td>
-          <td>${o.notes || ''}</td>
-        </tr>
-      `;
-    }).join('');
-    
-    // Group counts (excluding Done — those are on a separate list)
-    const counts = {
-      pending: orders.filter(o => o.status === 'pending').length,
-      'in-production': orders.filter(o => o.status === 'in-production').length
-    };
-    
-    const todayStr = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' });
-    
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-<title>Production List — ${bizNames[biz]}</title>
-<style>
+  // ============================================
+  // SHARED PRODUCTION PRINT ASSETS
+  // Used by BOTH printProductionList() (Active Orders → Print Production List)
+  // AND printPlannerSheet() (Planner → Print Plan). Keep them visually identical
+  // by editing in ONE place — no copy-paste drift.
+  // ============================================
+
+  const _PRODUCTION_PRINT_STYLES = `<style>
   @page { size: A4 landscape; margin: 10mm; }
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
   body { color: #000; background: #fff; font-size: 11px; padding: 0; }
@@ -1858,35 +2265,17 @@
   td:nth-child(9) { width: 75px; font-weight: bold; }
   td:nth-child(10) { width: 80px; }
   td:nth-child(11) { font-size: 9px; font-style: italic; }
+  /* Week-grouping rows (used only by the planner print — printProductionList has no group rows so this is a no-op there) */
+  tr.week-group td { background: #1F1E1D; color: #fff; font-weight: 900; font-size: 12px; letter-spacing: 0.05em; padding: 8px 10px; -webkit-print-color-adjust: exact; print-color-adjust: exact; text-align: left; }
+  tr.week-group td.unscheduled-head { background: #6B6760; }
   .footer { margin-top: 12px; font-size: 9px; color: #666; display:flex; justify-content:space-between; border-top: 1px solid #ddd; padding-top: 6px; }
   .no-print { padding: 15px; text-align:right; background: #f0f0f0; }
   @media print {
     .no-print { display: none; }
   }
-</style>
-</head>
-<body>
-  <div class="no-print">
-    <button onclick="window.print()" style="padding:8px 16px; font-weight:bold; cursor:pointer; background:#000; color:#fff; border:none; border-radius:4px">🖨️ PRINT</button>
-    <button onclick="window.close()" style="padding:8px 16px; cursor:pointer; margin-left:8px">CLOSE</button>
-  </div>
-  
-  <div class="header">
-    <div>
-      <div class="biz-name">${bizNames[biz]}</div>
-      <div class="date">Production List · ${todayStr}</div>
-    </div>
-    <div class="title">PRODUCTION STATUS</div>
-  </div>
-  
-  <div class="summary">
-    <div><strong>${orders.length}</strong> total in production list</div>
-    <div><strong>${counts.pending}</strong> pending</div>
-    <div><strong>${counts['in-production']}</strong> in production</div>
-  </div>
-  
-  <table>
-    <thead>
+</style>`;
+
+  const _PRODUCTION_TABLE_HEAD = `<thead>
       <tr>
         <th>#</th>
         <th>Invoice</th>
@@ -1900,17 +2289,119 @@
         <th>Due Date</th>
         <th>Notes</th>
       </tr>
-    </thead>
+    </thead>`;
+
+  const _PRODUCTION_STATUS_LABEL = { 'pending': 'PENDING', 'in-production': 'IN PRODUCTION', 'done': 'DONE' };
+
+  // Render a single <tr> for an order in the production / planner print table.
+  // `index` is 1-based row number; `todayDate` is a midnight Date for due-date math.
+  function _productionRowHtml(o, index, todayDate) {
+    const due = o.dueDate ? new Date(o.dueDate) : null;
+    const daysLeft = due && !isNaN(due.getTime()) ? Math.ceil((due - todayDate) / (1000 * 60 * 60 * 24)) : null;
+    const urgencyMark = daysLeft !== null && daysLeft < 0 ? ' ⚠️ OVERDUE' : daysLeft !== null && daysLeft <= 7 ? ' ⏰' : '';
+
+    // Fabric status display (colour-coded — green=received, yellow=ordered, red=waiting/OOS)
+    let fabricStatusText = '—';
+    let fabricBg = '';
+    if (o.fabric) {
+      const fs = o.fabricStatus || 'waiting';
+      if (o.fabricOOS) { fabricStatusText = '🔴 OUT OF STOCK' + (o.fabricStockETA ? ' (ETA ' + o.fabricStockETA + ')' : ''); fabricBg = 'background:#fee2e2;'; }
+      else if (fs === 'received') { fabricStatusText = '✅ RECEIVED'; fabricBg = 'background:#d1fae5;'; }
+      else if (fs === 'ordered') { fabricStatusText = '📦 ORDERED'; fabricBg = 'background:#fef3c7;'; }
+      else { fabricStatusText = '⏳ WAITING'; fabricBg = 'background:#fee2e2;'; }
+    }
+
+    return `
+        <tr>
+          <td>${index}</td>
+          <td style="font-weight:bold; font-size:14px">#${o.invoice || o.id}</td>
+          <td>${o.orderDate || '—'}</td>
+          <td>${o.product || ''}${o.category ? ' [' + o.category + ']' : ''}</td>
+          <td>${o.fabric || '—'}</td>
+          <td style="${fabricBg} font-weight:bold; font-size:10px">${fabricStatusText}</td>
+          <td style="text-align:center">${o.qty || 1}</td>
+          <td>${o.customer || ''}</td>
+          <td><strong>${_PRODUCTION_STATUS_LABEL[o.status] || o.status}</strong></td>
+          <td>${o.dueDate || '—'}${urgencyMark}</td>
+          <td>${o.notes || ''}</td>
+        </tr>
+      `;
+  }
+
+  function printProductionList() {
+    const biz = activeBiz;
+    const bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
+
+    // Get all active orders (not delivered, not done)
+    let orders = (data[biz]?.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done');
+
+    if (orders.length === 0) {
+      alert('No orders in production. Pending and In Production orders only.');
+      return;
+    }
+
+    // Sort by status, then due date
+    const statusOrder = { 'in-production': 1, 'pending': 2 };
+    orders.sort((a, b) => {
+      const sa = statusOrder[a.status] || 99;
+      const sb = statusOrder[b.status] || 99;
+      if (sa !== sb) return sa - sb;
+      const dateA = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+      const dateB = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+      return dateA - dateB;
+    });
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const rows = orders.map((o, i) => _productionRowHtml(o, i + 1, today)).join('');
+
+    // Group counts (excluding Done — those are on a separate list)
+    const counts = {
+      pending: orders.filter(o => o.status === 'pending').length,
+      'in-production': orders.filter(o => o.status === 'in-production').length
+    };
+
+    const todayStr = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' });
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<title>Production List — ${bizNames[biz]}</title>
+${_PRODUCTION_PRINT_STYLES}
+</head>
+<body>
+  <div class="no-print">
+    <button onclick="window.print()" style="padding:8px 16px; font-weight:bold; cursor:pointer; background:#000; color:#fff; border:none; border-radius:4px">🖨️ PRINT</button>
+    <button onclick="window.close()" style="padding:8px 16px; cursor:pointer; margin-left:8px">CLOSE</button>
+  </div>
+
+  <div class="header">
+    <div>
+      <div class="biz-name">${bizNames[biz]}</div>
+      <div class="date">Production List · ${todayStr}</div>
+    </div>
+    <div class="title">PRODUCTION STATUS</div>
+  </div>
+
+  <div class="summary">
+    <div><strong>${orders.length}</strong> total in production list</div>
+    <div><strong>${counts.pending}</strong> pending</div>
+    <div><strong>${counts['in-production']}</strong> in production</div>
+  </div>
+
+  <table>
+    ${_PRODUCTION_TABLE_HEAD}
     <tbody>${rows}</tbody>
   </table>
-  
+
   <div class="footer">
     <div>Printed: ${new Date().toLocaleString('en-ZA')}</div>
     <div>${orders.length} order${orders.length !== 1 ? 's' : ''} listed</div>
   </div>
 </body>
 </html>`;
-    
+
     const win = window.open('', '_blank');
     win.document.write(html);
     win.document.close();
@@ -1931,7 +2422,84 @@
     
     const bizName = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
     const stageList = stages[activeBiz] || [];
-    
+
+    // Cutting list block — only rendered if the linked product has a cutList.
+    // Uses getBomKeyForOrder so it works whether the order is linked via
+    // order.bomKey (explicit picker selection) or by direct product-name match.
+    // Per-unit lines are listed, then a total line scaled by order qty.
+    let cuttingListHtml = '';
+    try {
+      const bomKey = (typeof getBomKeyForOrder === 'function')
+        ? getBomKeyForOrder(order, currentData())
+        : (currentData().productBoms?.[order.product] ? order.product : null);
+      const prod = bomKey ? currentData().productBoms[bomKey] : null;
+      const cuts = (prod && prod.cutList) || [];
+      if (cuts.length > 0) {
+        const orderQty = parseFloat(order.qty) || 1;
+        const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        // Look up material unit by name (so totals know if it's Meter → linear m, Sheet+width → m²)
+        const matByName = {};
+        (currentData().materialsLibrary || []).forEach(m => { if (m && m.name) matByName[m.name] = m; });
+        // Group cuts by their timber NAME (any meter/sheet material, not just 2 pines)
+        const byTimber = {};
+        cuts.forEach(c => {
+          const t = (c.timber || '').trim() || '(no material)';
+          if (!byTimber[t]) byTimber[t] = [];
+          byTimber[t].push(c);
+        });
+        const orderedTimbers = Object.keys(byTimber).sort();
+
+        const sectionHtml = orderedTimbers.map(timber => {
+          const rows = byTimber[timber];
+          if (rows.length === 0) return '';
+          const mat = matByName[timber];
+
+          // Per-unit totals: linear (mm × qty) AND area (mm × mm × qty when width > 0)
+          let perUnitLinearMm = 0;
+          let perUnitAreaMm2 = 0;
+          let anyWidth = false;
+          rows.forEach(c => {
+            const len = parseFloat(c.lengthMm || 0);
+            const wid = parseFloat(c.widthMm || 0);
+            const qty = parseFloat(c.qty || 0);
+            perUnitLinearMm += len * qty;
+            if (wid > 0) { perUnitAreaMm2 += len * wid * qty; anyWidth = true; }
+          });
+          const useArea = mat && mat.unit === 'Sheet' && anyWidth;
+          const perUnitVal = useArea ? perUnitAreaMm2 / 1000000 : perUnitLinearMm / 1000;
+          const unitLabel = useArea ? 'm²' : 'm';
+          const grandTotal = perUnitVal * orderQty;
+
+          const rowsHtml = rows.map(c => {
+            const len = c.lengthMm || 0;
+            const wid = c.widthMm || 0;
+            const dims = wid > 0 ? `${len}×${wid}mm` : `${len}mm`;
+            return `<li style="font-size:12px; padding:2px 0; font-family:'Courier New', monospace">` +
+              `${c.qty || 0} × ${dims}` +
+              (c.part ? ` — ${escapeHtml(c.part)}` : '') +
+            `</li>`;
+          }).join('');
+
+          return `
+            <div style="margin-bottom:8px">
+              <div style="font-weight:bold; text-transform:uppercase; letter-spacing:0.05em; font-size:11px; margin-bottom:4px; border-bottom:1px solid #000; padding-bottom:2px">${escapeHtml(timber)}</div>
+              <ul style="list-style:none; padding:0 0 0 6px; margin:0">${rowsHtml}</ul>
+              <div style="font-size:11px; font-weight:bold; margin-top:4px; padding-top:3px; border-top:1px dashed #999">
+                Total ${escapeHtml(timber)}: ${perUnitVal.toFixed(2)}${unitLabel} × ${orderQty} unit${orderQty !== 1 ? 's' : ''} = ${grandTotal.toFixed(2)}${unitLabel}
+              </div>
+            </div>`;
+        }).join('');
+
+        cuttingListHtml = `
+          <div style="border:1px solid #000; padding:8px; margin-bottom:8px; page-break-inside:avoid">
+            <div class="field-label">CUTTING LIST — ${escapeHtml(order.product || '')} × ${orderQty}</div>
+            <div style="margin-top:6px">${sectionHtml}</div>
+          </div>`;
+      }
+    } catch (e) {
+      console.warn('Cutting list render skipped:', e);
+    }
+
     const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -2018,11 +2586,13 @@
     </div>
   </div>
   
+  ${cuttingListHtml}
+
   <div class="notes">
     <div class="field-label">Notes / Special Instructions</div>
     ${order.notes ? `<div style="margin-top:8px; font-size:13px; line-height:1.6; white-space:pre-wrap">${order.notes.replace(/</g, '&lt;')}</div>` : ''}
   </div>
-  
+
   <div class="signatures">
     <div class="sig-block">
       <div class="sig-line"></div>
@@ -2165,6 +2735,33 @@
       render();
     }
   }
+
+  // Link an order to a BOM via order.bomKey — DOES NOT change order.product.
+  // The original product text (from the invoice/PDF) stays untouched so the customer-
+  // facing description on the order is preserved. Stock deduction uses order.bomKey
+  // first, falling back to order.product matching a BOM key (legacy direct match).
+  // Empty bomName = clear the explicit link (order falls back to product match, or
+  // becomes unlinked if product doesn't match any BOM).
+  function setOrderBom(orderId, bomName) {
+    const order = currentData().orders.find(o => o.id === orderId);
+    if (!order) return;
+    if (!bomName) {
+      if (!order.bomKey) return; // already unlinked, no-op
+      snapshotState();
+      delete order.bomKey;
+      saveData();
+      render();
+      toast('BOM link cleared (Ctrl+Z to undo)', 'info', 2500);
+      return;
+    }
+    if (order.bomKey === bomName) return;
+    snapshotState();
+    order.bomKey = bomName;
+    saveData();
+    render();
+    toast(`Linked to BOM "${bomName}" · order text unchanged (Ctrl+Z to undo)`, 'success', 3000);
+  }
+  window.setOrderBom = setOrderBom;
   
   function addSupplier() {
     const name = document.getElementById('supplier-name').value.trim();
@@ -2597,7 +3194,8 @@
   // Run the full render pipeline. Many mutation paths call snapshotState →
   // saveData → render in quick succession; coalesce those into a single
   // animation-frame so a 50-row bulk edit doesn't trigger 50 full re-renders.
-  let renderScheduled = false;
+  // (renderScheduled is declared at the top of the script — it MUST exist
+  // before switchBiz('bellville') runs.)
   function render() {
     if (renderScheduled) return;
     renderScheduled = true;
@@ -2608,6 +3206,12 @@
   }
 
   function renderImmediate() {
+    // If we're in second-screen dashboard mode, only the standalone dashboard renders.
+    // Skip every other per-section renderer — none of their DOM exists in this mode.
+    if (typeof IS_DASHBOARD_MODE !== 'undefined' && IS_DASHBOARD_MODE) {
+      if (typeof renderDashboardOnlyView === 'function') renderDashboardOnlyView();
+      return;
+    }
     renderDashboard();
     renderOrders();
     renderDoneOrders();
@@ -3012,31 +3616,204 @@
     { id: 'm15', name: 'Plastic legs', unit: 'Each', cost: 6 },
     { id: 'm16', name: 'Wooden legs', unit: 'Each', cost: 50 },
     { id: 'm17', name: 'Oak Frame chair', unit: 'Each', cost: 400 },
-    { id: 'm18', name: 'Oak Frame couch', unit: 'Each', cost: 1400 }
+    { id: 'm18', name: 'Oak Frame couch', unit: 'Each', cost: 1400 },
+    { id: 'm19', name: 'Chip board',      unit: 'Each', cost: 525 }
   ];
+  // Updated from product_catalogue_edit.xlsx — Feroche/Feroche Chair categories
+  // dissolved into Sofa/Chair; Chesterfield 1/2/3-seater + Oak Sofa + Paris Chesterfield
+  // + Mel Wingback (+DB) + Extra Large Wingback + Ridgid removed.
   const DEFAULT_PRODUCT_GROUPS_BELLVILLE = [
     ['Daybed', 'Lisa,Isabella,Peter,Amber,Pillay,Conner,Jean,California,New Mexico,Davis,Miami,New York,Savy'],
     ['Corner', 'Miami,Anne,Ryan,New York,Isabella,New Mexico,Amber,Savvy,Casey U Shape'],
     ['2 Seater', 'Savvy,Amber,Peter,New Mexico,New York,Miami,Isabella,Chanel'],
     ['3 Seater', 'Miami,Savvy,Peter,Amber,Chesterfield,New Mexico,New York,Isabella,Snazi Sofa with Ottoman'],
-    ['Sofa', 'Chesterfield 3 Seater,Chesterfield 2 Seater,Chesterfield 1 Seater,Christel,Gilmore,Galaxy,Pillay Pine,Pillay Ash/Oak,Cambridge,Phoebe Chaise,London Steel Frame,Mojo Sleeper'],
-    ['Feroche', 'Elata Sofa,Woodland Daybed,Boulder Sofa,Alaska Daybed,Marvel Sofa,Therific Sofa,Jane Sofa,Coopers Sofa,Dutches,Skyler Daybed,London Sofa,Alessi Sofa,Oak Sofa,Paris Chesterfield'],
+    ['Sofa', 'Christel,Gilmore,Galaxy,Pillay Pine,Pillay Ash/Oak,Cambridge,Phoebe Chaise,London Steel Frame,Mojo Sleeper,Elata Sofa,Woodland Daybed,Boulder Sofa,Alaska Daybed,Marvel Sofa,Therific Sofa,Jane Sofa,Coopers Sofa,Dutches,Skyler Daybed,London Sofa,Alessi Sofa'],
     ['Ottoman', 'Steel Framed,Trout,Boho,Nimbus,Beverly,Paris,Shaun,Mauf Poof,Scandi Table'],
-    ['Chair', 'Tub,Princess,English,Tree,Jay,Abba,Mila,Roman,Chas,Julie Wingback,Julie Wingback Deep Button,Mel Wingback,Mel Wingback Deep Button,Extra Large Wingback'],
-    ['Feroche Chair', 'Shawn,Straight,Double,Everest,Parlour,West,Carlo,Ovo Tub,Lumba,Next'],
-    ['Dining Chair', 'Elegant,Classic,Casual,Layla,Ridgid'],
+    ['Chair', 'Tub,Princess,English,Tree,Jay,Abba,Mila,Roman,Chas,Julie Wingback,Julie Wingback Deep Button,Shawn,Straight,Double,Everest,Parlour,West,Carlo,Ovo Tub,Lumba,Next'],
+    ['Dining Chair', 'Elegant,Classic,Casual,Layla'],
     ['Bed', 'Salone Double,Salone Queen,Salone King,California Double,California Queen,California King,Trendy Double,Trendy Queen,Trendy King,Studio Double,Studio Queen,Studio King,Bold Double,Bold Queen,Bold King'],
     ['Headboard', 'Plain Single,Plain 3 Quarter,Plain Double,Plain Queen,Plain King,Panels Single,Panels 3 Quarter,Panels Double,Panels Queen,Panels King,Deep Button Single,Deep Button 3 Quarter,Deep Button Double,Deep Button Queen,Deep Button King,Framed Deep Button Single,Framed Deep Button 3 Quarter,Framed Deep Button Double,Framed Deep Button Queen,Framed Deep Button King,Wingback Single,Wingback 3 Quarter,Wingback Double,Wingback Queen,Wingback King,Limbo Single,Limbo 3 Quarter,Limbo Double,Limbo Queen,Limbo King,California Single,California 3 Quarter,California Double,California Queen,California King'],
     ['Bed Box', 'Fluted Double,Fluted Queen,Fluted King,Plain Double,Plain Queen,Plain King,Deep Button Fluted Double,Deep Button Fluted Queen,Deep Button Fluted King']
   ];
-  
+
+  // ReptiCube defaults — sourced from repticube_costing_input.xlsx (Finance / Documents)
+  // Sheet 1 (Materials) and Sheet 4 (SKU Build). China-landed PVC pricing on all SKUs.
+  const DEFAULT_MATERIALS_REPTICUBE = [
+    // ── BOARDS ──
+    { id: 'rc1',  name: 'PVC Foam Board 12mm (local)',         unit: 'Sheet', cost: 600 },
+    { id: 'rc2',  name: 'PVC Foam Board 12mm (China landed)',  unit: 'Sheet', cost: 401 },
+    { id: 'rc3',  name: 'PVC Foam Board 15mm',                 unit: 'Sheet', cost: 0 },
+    { id: 'rc4',  name: 'PVC Foam Board 18mm',                 unit: 'Sheet', cost: 0 },
+    { id: 'rc5',  name: 'Perspex / Acrylic 3mm',               unit: 'Sheet', cost: 0 },
+    { id: 'rc6',  name: 'Perspex / Acrylic 5mm',               unit: 'Sheet', cost: 4250 },
+    // ── FASTENERS & HARDWARE ──
+    { id: 'rc7',  name: 'Screws (standard)',                   unit: 'Each',  cost: 0.5 },
+    { id: 'rc8',  name: 'Hinges',                              unit: 'Each',  cost: 6 },
+    { id: 'rc9',  name: 'Locks',                               unit: 'Each',  cost: 3 },
+    { id: 'rc10', name: 'Knobs / Handles',                     unit: 'Each',  cost: 3 },
+    { id: 'rc11', name: 'Magnets',                             unit: 'Each',  cost: 0 },
+    { id: 'rc12', name: 'Sliding mech (RCV range)',            unit: 'Each',  cost: 200 },
+    // ── CONSUMABLES & ADHESIVES ──
+    { id: 'rc13', name: 'Silicone sealant',                    unit: 'Tube',  cost: 0 },
+    { id: 'rc14', name: 'Wood glue / PVA',                     unit: 'Litre', cost: 0 },
+    { id: 'rc15', name: 'Edge banding / trim',                 unit: 'Meter', cost: 0 },
+    { id: 'rc16', name: 'Sandpaper / drill bits / blades',     unit: 'Each',  cost: 6 },
+    // ── PACKAGING ──
+    { id: 'rc17', name: 'Box small',                           unit: 'Each',  cost: 30 },
+    { id: 'rc18', name: 'Box medium',                          unit: 'Each',  cost: 85 },
+    { id: 'rc19', name: 'Box large',                           unit: 'Each',  cost: 100 },
+    { id: 'rc20', name: 'Box XL',                              unit: 'Each',  cost: 120 },
+    { id: 'rc21', name: 'Bubble wrap',                         unit: 'Each',  cost: 15 },
+    { id: 'rc22', name: 'Strapping / tape',                    unit: 'Each',  cost: 3 }
+  ];
+
+  // 14 enclosure SKUs with their per-unit material quantities. All categorized as "Enclosure"
+  // so the existing Category Template feature is available if a per-size template is wanted later.
+  // Format: [productName, { matId: qtyPerUnit, ... }]. Materials not used by a SKU are omitted (= 0).
+  const DEFAULT_PRODUCTS_REPTICUBE = [
+    ['RC30',   { rc2: 0.25, rc6: 0.012, rc7: 35, rc8: 2, rc9: 2, rc10: 1, rc16: 1, rc17: 1, rc21: 1,   rc22: 1 }],
+    ['RCA30',  { rc2: 0.25, rc6: 0.012, rc7: 35, rc8: 2, rc9: 2, rc10: 1, rc16: 1, rc17: 1, rc21: 1,   rc22: 1 }],
+    ['RC40',   { rc2: 0.33, rc6: 0.028, rc7: 45, rc8: 2, rc9: 2, rc10: 1, rc16: 1, rc17: 1, rc21: 1,   rc22: 1 }],
+    ['RCA40',  { rc2: 0.33, rc6: 0.03,  rc7: 45, rc8: 2, rc9: 2, rc10: 1, rc16: 1, rc17: 1, rc21: 1,   rc22: 1 }],
+    ['RCB90',  { rc2: 0.75, rc6: 0.032, rc7: 55, rc8: 4, rc9: 4, rc10: 2, rc16: 2, rc18: 1, rc21: 1.5, rc22: 1 }],
+    ['RC90',   { rc2: 1,    rc6: 0.04,  rc7: 55, rc8: 4, rc9: 4, rc10: 2, rc16: 2, rc18: 1, rc21: 1.5, rc22: 1 }],
+    ['RCV90',  { rc2: 1,    rc6: 0.03,  rc7: 55, rc8: 2, rc9: 2, rc10: 2, rc12: 0.8, rc16: 2, rc18: 1, rc21: 1.5, rc22: 1 }],
+    ['RCB120', { rc2: 1,    rc6: 0.04,  rc7: 65, rc8: 4, rc9: 4, rc10: 2, rc16: 2, rc19: 1, rc21: 2,   rc22: 1 }],
+    ['RC120',  { rc2: 1.25, rc6: 0.05,  rc7: 65, rc8: 4, rc9: 4, rc10: 2, rc16: 2, rc19: 1, rc21: 2,   rc22: 1 }],
+    ['RCV120', { rc2: 1.25, rc6: 0.04,  rc7: 65, rc8: 2, rc9: 2, rc10: 2, rc12: 1,   rc16: 2, rc19: 1, rc21: 2, rc22: 1 }],
+    ['RC180',  { rc2: 2.5,  rc6: 0.07,  rc7: 65, rc8: 4, rc9: 4, rc10: 2, rc16: 3, rc20: 1, rc21: 3,   rc22: 1 }],
+    ['RCA90',  { rc2: 2,    rc6: 0.07,  rc7: 65, rc8: 4, rc9: 4, rc10: 2, rc16: 3, rc20: 1, rc21: 3,   rc22: 1 }],
+    ['RCA120', { rc2: 2.5,  rc6: 0.08,  rc7: 65, rc8: 4, rc9: 4, rc10: 2, rc16: 3, rc20: 1, rc21: 3,   rc22: 1 }],
+    ['RCA180', { rc2: 4,    rc6: 0.09,  rc7: 70, rc8: 8, rc9: 8, rc10: 2, rc16: 3, rc20: 1, rc21: 3.5, rc22: 1 }]
+  ];
+
+  // PinkFoot defaults — sourced from pinkfoot_costing_input.xlsx (Finance / Documents)
+  // Sheet 1 (Materials). Per-product BOMs to be added once catalogue is supplied.
+  // Materials with no price yet are loaded at R0 so they appear in the library
+  // (so the user can fill them in via the BOM tab without losing the entry).
+  const DEFAULT_MATERIALS_PINKFOOT = [
+    // ── BOARDS / WOOD ──
+    { id: 'pf1',  name: 'Pine 76',                       unit: 'Meter', cost: 13 },
+    { id: 'pf2',  name: 'Pine 152',                      unit: 'Meter', cost: 26 },
+    { id: 'pf3',  name: 'MDF 12mm',                      unit: 'Sheet', cost: 0 },
+    { id: 'pf4',  name: 'MDF 16mm',                      unit: 'Sheet', cost: 575 },
+    { id: 'pf5',  name: 'MDF 18mm',                      unit: 'Sheet', cost: 695 },
+    { id: 'pf6',  name: 'MDF 21mm',                      unit: 'Sheet', cost: 850 },
+    { id: 'pf7',  name: 'Plywood 16mm',                  unit: 'Sheet', cost: 1050 },
+    { id: 'pf8',  name: 'Plywood 18mm',                  unit: 'Sheet', cost: 1230 },
+    { id: 'pf9',  name: 'Plywood 21mm',                  unit: 'Sheet', cost: 1470 },
+    { id: 'pf10', name: 'SupaWood / Chipboard',          unit: 'Sheet', cost: 0 },
+    // ── FASTENERS / HARDWARE ──
+    { id: 'pf11', name: 'Hinges',                        unit: 'Each',  cost: 10 },
+    { id: 'pf12', name: 'Drawer slides',                 unit: 'Pair',  cost: 50 },
+    { id: 'pf13', name: 'Knobs / Handles',               unit: 'Each',  cost: 10 },
+    { id: 'pf14', name: 'Screws (assembly)',             unit: 'Each',  cost: 0.1 },
+    { id: 'pf15', name: 'Cot bolts',                     unit: 'Each',  cost: 5 },
+    { id: 'pf16', name: 'Wheels / castors',              unit: 'Each',  cost: 0 },
+    // ── FINISHES ──
+    { id: 'pf17', name: 'Primer (white)',                unit: 'Litre', cost: 79 },
+    { id: 'pf18', name: 'Paint white (topcoat)',         unit: 'Litre', cost: 138 },
+    { id: 'pf19', name: 'Paint pink',                    unit: 'Litre', cost: 0 },
+    { id: 'pf20', name: 'Paint grey',                    unit: 'Litre', cost: 0 },
+    { id: 'pf21', name: 'Wood glue / PVA',               unit: 'Litre', cost: 100 },
+    { id: 'pf22', name: 'Filler / putty',                unit: 'Tub',   cost: 50 },
+    { id: 'pf23', name: 'Lacquer / clear coat',          unit: 'Litre', cost: 100 },
+    // ── CONSUMABLES ──
+    { id: 'pf24', name: 'Sandpaper 80 grit',             unit: 'Sheet', cost: 5 },
+    { id: 'pf25', name: 'Sandpaper 100 grit',            unit: 'Sheet', cost: 5 },
+    { id: 'pf26', name: 'Sandpaper 120 grit',            unit: 'Sheet', cost: 5 },
+    { id: 'pf27', name: 'Sandpaper 240 grit',            unit: 'Sheet', cost: 5 },
+    { id: 'pf28', name: 'Sandpaper 320 grit',            unit: 'Sheet', cost: 5 },
+    { id: 'pf29', name: 'Edge banding',                  unit: 'Meter', cost: 0 },
+    { id: 'pf30', name: 'Mattress base slats / panel',   unit: 'Each',  cost: 0 },
+    { id: 'pf31', name: 'Decorative trim / moulding',    unit: 'Meter', cost: 0 },
+    // ── PACKAGING ──
+    { id: 'pf32', name: 'Box (cot, large)',              unit: 'Each',  cost: 0 },
+    { id: 'pf33', name: 'Box (compactum)',               unit: 'Each',  cost: 0 },
+    { id: 'pf34', name: 'Box (small / accessories)',     unit: 'Each',  cost: 0 },
+    { id: 'pf35', name: 'Bubble wrap',                   unit: 'Each',  cost: 200 },
+    { id: 'pf36', name: 'Strapping / tape',              unit: 'Each',  cost: 0 },
+    { id: 'pf37', name: 'Polystyrene corners',           unit: 'Each',  cost: 0 },
+    { id: 'pf38', name: 'Backing board',                  unit: 'Sheet', cost: 130 }
+  ];
+
+  // PinkFoot product catalogue — sourced from "Pinkfoot Stock on Hand.xlsx".
+  // Per-product BOMs and cutLists are empty for now; user will fill in via BOM tab
+  // (or send a separate costing sheet to bake in as defaults).
+  // Format: [productName, category]
+  // Updated from product_catalogue_edit.xlsx:
+  //   - "Square Compactum - White" + "Square Birch Compactum" merged into "Square Compactum"
+  //   - "Flush 3 Door Compactum" renamed to "Flush 2+2 Door Compactum"
+  //   - "Square Cot - White" removed (only "Square Cot" remains)
+  //   - New "Foot stool" category mirroring the Rocking Chair lineup
+  const DEFAULT_PRODUCTS_PINKFOOT = [
+    // ── COMPACTUMS ──
+    ['Square Compactum',            'Compactum'],
+    ['Rolanda Compactum',           'Compactum'],
+    ['Flush 2+2 Door Compactum',    'Compactum'],
+    ['Jasper Compactum',            'Compactum'],
+    ['Rupert Compactum',            'Compactum'],
+    ['Bold Compactum',              'Compactum'],
+    ['June Compactum',              'Compactum'],
+    ['Donnalee Compactum',          'Compactum'],
+    ['Heidi Compactum',             'Compactum'],
+    ['Naku Compactum',              'Compactum'],
+    ['Line Compactum',              'Compactum'],
+    ['Lora Compactum',              'Compactum'],
+    // ── COTS ──
+    ['Square Cot',                  'Cot'],
+    ['House Frame Cot',             'Cot'],
+    ['Rupert Cot - All White',      'Cot'],
+    ['Rupert Cot - Natural',        'Cot'],
+    ['Pinkfoot Cot',                'Cot'],
+    ['Heidi Cot',                   'Cot'],
+    ['June Cot',                    'Cot'],
+    ['Shiraz Cot',                  'Cot'],
+    ['Lora Cot',                    'Cot'],
+    ['Bold Cot - Beech',            'Cot'],
+    ['Bold Cot - White',            'Cot'],
+    ['Line Cot',                    'Cot'],
+    // ── ROCKING CHAIRS ──
+    ['Feeding Rocking Chair',       'Rocking Chair'],
+    ['Dream Rocking Chair',         'Rocking Chair'],
+    ['Studio Rocking Chair',        'Rocking Chair'],
+    ['Tufted Rocking Chair',        'Rocking Chair'],
+    ['King Rocking Chair',          'Rocking Chair'],
+    ['Rolanda Rocking Chair',       'Rocking Chair'],
+    ['Donnalee Rocking Chair',      'Rocking Chair'],
+    ['Lora Rocking Chair',          'Rocking Chair'],
+    ['Swag Rocking Chair',          'Rocking Chair'],
+    // ── FOOT STOOLS (paired with rocking chairs) ──
+    ['Feeding foot stool',          'Foot stool'],
+    ['Dream foot stool',            'Foot stool'],
+    ['Studio foot stool',           'Foot stool'],
+    ['Tufted foot stool',           'Foot stool'],
+    ['King foot stool',             'Foot stool'],
+    ['Rolanda foot stool',          'Foot stool'],
+    ['Donnalee foot stool',         'Foot stool'],
+    ['Lora foot stool',             'Foot stool'],
+    ['Swag foot stool',             'Foot stool']
+  ];
+
   function initBomDefaults() {
-    // Guard against being called before constants are defined (during early dashboard render)
+    // Guard against being called before constants are defined (during early dashboard render).
+    // typeof on a TDZ const throws — but this function is called from try/catch sites, so a
+    // throw here is silently swallowed and we retry later when the script has fully parsed.
     if (typeof DEFAULT_MATERIALS_BELLVILLE === 'undefined' || typeof DEFAULT_PRODUCT_GROUPS_BELLVILLE === 'undefined') return;
     ['bellville', 'pinkfoot', 'repticube'].forEach(biz => {
+      // Seed materials library if empty
       if (!data[biz].materialsLibrary || data[biz].materialsLibrary.length === 0) {
-        data[biz].materialsLibrary = biz === 'bellville' ? JSON.parse(JSON.stringify(DEFAULT_MATERIALS_BELLVILLE)) : [];
+        if (biz === 'bellville') {
+          data[biz].materialsLibrary = JSON.parse(JSON.stringify(DEFAULT_MATERIALS_BELLVILLE));
+        } else if (biz === 'repticube') {
+          data[biz].materialsLibrary = JSON.parse(JSON.stringify(DEFAULT_MATERIALS_REPTICUBE));
+        } else if (biz === 'pinkfoot') {
+          data[biz].materialsLibrary = JSON.parse(JSON.stringify(DEFAULT_MATERIALS_PINKFOOT));
+        } else {
+          data[biz].materialsLibrary = [];
+        }
       }
+      // Seed product BOMs if empty
       if (!data[biz].productBoms) {
         data[biz].productBoms = {};
         if (biz === 'bellville') {
@@ -3049,6 +3826,20 @@
               };
             });
           });
+        } else if (biz === 'repticube') {
+          DEFAULT_PRODUCTS_REPTICUBE.forEach(([name, materials]) => {
+            data[biz].productBoms[name] = {
+              category: 'Enclosure',
+              materials: JSON.parse(JSON.stringify(materials))
+            };
+          });
+        } else if (biz === 'pinkfoot') {
+          DEFAULT_PRODUCTS_PINKFOOT.forEach(([name, category]) => {
+            data[biz].productBoms[name] = {
+              category: category,
+              materials: {}  // empty — user will fill in via BOM tab
+            };
+          });
         }
       }
       // Initialize category templates
@@ -3058,33 +3849,934 @@
     });
   }
   
+  // Merge the ReptiCube defaults into the live data without overwriting customizations.
+  // Used by the "📥 Load ReptiCube Defaults" button on the BOM tab — needed when
+  // the cloud doc already has something in it (so initBomDefaults' empty-only seed skipped).
+  function loadRepticubeDefaults() {
+    if (activeBiz !== 'repticube') {
+      alert('Switch to ReptiCube first.');
+      return;
+    }
+    if (typeof DEFAULT_MATERIALS_REPTICUBE === 'undefined' || typeof DEFAULT_PRODUCTS_REPTICUBE === 'undefined') {
+      alert('ReptiCube defaults not yet defined — script may still be loading. Try again in a moment.');
+      return;
+    }
+    if (!confirm('Load default ReptiCube materials (22) and SKU BOMs (14) into your library?\n\nSafe: existing materials and products will not be overwritten — only missing ones are added.\nProducts that exist but have no BOM yet will have their default BOM filled in.')) {
+      return;
+    }
+
+    snapshotState();
+    const biz = currentData();
+    if (!biz.materialsLibrary) biz.materialsLibrary = [];
+    if (!biz.productBoms) biz.productBoms = {};
+
+    let matsAdded = 0, prodsAdded = 0, bomsFilled = 0;
+
+    // Index existing materials by lowercase name so we can dedupe and resolve
+    // default-IDs to the user's actual IDs when wiring up product BOMs.
+    const existingByName = {};
+    biz.materialsLibrary.forEach(m => { if (m.name) existingByName[m.name.toLowerCase().trim()] = m.id; });
+
+    const defaultIdToActualId = {};
+    DEFAULT_MATERIALS_REPTICUBE.forEach(dm => {
+      const key = dm.name.toLowerCase().trim();
+      if (existingByName[key]) {
+        // Use the user's existing material — don't add a duplicate
+        defaultIdToActualId[dm.id] = existingByName[key];
+      } else {
+        const fresh = JSON.parse(JSON.stringify(dm));
+        if (fresh.stock == null) fresh.stock = 0;
+        biz.materialsLibrary.push(fresh);
+        defaultIdToActualId[dm.id] = dm.id;
+        existingByName[key] = dm.id;
+        matsAdded++;
+      }
+    });
+
+    // Map a default BOM's material IDs to the user's actual material IDs
+    const remapBom = (defaultBom) => {
+      const mapped = {};
+      Object.entries(defaultBom).forEach(([defId, qty]) => {
+        mapped[defaultIdToActualId[defId] || defId] = qty;
+      });
+      return mapped;
+    };
+
+    DEFAULT_PRODUCTS_REPTICUBE.forEach(([name, materials]) => {
+      const existing = biz.productBoms[name];
+      if (!existing) {
+        biz.productBoms[name] = { category: 'Enclosure', materials: remapBom(materials) };
+        prodsAdded++;
+      } else if (!existing.materials || Object.keys(existing.materials).length === 0) {
+        existing.materials = remapBom(materials);
+        if (!existing.category) existing.category = 'Enclosure';
+        bomsFilled++;
+      }
+      // else: existing has custom materials — leave it alone
+    });
+
+    saveData();
+    if (typeof renderBomSection === 'function') renderBomSection();
+    render();
+
+    const parts = [];
+    if (matsAdded) parts.push(`${matsAdded} material${matsAdded !== 1 ? 's' : ''}`);
+    if (prodsAdded) parts.push(`${prodsAdded} new product${prodsAdded !== 1 ? 's' : ''}`);
+    if (bomsFilled) parts.push(`${bomsFilled} BOM${bomsFilled !== 1 ? 's' : ''} filled`);
+    const summary = parts.length ? 'Loaded: ' + parts.join(', ') + '.' : 'Nothing new to load — everything is already in place.';
+    toast(summary, parts.length ? 'success' : 'info', 4000);
+  }
+  window.loadRepticubeDefaults = loadRepticubeDefaults;
+
+  // Merge PinkFoot materials defaults into the live data without overwriting customizations.
+  // Mirrors loadRepticubeDefaults — used when the cloud doc already has data and
+  // initBomDefaults' empty-only seed was skipped.
+  function loadPinkfootDefaults() {
+    if (activeBiz !== 'pinkfoot') {
+      alert('Switch to PinkFoot first.');
+      return;
+    }
+    if (typeof DEFAULT_MATERIALS_PINKFOOT === 'undefined' || typeof DEFAULT_PRODUCTS_PINKFOOT === 'undefined') {
+      alert('PinkFoot defaults not yet defined — script may still be loading. Try again in a moment.');
+      return;
+    }
+    if (!confirm('Load PinkFoot defaults?\n\n• ' + DEFAULT_MATERIALS_PINKFOOT.length + ' materials\n• ' + DEFAULT_PRODUCTS_PINKFOOT.length + ' products (empty BOMs — fill in via BOM tab)\n\nSafe: existing materials and products are NOT overwritten — only missing ones are added (deduped by name).')) {
+      return;
+    }
+
+    snapshotState();
+    const biz = currentData();
+    if (!biz.materialsLibrary) biz.materialsLibrary = [];
+    if (!biz.productBoms) biz.productBoms = {};
+
+    // Index existing materials by lowercase name so we dedupe rather than create duplicates
+    const existingByName = {};
+    biz.materialsLibrary.forEach(m => { if (m.name) existingByName[m.name.toLowerCase().trim()] = m.id; });
+
+    let matsAdded = 0;
+    DEFAULT_MATERIALS_PINKFOOT.forEach(dm => {
+      const key = dm.name.toLowerCase().trim();
+      if (existingByName[key]) return;
+      const fresh = JSON.parse(JSON.stringify(dm));
+      if (fresh.stock == null) fresh.stock = 0;
+      biz.materialsLibrary.push(fresh);
+      existingByName[key] = dm.id;
+      matsAdded++;
+    });
+
+    // Add missing products (dedupe by name). Existing products with custom BOMs are untouched.
+    let prodsAdded = 0;
+    DEFAULT_PRODUCTS_PINKFOOT.forEach(([name, category]) => {
+      if (biz.productBoms[name]) return;
+      biz.productBoms[name] = { category: category, materials: {} };
+      prodsAdded++;
+    });
+
+    saveData();
+    if (typeof renderBomSection === 'function') renderBomSection();
+    render();
+
+    const parts = [];
+    if (matsAdded > 0) parts.push(matsAdded + ' material' + (matsAdded !== 1 ? 's' : ''));
+    if (prodsAdded > 0) parts.push(prodsAdded + ' product' + (prodsAdded !== 1 ? 's' : ''));
+    const msg = parts.length ? 'Loaded: ' + parts.join(', ') + '.' : 'Everything is already in place — nothing to load.';
+    toast(msg, parts.length ? 'success' : 'info', 3500);
+  }
+  window.loadPinkfootDefaults = loadPinkfootDefaults;
+
+  // ============================================
+  // CATALOGUE RECONCILIATION — one-click migration from old catalogue to current defaults.
+  // Handles four operations in a single snapshot-backed pass:
+  //   1) Hardcoded renames (e.g. "Flush 3 Door Compactum" → "Flush 2+2 Door Compactum")
+  //   2) Auto-derived renames from category remaps (e.g. "Feroche — Elata Sofa" → "Sofa — Elata Sofa")
+  //   3) Add missing products from defaults
+  //   4) Remove products no longer in defaults
+  // Migrates order.bomKey + order.product so existing linked orders survive renames.
+  // ============================================
+
+  // Hardcoded rename mappings (per biz). Format: { biz: { oldName: newName, ... } }
+  const CATALOGUE_RENAMES = {
+    bellville: {},  // none — Feroche category dissolution handled by CATEGORY_REMAPS below
+    pinkfoot: {
+      'Square Compactum - White': 'Square Compactum',
+      'Square Birch Compactum':   'Square Compactum',
+      'Flush 3 Door Compactum':   'Flush 2+2 Door Compactum'
+    },
+    repticube: {}
+  };
+
+  // Hardcoded category remaps (per biz). Products whose category is in the key set
+  // get migrated to the value category. Auto-generates Bellville's "Feroche — X" → "Sofa — X"
+  // renames because Bellville product names are "<category> — <basename>".
+  const CATALOGUE_CATEGORY_REMAPS = {
+    bellville: {
+      'Feroche': 'Sofa',
+      'Feroche Chair': 'Chair'
+    },
+    pinkfoot: {},
+    repticube: {}
+  };
+
+  function reconcileCatalogue() {
+    const biz = activeBiz;
+    const bizData = data[biz];
+    if (!bizData) { alert('No active biz data.'); return; }
+    bizData.productBoms = bizData.productBoms || {};
+
+    // Step 1: Build the "expected" set from the current source defaults for this biz
+    const expected = {};  // name → { category }
+    if (biz === 'bellville') {
+      if (typeof DEFAULT_PRODUCT_GROUPS_BELLVILLE === 'undefined') { alert('Bellville defaults not loaded yet — try again in a moment.'); return; }
+      DEFAULT_PRODUCT_GROUPS_BELLVILLE.forEach(([cat, names]) => {
+        names.split(',').forEach(n => {
+          const productName = cat + ' — ' + n.trim();
+          expected[productName] = { category: cat };
+        });
+      });
+    } else if (biz === 'pinkfoot') {
+      if (typeof DEFAULT_PRODUCTS_PINKFOOT === 'undefined') { alert('PinkFoot defaults not loaded yet — try again in a moment.'); return; }
+      DEFAULT_PRODUCTS_PINKFOOT.forEach(([name, cat]) => {
+        expected[name] = { category: cat };
+      });
+    } else if (biz === 'repticube') {
+      if (typeof DEFAULT_PRODUCTS_REPTICUBE === 'undefined') { alert('ReptiCube defaults not loaded yet — try again in a moment.'); return; }
+      DEFAULT_PRODUCTS_REPTICUBE.forEach(([name]) => {
+        expected[name] = { category: 'Enclosure' };
+      });
+    } else {
+      alert('No defaults defined for biz: ' + biz);
+      return;
+    }
+
+    const manualRenames = CATALOGUE_RENAMES[biz] || {};
+    const catRemaps = CATALOGUE_CATEGORY_REMAPS[biz] || {};
+    const productBoms = bizData.productBoms;
+
+    // Step 2: Plan renames — combine manual + auto-derived from category remaps
+    const renames = {};  // from → to
+    Object.entries(manualRenames).forEach(([from, to]) => {
+      if (productBoms[from]) renames[from] = to;
+    });
+    // Auto-derived: "<oldCat> — <baseName>" → "<newCat> — <baseName>" when product still uses old category prefix
+    Object.keys(productBoms).forEach(oldName => {
+      if (renames[oldName]) return;  // already covered by manual rename
+      const m = oldName.match(/^(.+?) — (.+)$/);
+      if (!m) return;
+      const oldCat = m[1].trim();
+      const baseName = m[2].trim();
+      const newCat = catRemaps[oldCat];
+      if (!newCat) return;
+      const newName = newCat + ' — ' + baseName;
+      if (expected[newName]) renames[oldName] = newName;
+    });
+
+    // Step 3: Compute the post-rename product set, then plan category updates, additions, removals
+    const afterRenames = new Set(Object.keys(productBoms));
+    Object.entries(renames).forEach(([from, to]) => {
+      afterRenames.delete(from);
+      afterRenames.add(to);
+    });
+
+    const catUpdates = [];  // { name, oldCat, newCat }
+    afterRenames.forEach(name => {
+      const exp = expected[name];
+      if (!exp) return;
+      // What's the product's current category? If it came from a rename, look at the source's category
+      const renameSource = Object.entries(renames).find(([, to]) => to === name);
+      let currentCat;
+      if (renameSource) currentCat = productBoms[renameSource[0]]?.category;
+      else currentCat = productBoms[name]?.category;
+      // Apply category remap to the source category (Feroche → Sofa)
+      if (currentCat && catRemaps[currentCat]) currentCat = catRemaps[currentCat];
+      if (currentCat !== exp.category) {
+        catUpdates.push({ name, oldCat: currentCat || '(none)', newCat: exp.category });
+      }
+    });
+
+    const additions = Object.keys(expected).filter(name => !afterRenames.has(name));
+    const removals = [...afterRenames].filter(name => !expected[name]);
+
+    // Step 4: Show plan + confirm
+    const renameLines = Object.entries(renames).map(([from, to]) => '  • ' + from + '  →  ' + to);
+    const summary =
+      'RECONCILE ' + biz.toUpperCase() + ' CATALOGUE\n\n' +
+      '  • ' + Object.keys(renames).length + ' rename(s)\n' +
+      '  • ' + catUpdates.length + ' category update(s)\n' +
+      '  • ' + additions.length + ' addition(s)\n' +
+      '  • ' + removals.length + ' removal(s)\n' +
+      (renameLines.length ? '\nRENAMES:\n' + renameLines.slice(0, 25).join('\n') + (renameLines.length > 25 ? '\n  ... +' + (renameLines.length - 25) + ' more' : '') : '') +
+      (removals.length ? '\n\nREMOVALS:\n  • ' + removals.slice(0, 25).join('\n  • ') + (removals.length > 25 ? '\n  ... +' + (removals.length - 25) + ' more' : '') : '') +
+      '\n\nOrders linked to renamed products will be auto-migrated. Snapshot saved (Ctrl+Z reverts).';
+
+    if (Object.keys(renames).length === 0 && catUpdates.length === 0 && additions.length === 0 && removals.length === 0) {
+      alert('Nothing to reconcile — catalogue is already in sync with defaults.');
+      return;
+    }
+
+    if (!confirm(summary)) return;
+
+    snapshotState();
+
+    // Step A: Apply renames (productBoms entries + matching orders.bomKey)
+    Object.entries(renames).forEach(([from, to]) => {
+      const src = productBoms[from];
+      if (!src) return;
+      if (productBoms[to]) {
+        // Target already exists — merge: if target has empty BOM and source has data, copy it over.
+        // Otherwise keep target as-is (target wins to preserve customizations).
+        if (Object.keys(productBoms[to].materials || {}).length === 0 && Object.keys(src.materials || {}).length > 0) {
+          productBoms[to].materials = src.materials;
+        }
+        if ((!productBoms[to].cutList || productBoms[to].cutList.length === 0) && src.cutList && src.cutList.length > 0) {
+          productBoms[to].cutList = src.cutList;
+        }
+      } else {
+        productBoms[to] = src;
+      }
+      delete productBoms[from];
+      // Migrate any order whose bomKey points at the old name
+      (bizData.orders || []).forEach(o => {
+        if (o.bomKey === from) o.bomKey = to;
+      });
+    });
+
+    // Step B: Apply category updates
+    catUpdates.forEach(({ name, newCat }) => {
+      if (productBoms[name]) productBoms[name].category = newCat;
+    });
+
+    // Step C: Add missing products (empty BOM — user fills via the per-product editor)
+    additions.forEach(name => {
+      productBoms[name] = { category: expected[name].category, materials: {} };
+    });
+
+    // Step D: Remove products no longer in defaults
+    removals.forEach(name => {
+      delete productBoms[name];
+    });
+
+    saveData();
+    if (typeof renderBomSection === 'function') renderBomSection();
+    render();
+
+    const parts = [];
+    if (Object.keys(renames).length) parts.push(Object.keys(renames).length + ' renamed');
+    if (catUpdates.length) parts.push(catUpdates.length + ' re-categorised');
+    if (additions.length) parts.push(additions.length + ' added');
+    if (removals.length) parts.push(removals.length + ' removed');
+    toast('Reconciled ' + biz + ' catalogue: ' + parts.join(' · '), 'success', 5000);
+  }
+  window.reconcileCatalogue = reconcileCatalogue;
+
   function renderBomSection() {
     initBomDefaults();
-    const biz = currentData();
-    
-    const cats = [...new Set(Object.values(biz.productBoms || {}).map(p => p.category))].sort();
-    
-    // Populate filter dropdown
-    const select = document.getElementById('bom-category');
-    if (select) {
-      const current = select.value;
-      select.innerHTML = '<option value="">-- All categories --</option>' +
-        cats.map(c => `<option value="${c}" ${c === current ? 'selected' : ''}>${c}</option>`).join('');
-    }
-    
-    // Populate template dropdown
-    const templateSelect = document.getElementById('bom-template-category');
-    if (templateSelect) {
-      const current = templateSelect.value;
-      templateSelect.innerHTML = '<option value="">-- Select category --</option>' +
-        cats.map(c => `<option value="${c}" ${c === current ? 'selected' : ''}>${c}</option>`).join('');
-    }
-    
-    renderTemplateEditor();
+    // The new per-product editor (renderProductEditor) replaces the old combo of
+    // Category Templates + Product BOMs table + Cutting Lists. The old renderers
+    // (renderTemplateEditor / renderProductBomTable / renderCuttingListEditor)
+    // remain defined for compat but their corresponding DOM elements were removed
+    // from the markup, so calling them would be a no-op.
     renderMaterialsLibrary();
-    renderProductBomTable();
+    renderProductEditor();
   }
-  
+
+  // ============================================
+  // CUTTING LISTS — per-product cut schedule.
+  // Stored on data[biz].productBoms[name].cutList as an array of
+  //   { timber: string, lengthMm: number, widthMm: number, qty: number, part: string }
+  // `timber` is a material NAME from the active biz's materialsLibrary, restricted
+  // to materials whose unit is 'Meter' or 'Sheet'. `widthMm` is optional (0 = no width,
+  // used for strip cuts like pine). The field is additive — existing rows without
+  // widthMm are treated as widthMm: 0.
+  // ============================================
+
+  // Total ZAR cost contributed by a product's cut list (per ONE unit of the product).
+  // Used by the Product BOMs table cost column AND shown in the cut list editor totals.
+  // - Meter material (or Sheet with width=0): cost = (length × qty / 1000) × material.cost
+  // - Sheet material with width > 0: cost = (cut area / sheet area) × material.cost
+  //   Sheet area defaults to 2440×1220mm = 2.9768 m² unless the material has an explicit
+  //   `sheetAreaM2` value (you can set this per material later if your sheets differ — e.g.
+  //   PinkFoot MDF uses 2750×1830mm = 5.0325 m²).
+  function _productCutListCost(productName, bizData) {
+    bizData = bizData || currentData();
+    const prod = (bizData.productBoms || {})[productName];
+    if (!prod || !prod.cutList || prod.cutList.length === 0) return 0;
+    const matByName = {};
+    (bizData.materialsLibrary || []).forEach(m => { if (m && m.name) matByName[m.name] = m; });
+    const DEFAULT_SHEET_AREA_M2 = (2440 * 1220) / 1000000;  // 2.9768
+    let total = 0;
+    prod.cutList.forEach(c => {
+      const mat = matByName[c.timber];
+      if (!mat) return;
+      const cost = parseFloat(mat.cost || 0);
+      const len = parseFloat(c.lengthMm || 0);
+      const wid = parseFloat(c.widthMm || 0);
+      const qty = parseFloat(c.qty || 0);
+      if (mat.unit === 'Sheet' && wid > 0) {
+        const sheetArea = parseFloat(mat.sheetAreaM2 || DEFAULT_SHEET_AREA_M2);
+        const cutArea_m2 = (len * wid * qty) / 1000000;
+        total += (cutArea_m2 / sheetArea) * cost;
+      } else {
+        const linear_m = (len * qty) / 1000;
+        total += linear_m * cost;
+      }
+    });
+    return total;
+  }
+  window._productCutListCost = _productCutListCost;
+
+  // Material consumption (qty per ONE unit of the product) implied by the cut list.
+  // Returns { matId: qty }. Used by the weekly material forecasts so that timber/sheets
+  // cut for production are pulled into the "what we need this week" calculation
+  // alongside the materials map. Same per-row math as _productCutListCost.
+  function _cutListConsumption(prod, bizData) {
+    bizData = bizData || currentData();
+    const result = {};
+    if (!prod || !prod.cutList || prod.cutList.length === 0) return result;
+    const matByName = {};
+    (bizData.materialsLibrary || []).forEach(m => { if (m && m.name) matByName[m.name] = m; });
+    const DEFAULT_SHEET_AREA_M2 = (2440 * 1220) / 1000000;
+    prod.cutList.forEach(c => {
+      const mat = matByName[c.timber];
+      if (!mat) return;
+      const len = parseFloat(c.lengthMm || 0);
+      const wid = parseFloat(c.widthMm || 0);
+      const qty = parseFloat(c.qty || 0);
+      let used;
+      if (mat.unit === 'Sheet' && wid > 0) {
+        const sheetArea = parseFloat(mat.sheetAreaM2 || DEFAULT_SHEET_AREA_M2);
+        used = (len * wid * qty) / 1000000 / sheetArea;
+      } else {
+        used = (len * qty) / 1000;
+      }
+      result[mat.id] = (result[mat.id] || 0) + used;
+    });
+    return result;
+  }
+  window._cutListConsumption = _cutListConsumption;
+
+  // ============================================
+  // PER-PRODUCT EDITOR — single focused view that replaces the old combo of
+  // Category Templates + Product BOMs table + Cutting Lists card. Pick one
+  // product, edit its materials map (hardware, finishes) and cutting list
+  // (timber/sheets cut) in one place. Cost shown live.
+  // ============================================
+
+  function addNewProductFromEditor() {
+    const cat = prompt('Category (e.g. "Compactum", "Cot", "Sofa"):');
+    if (!cat) return;
+    const name = prompt('Product name (must be unique):');
+    if (!name) return;
+    const fullName = name.trim();
+    const biz = currentData();
+    if (!biz.productBoms) biz.productBoms = {};
+    if (biz.productBoms[fullName]) { alert('A product with that name already exists.'); return; }
+    snapshotState();
+    biz.productBoms[fullName] = { category: cat.trim(), materials: {} };
+    saveData();
+    // Select the new one in the editor
+    const sel = document.getElementById('prod-editor-product');
+    if (sel) sel.value = fullName;
+    renderProductEditor();
+    toast('Created "' + fullName + '"', 'success', 2500);
+  }
+  window.addNewProductFromEditor = addNewProductFromEditor;
+
+  // Set the materials-map qty for one (material, product) pair. Used by both the
+  // legacy big-table view AND the new per-product editor. 0 / NaN removes the entry.
+  function setProductMaterialQty(prodName, matId, qty) {
+    const biz = currentData();
+    if (!biz.productBoms || !biz.productBoms[prodName]) return;
+    snapshotState();
+    if (!biz.productBoms[prodName].materials) biz.productBoms[prodName].materials = {};
+    if (!qty || isNaN(qty)) delete biz.productBoms[prodName].materials[matId];
+    else biz.productBoms[prodName].materials[matId] = qty;
+    saveData();
+    renderProductEditor();
+  }
+  window.setProductMaterialQty = setProductMaterialQty;
+
+  // Add a material to a product (defaults qty to 1, user edits inline after).
+  function addMaterialToProduct(prodName) {
+    const biz = currentData();
+    if (!biz.productBoms || !biz.productBoms[prodName]) return;
+    const selectEl = document.getElementById('add-material-select');
+    if (!selectEl) return;
+    const matId = selectEl.value;
+    if (!matId) { toast('Pick a material first', 'warn', 2000); return; }
+    snapshotState();
+    if (!biz.productBoms[prodName].materials) biz.productBoms[prodName].materials = {};
+    biz.productBoms[prodName].materials[matId] = biz.productBoms[prodName].materials[matId] || 1;
+    saveData();
+    renderProductEditor();
+  }
+  window.addMaterialToProduct = addMaterialToProduct;
+
+  // Update a product's category
+  function setProductCategory(prodName, newCat) {
+    const biz = currentData();
+    if (!biz.productBoms || !biz.productBoms[prodName]) return;
+    snapshotState();
+    biz.productBoms[prodName].category = newCat || '';
+    saveData();
+    renderProductEditor();
+  }
+  window.setProductCategory = setProductCategory;
+
+  // Delete a product (with confirm)
+  function deleteProductFromEditor(prodName) {
+    const biz = currentData();
+    if (!biz.productBoms || !biz.productBoms[prodName]) return;
+    if (!confirm('Delete "' + prodName + '"? This removes the product\'s BOM and cutting list. Existing orders that referenced it stay but become unlinked.')) return;
+    snapshotState();
+    delete biz.productBoms[prodName];
+    saveData();
+    const sel = document.getElementById('prod-editor-product');
+    if (sel) sel.value = '';
+    renderProductEditor();
+    toast('Deleted', 'info', 2000);
+  }
+  window.deleteProductFromEditor = deleteProductFromEditor;
+
+  function renderProductEditor() {
+    const catSelect = document.getElementById('prod-editor-cat');
+    const prodSelect = document.getElementById('prod-editor-product');
+    const editor = document.getElementById('product-editor');
+    if (!prodSelect || !editor) return;
+
+    initBomDefaults();
+    const biz = currentData();
+    const products = biz.productBoms || {};
+
+    // Populate category filter
+    const cats = [...new Set(Object.values(products).map(p => p.category || '(uncategorized)'))].sort();
+    if (catSelect) {
+      const cur = catSelect.value;
+      catSelect.innerHTML = '<option value="">-- All categories --</option>' +
+        cats.map(c => `<option value="${_escape(c)}" ${c === cur ? 'selected' : ''}>${_escape(c)}</option>`).join('');
+    }
+    const selectedCat = (catSelect && catSelect.value) || '';
+
+    // Populate product dropdown (filtered by category)
+    const filtered = Object.keys(products)
+      .filter(n => !selectedCat || (products[n].category || '(uncategorized)') === selectedCat)
+      .sort();
+    const curProd = prodSelect.value;
+    prodSelect.innerHTML = '<option value="">-- Select product --</option>' +
+      filtered.map(n => `<option value="${n.replace(/"/g, '&quot;')}" ${n === curProd ? 'selected' : ''}>${_escape(n)}</option>`).join('');
+
+    const prodName = prodSelect.value;
+    if (!prodName) {
+      editor.innerHTML = `<div class="empty" style="padding:1.5rem; text-align:center">
+        Pick a product above to edit its bill of materials and cutting list.<br>
+        <span style="font-size:11px; color:var(--text-muted)">${filtered.length} product${filtered.length !== 1 ? 's' : ''}${selectedCat ? ' in ' + _escape(selectedCat) : ' available'}.</span>
+      </div>`;
+      return;
+    }
+
+    const prod = products[prodName];
+    if (!prod) { editor.innerHTML = '<div class="empty">Product not found.</div>'; return; }
+
+    const safeProd = _escape(prodName).replace(/'/g, "\\'");
+    const matsLib = biz.materialsLibrary || [];
+    const matById = Object.fromEntries(matsLib.map(m => [m.id, m]));
+
+    // Materials currently set on this product (in the materials map — hardware/finishes)
+    const usedMatEntries = Object.entries(prod.materials || {}).filter(([matId]) => matById[matId]);
+
+    // Available materials to add (those NOT already in materials map, sorted alphabetically)
+    const usedIds = new Set(usedMatEntries.map(([id]) => id));
+    const availableToAdd = matsLib
+      .filter(m => !usedIds.has(m.id))
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    // Cost breakdown
+    const matsCost = usedMatEntries.reduce((s, [matId, qty]) => s + (parseFloat(qty || 0) * parseFloat(matById[matId].cost || 0)), 0);
+    const cutCost = _productCutListCost(prodName, biz);
+    const totalCost = matsCost + cutCost;
+
+    // === Materials section HTML ===
+    const matsRowsHtml = usedMatEntries.length === 0 ? `
+      <tr><td colspan="5" class="empty" style="padding:0.75rem; text-align:center; font-size:12px">
+        No materials added yet. Use "+ Add material" below for fasteners, finishes, glue, packaging, etc.
+        Timber and sheets go in the Cutting List section instead.
+      </td></tr>
+    ` : usedMatEntries.map(([matId, qty]) => {
+      const mat = matById[matId];
+      const subtotal = parseFloat(qty || 0) * parseFloat(mat.cost || 0);
+      return `
+        <tr>
+          <td style="padding:0.4rem 0.6rem; border:1px solid var(--border); font-weight:500">${_escape(mat.name)}</td>
+          <td style="padding:0.4rem 0.6rem; border:1px solid var(--border); color:var(--text-muted); font-size:11px">${_escape(mat.unit || '')}</td>
+          <td style="padding:0; border:1px solid var(--border); width:90px">
+            <input type="number" step="0.01" value="${qty}"
+              onchange="setProductMaterialQty('${safeProd}', '${matId}', parseFloat(this.value) || 0)"
+              style="width:100%; padding:5px 8px; border:none; text-align:right; background:transparent; font-variant-numeric:tabular-nums">
+          </td>
+          <td style="padding:0.4rem 0.6rem; border:1px solid var(--border); text-align:right; color:var(--text-muted); font-size:11px; width:80px">R${parseFloat(mat.cost || 0).toFixed(2)}</td>
+          <td style="padding:0.4rem 0.6rem; border:1px solid var(--border); text-align:right; font-weight:600; width:90px">R${subtotal.toFixed(2)}</td>
+          <td style="padding:0.3rem; border:1px solid var(--border); width:44px; text-align:center">
+            <button class="btn btn-sm btn-danger" onclick="setProductMaterialQty('${safeProd}', '${matId}', 0)" title="Remove from this product" style="padding:2px 8px">✕</button>
+          </td>
+        </tr>`;
+    }).join('');
+
+    const addMaterialHtml = availableToAdd.length > 0 ? `
+      <div style="margin-top:0.5rem; display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
+        <select id="add-material-select" style="flex:1; min-width:200px; padding:6px 10px; margin:0">
+          <option value="">-- Pick a material to add --</option>
+          ${availableToAdd.map(m => `<option value="${m.id}">${_escape(m.name)} (${_escape(m.unit || '')}) — R${parseFloat(m.cost || 0).toFixed(2)}</option>`).join('')}
+        </select>
+        <button class="btn" onclick="addMaterialToProduct('${safeProd}')">+ Add material</button>
+      </div>` : `
+      <div style="margin-top:0.5rem; padding:0.5rem 0.75rem; font-size:11px; color:var(--text-muted); background:var(--bg); border-radius:4px">
+        All materials in your library are already added to this product.
+      </div>`;
+
+    // === Cutting list section (inlined — same logic as old renderCuttingListEditor) ===
+    const cuts = prod.cutList || [];
+    const cuttable = matsLib
+      .filter(m => m && (m.unit === 'Meter' || m.unit === 'Sheet'))
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const cuttableNames = new Set(cuttable.map(m => m.name));
+    const matByName = {};
+    matsLib.forEach(m => { if (m && m.name) matByName[m.name] = m; });
+
+    const cutStats = {};
+    cuts.forEach(c => {
+      const t = c.timber || ''; if (!t) return;
+      const len = parseFloat(c.lengthMm || 0);
+      const wid = parseFloat(c.widthMm || 0);
+      const qty = parseFloat(c.qty || 0);
+      if (!cutStats[t]) cutStats[t] = { linearMm: 0, areaMm2: 0, anyWidth: false };
+      cutStats[t].linearMm += len * qty;
+      if (wid > 0) { cutStats[t].areaMm2 += len * wid * qty; cutStats[t].anyWidth = true; }
+    });
+    const cutTotalFor = (t) => {
+      const s = cutStats[t];
+      const mat = matByName[t];
+      if (mat && mat.unit === 'Sheet' && s.anyWidth) return (s.areaMm2 / 1000000).toFixed(2) + 'm²';
+      return (s.linearMm / 1000).toFixed(2) + 'm';
+    };
+    const optionsFor = (currentTimber) => {
+      const opts = cuttable.map(m =>
+        `<option value="${_escape(m.name)}" ${m.name === currentTimber ? 'selected' : ''}>${_escape(m.name)} (${_escape(m.unit)})</option>`
+      );
+      if (currentTimber && !cuttableNames.has(currentTimber)) {
+        opts.unshift(`<option value="${_escape(currentTimber)}" selected>${_escape(currentTimber)} — missing from library</option>`);
+      }
+      if (!currentTimber) opts.unshift('<option value="" selected>-- pick a material --</option>');
+      return opts.join('');
+    };
+    const cutRowsHtml = cuts.length === 0 ? `
+      <tr><td colspan="6" class="empty" style="padding:0.75rem; text-align:center; font-size:12px">No cuts yet — click "+ Add cut row" below.</td></tr>
+    ` : cuts.map((c, idx) => `
+      <tr>
+        <td style="padding:0; border:1px solid var(--border)">
+          <select onchange="updateCutListField('${safeProd}', ${idx}, 'timber', this.value)" style="width:100%; padding:5px 8px; border:none; background:transparent">
+            ${optionsFor(c.timber || '')}
+          </select>
+        </td>
+        <td style="padding:0; border:1px solid var(--border); width:100px">
+          <input type="number" min="0" step="1" value="${c.lengthMm || ''}" placeholder="0"
+            onchange="updateCutListField('${safeProd}', ${idx}, 'lengthMm', parseFloat(this.value) || 0)"
+            style="width:100%; padding:5px 8px; border:none; text-align:right; background:transparent; font-variant-numeric:tabular-nums">
+        </td>
+        <td style="padding:0; border:1px solid var(--border); width:100px">
+          <input type="number" min="0" step="1" value="${c.widthMm || ''}" placeholder="0"
+            onchange="updateCutListField('${safeProd}', ${idx}, 'widthMm', parseFloat(this.value) || 0)"
+            style="width:100%; padding:5px 8px; border:none; text-align:right; background:transparent; font-variant-numeric:tabular-nums"
+            title="Optional. Leave 0 for strip cuts.">
+        </td>
+        <td style="padding:0; border:1px solid var(--border); width:70px">
+          <input type="number" min="0" step="1" value="${c.qty || ''}" placeholder="0"
+            onchange="updateCutListField('${safeProd}', ${idx}, 'qty', parseFloat(this.value) || 0)"
+            style="width:100%; padding:5px 8px; border:none; text-align:right; background:transparent; font-variant-numeric:tabular-nums">
+        </td>
+        <td style="padding:0; border:1px solid var(--border)">
+          <input type="text" value="${_escape(c.part || '')}" placeholder="e.g. Side panel"
+            onchange="updateCutListField('${safeProd}', ${idx}, 'part', this.value)"
+            style="width:100%; padding:5px 8px; border:none; background:transparent">
+        </td>
+        <td style="padding:0.3rem; border:1px solid var(--border); text-align:center; width:44px">
+          <button class="btn btn-sm btn-danger" onclick="deleteCutListRow('${safeProd}', ${idx})" style="padding:2px 8px">✕</button>
+        </td>
+      </tr>
+    `).join('');
+
+    // === Compose final HTML ===
+    editor.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem; padding:0.6rem 0.85rem; background:var(--bg); border-radius:6px; margin-bottom:1rem">
+        <div>
+          <div style="font-size:16px; font-weight:700">${_escape(prodName)}</div>
+          <div style="font-size:11px; color:var(--text-muted); margin-top:2px">
+            Category:
+            <select onchange="setProductCategory('${safeProd}', this.value)" style="width:auto; display:inline-block; padding:2px 6px; font-size:11px; margin-left:4px">
+              ${[...new Set([prod.category || '', ...cats])].filter(Boolean).map(c => `<option value="${_escape(c)}" ${c === (prod.category || '') ? 'selected' : ''}>${_escape(c)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:11px; color:var(--text-muted)">Cost per unit</div>
+          <div style="font-size:20px; font-weight:800; color:var(--accent)">R${totalCost.toFixed(2)}</div>
+          <div style="font-size:10px; color:var(--text-muted)">Materials R${matsCost.toFixed(2)} · Cuts R${cutCost.toFixed(2)}</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:1rem">
+        <div style="font-weight:700; font-size:13px; margin-bottom:0.4rem; display:flex; justify-content:space-between; align-items:center">
+          <span>📦 Materials <span style="color:var(--text-muted); font-weight:normal; font-size:11px">(hardware, finishes, consumables — non-cut items)</span></span>
+          <span style="color:var(--text-muted); font-size:11px">${usedMatEntries.length} item${usedMatEntries.length !== 1 ? 's' : ''}</span>
+        </div>
+        <div style="overflow-x:auto; border:1px solid var(--border); border-radius:6px">
+          <table style="width:100%; border-collapse:collapse; font-size:12px">
+            <thead><tr style="background:var(--bg)">
+              <th style="padding:0.4rem 0.6rem; border:1px solid var(--border); text-align:left">Material</th>
+              <th style="padding:0.4rem 0.6rem; border:1px solid var(--border); text-align:left; width:70px">Unit</th>
+              <th style="padding:0.4rem 0.6rem; border:1px solid var(--border); text-align:right; width:90px">Qty / unit</th>
+              <th style="padding:0.4rem 0.6rem; border:1px solid var(--border); text-align:right; width:80px">Cost/ea</th>
+              <th style="padding:0.4rem 0.6rem; border:1px solid var(--border); text-align:right; width:90px">Subtotal</th>
+              <th style="padding:0.4rem 0.6rem; border:1px solid var(--border); width:44px"></th>
+            </tr></thead>
+            <tbody>${matsRowsHtml}</tbody>
+          </table>
+        </div>
+        ${addMaterialHtml}
+      </div>
+
+      <div style="margin-bottom:1rem">
+        <div style="font-weight:700; font-size:13px; margin-bottom:0.4rem; display:flex; justify-content:space-between; align-items:center">
+          <span>✂️ Cutting List <span style="color:var(--text-muted); font-weight:normal; font-size:11px">(timber/sheets cut per unit — uses any Meter or Sheet material)</span></span>
+          <span style="color:var(--text-muted); font-size:11px">${cuts.length} cut${cuts.length !== 1 ? 's' : ''}</span>
+        </div>
+        <div style="overflow-x:auto; border:1px solid var(--border); border-radius:6px">
+          <table style="width:100%; border-collapse:collapse; font-size:12px">
+            <thead><tr style="background:var(--bg)">
+              <th style="padding:0.4rem 0.6rem; border:1px solid var(--border); text-align:left; width:160px">Timber</th>
+              <th style="padding:0.4rem 0.6rem; border:1px solid var(--border); text-align:right">Length (mm)</th>
+              <th style="padding:0.4rem 0.6rem; border:1px solid var(--border); text-align:right">Width (mm)</th>
+              <th style="padding:0.4rem 0.6rem; border:1px solid var(--border); text-align:right">Qty</th>
+              <th style="padding:0.4rem 0.6rem; border:1px solid var(--border); text-align:left">Part name</th>
+              <th style="padding:0.4rem 0.6rem; border:1px solid var(--border); width:44px"></th>
+            </tr></thead>
+            <tbody>${cutRowsHtml}</tbody>
+          </table>
+        </div>
+        <div style="margin-top:0.6rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem">
+          <button class="btn" onclick="addCutListRow('${safeProd}')">+ Add cut row</button>
+          <div style="display:flex; gap:1rem; font-size:12px; flex-wrap:wrap; justify-content:flex-end">
+            ${Object.keys(cutStats).sort().map(t => `<div><span style="color:var(--text-muted)">Total ${_escape(t)}:</span> <strong>${cutTotalFor(t)}</strong></div>`).join('') || '<span style="color:var(--text-muted); font-size:11px; font-style:italic">No cut totals yet</span>'}
+          </div>
+        </div>
+        ${cuttable.length === 0 ? '<div style="margin-top:0.5rem; padding:0.5rem 0.75rem; background:#fef3c7; border-left:3px solid #f59e0b; font-size:11px; border-radius:4px">⚠️ No Meter or Sheet materials in your library. Add some in the Materials Library below before defining cuts.</div>' : ''}
+      </div>
+
+      <div style="border-top:1px solid var(--border); padding-top:0.75rem; display:flex; justify-content:flex-end">
+        <button class="btn btn-danger" onclick="deleteProductFromEditor('${safeProd}')">🗑️ Delete product</button>
+      </div>
+    `;
+  }
+  window.renderProductEditor = renderProductEditor;
+
+  function renderCuttingListEditor() {
+    const select = document.getElementById('cutlist-product');
+    const editor = document.getElementById('cutting-list-editor');
+    if (!select || !editor) return;
+
+    const biz = currentData();
+
+    // Populate the product dropdown (alphabetical across all categories)
+    const products = Object.keys(biz.productBoms || {}).sort();
+    const current = select.value;
+    select.innerHTML = '<option value="">-- Select product --</option>' +
+      products.map(p => `<option value="${p.replace(/"/g, '&quot;')}" ${p === current ? 'selected' : ''}>${_escape(p)}</option>`).join('');
+
+    const prodName = select.value;
+    if (!prodName) {
+      editor.innerHTML = '<div class="empty">Select a product above to edit its cutting list.</div>';
+      return;
+    }
+    const prod = biz.productBoms[prodName];
+    if (!prod) {
+      editor.innerHTML = '<div class="empty">Product not found in BOM.</div>';
+      return;
+    }
+
+    const cuts = prod.cutList || [];
+
+    // Materials selectable in the cut list: any material in the active biz's
+    // library whose unit is 'Meter' or 'Sheet'. Sorted alphabetically by name.
+    const cuttable = (biz.materialsLibrary || [])
+      .filter(m => m && (m.unit === 'Meter' || m.unit === 'Sheet'))
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const cuttableNames = new Set(cuttable.map(m => m.name));
+    const matByName = {};
+    (biz.materialsLibrary || []).forEach(m => { if (m && m.name) matByName[m.name] = m; });
+
+    // Per-timber totals: aggregate linear length (mm × qty) AND area (mm × mm × qty
+    // when width > 0). Whether we display linear or area in the final total label
+    // depends on the material's unit (Meter → linear, Sheet → area if any width is set).
+    const stats = {};  // { timberName: { linearMm, areaMm2, anyWidth } }
+    cuts.forEach(c => {
+      const t = c.timber || '';
+      if (!t) return;
+      const len = parseFloat(c.lengthMm || 0);
+      const wid = parseFloat(c.widthMm || 0);
+      const qty = parseFloat(c.qty || 0);
+      if (!stats[t]) stats[t] = { linearMm: 0, areaMm2: 0, anyWidth: false };
+      stats[t].linearMm += len * qty;
+      if (wid > 0) {
+        stats[t].areaMm2 += len * wid * qty;
+        stats[t].anyWidth = true;
+      }
+    });
+
+    // Format a total line for one timber based on its material unit.
+    // Meter material → linear meters. Sheet + any width set → m². Otherwise linear.
+    const totalLineFor = (timber) => {
+      const s = stats[timber];
+      const mat = matByName[timber];
+      if (mat && mat.unit === 'Sheet' && s.anyWidth) {
+        return (s.areaMm2 / 1000000).toFixed(2) + 'm²';
+      }
+      return (s.linearMm / 1000).toFixed(2) + 'm';
+    };
+
+    // Escape prodName for safe embedding in onclick handlers
+    const safeProd = _escape(prodName).replace(/'/g, "\\'");
+
+    // Build dropdown <option> list for a given row's current timber.
+    // If the row's stored timber isn't in the current library (renamed/deleted),
+    // we still show it so the user sees and can fix it — flagged with "(missing)".
+    const optionsFor = (currentTimber) => {
+      const opts = cuttable.map(m =>
+        `<option value="${_escape(m.name)}" ${m.name === currentTimber ? 'selected' : ''}>${_escape(m.name)} (${_escape(m.unit)})</option>`
+      );
+      if (currentTimber && !cuttableNames.has(currentTimber)) {
+        opts.unshift(`<option value="${_escape(currentTimber)}" selected>${_escape(currentTimber)} — missing from library</option>`);
+      }
+      if (!currentTimber) {
+        opts.unshift('<option value="" selected>-- pick a material --</option>');
+      }
+      return opts.join('');
+    };
+
+    const rowsHtml = cuts.map((c, idx) => `
+      <tr>
+        <td style="padding:0; border:1px solid var(--border)">
+          <select onchange="updateCutListField('${safeProd}', ${idx}, 'timber', this.value)"
+                  style="width:100%; padding:6px 8px; border:none; background:transparent; font-family:inherit">
+            ${optionsFor(c.timber || '')}
+          </select>
+        </td>
+        <td style="padding:0; border:1px solid var(--border)">
+          <input type="number" min="0" step="1" value="${c.lengthMm || ''}" placeholder="0"
+            onchange="updateCutListField('${safeProd}', ${idx}, 'lengthMm', parseFloat(this.value) || 0)"
+            style="width:100%; padding:6px 8px; border:none; text-align:right; background:transparent; font-variant-numeric:tabular-nums">
+        </td>
+        <td style="padding:0; border:1px solid var(--border)">
+          <input type="number" min="0" step="1" value="${c.widthMm || ''}" placeholder="0"
+            onchange="updateCutListField('${safeProd}', ${idx}, 'widthMm', parseFloat(this.value) || 0)"
+            style="width:100%; padding:6px 8px; border:none; text-align:right; background:transparent; font-variant-numeric:tabular-nums"
+            title="Optional. Leave 0 for strip cuts (Pine). Required for area calc on sheet materials.">
+        </td>
+        <td style="padding:0; border:1px solid var(--border)">
+          <input type="number" min="0" step="1" value="${c.qty || ''}" placeholder="0"
+            onchange="updateCutListField('${safeProd}', ${idx}, 'qty', parseFloat(this.value) || 0)"
+            style="width:100%; padding:6px 8px; border:none; text-align:right; background:transparent; font-variant-numeric:tabular-nums">
+        </td>
+        <td style="padding:0; border:1px solid var(--border)">
+          <input type="text" value="${_escape(c.part || '')}" placeholder="e.g. Frame rail"
+            onchange="updateCutListField('${safeProd}', ${idx}, 'part', this.value)"
+            style="width:100%; padding:6px 8px; border:none; background:transparent">
+        </td>
+        <td style="padding:0.3rem; border:1px solid var(--border); text-align:center; width:44px">
+          <button class="btn btn-sm btn-danger" onclick="deleteCutListRow('${safeProd}', ${idx})" style="padding:2px 8px">✕</button>
+        </td>
+      </tr>
+    `).join('');
+
+    editor.innerHTML = `
+      <div style="margin-bottom:0.75rem; padding:0.5rem 0.75rem; background:var(--bg); border-radius:6px; font-size:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <div>Editing: <strong>${_escape(prodName)}</strong></div>
+        <div style="color:var(--text-muted)">${cuts.length} cut row${cuts.length !== 1 ? 's' : ''}</div>
+      </div>
+      <div style="overflow-x:auto; border:1px solid var(--border); border-radius:6px">
+        <table style="width:100%; border-collapse:collapse; font-size:13px">
+          <thead>
+            <tr style="background:var(--bg)">
+              <th style="padding:0.5rem; border:1px solid var(--border); text-align:left; width:160px">Timber</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); text-align:right; width:110px">Length (mm)</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); text-align:right; width:110px">Width (mm)</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); text-align:right; width:80px">Qty</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); text-align:left">Part name</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); width:44px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml || '<tr><td colspan="6" class="empty" style="padding:1rem; text-align:center">No cuts defined yet — click "+ Add row" below.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:1rem; display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:1rem">
+        <button class="btn btn-primary" onclick="addCutListRow('${safeProd}')">+ Add row</button>
+        <div style="display:flex; gap:1.25rem; font-size:13px; flex-wrap:wrap; justify-content:flex-end">
+          ${Object.keys(stats).sort().map(t => `
+            <div><span style="color:var(--text-muted)">Total ${_escape(t)}:</span> <strong>${totalLineFor(t)}</strong></div>
+          `).join('') || '<div style="color:var(--text-muted); font-style:italic">No totals yet</div>'}
+        </div>
+      </div>
+      <div style="margin-top:0.5rem; padding:0.6rem 0.75rem; background:var(--bg); border-left:3px solid var(--accent); border-radius:4px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span style="font-size:12px; color:var(--text-muted)">Cut list cost per unit (auto-added to BOM cost):</span>
+        <strong style="font-size:15px; color:var(--accent)">R${_productCutListCost(prodName, biz).toFixed(2)}</strong>
+      </div>
+      ${cuttable.length === 0 ? '<div style="margin-top:0.75rem; padding:0.5rem 0.75rem; background:#fef3c7; border-left:3px solid #f59e0b; font-size:12px; border-radius:4px">⚠️ No materials with unit "Meter" or "Sheet" in your library yet. Add some on the Materials Library card below before defining cuts.</div>' : ''}
+    `;
+  }
+  window.renderCuttingListEditor = renderCuttingListEditor;
+
+  function addCutListRow(prodName) {
+    const biz = currentData();
+    const prod = biz.productBoms && biz.productBoms[prodName];
+    if (!prod) return;
+    snapshotState();
+    if (!prod.cutList) prod.cutList = [];
+    // Default new row's timber to the first cuttable material in the active biz's
+    // library (Meter or Sheet). If none exist, leave empty so the dropdown shows
+    // the "pick a material" placeholder.
+    const cuttable = (biz.materialsLibrary || [])
+      .filter(m => m && (m.unit === 'Meter' || m.unit === 'Sheet'))
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const defaultTimber = cuttable.length > 0 ? cuttable[0].name : '';
+    prod.cutList.push({ timber: defaultTimber, lengthMm: 0, widthMm: 0, qty: 0, part: '' });
+    saveData();
+    // Re-render the per-product editor (cut list is embedded inside it)
+    if (typeof renderProductEditor === 'function') renderProductEditor();
+  }
+  window.addCutListRow = addCutListRow;
+
+  function updateCutListField(prodName, idx, field, value) {
+    const biz = currentData();
+    const prod = biz.productBoms && biz.productBoms[prodName];
+    if (!prod || !prod.cutList || !prod.cutList[idx]) return;
+    snapshotState();
+    prod.cutList[idx][field] = value;
+    saveData();
+    if (typeof renderProductEditor === 'function') renderProductEditor();
+  }
+  window.updateCutListField = updateCutListField;
+
+  function deleteCutListRow(prodName, idx) {
+    const biz = currentData();
+    const prod = biz.productBoms && biz.productBoms[prodName];
+    if (!prod || !prod.cutList) return;
+    if (!confirm('Delete this cut row?')) return;
+    snapshotState();
+    prod.cutList.splice(idx, 1);
+    saveData();
+    if (typeof renderProductEditor === 'function') renderProductEditor();
+  }
+  window.deleteCutListRow = deleteCutListRow;
+
   function renderTemplateEditor() {
     const biz = currentData();
     const cat = document.getElementById('bom-template-category')?.value;
@@ -3331,7 +5023,13 @@
           </td>
         `;
       }).join('');
-      
+
+      // Add cut-list contribution to the cost — automatically reflects any cuts
+      // defined for this product without the user having to touch the materials map.
+      // For Meter materials: linear m × cost/m. For Sheet materials with width:
+      // (cut area / sheet area) × cost/sheet. Default sheet area is 2440×1220mm.
+      totalCost += (typeof _productCutListCost === 'function') ? _productCutListCost(prodName, biz) : 0;
+
       let badge = '';
       if (isEmpty) badge = '<span title="No BOM yet — uses template if applied" style="background:#fee2e2; color:#991b1b; padding:1px 6px; border-radius:3px; font-size:9px; font-weight:600">EMPTY</span>';
       else if (isCustom) badge = '<span title="Customized — differs from template" style="background:#fef3c7; color:#92400e; padding:1px 6px; border-radius:3px; font-size:9px; font-weight:600">🔧 CUSTOM</span>';
@@ -3428,7 +5126,8 @@
       biz.productBoms[prodName].materials[matId] = qty;
     }
     saveData();
-    renderProductBomTable();
+    // Re-render the new per-product editor (the old big table is no longer in the DOM)
+    if (typeof renderProductEditor === 'function') renderProductEditor();
   }
   
   function addNewProductBom() {
@@ -3716,7 +5415,380 @@
     }
   }
   
+  // Live cross-biz overview — sits above the per-biz cards. Aggregates active orders,
+  // in-production load, due-this-week, overdue count, and stock alerts across ALL
+  // three businesses. Updates on every render (which fires on every Firestore sync),
+  // so the numbers are always current. No timers, no polling — driven by data flow.
+  // Detect dashboard-only mode (second-screen / wall-mount view) from ?dashboard=1 URL param.
+  // When in this mode, the regular app UI stays hidden after auth and only the fullscreen
+  // dashboard renders. The Firestore listener still pushes updates so numbers stay live.
+  const IS_DASHBOARD_MODE = (function () {
+    try { return new URLSearchParams(window.location.search).get('dashboard') === '1'; }
+    catch (e) { return false; }
+  })();
+
+  // Open the current app URL with ?dashboard=1 in a new browser window the user
+  // can drag onto a second monitor. Sized large by default — they can resize / move.
+  function openDashboardWindow() {
+    const u = new URL(window.location.href);
+    u.searchParams.set('dashboard', '1');
+    const features = 'width=' + Math.min(1600, screen.availWidth) + ',height=' + Math.min(1000, screen.availHeight) + ',menubar=no,toolbar=no,location=no,status=no';
+    const w = window.open(u.toString(), 'bellville-dashboard', features);
+    if (!w) {
+      alert('Pop-up blocked. Allow pop-ups for this site so the dashboard window can open.');
+    }
+  }
+  window.openDashboardWindow = openDashboardWindow;
+
+  // Live clock for the standalone dashboard window. Updates once per second.
+  // Started by enterDashboardOnlyMode below.
+  let _dashOnlyClockTimer = null;
+  function _tickDashboardOnlyClock() {
+    const clockEl = document.getElementById('dash-only-clock');
+    const dateEl = document.getElementById('dash-only-date');
+    if (!clockEl || !dateEl) return;
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
+    clockEl.textContent = hh + ':' + mm + ':' + ss;
+    dateEl.textContent = now.toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  }
+
+  function enterDashboardOnlyMode() {
+    document.getElementById('main-app').style.display = 'none';
+    document.getElementById('login-overlay').style.display = 'none';
+    const view = document.getElementById('dashboard-only-view');
+    if (view) view.style.display = 'block';
+    document.title = 'Bellville Group · Live Dashboard';
+    _tickDashboardOnlyClock();
+    if (!_dashOnlyClockTimer) _dashOnlyClockTimer = setInterval(_tickDashboardOnlyClock, 1000);
+    renderDashboardOnlyView();
+  }
+
+  // Big-screen dashboard renderer — same data sources as renderLiveDashboard
+  // but styled for distant viewing (huge numbers, dark theme, no other clutter).
+  function renderDashboardOnlyView() {
+    const content = document.getElementById('dash-only-content');
+    if (!content) return;
+
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const oneDay = 86400000;
+    const BIZ_LIST = ['bellville', 'pinkfoot', 'repticube'];
+    const BIZ_META = {
+      bellville: { label: 'BELLVILLE',  color: '#d97706' },
+      pinkfoot:  { label: 'PINKFOOT',   color: '#ec4899' },
+      repticube: { label: 'REPTICUBE',  color: '#10b981' }
+    };
+
+    const totals = { active: 0, pending: 0, producing: 0, doneReady: 0, dueThisWeek: 0, overdue: 0, deliveriesToday: 0, deliveriesThisWeek: 0 };
+    const perBiz = {};
+    let lowStockTotal = 0, oosFabricsTotal = 0;
+
+    BIZ_LIST.forEach(biz => {
+      const bz = data[biz] || {};
+      const orders = bz.orders || [];
+      const s = { active: 0, pending: 0, producing: 0, doneReady: 0, overdue: 0, dueThisWeek: 0 };
+      orders.forEach(o => {
+        if (o.status === 'delivered') return;
+        if (o.status === 'done') { s.doneReady++; totals.doneReady++; return; }
+        s.active++; totals.active++;
+        if (o.status === 'pending') { s.pending++; totals.pending++; }
+        if (o.status === 'in-production') { s.producing++; totals.producing++; }
+        if (o.dueDate) {
+          const due = new Date(o.dueDate);
+          if (!isNaN(due.getTime())) {
+            const d = Math.ceil((due - today) / oneDay);
+            if (d < 0) { s.overdue++; totals.overdue++; }
+            else if (d <= 7) { s.dueThisWeek++; totals.dueThisWeek++; }
+          }
+        }
+        if (o.deliveryScheduled) {
+          const dd = new Date(o.deliveryScheduled);
+          if (!isNaN(dd.getTime())) {
+            const d = Math.ceil((dd - today) / oneDay);
+            if (d === 0) totals.deliveriesToday++;
+            if (d >= 0 && d <= 7) totals.deliveriesThisWeek++;
+          }
+        }
+        if (o.fabric && o.fabricOOS) oosFabricsTotal++;
+      });
+      try {
+        (bz.materialsLibrary || []).forEach(m => {
+          const stock = parseFloat(m.stock || 0);
+          const reorder = parseFloat(m.reorderPoint || 0);
+          if (stock <= 0 && reorder > 0) lowStockTotal++;
+          else if (reorder > 0 && stock <= reorder) lowStockTotal++;
+        });
+      } catch (e) { /* ignore */ }
+      perBiz[biz] = s;
+    });
+
+    const bigTile = (label, value, opts) => {
+      opts = opts || {};
+      const color = opts.color || '#fff';
+      const bg = opts.bg || '#1a1a1a';
+      return `
+        <div style="background:${bg}; border:1px solid #333; border-radius:12px; padding:1.5rem 1rem; text-align:center">
+          <div style="font-size:12px; color:#888; text-transform:uppercase; letter-spacing:0.15em; font-weight:600">${label}</div>
+          <div style="font-size:72px; font-weight:900; color:${color}; line-height:1; margin-top:0.5rem; font-variant-numeric:tabular-nums">${value}</div>
+          ${opts.sub ? `<div style="font-size:13px; color:#888; margin-top:0.5rem">${opts.sub}</div>` : ''}
+        </div>`;
+    };
+
+    const kpis = `
+      <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:1rem; margin-bottom:1.5rem">
+        ${bigTile('Active', totals.active, { color: '#fb923c', sub: totals.pending + ' pending · ' + totals.producing + ' in prod' })}
+        ${bigTile('In Production', totals.producing, { color: '#3b82f6' })}
+        ${bigTile('Due This Week', totals.dueThisWeek, { color: totals.dueThisWeek > 0 ? '#facc15' : '#666', bg: totals.dueThisWeek > 0 ? '#3a2c00' : '#1a1a1a' })}
+        ${bigTile('Overdue', totals.overdue, { color: totals.overdue > 0 ? '#f87171' : '#666', bg: totals.overdue > 0 ? '#3a0e0e' : '#1a1a1a' })}
+        ${bigTile('Ready to Dispatch', totals.doneReady, { color: '#22c55e' })}
+      </div>
+    `;
+
+    const bizCards = BIZ_LIST.map(biz => {
+      const s = perBiz[biz];
+      const meta = BIZ_META[biz];
+      const totalBar = Math.max(1, s.pending + s.producing + s.doneReady);
+      const pendW = (s.pending / totalBar) * 100;
+      const prodW = (s.producing / totalBar) * 100;
+      const doneW = (s.doneReady / totalBar) * 100;
+      return `
+        <div style="background:#1a1a1a; border:1px solid #333; border-left:6px solid ${meta.color}; border-radius:12px; padding:1rem 1.5rem">
+          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:0.75rem">
+            <div style="font-size:20px; font-weight:900; color:${meta.color}; letter-spacing:0.05em">${meta.label}</div>
+            <div style="font-size:14px; color:#888">${s.active} active${s.overdue > 0 ? ' · <span style=\"color:#f87171; font-weight:700\">' + s.overdue + ' overdue</span>' : ''}</div>
+          </div>
+          <div style="display:flex; height:10px; border-radius:5px; overflow:hidden; background:#0f0f0f; margin-bottom:0.6rem">
+            <div style="width:${pendW}%; background:#facc15"></div>
+            <div style="width:${prodW}%; background:#3b82f6"></div>
+            <div style="width:${doneW}%; background:#22c55e"></div>
+          </div>
+          <div style="display:flex; justify-content:space-between; font-size:13px">
+            <div><span style="color:#facc15; font-weight:700; font-size:18px">${s.pending}</span> <span style="color:#888">pending</span></div>
+            <div><span style="color:#3b82f6; font-weight:700; font-size:18px">${s.producing}</span> <span style="color:#888">in prod</span></div>
+            <div><span style="color:#22c55e; font-weight:700; font-size:18px">${s.doneReady}</span> <span style="color:#888">ready</span></div>
+          </div>
+        </div>`;
+    }).join('');
+
+    const alerts = [];
+    if (totals.deliveriesToday > 0) alerts.push({ icon: '🚚', label: 'Deliveries TODAY', val: totals.deliveriesToday, color: '#facc15' });
+    if (totals.deliveriesThisWeek > 0) alerts.push({ icon: '📅', label: 'Deliveries this week', val: totals.deliveriesThisWeek, color: '#3b82f6' });
+    if (oosFabricsTotal > 0) alerts.push({ icon: '⚠️', label: 'Fabrics out of stock', val: oosFabricsTotal, color: '#f87171' });
+    if (lowStockTotal > 0) alerts.push({ icon: '📦', label: 'Low-stock materials', val: lowStockTotal, color: '#f87171' });
+
+    const alertHtml = alerts.length ? `
+      <div style="margin-top:1.5rem">
+        <div style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.15em; margin-bottom:0.6rem">⚡ Watch list</div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:0.75rem">
+          ${alerts.map(a => `
+            <div style="background:#1a1a1a; border:1px solid #333; border-radius:8px; padding:0.85rem 1.1rem; display:flex; align-items:center; gap:0.75rem">
+              <span style="font-size:28px">${a.icon}</span>
+              <div>
+                <div style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.05em">${a.label}</div>
+                <div style="font-size:30px; font-weight:900; color:${a.color}; line-height:1">${a.val}</div>
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>` : `
+      <div style="margin-top:1.5rem; padding:1rem; text-align:center; background:#0d2818; border:1px solid #14532d; border-radius:8px; color:#22c55e; font-size:14px; font-weight:600">
+        ✓ All clear — nothing urgent across any business.
+      </div>`;
+
+    content.innerHTML = `
+      ${kpis}
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:1rem">
+        ${bizCards}
+      </div>
+      ${alertHtml}
+    `;
+  }
+  window.renderDashboardOnlyView = renderDashboardOnlyView;
+
+  function renderLiveDashboard() {
+    const content = document.getElementById('dash-live-content');
+    const updated = document.getElementById('dash-live-updated');
+    if (!content) return;
+
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const oneDay = 86400000;
+    const oneWeekAhead = new Date(today.getTime() + 7 * oneDay);
+
+    const BIZ_LIST = ['bellville', 'pinkfoot', 'repticube'];
+    const BIZ_META = {
+      bellville: { label: 'Bellville',  color: '#8b4513' },
+      pinkfoot:  { label: 'PinkFoot',   color: '#ff1493' },
+      repticube: { label: 'ReptiCube',  color: '#00d4aa' }
+    };
+
+    // Aggregate across all biz
+    const totals = { active: 0, pending: 0, producing: 0, doneReady: 0, dueThisWeek: 0, overdue: 0, deliveriesThisWeek: 0, deliveriesToday: 0 };
+    const perBiz = {};
+    let lowStockTotal = 0;
+    let oosFabricsTotal = 0;
+    let fabricWaiting = 0;
+
+    BIZ_LIST.forEach(biz => {
+      const bz = data[biz] || {};
+      const orders = bz.orders || [];
+      const stats = { active: 0, pending: 0, producing: 0, doneReady: 0, overdue: 0, dueThisWeek: 0 };
+
+      orders.forEach(o => {
+        if (o.status === 'delivered') return;
+        // doneReady = ready to deliver
+        if (o.status === 'done') { stats.doneReady++; totals.doneReady++; return; }
+        stats.active++; totals.active++;
+        if (o.status === 'pending') { stats.pending++; totals.pending++; }
+        if (o.status === 'in-production') { stats.producing++; totals.producing++; }
+        if (o.dueDate) {
+          const due = new Date(o.dueDate);
+          if (!isNaN(due.getTime())) {
+            const daysLeft = Math.ceil((due - today) / oneDay);
+            if (daysLeft < 0) { stats.overdue++; totals.overdue++; }
+            else if (daysLeft <= 7) { stats.dueThisWeek++; totals.dueThisWeek++; }
+          }
+        }
+        if (o.deliveryScheduled) {
+          const dd = new Date(o.deliveryScheduled);
+          if (!isNaN(dd.getTime())) {
+            const daysAway = Math.ceil((dd - today) / oneDay);
+            if (daysAway >= 0 && daysAway <= 7) totals.deliveriesThisWeek++;
+            if (daysAway === 0) totals.deliveriesToday++;
+          }
+        }
+        if (o.fabric) {
+          const fs = o.fabricStatus || 'waiting';
+          if (o.fabricOOS) oosFabricsTotal++;
+          else if (fs === 'waiting') fabricWaiting++;
+        }
+      });
+
+      // Low stock: any material whose stock <= reorderPoint, or shortfall against required > 0.
+      // Skip if biz has no productBoms (e.g. fresh PinkFoot) — counts 0 to avoid noise.
+      try {
+        const mats = bz.materialsLibrary || [];
+        mats.forEach(m => {
+          const stock = parseFloat(m.stock || 0);
+          const reorder = parseFloat(m.reorderPoint || 0);
+          if (stock <= 0 && reorder > 0) lowStockTotal++;
+          else if (reorder > 0 && stock <= reorder) lowStockTotal++;
+        });
+      } catch (e) { /* ignore */ }
+
+      perBiz[biz] = stats;
+    });
+
+    // KPI tile renderer
+    const tile = (label, value, opts) => {
+      opts = opts || {};
+      const color = opts.color || 'var(--text)';
+      const bg = opts.bg || 'transparent';
+      const sub = opts.sub || '';
+      return `
+        <div style="background:${bg}; border:1px solid var(--border); border-radius:8px; padding:0.75rem 1rem; text-align:center">
+          <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; font-weight:600">${label}</div>
+          <div style="font-size:32px; font-weight:900; color:${color}; line-height:1.1; margin-top:4px; font-variant-numeric:tabular-nums">${value}</div>
+          ${sub ? `<div style="font-size:10px; color:var(--text-muted); margin-top:2px">${sub}</div>` : ''}
+        </div>`;
+    };
+
+    // Big KPIs row — five tiles
+    const kpisHtml = `
+      <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:0.5rem; margin-bottom:1rem">
+        ${tile('Active Orders', totals.active, { color: 'var(--accent)', sub: totals.pending + ' pending · ' + totals.producing + ' in prod' })}
+        ${tile('In Production', totals.producing, { bg: 'rgba(59, 130, 246, 0.05)', color: 'var(--info)' })}
+        ${tile('Due This Week', totals.dueThisWeek, { bg: totals.dueThisWeek > 0 ? '#fef3c7' : 'transparent', color: totals.dueThisWeek > 0 ? '#92400e' : 'var(--text-muted)' })}
+        ${tile('Overdue', totals.overdue, { bg: totals.overdue > 0 ? '#fee2e2' : 'transparent', color: totals.overdue > 0 ? '#991b1b' : 'var(--text-muted)' })}
+        ${tile('Done / Ready', totals.doneReady, { bg: 'rgba(34, 197, 94, 0.05)', color: 'var(--success)', sub: 'ready to dispatch' })}
+      </div>
+    `;
+
+    // Per-biz row — small tiles with a horizontal status bar
+    const bizTiles = BIZ_LIST.map(biz => {
+      const s = perBiz[biz];
+      const meta = BIZ_META[biz];
+      const totalForBar = Math.max(1, s.pending + s.producing + s.doneReady);
+      const pendW = (s.pending / totalForBar) * 100;
+      const prodW = (s.producing / totalForBar) * 100;
+      const doneW = (s.doneReady / totalForBar) * 100;
+      return `
+        <div onclick="switchBiz('${biz}')" style="cursor:pointer; background:var(--surface); border:1px solid var(--border); border-left:4px solid ${meta.color}; border-radius:8px; padding:0.75rem 1rem" title="Click to switch to ${meta.label}">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem">
+            <div style="font-weight:700; font-size:13px; color:${meta.color}">${meta.label}</div>
+            <div style="font-size:11px; color:var(--text-muted)">${s.active} active${s.overdue > 0 ? ' · <span style=\"color:#991b1b; font-weight:700\">' + s.overdue + ' overdue</span>' : ''}</div>
+          </div>
+          <div style="display:flex; height:6px; border-radius:3px; overflow:hidden; background:var(--bg); margin-bottom:0.4rem">
+            <div style="width:${pendW}%; background:var(--warn)" title="${s.pending} pending"></div>
+            <div style="width:${prodW}%; background:var(--info)" title="${s.producing} in production"></div>
+            <div style="width:${doneW}%; background:var(--success)" title="${s.doneReady} done"></div>
+          </div>
+          <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted)">
+            <span>${s.pending} pending</span>
+            <span>${s.producing} in prod</span>
+            <span>${s.doneReady} ready</span>
+          </div>
+        </div>`;
+    }).join('');
+
+    // Alert row — only shown if at least one alert > 0
+    const alerts = [];
+    if (totals.deliveriesToday > 0) {
+      alerts.push({ icon: '🚚', label: 'Deliveries TODAY', val: totals.deliveriesToday, color: '#92400e', bg: '#fef3c7' });
+    }
+    if (totals.deliveriesThisWeek > 0) {
+      alerts.push({ icon: '📅', label: 'Deliveries this week', val: totals.deliveriesThisWeek, color: 'var(--info)', bg: 'rgba(59, 130, 246, 0.05)' });
+    }
+    if (fabricWaiting > 0) {
+      alerts.push({ icon: '🧵', label: 'Fabric waiting', val: fabricWaiting, color: '#92400e', bg: '#fef3c7' });
+    }
+    if (oosFabricsTotal > 0) {
+      alerts.push({ icon: '⚠️', label: 'Fabrics out of stock', val: oosFabricsTotal, color: '#991b1b', bg: '#fee2e2' });
+    }
+    if (lowStockTotal > 0) {
+      alerts.push({ icon: '📦', label: 'Low-stock materials', val: lowStockTotal, color: '#991b1b', bg: '#fee2e2' });
+    }
+    const alertsHtml = alerts.length ? `
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:0.5rem; margin-top:1rem">
+        ${alerts.map(a => `
+          <div style="background:${a.bg}; border:1px solid var(--border); border-radius:8px; padding:0.6rem 0.75rem; display:flex; align-items:center; gap:0.5rem">
+            <span style="font-size:18px">${a.icon}</span>
+            <div style="flex:1">
+              <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em">${a.label}</div>
+              <div style="font-size:20px; font-weight:700; color:${a.color}; line-height:1">${a.val}</div>
+            </div>
+          </div>`).join('')}
+      </div>` : `
+      <div style="margin-top:1rem; padding:0.75rem; text-align:center; background:rgba(34, 197, 94, 0.05); border:1px solid var(--border); border-radius:8px; color:var(--success); font-size:12px; font-weight:600">
+        ✓ All clear — no urgent alerts across any business.
+      </div>`;
+
+    content.innerHTML = `
+      ${kpisHtml}
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:0.5rem">
+        ${bizTiles}
+      </div>
+      ${alertsHtml}
+    `;
+
+    // Responsive: collapse 5-column KPI grid to 2 columns on narrow screens
+    const kpis = content.querySelector('div[style*="repeat(5"]');
+    if (kpis && window.innerWidth < 700) {
+      kpis.style.gridTemplateColumns = 'repeat(2, 1fr)';
+    }
+
+    if (updated) {
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      const ss = String(now.getSeconds()).padStart(2, '0');
+      updated.textContent = 'Updated ' + hh + ':' + mm + ':' + ss;
+    }
+  }
+  window.renderLiveDashboard = renderLiveDashboard;
+
   function renderDashboard() {
+    renderLiveDashboard();
     const orders = currentData().orders;
     const pending = orders.filter(o => o.status === 'pending').length;
     const producing = orders.filter(o => o.status === 'in-production').length;
@@ -3914,23 +5986,34 @@
   function renderOrders() {
     let orders = currentData().orders.filter(o => o.status !== 'delivered' && o.status !== 'done');
     const today = new Date();
-    
+
     // Apply search filter
     const searchInput = document.getElementById('order-search');
     if (searchInput && searchInput.value.trim()) {
       const q = searchInput.value.trim().toLowerCase();
-      orders = orders.filter(o => 
+      orders = orders.filter(o =>
         (o.invoice || '').toLowerCase().includes(q) ||
         (o.customer || '').toLowerCase().includes(q) ||
         (o.product || '').toLowerCase().includes(q)
       );
     }
-    
+
+    // BOM catalog for this biz — list of valid product names. Used to render a
+    // per-order BOM picker (dropdown) so users can link an order to its BOM
+    // without retyping the product name. Empty array = no BOMs set up = no picker.
+    const bomKeys = Object.keys(currentData().productBoms || {}).sort();
+    const bomOptions = (currentProduct) => bomKeys.map(k => {
+      const safe = k.replace(/"/g, '&quot;');
+      return `<option value="${safe}" ${k === currentProduct ? 'selected' : ''}>${safe}</option>`;
+    }).join('');
+
     const html = orders.map(o => {
       if (!o.dueDate) o.dueDate = new Date(Date.now() + 28 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       const due = new Date(o.dueDate);
       const daysLeft = isNaN(due.getTime()) ? 0 : Math.ceil((due - today) / (1000 * 60 * 60 * 24));
       const isUrgent = daysLeft <= 7 && daysLeft > 0;
+      const linkedBom = getBomKeyForOrder(o, currentData());
+      const isBomLinked = !!linkedBom;
       
       return `
         <div class="order-card">
@@ -3967,7 +6050,18 @@
           <div style="font-size:11px; color:var(--text-muted); margin-bottom:0.75rem">
             Order: ${o.orderDate} | Due: <input type="date" value="${o.dueDate}" onchange="updateDueDate('${o.id}', this.value)" style="display:inline-block; width:auto; padding:2px 6px; font-size:11px; background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:4px">
           </div>
-          
+
+          ${bomKeys.length > 0 ? `
+          <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin-bottom:0.75rem; padding:0.5rem 0.75rem; background:${isBomLinked ? 'rgba(34,197,94,0.08)' : '#fef3c7'}; border-left:3px solid ${isBomLinked ? 'var(--success)' : 'var(--warn)'}; border-radius:4px">
+            <span style="font-size:10px; color:var(--text-muted); text-transform:uppercase; font-weight:700; letter-spacing:0.05em">🔗 BOM:</span>
+            <select onchange="setOrderBom('${o.id}', this.value)" style="flex:1; min-width:180px; padding:4px 8px; font-size:12px; margin:0" title="Picking a BOM links the order for stock auto-deduction. The product text on the order stays unchanged.">
+              <option value="" ${!isBomLinked ? 'selected' : ''}>— Not linked (no auto-deduct) —</option>
+              ${bomOptions(linkedBom || '')}
+            </select>
+            <span style="font-size:11px; font-weight:700; color:${isBomLinked ? 'var(--success)' : 'var(--warn)'}">${isBomLinked ? '✓ ' + linkedBom.replace(/</g, '&lt;') : '⚠️ unlinked'}</span>
+          </div>
+          ` : ''}
+
           <div style="margin-bottom:0.75rem; padding:0.75rem; background:var(--bg); border-radius:6px; border:1px solid var(--border)">
             <label style="font-size:11px; color:var(--text-muted); margin-bottom:0.4rem; display:flex; justify-content:space-between; align-items:center">
               📝 Notes / Special Requests
@@ -4187,9 +6281,40 @@
     const inv = _escape(o.invoice || o.id);
     const prodLabel = (o.category ? '[' + o.category + '] ' : '') + (o.product || '') + (o.qty > 1 ? ' × ' + o.qty : '');
 
+    // Fabric status: dedicated visible line + background tint that signals readiness at a glance.
+    // Order of precedence — OOS overrides status (OOS is worse news than waiting/ordered).
+    let fabricRowHtml = '';
+    let bgStyle = '';
+    if (o.fabric) {
+      let badge;
+      if (o.fabricOOS) {
+        const etaText = o.fabricStockETA ? ' · ETA ' + _escape(o.fabricStockETA) : '';
+        badge = `<span style="font-weight:700; color:#991b1b">🔴 OUT OF STOCK${etaText}</span>`;
+        bgStyle = 'background:#fef2f2;'; // red tint — blocked
+      } else if (o.fabricStatus === 'received') {
+        badge = `<span style="font-weight:700; color:#166534">✅ RECEIVED</span>`;
+        // no tint — fabric is ready, card stays white
+      } else if (o.fabricStatus === 'ordered') {
+        badge = `<span style="font-weight:700; color:#92400e">📦 ORDERED</span>`;
+        bgStyle = 'background:#fffbeb;'; // yellow tint — in flight
+      } else {
+        // waiting or undefined — hasn't been ordered yet
+        badge = `<span style="font-weight:700; color:#991b1b">⏳ WAITING</span>`;
+        bgStyle = 'background:#fffbeb;'; // yellow tint — needs action
+      }
+      fabricRowHtml = `
+          <div class="pc-fabric" style="font-size:11px; margin-top:4px; display:flex; align-items:center; gap:4px; flex-wrap:wrap; line-height:1.3">
+            <span style="color:var(--text-muted)">🧵</span>
+            <span style="color:var(--text); font-weight:500">${_escape(o.fabric)}</span>
+            <span style="color:var(--text-muted)">·</span>
+            ${badge}
+          </div>`;
+    }
+
     return `
       <div class="plan-card ${overdueCls} ${statusCls}" draggable="true"
            data-order-id="${_escape(o.id)}"
+           style="${bgStyle}"
            ondragstart="planDragStart(event, '${_escape(o.id)}')"
            ondragend="planDragEnd(event)">
         <div class="pc-body">
@@ -4197,6 +6322,7 @@
           <div class="pc-prod">${_escape(prodLabel)}</div>
           <div class="pc-cust">👤 ${_escape(o.customer)}</div>
           ${dueText ? `<div class="pc-due">${_escape(dueText)}</div>` : ''}
+          ${fabricRowHtml}
           ${showPlanDate ? `<div class="pc-due">📅 Week of ${_escape(o.planWeek)}</div>` : ''}
         </div>
         <button type="button" class="plan-menu-trigger" title="Schedule" aria-label="Schedule options"
@@ -4371,6 +6497,472 @@
   window.openPlanMenu = openPlanMenu;
   window.closePlanMenu = closePlanMenu;
 
+  // ----- Print: A4-landscape weekly production plan -----
+  // Uses the SAME table format as printProductionList (shared _PRODUCTION_PRINT_STYLES,
+  // _PRODUCTION_TABLE_HEAD, _productionRowHtml). The only differences vs printProductionList:
+  //   - Title says "PRODUCTION PLAN" instead of "PRODUCTION STATUS"
+  //   - Orders are grouped by planWeek with a heading row "📅 WEEK OF YYYY-MM-DD"
+  //   - Unscheduled orders go under a final "📥 UNSCHEDULED" heading row
+  function printPlannerSheet() {
+    const biz = activeBiz;
+    const bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
+
+    let orders = (data[biz]?.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done');
+    if (orders.length === 0) {
+      alert('No active orders to print.');
+      return;
+    }
+
+    // Group by unique planWeek (chronological); unscheduled separately at end.
+    // Inner sort within each group matches printProductionList: status (in-production
+    // above pending), then due date ascending.
+    const statusOrder = { 'in-production': 1, 'pending': 2 };
+    const innerSort = (a, b) => {
+      const sa = statusOrder[a.status] || 99;
+      const sb = statusOrder[b.status] || 99;
+      if (sa !== sb) return sa - sb;
+      const dateA = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+      const dateB = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+      return dateA - dateB;
+    };
+
+    const groups = new Map(); // weekIso → [orders]
+    const unscheduled = [];
+    orders.forEach(o => {
+      if (!o.planWeek) { unscheduled.push(o); return; }
+      if (!groups.has(o.planWeek)) groups.set(o.planWeek, []);
+      groups.get(o.planWeek).push(o);
+    });
+    const sortedWeeks = [...groups.keys()].sort();
+    sortedWeeks.forEach(w => groups.get(w).sort(innerSort));
+    unscheduled.sort(innerSort);
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Build the table body: for each week, a heading row spanning all columns,
+    // followed by the order rows. Row sequence number is global (1-based continuous).
+    const COLSPAN = 11; // matches column count in _PRODUCTION_TABLE_HEAD
+    let seq = 0;
+    const bodyParts = [];
+    sortedWeeks.forEach(weekIso => {
+      const wkOrders = groups.get(weekIso);
+      bodyParts.push(`<tr class="week-group"><td colspan="${COLSPAN}">📅 WEEK OF ${weekIso} &nbsp;·&nbsp; ${wkOrders.length} order${wkOrders.length !== 1 ? 's' : ''}</td></tr>`);
+      wkOrders.forEach(o => {
+        seq++;
+        bodyParts.push(_productionRowHtml(o, seq, today));
+      });
+    });
+    if (unscheduled.length > 0) {
+      bodyParts.push(`<tr class="week-group"><td colspan="${COLSPAN}" class="unscheduled-head">📥 UNSCHEDULED &nbsp;·&nbsp; ${unscheduled.length} order${unscheduled.length !== 1 ? 's' : ''}</td></tr>`);
+      unscheduled.forEach(o => {
+        seq++;
+        bodyParts.push(_productionRowHtml(o, seq, today));
+      });
+    }
+    const rows = bodyParts.join('');
+
+    const counts = {
+      pending: orders.filter(o => o.status === 'pending').length,
+      'in-production': orders.filter(o => o.status === 'in-production').length
+    };
+
+    const todayStr = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' });
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<title>Production Plan — ${bizNames[biz]}</title>
+${_PRODUCTION_PRINT_STYLES}
+</head>
+<body>
+  <div class="no-print">
+    <button onclick="window.print()" style="padding:8px 16px; font-weight:bold; cursor:pointer; background:#000; color:#fff; border:none; border-radius:4px">🖨️ PRINT</button>
+    <button onclick="window.close()" style="padding:8px 16px; cursor:pointer; margin-left:8px">CLOSE</button>
+  </div>
+
+  <div class="header">
+    <div>
+      <div class="biz-name">${bizNames[biz]}</div>
+      <div class="date">Production Plan · ${todayStr}</div>
+    </div>
+    <div class="title">PRODUCTION PLAN</div>
+  </div>
+
+  <div class="summary">
+    <div><strong>${orders.length}</strong> total active orders</div>
+    <div><strong>${counts.pending}</strong> pending</div>
+    <div><strong>${counts['in-production']}</strong> in production</div>
+    <div><strong>${sortedWeeks.length}</strong> week${sortedWeeks.length !== 1 ? 's' : ''} planned</div>
+    <div><strong>${unscheduled.length}</strong> unscheduled</div>
+  </div>
+
+  <table>
+    ${_PRODUCTION_TABLE_HEAD}
+    <tbody>${rows}</tbody>
+  </table>
+
+  <div class="footer">
+    <div>Printed: ${new Date().toLocaleString('en-ZA')}</div>
+    <div>${orders.length} order${orders.length !== 1 ? 's' : ''} on plan</div>
+  </div>
+</body>
+</html>`;
+
+    const win = window.open('', '_blank');
+    if (!win) {
+      alert('Pop-up blocked. Allow pop-ups for this site to print the plan.');
+      return;
+    }
+    win.document.write(html);
+    win.document.close();
+  }
+  window.printPlannerSheet = printPlannerSheet;
+
+  // ----- Print: one A4 landscape page per week (table format, for handing to individual foremen) -----
+  // Uses the SAME shared assets as printProductionList and printPlannerSheet
+  // (_PRODUCTION_PRINT_STYLES, _PRODUCTION_TABLE_HEAD, _productionRowHtml) — every
+  // page is visually identical to the Production List, just scoped to one week.
+  // Empty weeks are skipped (no wasted paper). Unscheduled gets its own page if any.
+  // Row numbers RESET per page (1-based per week) so each sheet stands alone.
+  function printPlannerSheetByWeek() {
+    const biz = activeBiz;
+    const bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
+
+    let orders = (data[biz]?.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done');
+    if (orders.length === 0) {
+      alert('No active orders to print.');
+      return;
+    }
+
+    // Group by unique planWeek; unscheduled separately. Inner sort matches
+    // printProductionList: status (in-production above pending), then due date.
+    const statusOrder = { 'in-production': 1, 'pending': 2 };
+    const innerSort = (a, b) => {
+      const sa = statusOrder[a.status] || 99;
+      const sb = statusOrder[b.status] || 99;
+      if (sa !== sb) return sa - sb;
+      const dateA = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+      const dateB = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+      return dateA - dateB;
+    };
+
+    const groups = new Map();
+    const unscheduled = [];
+    orders.forEach(o => {
+      if (!o.planWeek) { unscheduled.push(o); return; }
+      if (!groups.has(o.planWeek)) groups.set(o.planWeek, []);
+      groups.get(o.planWeek).push(o);
+    });
+    const sortedWeeks = [...groups.keys()].sort();
+    sortedWeeks.forEach(w => groups.get(w).sort(innerSort));
+    unscheduled.sort(innerSort);
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStr = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' });
+
+    // Build a single page — header + summary + table + footer. Each page is a
+    // <section class="week-page"> with page-break-after: always.
+    const buildPage = (titleRight, subtitleLeft, items) => {
+      const rows = items.map((o, i) => _productionRowHtml(o, i + 1, today)).join('');
+      const pendCount = items.filter(o => o.status === 'pending').length;
+      const inProdCount = items.filter(o => o.status === 'in-production').length;
+      return `
+  <section class="week-page">
+    <div class="header">
+      <div>
+        <div class="biz-name">${bizNames[biz]}</div>
+        <div class="date">${subtitleLeft} · ${todayStr}</div>
+      </div>
+      <div class="title">${titleRight}</div>
+    </div>
+
+    <div class="summary">
+      <div><strong>${items.length}</strong> order${items.length !== 1 ? 's' : ''} on this page</div>
+      <div><strong>${pendCount}</strong> pending</div>
+      <div><strong>${inProdCount}</strong> in production</div>
+    </div>
+
+    <table>
+      ${_PRODUCTION_TABLE_HEAD}
+      <tbody>${rows}</tbody>
+    </table>
+
+    <div class="footer">
+      <div>Printed: ${new Date().toLocaleString('en-ZA')}</div>
+      <div>${items.length} order${items.length !== 1 ? 's' : ''} this week</div>
+    </div>
+  </section>`;
+    };
+
+    // One page per non-empty week (chronological), plus a final page for unscheduled if any
+    const pages = [];
+    sortedWeeks.forEach(weekIso => {
+      const items = groups.get(weekIso);
+      if (items.length === 0) return;
+      const range = (typeof _formatWeekShort === 'function') ? _formatWeekShort(weekIso) : weekIso;
+      pages.push(buildPage(`WEEK OF ${range}`, `Production Plan · Week of ${weekIso}`, items));
+    });
+    if (unscheduled.length > 0) {
+      pages.push(buildPage('UNSCHEDULED ORDERS', 'Production Plan · Not yet scheduled', unscheduled));
+    }
+
+    if (pages.length === 0) {
+      alert('No orders in any visible week.');
+      return;
+    }
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<title>Production Plan (per week) — ${bizNames[biz]}</title>
+${_PRODUCTION_PRINT_STYLES}
+<style>
+  /* Per-week pagination — each week is its own A4 landscape page (size + margins
+     come from the shared @page rule in _PRODUCTION_PRINT_STYLES). */
+  .week-page { page-break-after: always; }
+  .week-page:last-of-type { page-break-after: auto; }
+</style>
+</head>
+<body>
+  <div class="no-print">
+    <button onclick="window.print()" style="padding:8px 16px; font-weight:bold; cursor:pointer; background:#000; color:#fff; border:none; border-radius:4px">🖨️ PRINT</button>
+    <button onclick="window.close()" style="padding:8px 16px; cursor:pointer; margin-left:8px">CLOSE</button>
+  </div>
+${pages.join('\n')}
+</body>
+</html>`;
+
+    const win = window.open('', '_blank');
+    if (!win) {
+      alert('Pop-up blocked. Allow pop-ups for this site to print the plan.');
+      return;
+    }
+    win.document.write(html);
+    win.document.close();
+  }
+  window.printPlannerSheetByWeek = printPlannerSheetByWeek;
+
+  // ----- Print: weekly raw materials forecast -----
+  // For each week (and a consolidated total), show what raw materials are needed
+  // based on the BOM for each order. Skips orders whose materials were already
+  // deducted (they're in production — materials are already gone from stock).
+  function printWeeklyMaterialRequirements() {
+    const biz = currentData();
+    const bizName = ({ bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' })[activeBiz] || String(activeBiz).toUpperCase();
+
+    const orders = (biz.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done');
+    if (orders.length === 0) {
+      alert('No active orders to forecast materials for.');
+      return;
+    }
+
+    const todayMonday = getMondayOf(new Date());
+    const weeks = [0, 1, 2, 3].map(i => _addDaysIso(todayMonday, i * 7));
+    const buckets = Object.fromEntries(weeks.map(w => [w, []]));
+    const beyond = [];
+    const unscheduled = [];
+    orders.forEach(o => {
+      if (!o.planWeek) { unscheduled.push(o); return; }
+      if (buckets[o.planWeek]) { buckets[o.planWeek].push(o); return; }
+      if (o.planWeek < weeks[0]) buckets[weeks[0]].push(o);
+      else beyond.push(o);
+    });
+
+    const mats = biz.materialsLibrary || [];
+    const matById = Object.fromEntries(mats.map(m => [m.id, m]));
+
+    // Calculate aggregate material requirements for a list of orders.
+    // Skips materialsDeducted=true orders (already accounted for in stock).
+    const calcReq = (orderList) => {
+      const req = {};
+      let unbomCount = 0;
+      orderList.forEach(o => {
+        if (o.materialsDeducted) return;
+        const bomKey = getBomKeyForOrder(o, biz);
+        const prodBom = bomKey ? biz.productBoms[bomKey] : null;
+        const hasMaterials = prodBom && prodBom.materials && Object.keys(prodBom.materials).length > 0;
+        const hasCutList = prodBom && prodBom.cutList && prodBom.cutList.length > 0;
+        if (!prodBom || (!hasMaterials && !hasCutList)) {
+          unbomCount++;
+          return;
+        }
+        const qty = parseFloat(o.qty || 1);
+        // Materials map contribution
+        if (hasMaterials) {
+          Object.entries(prodBom.materials).forEach(([matId, perUnit]) => {
+            req[matId] = (req[matId] || 0) + (perUnit * qty);
+          });
+        }
+        // Cut list contribution
+        if (hasCutList && typeof _cutListConsumption === 'function') {
+          const cutCons = _cutListConsumption(prodBom, biz);
+          Object.entries(cutCons).forEach(([matId, perUnit]) => {
+            req[matId] = (req[matId] || 0) + (perUnit * qty);
+          });
+        }
+      });
+      return { req, unbomCount };
+    };
+
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const todayStr = today.toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' });
+
+    // Render one page for a given bucket. opts.compareStock = true on the per-week
+    // pages (show shortfall vs current stock). For the consolidated totals page,
+    // shortfall comparison still makes sense — same logic.
+    const buildSection = (label, weekLabel, orderList) => {
+      const { req, unbomCount } = calcReq(orderList);
+      const matIds = Object.keys(req);
+      if (orderList.length === 0) return ''; // skip entirely empty weeks
+
+      let body;
+      if (matIds.length === 0) {
+        body = `
+          <div class="empty">
+            <strong>${orderList.length} order${orderList.length !== 1 ? 's' : ''} scheduled this week</strong> —
+            but no BOM data is set up for ${unbomCount === orderList.length ? 'any of them' : 'them'}.<br>
+            Set up category templates in the <strong>BOM</strong> tab to get a materials forecast.
+          </div>`;
+      } else {
+        // Sort: shortfalls first (biggest first), then OK rows alphabetically
+        const rows = matIds.map(matId => {
+          const mat = matById[matId];
+          const need = req[matId];
+          const stock = mat ? parseFloat(mat.stock || 0) : 0;
+          const shortfall = Math.max(0, need - stock);
+          const cost = mat ? shortfall * (mat.cost || 0) : 0;
+          return { mat, matId, need, stock, shortfall, cost };
+        }).sort((a, b) => {
+          if (b.shortfall !== a.shortfall) return b.shortfall - a.shortfall;
+          return (a.mat?.name || a.matId).localeCompare(b.mat?.name || b.matId);
+        });
+
+        const totalReorderCost = rows.reduce((s, r) => s + r.cost, 0);
+        const shortCount = rows.filter(r => r.shortfall > 0).length;
+
+        body = `
+          <div class="summary-bar">
+            <span><strong>${rows.length}</strong> material${rows.length !== 1 ? 's' : ''} needed</span>
+            <span class="${shortCount > 0 ? 'warn' : ''}"><strong>${shortCount}</strong> short of stock</span>
+            <span><strong>R${totalReorderCost.toFixed(2)}</strong> to fully restock</span>
+            ${unbomCount > 0 ? `<span class="warn">${unbomCount} order${unbomCount !== 1 ? 's' : ''} missing BOM</span>` : ''}
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Material</th>
+                <th>Unit</th>
+                <th class="num">Need</th>
+                <th class="num">In Stock</th>
+                <th class="num">Short</th>
+                <th class="num">Cost to Buy</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map(r => `
+                <tr class="${r.shortfall > 0 ? 'short-row' : ''}">
+                  <td>${_escape(r.mat?.name || '(unknown ' + r.matId + ')')}</td>
+                  <td>${_escape(r.mat?.unit || '—')}</td>
+                  <td class="num">${r.need.toFixed(2)}</td>
+                  <td class="num">${r.stock.toFixed(2)}</td>
+                  <td class="num ${r.shortfall > 0 ? 'shortfall' : ''}">${r.shortfall > 0 ? r.shortfall.toFixed(2) : '—'}</td>
+                  <td class="num">${r.shortfall > 0 ? 'R' + r.cost.toFixed(2) : '—'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>`;
+      }
+
+      return `
+        <section class="page">
+          <header class="page-head">
+            <div class="biz-name">${bizName}</div>
+            <div class="week-label">${label}</div>
+            <div class="week-sub">${weekLabel} · ${orderList.length} order${orderList.length !== 1 ? 's' : ''}</div>
+          </header>
+          ${body}
+          <footer class="page-foot">Printed ${todayStr} · Materials Forecast</footer>
+        </section>`;
+    };
+
+    const colLabels = ['CURRENT WEEK', 'NEXT WEEK', 'IN 2 WEEKS', 'IN 3 WEEKS'];
+    const weekSections = weeks.map((w, i) =>
+      buildSection(colLabels[i], _formatWeekShort(w), buckets[w])
+    ).filter(Boolean).join('');
+
+    // Consolidated totals page (all 4 weeks combined) — useful for placing one
+    // big supplier order covering the whole month
+    const allFourWeeks = weeks.flatMap(w => buckets[w]);
+    const totalsSection = allFourWeeks.length > 0
+      ? buildSection('📦 4-WEEK TOTAL', 'Consolidated reorder for the whole planning horizon', allFourWeeks)
+      : '';
+
+    if (!weekSections && !totalsSection) {
+      alert('No scheduled orders in any visible week. Schedule some orders in the Planner first.');
+      return;
+    }
+
+    const html = `<!DOCTYPE html>
+<html><head>
+<title>Weekly Materials Forecast — ${bizName}</title>
+<style>
+  @page { size: A4 portrait; margin: 15mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
+  body { color: #000; background: #fff; font-size: 12px; }
+  .no-print { padding: 12px; text-align: right; background: #f0f0f0; }
+  .no-print button { padding: 8px 16px; font-weight: bold; cursor: pointer; border: none; border-radius: 4px; font-size: 12px; }
+  .no-print .print { background: #000; color: #fff; }
+  .no-print .close { background: #ddd; margin-left: 8px; }
+  @media print { .no-print { display: none; } }
+
+  .page { padding: 0; min-height: 260mm; display: flex; flex-direction: column; page-break-after: always; }
+  .page:last-of-type { page-break-after: auto; }
+  .page-head { border-bottom: 3px solid #000; padding-bottom: 10px; margin-bottom: 12px; }
+  .biz-name { font-size: 13px; font-weight: 900; letter-spacing: 0.1em; color: #666; }
+  .week-label { font-size: 26px; font-weight: 900; margin-top: 4px; line-height: 1.1; }
+  .week-sub { font-size: 13px; color: #555; margin-top: 4px; }
+
+  .summary-bar { display: flex; gap: 18px; margin-bottom: 12px; font-size: 11px; padding: 8px 12px; background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; flex-wrap: wrap; }
+  .summary-bar strong { font-size: 14px; }
+  .summary-bar .warn { color: #991b1b; font-weight: bold; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  thead th { background: #000; color: #fff; text-align: left; padding: 6px 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+  thead th.num { text-align: right; }
+  tbody td { padding: 5px 8px; border-bottom: 1px solid #ddd; }
+  tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr.short-row { background: #fef3c7; }
+  tbody td.shortfall { color: #991b1b; font-weight: bold; }
+  tbody tr:nth-child(even):not(.short-row) { background: #fafafa; }
+
+  .empty { padding: 30px; text-align: center; font-style: italic; color: #888; font-size: 13px; border: 1px dashed #ccc; border-radius: 6px; margin-top: 20px; }
+
+  .page-foot { margin-top: auto; padding-top: 8px; border-top: 1px solid #ddd; font-size: 10px; color: #666; text-align: right; }
+
+  /* Force print colors */
+  .summary-bar, thead th, tbody tr.short-row { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+</style>
+</head><body>
+<div class="no-print">
+  <button class="print" onclick="window.print()">🖨️ PRINT</button>
+  <button class="close" onclick="window.close()">CLOSE</button>
+</div>
+${weekSections}
+${totalsSection}
+</body></html>`;
+
+    const win = window.open('', '_blank');
+    if (!win) {
+      alert('Pop-up blocked. Allow pop-ups for this site to print the forecast.');
+      return;
+    }
+    win.document.write(html);
+    win.document.close();
+  }
+  window.printWeeklyMaterialRequirements = printWeeklyMaterialRequirements;
+
   function saveData() {
     localStorage.setItem('production-data', JSON.stringify(data));
     document.getElementById('save-status').textContent = '✓ saved';
@@ -4431,12 +7023,10 @@
   // ============================================
   // FIREBASE AUTH & SYNC
   // ============================================
-  
-  let currentUser = null;
-  let firebaseReady = false;
-  let unsubscribe = null;
-  let saveTimeout = null;
-  
+  // Note: currentUser, currentRole, firebaseReady, unsubscribe, saveTimeout, and
+  // lastSyncedPayload are declared at the top of the script (right after `data`)
+  // to avoid temporal-dead-zone crashes if anything earlier throws at parse time.
+
   function waitForFirebase() {
     if (window.firebaseAuth && window.firebaseFns) {
       firebaseReady = true;
@@ -4466,8 +7056,7 @@
     }, 200);
   }
   
-  let currentRole = null;
-  
+  // currentRole declared at top of script (TDZ safety)
   // Role permissions: which tabs each role can see
   const ROLE_PERMISSIONS = {
     admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner'],
@@ -4494,25 +7083,10 @@
   
   function applyRolePermissions() {
     if (!currentRole) return;
-    
-    const allowedTabs = ROLE_PERMISSIONS[currentRole] || [];
-    
-    // Hide tabs user shouldn't see
-    document.querySelectorAll('.tab').forEach((tab, i) => {
-      const tabName = TAB_NAMES[i];
-      if (tabName && !allowedTabs.includes(tabName)) {
-        tab.style.display = 'none';
-      } else {
-        tab.style.display = '';
-      }
-    });
-    
-    // If active tab is hidden, switch to first allowed
-    const activeTab = document.querySelector('.tab.active');
-    if (activeTab && activeTab.style.display === 'none') {
-      showSection(allowedTabs[0] || 'dashboard');
-    }
-    
+
+    // Tab visibility — combined role + biz restriction logic lives in applyTabVisibility
+    applyTabVisibility();
+
     // Read-only: disable inputs/buttons (with some exceptions)
     if (isReadOnly()) {
       document.body.classList.add('readonly-mode');
@@ -4561,9 +7135,14 @@
         }
         
         document.getElementById('login-overlay').style.display = 'none';
-        document.getElementById('main-app').style.display = 'block';
-        document.getElementById('current-user-email').textContent = user.email;
-        applyRolePermissions();
+        if (IS_DASHBOARD_MODE) {
+          // Second-screen / wall-mount mode — skip the normal app UI entirely
+          enterDashboardOnlyMode();
+        } else {
+          document.getElementById('main-app').style.display = 'block';
+          document.getElementById('current-user-email').textContent = user.email;
+          applyRolePermissions();
+        }
         startSync();
       } else {
         currentUser = null;
@@ -4575,10 +7154,9 @@
     });
   }
   
-  // Last payload we successfully pushed to cloud. Used to short-circuit the
-  // snapshot listener when Firestore echoes our own write back — without this
-  // every save triggers a full render of all 9 sections.
-  let lastSyncedPayload = '';
+  // lastSyncedPayload declared at top of script (TDZ safety).
+  // Used to short-circuit the snapshot listener when Firestore echoes our own
+  // write back — without this every save triggers a full render of all 9 sections.
 
   function startSync() {
     updateSyncStatus('☁ Connecting…', 'info');
