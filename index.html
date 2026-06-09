@@ -7265,17 +7265,20 @@
     if (!sel) return;
     sel.innerHTML = _stationOptionsHtml(biz);
   }
-  // Shared <option> list: per-stage stations + a group of role logins (cover multiple stations)
+  // Shared <option> list: one entry per role (covers all its stations); stages with no
+  // role assigned fall back to their own single-station option.
   function _stationOptionsHtml(biz) {
     const esc = s => String(s).replace(/"/g, '&quot;');
     const stages = (typeof getProductionStages === 'function') ? getProductionStages(biz) : [];
-    let html = stages.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
     const map = (typeof bizRoleStageMap === 'function') ? bizRoleStageMap(biz) : {};
-    const roles = Object.keys(map).filter(r => map[r].length >= 2);
-    if (roles.length) {
-      html += `<optgroup label="Role logins (cover multiple stations)">` +
-        roles.map(r => `<option value="role-${esc(r)}">👥 ${esc(r)} — ${map[r].map(esc).join(', ')}</option>`).join('') +
-        `</optgroup>`;
+    const roles = Object.keys(map);
+    let html = roles.map(r => `<option value="role-${esc(r)}">👥 ${esc(r)} — ${map[r].map(esc).join(', ')}</option>`).join('');
+    // any stage without a role still gets a single-station option
+    const solo = stages.filter(s => !((typeof stageRole === 'function') && stageRole(biz, s)));
+    if (solo.length) {
+      html += (roles.length ? `<optgroup label="Single stations">` : '') +
+        solo.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('') +
+        (roles.length ? `</optgroup>` : '');
     }
     return html || '<option value="">(no stations)</option>';
   }
@@ -7307,7 +7310,10 @@
     const biz = activeBiz;
     const stages = (typeof getProductionStages === 'function') ? getProductionStages(biz) : [];
     const accounts = data.stationAccounts || {};
-    const rows = stages.map(s => {
+    // Per-station logins only for stages WITHOUT a role — stages that belong to a role are
+    // reached through that role's login instead (no separate single logins).
+    const soloStages = stages.filter(s => !stageRole(biz, s));
+    const rows = soloStages.map(s => {
       const exists = !!accounts[stationEmail(biz, s)];
       return `<div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; padding:4px 0; border-bottom:1px solid var(--border)">
         <span style="width:180px; font-weight:600">${s}</span>
@@ -7315,19 +7321,22 @@
         <span style="font-size:11px; color:${exists ? '#16a34a' : 'var(--text-muted)'}">${exists ? '✓ created' : 'not created'}</span>
       </div>`;
     }).join('');
-    const roleLoginRows = _roleLoginRowsHtml(biz);
-    el.innerHTML = `
-      <div class="card" style="border-left:4px solid var(--accent)">
-        <div class="card-title">🏭 Station Logins — ${biz} (admin)</div>
-        <p style="font-size:12px; color:var(--text-muted)">Set a password for each station and create them all at once — <strong>you stay logged in</strong>. Already-created stations are marked ✓ and skipped. Switch business (top) to set up PinkFoot / ReptiCube. The floor signs in via <strong>🏭 Station Login</strong> with just the station + password.</p>
+    const soloBlock = soloStages.length ? `
+        <div style="font-weight:700; margin:0.25rem 0">🏭 Single-station logins</div>
         <div style="display:flex; gap:0.5rem; align-items:center; margin:0.5rem 0; flex-wrap:wrap">
           <input type="text" id="stpw-all" placeholder="set all to…" autocomplete="off" style="width:170px; padding:4px 6px">
           <button class="btn btn-sm" onclick="fillAllStationPw()">Apply to all</button>
         </div>
-        ${rows || '<div class="empty">No stations defined for this business.</div>'}
-        <button class="btn btn-primary" style="margin-top:0.75rem" onclick="createAllStationLogins()">Create all station logins</button>
-        <div id="station-create-status" style="font-size:12px; margin-top:0.5rem; color:var(--text-muted)"></div>
-        ${roleLoginRows}
+        ${rows}
+        <button class="btn btn-primary" style="margin-top:0.75rem" onclick="createAllStationLogins()">Create single-station logins</button>
+        <div id="station-create-status" style="font-size:12px; margin-top:0.5rem; color:var(--text-muted)"></div>` : '';
+    const roleLoginRows = _roleLoginRowsHtml(biz);
+    el.innerHTML = `
+      <div class="card" style="border-left:4px solid var(--accent)">
+        <div class="card-title">🏭 Station Logins — ${biz} (admin)</div>
+        <p style="font-size:12px; color:var(--text-muted)">Each role gets one login that covers all of that role's stations — <strong>you stay logged in</strong> while creating them. Already-created logins are marked ✓ and skipped. Switch business (top) to set up the others. The floor signs in via <strong>🏭 Station Login</strong> and picks their role.</p>
+        ${roleLoginRows || '<div class="empty">No roles assigned to the stages here yet — open Stations → ⚙️ Edit production stages and set a role on each stage.</div>'}
+        ${soloBlock}
       </div>`;
   }
 
@@ -7339,7 +7348,7 @@
   }
   function _roleLoginRowsHtml(biz) {
     const map = bizRoleStageMap(biz);
-    const roles = Object.keys(map).filter(r => map[r].length >= 2); // only roles worth grouping
+    const roles = Object.keys(map); // one login per role (covers however many stations it has)
     if (!roles.length) return '';
     const accounts = data.stationAccounts || {};
     const rows = roles.map(r => {
@@ -7350,14 +7359,21 @@
         <span style="font-size:11px; color:${exists ? '#16a34a' : 'var(--text-muted)'}">${exists ? '✓ created' : 'not created'}</span>
       </div>`;
     }).join('');
-    return `<div style="margin-top:1rem; padding-top:0.75rem; border-top:2px dashed var(--border)">
-      <div style="font-weight:700; margin-bottom:0.25rem">👥 Role logins — one login per role, covers all its stations</div>
-      <p style="font-size:12px; color:var(--text-muted)">A carpenter (or sander/sprayer) who works at two stations signs in <strong>once</strong> here and taps between their stations. Each person still picks their own name on the floor.</p>
+    return `<div>
+      <div style="display:flex; gap:0.5rem; align-items:center; margin:0.5rem 0; flex-wrap:wrap">
+        <input type="text" id="rolepw-all" placeholder="set all to…" autocomplete="off" style="width:170px; padding:4px 6px">
+        <button class="btn btn-sm" onclick="fillAllRolePw()">Apply to all</button>
+      </div>
       ${rows}
       <button class="btn btn-primary" style="margin-top:0.75rem" onclick="createRoleStationLogins()">Create role logins</button>
       <div id="role-create-status" style="font-size:12px; margin-top:0.5rem; color:var(--text-muted)"></div>
     </div>`;
   }
+  function fillAllRolePw() {
+    const v = (document.getElementById('rolepw-all') || {}).value || '';
+    Object.keys(bizRoleStageMap(activeBiz)).forEach(r => { const el = document.getElementById('rolepw-' + _pwSlug(r)); if (el) el.value = v; });
+  }
+  window.fillAllRolePw = fillAllRolePw;
 
   function fillAllStationPw() {
     const v = (document.getElementById('stpw-all') || {}).value || '';
@@ -7408,7 +7424,7 @@
     const biz = activeBiz;
     const st = document.getElementById('role-create-status');
     const map = bizRoleStageMap(biz);
-    const jobs = Object.keys(map).filter(r => map[r].length >= 2)
+    const jobs = Object.keys(map)
       .map(r => ({ role: r, pw: ((document.getElementById('rolepw-' + _pwSlug(r)) || {}).value || '').trim() }))
       .filter(j => j.pw);
     if (!jobs.length) { if (st) st.textContent = 'Enter at least one password (min 6 chars).'; return; }
