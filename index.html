@@ -304,6 +304,7 @@
   
   <!-- DASHBOARD -->
   <div id="section-dashboard" class="section active">
+    <div id="business-overview"></div>
     <div id="command-centre"></div>
     <div class="card">
       <div class="card-title">STATUS</div>
@@ -5205,7 +5206,91 @@
   }
   window.renderCommandCentre = renderCommandCentre;
 
+  // ----- Per-business overview tiles (top of dashboard, click through to production) -----
+  function _weekSummaryForBiz(biz, mon, sun) {
+    let pieces = 0, revenue = 0, cost = 0;
+    (data[biz]?.orders || []).forEach(o => {
+      if (o.status !== 'done' && o.status !== 'delivered') return;
+      const cd = _completionDate(o);
+      if (!cd || cd < mon || cd > sun) return;
+      const qty = parseInt(o.qty) || 1;
+      const c = orderCosting(biz, o);
+      pieces += qty;
+      revenue += (Number(c.netPrice) || 0) * qty;
+      cost += (Number(c.trueCost) || 0) * qty;
+    });
+    const profit = revenue - cost;
+    return { pieces, revenue, cost, profit, marginValid: revenue > 0, margin: revenue > 0 ? profit / revenue : 0 };
+  }
+  function _bizDashStats(biz, mon, sun, todayIso) {
+    const orders = data[biz]?.orders || [];
+    let dueThisWeek = 0, inProd = 0, fabricToOrder = 0, fabricOOS = 0, overdue = 0;
+    orders.forEach(o => {
+      if (o.status === 'done' || o.status === 'delivered') return;   // active only
+      if (o.status === 'in-production') inProd++;
+      if (o.dueDate && o.dueDate >= mon && o.dueDate <= sun) dueThisWeek++;
+      if (o.dueDate && o.dueDate < todayIso) overdue++;
+      if (o.fabric && (o.fabricStatus || 'waiting') !== 'received') fabricToOrder++;
+      if (o.fabricOOS) fabricOOS++;
+    });
+    return { dueThisWeek, inProd, fabricToOrder, fabricOOS, overdue, low: _lowStockFor(biz).length, wk: _weekSummaryForBiz(biz, mon, sun) };
+  }
+  function goToProduction(biz, sec) { switchBiz(biz); showSection(sec || 'planner'); }
+  window.goToProduction = goToProduction;
+
+  function renderBusinessOverview() {
+    const el = document.getElementById('business-overview');
+    if (!el) return;
+    const mon = getMondayOf(new Date());
+    if (!mon) { el.innerHTML = ''; return; }
+    const sun = _addDaysIso(mon, 6);
+    const todayIso = _todayIsoLocal();
+    const showCosts = canSeeCosts();
+    const labels = { bellville: 'Bellville Furniture', pinkfoot: 'PinkFoot Boutique', repticube: 'ReptiCube' };
+    const emoji = { bellville: '🛋️', pinkfoot: '🐾', repticube: '🦎' };
+    const profitCol = n => n >= 0 ? '#16a34a' : '#dc2626';
+
+    const tiles = ['bellville', 'pinkfoot', 'repticube'].map(biz => {
+      const s = _bizDashStats(biz, mon, sun, todayIso);
+      const isActive = biz === activeBiz;
+      const stat = (label, val, col) => `<div style="text-align:center"><div style="font-size:18px; font-weight:800; color:${col || 'var(--text)'}">${val}</div><div style="font-size:9px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.03em">${label}</div></div>`;
+      const headline = showCosts
+        ? `<div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:0.5rem; padding-bottom:0.5rem; border-bottom:1px solid var(--border)">
+             <div><div style="font-size:22px; font-weight:800; color:${profitCol(s.wk.profit)}; line-height:1.1">${_rand0(s.wk.profit)}</div><div style="font-size:9px; color:var(--text-muted); text-transform:uppercase">Profit this week · ${s.wk.marginValid ? (s.wk.margin * 100).toFixed(0) + '%' : '—'}</div></div>
+             <div style="text-align:right"><div style="font-size:14px; font-weight:700">${_rand0(s.wk.revenue)}</div><div style="font-size:9px; color:var(--text-muted)">revenue · ${s.wk.pieces} pcs done</div></div>
+           </div>`
+        : `<div style="margin-bottom:0.5rem; padding-bottom:0.5rem; border-bottom:1px solid var(--border)">${stat('Pieces done this week', s.wk.pieces)}</div>`;
+      return `
+        <div class="card" style="margin:0; border:2px solid ${isActive ? 'var(--accent)' : 'var(--border)'}; cursor:pointer" onclick="goToProduction('${biz}')" title="Open ${labels[biz]} production planner">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.6rem">
+            <div style="font-weight:800; font-size:15px">${emoji[biz]} ${labels[biz]}${isActive ? ' <span style="font-size:9px; color:var(--accent)">● ACTIVE</span>' : ''}</div>
+            <span style="font-size:11px; color:var(--accent); font-weight:700; white-space:nowrap">View production →</span>
+          </div>
+          ${headline}
+          <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:0.4rem">
+            ${stat('Due this wk', s.dueThisWeek, s.dueThisWeek ? '#d97706' : null)}
+            ${stat('Low stock', s.low, s.low ? '#dc2626' : null)}
+            ${stat('Fabric to order', s.fabricToOrder, s.fabricToOrder ? '#d97706' : null)}
+            ${stat('Fabric OOS', s.fabricOOS, s.fabricOOS ? '#dc2626' : null)}
+          </div>
+          <div style="display:flex; gap:0.4rem; margin-top:0.6rem" onclick="event.stopPropagation()">
+            <button class="btn btn-sm" style="flex:1" onclick="goToProduction('${biz}','planner')">🗓️ Planner</button>
+            <button class="btn btn-sm" style="flex:1" onclick="goToProduction('${biz}','stations')">🏭 Stations</button>
+            <button class="btn btn-sm" style="flex:1" onclick="goToProduction('${biz}','orders')">📋 Orders</button>
+          </div>
+        </div>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div class="card">
+        <div class="card-title">🏢 Businesses — tap a card to go to its production</div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:1rem">${tiles}</div>
+      </div>`;
+  }
+  window.renderBusinessOverview = renderBusinessOverview;
+
   function renderDashboard() {
+    try { renderBusinessOverview(); } catch (e) { console.warn('Business overview render failed:', e); }
     try { renderCommandCentre(); } catch (e) { console.warn('Command centre render failed:', e); }
     const orders = currentData().orders;
     const pending = orders.filter(o => o.status === 'pending').length;
