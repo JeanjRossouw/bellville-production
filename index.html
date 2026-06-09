@@ -40,12 +40,14 @@
     // Expose to global so non-module code can use them
     window.firebaseAuth = auth;
     window.firebaseDb = db;
+    window.firebaseConfig = firebaseConfig;
     window.firebaseFns = {
       signIn: signInWithEmailAndPassword,
       createUser: createUserWithEmailAndPassword,
       signOut,
       onAuthStateChanged,
-      doc, setDoc, getDoc, onSnapshot
+      doc, setDoc, getDoc, onSnapshot,
+      initializeApp, getAuth, getFirestore
     };
     
     // Trigger app init once Firebase is ready
@@ -200,16 +202,35 @@
       <label>Password</label>
       <input type="password" id="login-password" placeholder="••••••••" style="margin-bottom:1rem">
       <button class="btn btn-primary" onclick="doLogin()" style="width:100%; margin-bottom:0.5rem">SIGN IN</button>
+      <button class="btn" onclick="showStationLogin()" style="width:100%; margin-bottom:0.5rem; font-size:11px">🏭 STATION LOGIN</button>
       <button class="btn" onclick="toggleLoginMode()" style="width:100%; font-size:10px">Need an account? CREATE ONE</button>
+    </div>
+
+    <div id="station-mode" style="display:none">
+      <h2 style="font-size:16px; text-align:center; margin-bottom:1rem">🏭 Station Login</h2>
+      <label>Business</label>
+      <select id="station-login-biz" onchange="populateStationLoginStations()" style="margin-bottom:1rem">
+        <option value="bellville">Bellville</option>
+        <option value="pinkfoot">PinkFoot</option>
+        <option value="repticube">ReptiCube</option>
+      </select>
+      <label>Station / Department</label>
+      <select id="station-login-station" style="margin-bottom:1rem"></select>
+      <label>Station password</label>
+      <input type="password" id="station-login-pin" placeholder="••••••" style="margin-bottom:1rem">
+      <button class="btn btn-primary" onclick="doStationLogin()" style="width:100%; margin-bottom:0.5rem">SIGN IN TO STATION</button>
+      <button class="btn" onclick="showStaffLogin()" style="width:100%; font-size:10px">← Staff login</button>
     </div>
     
     <div id="signup-mode" style="display:none">
-      <label>Email</label>
-      <input type="email" id="signup-email" placeholder="you@bellvillefurniture.co.za" style="margin-bottom:1rem">
+      <div id="signup-email-block">
+        <label>Email</label>
+        <input type="email" id="signup-email" placeholder="you@bellvillefurniture.co.za" style="margin-bottom:1rem">
+      </div>
       <label>Password (min 6 chars)</label>
       <input type="password" id="signup-password" placeholder="••••••••" style="margin-bottom:1rem">
       <label>Your Role</label>
-      <select id="signup-role" style="margin-bottom:1rem">
+      <select id="signup-role" onchange="onSignupRoleChange()" style="margin-bottom:1rem">
         <option value="">-- Select your role --</option>
         <option value="admin">Admin (full access)</option>
         <option value="sales">Sales Staff</option>
@@ -217,7 +238,18 @@
         <option value="dispatch">Dispatch / Driver</option>
         <option value="fabric">Fabric Buyer</option>
         <option value="manager">Manager (view only)</option>
+        <option value="station">🏭 Station / Department (single station)</option>
       </select>
+      <div id="signup-station-block" style="display:none">
+        <label>Business</label>
+        <select id="signup-biz" onchange="populateSignupStations()" style="margin-bottom:1rem">
+          <option value="bellville">Bellville</option>
+          <option value="pinkfoot">PinkFoot</option>
+          <option value="repticube">ReptiCube</option>
+        </select>
+        <label>Station / Department</label>
+        <select id="signup-station" style="margin-bottom:1rem"></select>
+      </div>
       <button class="btn btn-primary" onclick="doSignup()" style="width:100%; margin-bottom:0.5rem">CREATE ACCOUNT</button>
       <button class="btn" onclick="toggleLoginMode()" style="width:100%; font-size:10px">Already have an account? SIGN IN</button>
     </div>
@@ -233,7 +265,7 @@
 <header>
   <div style="display:flex; align-items:center; gap:1rem">
     <h1>Production Manager</h1>
-    <div style="display:flex; gap:0.25rem; background:rgba(255,255,255,0.05); padding:0.5rem; border:1px solid var(--border)">
+    <div id="biz-switcher" style="display:flex; gap:0.25rem; background:rgba(255,255,255,0.05); padding:0.5rem; border:1px solid var(--border)">
       <button class="btn" style="padding:0.5rem 1rem; font-size:11px" onclick="switchBiz('bellville')" id="btn-bellville">Bellville</button>
       <button class="btn" style="padding:0.5rem 1rem; font-size:11px" onclick="switchBiz('repticube')" id="btn-repticube">ReptiCube</button>
       <button class="btn" style="padding:0.5rem 1rem; font-size:11px" onclick="switchBiz('pinkfoot')" id="btn-pinkfoot">PinkFoot</button>
@@ -256,6 +288,7 @@
     <button class="tab active" onclick="showSection('dashboard')">Dashboard</button>
     <button class="tab" onclick="showSection('intake')">New Order</button>
     <button class="tab" onclick="showSection('orders')">Active Orders</button>
+    <button class="tab" onclick="showSection('stations')">🏭 Stations</button>
     <button class="tab" onclick="showSection('done')">🎁 Done (Ready)</button>
     <button class="tab" onclick="showSection('calendar')">📅 Calendar</button>
     <button class="tab" onclick="showSection('dispatch')">🚚 Dispatch (All)</button>
@@ -271,6 +304,8 @@
   
   <!-- DASHBOARD -->
   <div id="section-dashboard" class="section active">
+    <div id="business-overview"></div>
+    <div id="command-centre"></div>
     <div class="card">
       <div class="card-title">STATUS</div>
       <div class="grid3">
@@ -484,7 +519,16 @@
       <div id="orders-list"><div class="empty">No orders</div></div>
     </div>
   </div>
-  
+
+  <!-- STATIONS (shop-floor per-division done buttons) -->
+  <div id="section-stations" class="section">
+    <div class="card">
+      <div class="card-title">🏭 Stations — Shop Floor</div>
+      <p style="font-size:13px; color:var(--text-muted)">Pick your station, then press <strong>DONE</strong> on each piece as you finish it. It moves to the next station automatically and everyone's screen updates.</p>
+    </div>
+    <div id="stations-content"></div>
+  </div>
+
   <!-- DONE (READY FOR DELIVERY) -->
   <div id="section-done" class="section">
     <div class="card">
@@ -627,6 +671,7 @@
   
   <!-- BOM SECTION -->
   <div id="section-bom" class="section">
+    <div id="product-matching"></div>
     <div class="card">
       <div class="card-title">📋 Category Templates</div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
@@ -698,6 +743,7 @@
   </div>
 
   <div id="section-staff" class="section">
+    <div id="station-logins-admin"></div>
     <div class="card">
       <div class="card-title">ADD STAFF MEMBER</div>
       <div class="row">
@@ -809,7 +855,10 @@
     <div class="card">
       <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
         <span>🗓️ PRODUCTION PLANNER</span>
-        <span style="font-size:11px; color:var(--text-muted)">Drag cards between weeks · or tap <strong>⋮</strong> to schedule</span>
+        <span style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap">
+          <span style="font-size:11px; color:var(--text-muted)">Drag cards between weeks · or tap <strong>⋮</strong> to schedule</span>
+          <button class="btn btn-sm" onclick="printPlanner()">🖨️ Print Planner</button>
+        </span>
       </div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
         Active orders only (pending and in-production). Orders scheduled to a past week show in <strong>Current</strong>.
@@ -821,6 +870,9 @@
 
 <script>
   let activeBiz = 'bellville';
+  let currentRole = null; // declared early so render()/canSeeTab never hit a temporal-dead-zone
+  let currentStation = null;    // for 'station' department logins: their locked station name
+  let currentStationBiz = null; // for 'station' logins: their business
   let data = {
     bellville: { orders: [], products: {}, inventory: {}, staff: [] },
     repticube: { orders: [], products: {}, inventory: {}, staff: [] },
@@ -907,12 +959,14 @@
     render();
     if (typeof populateProductDatalist === 'function') populateProductDatalist();
   }
-  
-  switchBiz('bellville');
-  
+
+  // NOTE: initial switchBiz('bellville') is invoked at the very end of this
+  // script, after all module-level declarations are initialized, to avoid
+  // temporal-dead-zone errors (render() reads state declared further down).
+
   // Tab name array — order MUST match the order of .tab buttons in the DOM.
   // Used by showSection and applyRolePermissions for positional tab lookup.
-  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'costs', 'staff', 'materials', 'schedule', 'planner'];
+  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'stations', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'costs', 'staff', 'materials', 'schedule', 'planner'];
 
   function showSection(sec) {
     document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
@@ -923,6 +977,7 @@
     if (sec === 'calendar') renderCalendar();
     if (sec === 'bom') renderBomSection();
     if (sec === 'costs') renderCostSettings();
+    if (sec === 'stations') renderStations();
     if (sec === 'materials') renderInventory();
     if (sec === 'intake') populateProductDatalist();
     if (sec === 'done') renderDoneOrders();
@@ -1938,15 +1993,16 @@
     </thead>
     <tbody>${rows}</tbody>
   </table>
-  
+
   <div class="footer">
     <div>Printed: ${new Date().toLocaleString('en-ZA')}</div>
     <div>${orders.length} order${orders.length !== 1 ? 's' : ''} listed</div>
   </div>
 </body>
 </html>`;
-    
+
     const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Click the pop-up icon in the address bar and allow pop-ups for this site, then try Print again.'); return; }
     win.document.write(html);
     win.document.close();
   }
@@ -2078,12 +2134,13 @@
   </div>
 </body>
 </html>`;
-    
+
     const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Click the pop-up icon in the address bar and allow pop-ups for this site, then try Print again.'); return; }
     win.document.write(html);
     win.document.close();
   }
-  
+
   function updateDueDate(orderId, newDate) {
     const order = currentData().orders.find(o => o.id === orderId);
     if (order) {
@@ -2575,6 +2632,7 @@
   }
   
   function renderStaff() {
+    try { renderStationLoginsAdmin(); } catch (e) { console.warn('Station logins panel failed:', e); }
     const staff = currentData().staff || [];
     const html = staff.map(s => `
       <div class="order-card">
@@ -2654,6 +2712,7 @@
   function renderImmediate() {
     renderDashboard();
     renderOrders();
+    if (typeof renderStations === 'function') renderStations();
     renderDoneOrders();
     renderDispatch();
     renderFinished();
@@ -3129,8 +3188,92 @@
     renderRawMaterialCosts();
     renderMaterialsLibrary();
     renderProductBomTable();
+    renderProductMatching();
   }
-  
+
+  // Bulk product matching: link unmatched order products to a BOM, or create one
+  function renderProductMatching() {
+    const el = document.getElementById('product-matching');
+    if (!el) return;
+    const bizKey = activeBiz;
+    const bd = currentData();
+    const counts = {};
+    (bd.orders || []).forEach(o => {
+      if (o.status === 'done' || o.status === 'delivered') return;
+      if (!productMatched(bizKey, o.product)) {
+        const key = o.product || '(blank)';
+        counts[key] = (counts[key] || 0) + 1;
+      }
+    });
+    const names = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+    if (names.length === 0) { el.innerHTML = ''; return; }
+
+    const bomProducts = Object.keys(bd.productBoms || {}).sort();
+    const cats = [...new Set([
+      ...Object.values(bd.productBoms || {}).map(p => p.category).filter(Boolean),
+      ...Object.keys((data.costSettings && data.costSettings.unitWeights && data.costSettings.unitWeights[bizKey]) || {})
+    ])].sort();
+    const escAttr = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const rows = names.map(name => `
+      <div style="display:flex; align-items:center; gap:0.75rem; padding:6px 0; border-bottom:1px solid var(--border); flex-wrap:wrap">
+        <div style="flex:1; min-width:180px"><strong>${escAttr(name)}</strong> <span style="color:var(--text-muted); font-size:11px">${counts[name]} order${counts[name] !== 1 ? 's' : ''}</span></div>
+        <select data-biz="${bizKey}" data-name="${escAttr(name)}" onchange="resolveUnmatched(this)" style="max-width:320px; padding:5px 8px; font-size:12px">
+          <option value="">— choose action —</option>
+          <optgroup label="Link to existing product">
+            ${bomProducts.map(p => `<option value="LINK::${escAttr(p)}">${escAttr(p)}</option>`).join('')}
+          </optgroup>
+          <optgroup label="Create new product as category">
+            ${cats.map(c => `<option value="NEW::${escAttr(c)}">Create as ${escAttr(c)}</option>`).join('')}
+            <option value="NEW::__custom__">Create as new category…</option>
+          </optgroup>
+        </select>
+      </div>`).join('');
+
+    el.innerHTML = `
+      <div class="card" style="border-left:4px solid #d97706">
+        <div class="card-title">🔗 Product Matching (${names.length} unmatched)</div>
+        <p style="font-size:13px; color:var(--text-muted); margin-bottom:0.75rem">
+          These ${bizKey} order products don't match a BOM, so they're not counted in materials, weight or cost.
+          <strong>Link</strong> each to an existing product (updates all its orders), or <strong>Create</strong> a BOM product (pick a category; its orders match instantly — add materials in the table below afterwards).
+        </p>
+        ${rows}
+      </div>`;
+  }
+
+  function resolveUnmatched(sel) {
+    const bizKey = sel.dataset.biz;
+    const name = sel.dataset.name;
+    const v = sel.value;
+    if (!v) return;
+    const bd = data[bizKey];
+    if (!bd) return;
+    snapshotState();
+    if (v.indexOf('LINK::') === 0) {
+      const target = v.slice(6);
+      const cat = (bd.productBoms && bd.productBoms[target] && bd.productBoms[target].category) || '';
+      let n = 0;
+      (bd.orders || []).forEach(o => { if (o.product === name) { o.product = target; if (cat) o.category = cat; n++; } });
+      saveData(); renderBomSection(); render();
+      toast(`Linked ${n} order${n !== 1 ? 's' : ''} of "${name}" → ${target}`, 'success');
+    } else if (v.indexOf('NEW::') === 0) {
+      let cat = v.slice(5);
+      if (cat === '__custom__') {
+        cat = (prompt('New category name for "' + name + '":') || '').trim();
+        if (!cat) { sel.value = ''; return; }
+      }
+      if (!bd.productBoms) bd.productBoms = {};
+      if (!bd.productBoms[name]) bd.productBoms[name] = { category: cat, materials: {} };
+      else bd.productBoms[name].category = cat;
+      let n = 0;
+      (bd.orders || []).forEach(o => { if (o.product === name) { o.category = cat; n++; } });
+      saveData(); renderBomSection(); render();
+      toast(`Created "${name}" (${cat}); matched ${n} order${n !== 1 ? 's' : ''}`, 'success');
+    }
+  }
+  window.renderProductMatching = renderProductMatching;
+  window.resolveUnmatched = resolveUnmatched;
+
   function renderTemplateEditor() {
     const biz = currentData();
     const cat = document.getElementById('bom-template-category')?.value;
@@ -3784,6 +3927,7 @@
 </body>
 </html>`;
     const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Click the pop-up icon in the address bar and allow pop-ups for this site, then try Print again.'); return; }
     win.document.write(html);
     win.document.close();
   }
@@ -3984,6 +4128,429 @@
     order.sellingPrice = parseFloat(value) || 0;
     saveData();
     renderOrders();
+  }
+
+  // Re-link an order to a BOM product (fixes category, weight and material cost)
+  function updateOrderProduct(orderId, value) {
+    const order = currentData().orders.find(o => o.id === orderId);
+    if (!order || !value) return;
+    snapshotState();
+    order.product = value;
+    const bom = currentData().productBoms && currentData().productBoms[value];
+    if (bom && bom.category) order.category = bom.category; // inherit category so weight/cost resolve
+    saveData();
+    render();
+  }
+  window.updateOrderProduct = updateOrderProduct;
+
+  // ----- Per-stage (division) production progress on each order -----
+  const _DEFAULT_STAGES_BY_BIZ = {
+    pinkfoot: ['Cut Wood', 'Assemble', 'Sand', 'Primer', 'Sand 2nd', 'Final Paint', 'Final Assemble', 'Spot Check', 'Pack'],
+    repticube: ['CNC Board', 'CNC Windows', 'Sand Board', 'Fit Window', 'Clean', 'Pack']
+  };
+  // Rocking chairs are built in Bellville production regardless of which business owns the order
+  function isRockingOrder(o) {
+    return /rocking|rocker/i.test(o.category || '') || /rocking|rocker/i.test(o.product || '');
+  }
+  function findOrderAnyBiz(id) {
+    for (const b of ['bellville', 'pinkfoot', 'repticube']) {
+      const arr = data[b] && data[b].orders;
+      if (arr) { const o = arr.find(x => x.id === id); if (o) return { biz: b, o }; }
+    }
+    return null;
+  }
+  // Active orders worked at a given business's stations (Bellville also gets all rockers)
+  function stationPoolOrders(biz) {
+    let pool = [];
+    if (biz === 'bellville') {
+      ['bellville', 'pinkfoot', 'repticube'].forEach(b => (data[b] && data[b].orders ? data[b].orders : []).forEach(o => {
+        if (b === 'bellville' || isRockingOrder(o)) pool.push(o);
+      }));
+    } else {
+      pool = (data[biz] && data[biz].orders ? data[biz].orders : []).filter(o => !isRockingOrder(o));
+    }
+    return pool.filter(o => o.status !== 'done' && o.status !== 'delivered');
+  }
+
+  // The manufacturing divisions an order passes through. Rockers always use Bellville's
+  // stages (built there); Bellville uses capacity stages + category skips; others a default list.
+  function getProductionStagesForOrder(biz, o) {
+    const prodBiz = isRockingOrder(o) ? 'bellville' : biz;
+    if (prodBiz === 'bellville') {
+      try {
+        ensureCapacitySettings();
+        const cat = _orderCategory(o);
+        return (data.capacitySettings.stages || []).filter(s => !_stageExcludes(s, cat)).map(s => s.name);
+      } catch (e) { return []; }
+    }
+    return _DEFAULT_STAGES_BY_BIZ[prodBiz] || [];
+  }
+
+  function toggleOrderStage(orderId, stage) {
+    const found = findOrderAnyBiz(orderId);
+    if (!found) return;
+    const o = found.o;
+    snapshotState();
+    if (!o.stageDone || typeof o.stageDone !== 'object') o.stageDone = {};
+    if (!o.stageDoneAt || typeof o.stageDoneAt !== 'object') o.stageDoneAt = {};
+    if (o.stageDone[stage]) { delete o.stageDone[stage]; delete o.stageDoneAt[stage]; }
+    else { o.stageDone[stage] = true; o.stageDoneAt[stage] = new Date().toISOString(); }
+    saveData();
+    render();
+  }
+  window.toggleOrderStage = toggleOrderStage;
+
+  // ----- Stations (shop-floor) view -----
+  let stationStage = null;
+  function setStationStage(s) { stationStage = s; renderStations(); }
+  window.setStationStage = setStationStage;
+
+  // Full division list for a business (for the station selector)
+  function getProductionStages(biz) {
+    if (biz === 'bellville') { try { ensureCapacitySettings(); return (data.capacitySettings.stages || []).map(s => s.name); } catch (e) { return []; } }
+    return _DEFAULT_STAGES_BY_BIZ[biz] || [];
+  }
+  // The stage an order is currently waiting at (first not-done in its sequential stage list);
+  // null if finished. Independent/separate departments are skipped — they don't gate the flow.
+  function _orderCurrentStage(biz, o) {
+    const stages = getProductionStagesForOrder(biz, o);
+    if (!stages.length) return null;
+    return stages.find(s => !_isSeparateStage(biz, s) && !(o.stageDone && o.stageDone[s])) || null;
+  }
+  function _isStartStage(biz, stageName) {
+    if (biz !== 'bellville') return false;
+    try { const s = (data.capacitySettings.stages || []).find(x => x.name === stageName); return !!(s && s.start); } catch (e) { return false; }
+  }
+  // An independent department that runs in parallel and is NOT part of the sequential flow.
+  function _isSeparateStage(biz, stageName) {
+    if (biz !== 'bellville') return false;
+    try { const s = (data.capacitySettings.stages || []).find(x => x.name === stageName); return !!(s && s.separate); } catch (e) { return false; }
+  }
+  function ordersAtStage(biz, stageName) {
+    const isParallel = _isStartStage(biz, stageName) || _isSeparateStage(biz, stageName);
+    return stationPoolOrders(biz).filter(o => {
+      const stages = getProductionStagesForOrder(biz, o);
+      if (stages.indexOf(stageName) === -1) return false;        // product doesn't use this stage
+      if (o.stageDone && o.stageDone[stageName]) return false;   // already done here
+      if (isParallel) return true;                               // start point / separate dept — show all active orders in parallel
+      return _orderCurrentStage(biz, o) === stageName;           // otherwise sequential (first not-done)
+    });
+  }
+
+  // Admin: clear all per-station progress on this business's station pool to start over
+  function resetAllStationProgress() {
+    if (currentRole !== 'admin') { alert('Only admin can reset station progress.'); return; }
+    const biz = activeBiz;
+    const active = stationPoolOrders(biz);
+    if (!confirm(`Clear station progress for all ${active.length} active order(s) at ${biz}? Every piece restarts from the beginning. This does not delete orders.`)) return;
+    snapshotState();
+    active.forEach(o => { o.stageDone = {}; });
+    saveData();
+    render();
+    toast(`Reset station progress for ${active.length} order(s)`, 'success');
+  }
+  window.resetAllStationProgress = resetAllStationProgress;
+
+  // Worker presses DONE → mark stage complete, advance status, auto-finish when last stage
+  function completeStage(orderId, stage) {
+    const found = findOrderAnyBiz(orderId);
+    if (!found) return;
+    const biz = found.biz, o = found.o;
+    snapshotState();
+    const oldStatus = o.status;
+    if (!o.stageDone || typeof o.stageDone !== 'object') o.stageDone = {};
+    o.stageDone[stage] = true;
+    if (!o.stageDoneAt || typeof o.stageDoneAt !== 'object') o.stageDoneAt = {};
+    o.stageDoneAt[stage] = new Date().toISOString(); // when this department finished — feeds the daily report
+    if (o.status === 'pending') {
+      o.status = 'in-production';
+      if (!o.startDate) o.startDate = new Date().toISOString().split('T')[0];
+      try { deductMaterialsForOrder(biz, o); } catch (e) { console.warn('Deduction failed:', e); }
+    }
+    const stages = getProductionStagesForOrder(biz, o);
+    const allDone = stages.length && stages.every(s => o.stageDone[s]);
+    if (allDone) o.status = 'done';
+    if (o.status !== oldStatus) { try { applyCostFreezeOnStatusChange(biz, o, oldStatus, o.status); } catch (e) { console.warn('Cost freeze failed:', e); } }
+    saveData();
+    render();
+    toast(allDone ? `#${o.invoice || o.id} complete → moved to Done` : `${stage} done for #${o.invoice || o.id}`, 'success', 1500);
+  }
+  window.completeStage = completeStage;
+
+  function renderStations() {
+    const el = document.getElementById('stations-content');
+    if (!el) return;
+    const biz = activeBiz;
+    const allStages = getProductionStages(biz);
+    if (!allStages.length) { el.innerHTML = '<div class="empty">No production stages defined for this business.</div>'; return; }
+    const escJs = s => String(s).replace(/'/g, "\\'");
+    const escHtml = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    // Department logins are locked to their own station; everyone else can switch
+    const locked = currentRole === 'station' && currentStation && allStages.indexOf(currentStation) !== -1;
+    if (locked) stationStage = currentStation;
+    else if (!stationStage || allStages.indexOf(stationStage) === -1) stationStage = allStages[0];
+
+    const counts = {}; allStages.forEach(s => counts[s] = ordersAtStage(biz, s).length);
+    const selectorCard = locked ? '' : `
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.5rem">
+          <span style="font-size:11px; color:var(--text-muted)">Tap your station — number shows how many pieces are waiting there now.</span>
+          <span style="display:flex; gap:0.4rem">
+            <button class="btn btn-sm" onclick="openStationReport()" title="Report of what each department completed, by date range">📊 Daily report</button>
+            ${currentRole === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="resetAllStationProgress()" title="Clear progress on all active orders and start over">↺ Reset all progress</button>` : ''}
+          </span>
+        </div>
+        <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center">${(() => {
+          const stageBtn = s => {
+            const sel = s === stationStage;
+            const mark = _isSeparateStage(biz, s) ? '◆ ' : (_isStartStage(biz, s) ? '▶ ' : '');
+            return `<button onclick="setStationStage('${escJs(s)}')" style="border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'}; background:${sel ? 'var(--accent)' : 'var(--surface)'}; color:${sel ? '#fff' : 'var(--text)'}; border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; font-weight:${sel ? '700' : '500'}">${mark}${escHtml(s)} <span style="opacity:0.8">(${counts[s]})</span></button>`;
+          };
+          const flow = allStages.filter(s => !_isSeparateStage(biz, s));
+          const separate = allStages.filter(s => _isSeparateStage(biz, s));
+          let out = flow.map(stageBtn).join('');
+          if (separate.length) {
+            out += `<span style="width:1px; height:24px; background:var(--border); margin:0 4px"></span>`
+                 + `<span style="font-size:10px; color:var(--text-muted); font-weight:700" title="Independent departments — worked in parallel, not part of the sequential flow">◆ SEPARATE</span>`
+                 + separate.map(stageBtn).join('');
+          }
+          return out;
+        })()}</div>
+      </div>`;
+
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const queue = ordersAtStage(biz, stationStage).sort((a, b) => (a.dueDate ? new Date(a.dueDate).getTime() : Infinity) - (b.dueDate ? new Date(b.dueDate).getTime() : Infinity));
+    const cards = queue.map(o => {
+      const stages = getProductionStagesForOrder(biz, o);
+      const doneCount = stages.filter(s => o.stageDone && o.stageDone[s]).length;
+      const due = o.dueDate ? new Date(o.dueDate + 'T00:00:00') : null;
+      const daysLeft = due && !isNaN(due.getTime()) ? Math.ceil((due - today) / 86400000) : null;
+      const overdue = daysLeft !== null && daysLeft < 0;
+      const rockerTag = (biz === 'bellville' && isRockingOrder(o)) ? ' <span style="background:#f3e8ff; color:#7e22ce; padding:1px 6px; border-radius:3px; font-size:9px; font-weight:700">🪑 ' + ((findOrderAnyBiz(o.id) || {}).biz || '').toUpperCase() + '</span>' : '';
+      return `<div class="order-card" style="display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap; ${overdue ? 'border-left:4px solid #dc2626' : ''}">
+        <div style="flex:1; min-width:200px">
+          <div style="font-weight:700; font-size:15px">#${escHtml(o.invoice || o.id)} — ${escHtml(o.product || '')}${o.qty > 1 ? ' × ' + o.qty : ''}${rockerTag}</div>
+          <div style="font-size:12px; color:var(--text-muted)">${escHtml(o.customer || '')}${o.fabric ? ' · 🎨 ' + escHtml(o.fabric) : ''}</div>
+          <div style="font-size:11px; color:${overdue ? '#dc2626' : 'var(--text-muted)'}; margin-top:2px">Due ${escHtml(o.dueDate || '—')}${daysLeft !== null ? (overdue ? ` (${Math.abs(daysLeft)}d overdue)` : ` (${daysLeft}d)`) : ''} · progress ${doneCount}/${stages.length}</div>
+        </div>
+        <button onclick="completeStage('${o.id}', '${escJs(stationStage)}')" style="background:#16a34a; color:#fff; border:none; border-radius:8px; padding:0.9rem 1.6rem; font-size:15px; font-weight:800; cursor:pointer; white-space:nowrap">✓ DONE</button>
+      </div>`;
+    }).join('');
+
+    el.innerHTML = `
+      ${selectorCard}
+      ${stationReportOpen ? stationReportPanelHtml(biz) : ''}
+      <div class="card">
+        <div class="card-title">${escHtml(stationStage)} — ${queue.length} waiting${locked ? '' : ''}</div>
+        ${cards || '<div class="empty">Nothing waiting at this station right now 🎉</div>'}
+      </div>`;
+  }
+  window.renderStations = renderStations;
+
+  // All orders produced at this business (any status), so the report can include finished work.
+  function _productionOrdersAll(biz) {
+    let pool = [];
+    if (biz === 'bellville') {
+      ['bellville', 'pinkfoot', 'repticube'].forEach(b => (data[b] && data[b].orders ? data[b].orders : []).forEach(o => {
+        if (b === 'bellville' || isRockingOrder(o)) pool.push(o);
+      }));
+    } else {
+      pool = (data[biz] && data[biz].orders ? data[biz].orders : []).filter(o => !isRockingOrder(o));
+    }
+    return pool;
+  }
+
+  // ----- Department daily report (what each department completed, by date range) -----
+  let stationReportOpen = false;
+  let reportFrom = null, reportTo = null;   // 'YYYY-MM-DD' (inclusive); null = open-ended
+  let reportPreset = 'last7';
+
+  function _localDayStr(date) {
+    const d = (date instanceof Date) ? date : new Date(date);
+    if (isNaN(d.getTime())) return null;
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  // Build the report dataset for a business between fromStr..toStr (inclusive; null = unbounded)
+  function _deptReportData(biz, fromStr, toStr) {
+    const events = [];
+    _productionOrdersAll(biz).forEach(o => {
+      const at = o.stageDoneAt;
+      if (!at || typeof at !== 'object') return;
+      Object.keys(at).forEach(stage => {
+        const day = _localDayStr(new Date(at[stage]));
+        if (!day) return;
+        if (fromStr && day < fromStr) return;
+        if (toStr && day > toStr) return;
+        events.push({ day, stage, qty: o.qty || 1, order: o });
+      });
+    });
+    const stageOrder = getProductionStages(biz).slice();
+    events.forEach(e => { if (stageOrder.indexOf(e.stage) === -1) stageOrder.push(e.stage); });
+    const days = Array.from(new Set(events.map(e => e.day))).sort().reverse(); // newest first
+    const matrix = {}, rowTot = {}, colTot = {}; let grand = 0;
+    stageOrder.forEach(s => colTot[s] = 0);
+    days.forEach(d => { matrix[d] = {}; rowTot[d] = 0; stageOrder.forEach(s => matrix[d][s] = 0); });
+    events.forEach(e => { matrix[e.day][e.stage] += e.qty; rowTot[e.day] += e.qty; colTot[e.stage] += e.qty; grand += e.qty; });
+    return { events, stageOrder, days, matrix, rowTot, colTot, grand };
+  }
+
+  // Shared matrix + detail markup (inline styles so it works on-screen and in the print window)
+  function _deptReportTablesHtml(biz, R) {
+    const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const fmtDayHdr = d => new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' });
+    if (!R.days.length) return `<p style="padding:14px; text-align:center; color:#666; font-style:italic">No completions recorded in this date range.</p>`;
+    const matrixRows = R.days.map(d => `
+      <tr>
+        <td style="border:1px solid #999; padding:4px 6px; font-weight:bold; white-space:nowrap">${esc(fmtDayHdr(d))}</td>
+        ${R.stageOrder.map(s => `<td style="border:1px solid #999; padding:4px 6px; text-align:center${R.matrix[d][s] ? '' : '; color:#bbb'}">${R.matrix[d][s] || ''}</td>`).join('')}
+        <td style="border:1px solid #999; padding:4px 6px; text-align:center; font-weight:bold; background:#f1f5f9">${R.rowTot[d]}</td>
+      </tr>`).join('');
+    const matrixTable = `
+      <table style="width:100%; border-collapse:collapse; margin-bottom:14px">
+        <thead><tr>
+          <th style="border:1px solid #999; padding:4px 6px; background:#1f2937; color:#fff; font-size:10px; text-transform:uppercase">Day</th>
+          ${R.stageOrder.map(s => `<th style="border:1px solid #999; padding:4px 6px; background:#1f2937; color:#fff; font-size:10px; text-transform:uppercase">${esc(s)}</th>`).join('')}
+          <th style="border:1px solid #999; padding:4px 6px; background:#1f2937; color:#fff; font-size:10px; text-transform:uppercase">Total</th>
+        </tr></thead>
+        <tbody>${matrixRows}</tbody>
+        <tfoot><tr>
+          <td style="border:1px solid #999; padding:4px 6px; font-weight:bold; background:#e5e7eb">TOTAL</td>
+          ${R.stageOrder.map(s => `<td style="border:1px solid #999; padding:4px 6px; text-align:center; font-weight:bold; background:#e5e7eb">${R.colTot[s] || 0}</td>`).join('')}
+          <td style="border:1px solid #999; padding:4px 6px; text-align:center; font-weight:bold; background:#e5e7eb">${R.grand}</td>
+        </tr></tfoot>
+      </table>`;
+    const detail = R.days.map(d => {
+      const byStage = R.stageOrder.map(s => {
+        const items = R.events.filter(e => e.day === d && e.stage === s);
+        if (!items.length) return '';
+        const rows = items.map(e => `<li style="font-size:11px; margin:1px 0">#${esc(e.order.invoice || e.order.id)} — ${esc(e.order.product || '')}${e.order.qty > 1 ? ' ×' + e.order.qty : ''} <span style="color:#777">(${esc(e.order.customer || '')})</span>${(biz === 'bellville' && isRockingOrder(e.order)) ? ' 🪑' : ''}</li>`).join('');
+        return `<div style="margin:4px 0 8px 8px"><div style="font-weight:700; font-size:12px">${esc(s)} — ${items.reduce((a, e) => a + e.qty, 0)} unit(s)</div><ul style="margin:2px 0 0 22px">${rows}</ul></div>`;
+      }).join('');
+      return `<section style="margin-bottom:14px; page-break-inside:avoid"><h3 style="font-size:14px; border-bottom:1px solid #999; padding-bottom:3px; margin-bottom:6px">${esc(fmtDayHdr(d))} <span style="font-weight:400; color:#666">· ${R.rowTot[d]} unit(s)</span></h3>${byStage}</section>`;
+    }).join('');
+    return `${matrixTable}<div style="font-size:14px; font-weight:800; margin:6px 0; border-bottom:2px solid #000; padding-bottom:3px">Detailed breakdown</div>${detail}`;
+  }
+
+  function _reportRangeLabel() {
+    if (reportFrom && reportTo) return reportFrom === reportTo ? reportFrom : `${reportFrom} → ${reportTo}`;
+    if (reportFrom) return `from ${reportFrom}`;
+    if (reportTo) return `up to ${reportTo}`;
+    return 'all time';
+  }
+
+  function openStationReport() { stationReportOpen = true; if (reportPreset && !reportFrom && !reportTo) setReportPreset(reportPreset); else renderStations(); }
+  function closeStationReport() { stationReportOpen = false; renderStations(); }
+  window.openStationReport = openStationReport;
+  window.closeStationReport = closeStationReport;
+
+  function setReportPreset(p) {
+    reportPreset = p;
+    const today = _localDayStr(new Date());
+    if (p === 'today') { reportFrom = today; reportTo = today; }
+    else if (p === 'yesterday') { const y = _addDaysIso(today, -1); reportFrom = y; reportTo = y; }
+    else if (p === 'week') { const mon = getMondayOf(new Date()); reportFrom = mon; reportTo = _addDaysIso(mon, 6); }
+    else if (p === 'lastweek') { const mon = _addDaysIso(getMondayOf(new Date()), -7); reportFrom = mon; reportTo = _addDaysIso(mon, 6); }
+    else if (p === 'last7') { reportFrom = _addDaysIso(today, -6); reportTo = today; }
+    else if (p === 'last30') { reportFrom = _addDaysIso(today, -29); reportTo = today; }
+    else if (p === 'month') { const d = new Date(); reportFrom = _localDayStr(new Date(d.getFullYear(), d.getMonth(), 1)); reportTo = today; }
+    else if (p === 'all') { reportFrom = null; reportTo = null; }
+    renderStations();
+  }
+  window.setReportPreset = setReportPreset;
+  function setReportFrom(v) { reportFrom = v || null; reportPreset = 'custom'; renderStations(); }
+  function setReportTo(v) { reportTo = v || null; reportPreset = 'custom'; renderStations(); }
+  window.setReportFrom = setReportFrom;
+  window.setReportTo = setReportTo;
+
+  // Inline report panel (controls + tables) shown inside the Stations view
+  function stationReportPanelHtml(biz) {
+    const presets = [
+      ['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'This week'], ['lastweek', 'Last week'],
+      ['last7', 'Last 7 days'], ['last30', 'Last 30 days'], ['month', 'This month'], ['all', 'All time']
+    ];
+    const presetBtns = presets.map(([k, label]) => {
+      const sel = reportPreset === k;
+      return `<button onclick="setReportPreset('${k}')" style="border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'}; background:${sel ? 'var(--accent)' : 'var(--surface)'}; color:${sel ? '#fff' : 'var(--text)'}; border-radius:6px; padding:5px 9px; font-size:11px; cursor:pointer; font-weight:${sel ? '700' : '500'}">${label}</button>`;
+    }).join('');
+    const R = _deptReportData(biz, reportFrom, reportTo);
+    return `
+      <div class="card" style="border-left:4px solid #2563eb">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem">
+          <span class="card-title" style="margin:0">📊 Department report — ${_escape(_reportRangeLabel())} · ${R.grand} unit(s)</span>
+          <span style="display:flex; gap:0.4rem">
+            <button class="btn btn-sm" onclick="printDepartmentReport()" title="Open a printable version of this report">🖨️ Print / PDF</button>
+            <button class="btn btn-sm" onclick="closeStationReport()">✕ Close</button>
+          </span>
+        </div>
+        <div style="display:flex; gap:0.35rem; flex-wrap:wrap; margin-bottom:0.5rem">${presetBtns}</div>
+        <div style="display:flex; gap:0.8rem; flex-wrap:wrap; align-items:center; margin-bottom:0.8rem; font-size:12px">
+          <label style="display:flex; align-items:center; gap:0.3rem">From <input type="date" value="${reportFrom || ''}" onchange="setReportFrom(this.value)" style="padding:3px 5px"></label>
+          <label style="display:flex; align-items:center; gap:0.3rem">To <input type="date" value="${reportTo || ''}" onchange="setReportTo(this.value)" style="padding:3px 5px"></label>
+        </div>
+        <div style="overflow-x:auto">${_deptReportTablesHtml(biz, R)}</div>
+      </div>`;
+  }
+
+  // Printable version of the currently-selected report range
+  function printDepartmentReport() {
+    const biz = activeBiz;
+    const bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
+    const R = _deptReportData(biz, reportFrom, reportTo);
+    const todayStr = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' });
+    const html = `<!DOCTYPE html><html><head><title>Department Report — ${bizNames[biz] || biz}</title>
+<style>
+  @page { size: A4 landscape; margin: 10mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; color: #000; }
+  body { padding: 4px; }
+  .header { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:3px solid #000; padding-bottom:6px; margin-bottom:10px; }
+  .biz-name { font-size:20px; font-weight:800; }
+  .date { font-size:12px; color:#444; }
+  .title { font-size:16px; font-weight:700; text-align:right; }
+  @media print { .no-print { display:none; } }
+</style></head><body>
+  <div class="header">
+    <div><div class="biz-name">${bizNames[biz] || biz}</div><div class="date">Department Report · generated ${todayStr}</div></div>
+    <div class="title">What each department completed<br>${_escape(_reportRangeLabel())} · ${R.grand} unit(s)</div>
+  </div>
+  <button class="no-print" onclick="window.print()" style="padding:8px 16px; font-size:14px; font-weight:700; margin-bottom:10px; cursor:pointer">🖨️ Print / Save PDF</button>
+  ${_deptReportTablesHtml(biz, R)}
+  <p style="font-size:10px; color:#666; margin-top:10px">Counts are units (order qty) marked done at each department. Only completions recorded after this feature was deployed appear here.</p>
+</body></html>`;
+    const w = window.open('', '_blank');
+    if (!w) { alert('Please allow pop-ups to view the report.'); return; }
+    w.document.write(html); w.document.close();
+  }
+  window.printDepartmentReport = printDepartmentReport;
+
+  function orderStageTrackerHtml(biz, o) {
+    const stages = getProductionStagesForOrder(biz, o);
+    if (!stages.length) return '';
+    const done = (o.stageDone && typeof o.stageDone === 'object') ? o.stageDone : {};
+    const doneCount = stages.filter(s => done[s]).length;
+    const currentIdx = stages.findIndex(s => !done[s]); // first not-done = where it is now
+    const escJs = s => String(s).replace(/'/g, "\\'");
+    const escHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const chips = stages.map((s, i) => {
+      const isDone = !!done[s];
+      const isCurrent = !isDone && i === currentIdx;
+      const style = isDone
+        ? 'background:#16a34a; color:#fff; border-color:#16a34a'
+        : isCurrent
+          ? 'background:#fff7ed; color:#9a3412; border-color:#f59e0b; font-weight:700'
+          : 'background:var(--surface); color:var(--text-muted); border-color:var(--border)';
+      return `<button onclick="toggleOrderStage('${o.id}', '${escJs(s)}')" title="${isDone ? 'Done — click to undo' : 'Mark ' + escHtml(s) + ' done'}" style="border:1px solid; border-radius:14px; padding:2px 9px; font-size:11px; cursor:pointer; ${style}">${isDone ? '✓ ' : isCurrent ? '▶ ' : ''}${escHtml(s)}</button>`;
+    }).join('');
+    const allDone = doneCount === stages.length;
+    return `
+      <div style="margin-bottom:0.75rem; padding:0.6rem 0.7rem; background:var(--bg); border:1px solid var(--border); border-radius:6px">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem">
+          <span style="font-size:11px; font-weight:700; letter-spacing:0.03em; color:var(--text-muted)">🏗️ PRODUCTION PROGRESS</span>
+          <span style="font-size:11px; font-weight:700; color:${allDone ? '#16a34a' : 'var(--text)'}">${doneCount}/${stages.length}${allDone ? ' ✓ all stages' : currentIdx >= 0 ? ' · at: ' + escHtml(stages[currentIdx]) : ''}</span>
+        </div>
+        <div style="display:flex; gap:0.35rem; flex-wrap:wrap">${chips}</div>
+      </div>`;
   }
 
   function renderCostSettings() {
@@ -4393,7 +4960,338 @@
     }
   }
   
+  // ============================================
+  // OWNER'S COMMAND CENTRE (reads profit-engine values; admin only)
+  // ============================================
+  let dashScope = 'business'; // 'business' | 'all'
+  function setDashScope(s) { dashScope = s; renderCommandCentre(); }
+  window.setDashScope = setDashScope;
+
+  function _todayIsoLocal() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  function _rand0(n) { return 'R' + Math.round(Number(n) || 0).toLocaleString('en-ZA'); }
+
+  // Businesses in the current scope
+  function dashBizList() {
+    return dashScope === 'all' ? ['bellville', 'pinkfoot', 'repticube'] : [activeBiz];
+  }
+  function dashOrders() {
+    const out = [];
+    dashBizList().forEach(b => (data[b]?.orders || []).forEach(o => out.push({ biz: b, o })));
+    return out;
+  }
+  // Completion date for done/delivered: deliveredDate, else snapshot freeze date, else dueDate
+  function _completionDate(o) {
+    if (o.deliveredDate) return String(o.deliveredDate).slice(0, 10);
+    if (o.costSnapshot && o.costSnapshot.frozenAt) return String(o.costSnapshot.frozenAt).slice(0, 10);
+    return o.dueDate ? String(o.dueDate).slice(0, 10) : null;
+  }
+
+  // Aggregate completed orders (done/delivered) whose completion date is within [mon,sun]
+  // Reads profit-engine values via orderCosting (frozen for done/delivered). Totals scale by qty.
+  function _weekSummary(monIso, sunIso) {
+    let pieces = 0, weighted = 0, revenue = 0, cost = 0;
+    dashOrders().forEach(({ biz, o }) => {
+      if (o.status !== 'done' && o.status !== 'delivered') return;
+      const cd = _completionDate(o);
+      if (!cd || cd < monIso || cd > sunIso) return;
+      const qty = parseInt(o.qty) || 1;
+      const c = orderCosting(biz, o);
+      pieces += qty;
+      weighted += (Number(c.weight) || 1) * qty;
+      revenue += (Number(c.netPrice) || 0) * qty;   // netPrice already strips VAT per business
+      cost += (Number(c.trueCost) || 0) * qty;
+    });
+    const profit = revenue - cost;
+    const margin = revenue > 0 ? profit / revenue : 0;
+    return { pieces, weighted, revenue, cost, profit, margin, marginValid: revenue > 0 };
+  }
+
+  // Per-business low stock (replicates material-requirements logic for any biz)
+  function _materialRequirementsFor(biz) {
+    const bd = data[biz]; const required = {};
+    (bd?.orders || []).forEach(o => {
+      if (o.status === 'delivered' || o.status === 'done' || o.materialsDeducted) return;
+      const prodBom = bd.productBoms?.[o.product];
+      if (!prodBom || !prodBom.materials) return;
+      const qty = parseFloat(o.qty || 1);
+      Object.entries(prodBom.materials).forEach(([id, per]) => { required[id] = (required[id] || 0) + per * qty; });
+    });
+    return required;
+  }
+  function _lowStockFor(biz) {
+    const mats = data[biz]?.materialsLibrary || [];
+    const req = _materialRequirementsFor(biz);
+    return mats.filter(m => {
+      const stock = parseFloat(m.stock || 0), r = parseFloat(req[m.id] || 0), ro = parseFloat(m.reorderPoint || 0);
+      return stock <= 0 || r > stock || (ro > 0 && stock <= ro);
+    }).map(m => ({ name: m.name, unit: m.unit, stock: parseFloat(m.stock || 0), biz }));
+  }
+
+  // Product matching to the BOM system
+  function productMatched(biz, product) {
+    const pb = data[biz]?.productBoms;
+    return !!(pb && pb[product]);
+  }
+  function productHasMaterials(biz, product) {
+    const p = data[biz]?.productBoms?.[product];
+    return !!(p && p.materials && Object.keys(p.materials).length > 0);
+  }
+  // Reason an order won't be counted in material needs, or '' if it will
+  function unmatchedReason(biz, product) {
+    if (productHasMaterials(biz, product)) return '';
+    return productMatched(biz, product) ? 'no BOM set' : 'no matching product';
+  }
+
+  function _delta(cur, prev, higherIsGood) {
+    if (!isFinite(cur)) cur = 0; if (!isFinite(prev)) prev = 0;
+    if (prev === 0 && cur === 0) return '<span style="font-size:10px; color:var(--text-muted)">— vs last wk</span>';
+    let txt, up;
+    if (prev === 0) { up = cur > 0; txt = 'new'; }
+    else { const ch = (cur - prev) / Math.abs(prev) * 100; up = ch >= 0; txt = Math.abs(ch).toFixed(0) + '%'; }
+    const good = higherIsGood === false ? !up : up;
+    const col = good ? '#16a34a' : '#dc2626';
+    return `<span style="font-size:10px; color:${col}; font-weight:600">${up ? '▲' : '▼'} ${txt} vs last wk</span>`;
+  }
+
+  function _trendSvg(weeks) {
+    const W = 600, H = 150, pad = 18;
+    const max = Math.max(1, ...weeks.map(w => Math.abs(w.profit)));
+    const zeroY = pad + (H - pad * 2) / 2;
+    const bw = (W - pad * 2) / weeks.length;
+    const bars = weeks.map((w, i) => {
+      const bh = (Math.abs(w.profit) / max) * ((H - pad * 2) / 2);
+      const xx = pad + i * bw + 3;
+      const yy = w.profit >= 0 ? zeroY - bh : zeroY;
+      const col = w.profit >= 0 ? '#16a34a' : '#dc2626';
+      return `<rect x="${xx}" y="${yy}" width="${Math.max(2, bw - 6)}" height="${Math.max(1, bh)}" rx="2" fill="${col}"><title>${w.label}: ${_rand0(w.profit)}</title></rect>
+        <text x="${xx + (bw - 6) / 2}" y="${H - 4}" font-size="8" text-anchor="middle" fill="#888">${w.label}</text>`;
+    }).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:100%; height:auto; display:block">
+      <line x1="${pad}" y1="${zeroY}" x2="${W - pad}" y2="${zeroY}" stroke="#ccc" stroke-width="1"/>${bars}</svg>`;
+  }
+
+  function renderCommandCentre() {
+    const el = document.getElementById('command-centre');
+    if (!el) return;
+    if (!canSeeCosts()) { el.innerHTML = ''; return; } // owner / admin only
+    ensureCostSettings();
+
+    const thisMon = getMondayOf(new Date());
+    if (!thisMon) { el.innerHTML = ''; return; }
+    const thisSun = _addDaysIso(thisMon, 6);
+    const lastMon = _addDaysIso(thisMon, -7);
+    const lastSun = _addDaysIso(thisMon, -1);
+    const todayIso = _todayIsoLocal();
+
+    const wk = _weekSummary(thisMon, thisSun);
+    const lw = _weekSummary(lastMon, lastSun);
+
+    // Money + production flags + top performers (single pass)
+    let unpaidCount = 0, outstanding = 0, overdue = 0, dueThisWeek = 0, fabricNotRec = 0, unmatchedCount = 0;
+    const unmatched = {}; // "product" -> { count, biz, reason }
+    const completed = [];
+    dashOrders().forEach(({ biz, o }) => {
+      if (o.paymentStatus && o.paymentStatus !== 'paid') { unpaidCount++; outstanding += parseFloat(o.outstanding) || 0; }
+      const active = o.status !== 'done' && o.status !== 'delivered';
+      if (active && o.dueDate && o.dueDate < todayIso) overdue++;
+      if (active && o.dueDate && o.dueDate >= thisMon && o.dueDate <= thisSun) dueThisWeek++;
+      if (active && o.fabric && (o.fabricStatus || 'waiting') !== 'received') fabricNotRec++;
+      if (active) {
+        const reason = unmatchedReason(biz, o.product);
+        if (reason) {
+          unmatchedCount++;
+          const key = (o.product || '(blank)') + '||' + biz;
+          if (!unmatched[key]) unmatched[key] = { product: o.product || '(blank)', biz, reason, count: 0 };
+          unmatched[key].count++;
+        }
+      }
+      if (o.status === 'done' || o.status === 'delivered') {
+        const cd = _completionDate(o);
+        if (cd && cd >= thisMon && cd <= thisSun) {
+          const qty = parseInt(o.qty) || 1;
+          const c = orderCosting(biz, o);
+          completed.push({ biz, name: o.product || '', inv: o.invoice || o.id, profit: (Number(c.profit) || 0) * qty, margin: c.marginValid ? c.margin : null });
+        }
+      }
+    });
+    const lowList = dashBizList().flatMap(_lowStockFor);
+    const top = [...completed].sort((a, b) => b.profit - a.profit).slice(0, 5);
+    const losses = completed.filter(x => x.margin !== null && x.margin < 0).sort((a, b) => a.margin - b.margin).slice(0, 5);
+
+    const trend = [];
+    for (let i = 7; i >= 0; i--) { const mon = _addDaysIso(thisMon, -7 * i); const s = _weekSummary(mon, _addDaysIso(mon, 6)); trend.push({ label: mon.slice(8, 10) + '/' + mon.slice(5, 7), profit: s.profit }); }
+
+    const mpct = (m, valid) => valid ? (m * 100).toFixed(1) + '%' : '—';
+    const profitCol = n => n >= 0 ? '#16a34a' : '#dc2626';
+    const big = (label, value, sub, accent) => `
+      <div class="card" style="margin:0; padding:0.85rem 1rem">
+        <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted)">${label}</div>
+        <div style="font-size:24px; font-weight:800; color:${accent || 'var(--text)'}; line-height:1.15; margin-top:2px">${value}</div>
+        ${sub ? `<div style="margin-top:3px">${sub}</div>` : ''}
+      </div>`;
+    const flag = (label, value, accent, sub) => `
+      <div class="card" style="margin:0; padding:0.85rem 1rem">
+        <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted)">${label}</div>
+        <div style="font-size:24px; font-weight:800; color:${accent}; line-height:1.15; margin-top:2px">${value}</div>
+        ${sub ? `<div style="font-size:11px; color:var(--text-muted); margin-top:2px">${sub}</div>` : ''}
+      </div>`;
+    const grid = inner => `<div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:0.75rem">${inner}</div>`;
+    const noData = wk.pieces === 0;
+
+    const html = `
+      <div class="card" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem">
+        <div class="card-title" style="margin:0">📊 Owner's Command Centre</div>
+        <div style="display:flex; gap:0.4rem; background:var(--bg); padding:3px; border-radius:8px">
+          <button class="btn btn-sm" onclick="setDashScope('business')" style="${dashScope === 'business' ? 'background:var(--accent); color:#fff; border-color:var(--accent)' : 'background:transparent'}">This Business</button>
+          <button class="btn btn-sm" onclick="setDashScope('all')" style="${dashScope === 'all' ? 'background:var(--accent); color:#fff; border-color:var(--accent)' : 'background:transparent'}">All Combined</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📅 This Week ${noData ? '<span style="font-size:11px; font-weight:normal; color:var(--text-muted)">— no completions yet this week</span>' : ''}</div>
+        ${grid(`
+          ${big('Pieces completed', wk.pieces, `<span style="font-size:11px; color:var(--text-muted)">weighted ${wk.weighted.toFixed(1)}</span> · ${_delta(wk.pieces, lw.pieces, true)}`)}
+          ${big('Revenue (net)', _rand0(wk.revenue), _delta(wk.revenue, lw.revenue, true))}
+          ${big('True cost', _rand0(wk.cost), _delta(wk.cost, lw.cost, false))}
+          ${big('Profit', _rand0(wk.profit), _delta(wk.profit, lw.profit, true), profitCol(wk.profit))}
+          ${big('Margin', mpct(wk.margin, wk.marginValid), _delta(wk.margin * 100, lw.margin * 100, true), profitCol(wk.profit))}
+        `)}
+      </div>
+
+      <div class="card">
+        <div class="card-title">🚩 Money & Production Flags</div>
+        ${grid(`
+          ${flag('Unpaid / partial', unpaidCount, unpaidCount ? '#dc2626' : '#16a34a', 'Outstanding: ' + _rand0(outstanding))}
+          ${flag('Overdue (not done)', overdue, overdue ? '#dc2626' : '#16a34a', 'past due date')}
+          ${flag('Due this week', dueThisWeek, dueThisWeek ? '#d97706' : '#16a34a', 'not yet done')}
+          ${flag('Fabric not received', fabricNotRec, fabricNotRec ? '#d97706' : '#16a34a', 'active orders')}
+          ${flag('Low stock materials', lowList.length, lowList.length ? '#dc2626' : '#16a34a', lowList.length ? 'see list below' : 'all in stock')}
+          ${flag('Not matched to BOM', unmatchedCount, unmatchedCount ? '#dc2626' : '#16a34a', unmatchedCount ? 'no materials counted' : 'all products matched')}
+        `)}
+        ${lowList.length ? `<div style="margin-top:0.75rem; font-size:12px">
+          <div style="font-weight:600; margin-bottom:0.25rem">Top low-stock items</div>
+          ${lowList.slice(0, 5).map(m => `<div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid var(--border)"><span>${m.name}${dashScope === 'all' ? ' <span style=\"color:var(--text-muted); font-size:10px\">(' + m.biz + ')</span>' : ''}</span><span style="color:${m.stock <= 0 ? '#dc2626' : '#d97706'}; font-weight:600">${m.stock.toFixed(2)} ${m.unit || ''}</span></div>`).join('')}
+        </div>` : ''}
+        ${unmatchedCount ? `<div style="margin-top:0.75rem; font-size:12px; padding:0.6rem; background:#fef2f2; border:1px solid #fecaca; border-radius:6px">
+          <div style="font-weight:700; color:#b91c1c; margin-bottom:0.25rem">⚠️ Products not matched to the BOM system (won't be counted in materials)</div>
+          <div style="color:var(--text-muted); margin-bottom:0.4rem">Fix the order's product name to match a BOM product, or add a BOM for it.</div>
+          ${Object.values(unmatched).sort((a, b) => b.count - a.count).map(u => `<div style="display:flex; justify-content:space-between; gap:0.5rem; padding:3px 0; border-bottom:1px solid var(--border)"><span>${u.product}${dashScope === 'all' ? ' <span style=\"color:var(--text-muted); font-size:10px\">(' + u.biz + ')</span>' : ''}</span><span style="white-space:nowrap; color:#b91c1c">${u.count} order${u.count !== 1 ? 's' : ''} · ${u.reason}</span></div>`).join('')}
+        </div>` : ''}
+      </div>
+
+      <div class="card">
+        <div class="card-title">🏆 Top Performers (this week)</div>
+        ${completed.length === 0 ? '<div class="empty">No completed orders yet this week</div>' : `
+          <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:1rem">
+            <div>
+              <div style="font-size:12px; font-weight:700; color:#16a34a; margin-bottom:0.4rem">Most profitable</div>
+              ${top.map(t => `<div style="display:flex; justify-content:space-between; gap:0.5rem; padding:4px 0; border-bottom:1px solid var(--border); font-size:12px"><span>#${t.inv} ${t.name}</span><span style="white-space:nowrap; font-weight:600; color:${profitCol(t.profit)}">${_rand0(t.profit)} · ${mpct(t.margin, t.margin !== null)}</span></div>`).join('')}
+            </div>
+            <div>
+              <div style="font-size:12px; font-weight:700; color:#dc2626; margin-bottom:0.4rem">Completed at a loss</div>
+              ${losses.length ? losses.map(t => `<div style="display:flex; justify-content:space-between; gap:0.5rem; padding:4px 0; border-bottom:1px solid var(--border); font-size:12px; background:#fef2f2"><span>#${t.inv} ${t.name}</span><span style="white-space:nowrap; font-weight:600; color:#dc2626">${_rand0(t.profit)} · ${mpct(t.margin, true)}</span></div>`).join('') : '<div style="font-size:12px; color:var(--text-muted)">None — nothing sold at a loss 🎉</div>'}
+            </div>
+          </div>`}
+      </div>
+
+      <div class="card">
+        <div class="card-title">📈 Weekly Profit — last 8 weeks ${dashScope === 'all' ? '(all businesses)' : ''}</div>
+        ${_trendSvg(trend)}
+      </div>
+    `;
+    el.innerHTML = html;
+  }
+  window.renderCommandCentre = renderCommandCentre;
+
+  // ----- Per-business overview tiles (top of dashboard, click through to production) -----
+  function _weekSummaryForBiz(biz, mon, sun) {
+    let pieces = 0, revenue = 0, cost = 0;
+    (data[biz]?.orders || []).forEach(o => {
+      if (o.status !== 'done' && o.status !== 'delivered') return;
+      const cd = _completionDate(o);
+      if (!cd || cd < mon || cd > sun) return;
+      const qty = parseInt(o.qty) || 1;
+      const c = orderCosting(biz, o);
+      pieces += qty;
+      revenue += (Number(c.netPrice) || 0) * qty;
+      cost += (Number(c.trueCost) || 0) * qty;
+    });
+    const profit = revenue - cost;
+    return { pieces, revenue, cost, profit, marginValid: revenue > 0, margin: revenue > 0 ? profit / revenue : 0 };
+  }
+  function _bizDashStats(biz, mon, sun, todayIso) {
+    const orders = data[biz]?.orders || [];
+    let dueThisWeek = 0, inProd = 0, fabricToOrder = 0, fabricOOS = 0, overdue = 0;
+    orders.forEach(o => {
+      if (o.status === 'done' || o.status === 'delivered') return;   // active only
+      if (o.status === 'in-production') inProd++;
+      if (o.dueDate && o.dueDate >= mon && o.dueDate <= sun) dueThisWeek++;
+      if (o.dueDate && o.dueDate < todayIso) overdue++;
+      if (o.fabric && (o.fabricStatus || 'waiting') !== 'received') fabricToOrder++;
+      if (o.fabricOOS) fabricOOS++;
+    });
+    return { dueThisWeek, inProd, fabricToOrder, fabricOOS, overdue, low: _lowStockFor(biz).length, wk: _weekSummaryForBiz(biz, mon, sun) };
+  }
+  function goToProduction(biz, sec) { switchBiz(biz); showSection(sec || 'planner'); }
+  window.goToProduction = goToProduction;
+
+  function renderBusinessOverview() {
+    const el = document.getElementById('business-overview');
+    if (!el) return;
+    const mon = getMondayOf(new Date());
+    if (!mon) { el.innerHTML = ''; return; }
+    const sun = _addDaysIso(mon, 6);
+    const todayIso = _todayIsoLocal();
+    const showCosts = canSeeCosts();
+    const labels = { bellville: 'Bellville Furniture', pinkfoot: 'PinkFoot Boutique', repticube: 'ReptiCube' };
+    const emoji = { bellville: '🛋️', pinkfoot: '🐾', repticube: '🦎' };
+    const profitCol = n => n >= 0 ? '#16a34a' : '#dc2626';
+
+    const tiles = ['bellville', 'pinkfoot', 'repticube'].map(biz => {
+      const s = _bizDashStats(biz, mon, sun, todayIso);
+      const isActive = biz === activeBiz;
+      const stat = (label, val, col) => `<div style="text-align:center"><div style="font-size:18px; font-weight:800; color:${col || 'var(--text)'}">${val}</div><div style="font-size:9px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.03em">${label}</div></div>`;
+      const headline = showCosts
+        ? `<div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:0.5rem; padding-bottom:0.5rem; border-bottom:1px solid var(--border)">
+             <div><div style="font-size:22px; font-weight:800; color:${profitCol(s.wk.profit)}; line-height:1.1">${_rand0(s.wk.profit)}</div><div style="font-size:9px; color:var(--text-muted); text-transform:uppercase">Profit this week · ${s.wk.marginValid ? (s.wk.margin * 100).toFixed(0) + '%' : '—'}</div></div>
+             <div style="text-align:right"><div style="font-size:14px; font-weight:700">${_rand0(s.wk.revenue)}</div><div style="font-size:9px; color:var(--text-muted)">revenue · ${s.wk.pieces} pcs done</div></div>
+           </div>`
+        : `<div style="margin-bottom:0.5rem; padding-bottom:0.5rem; border-bottom:1px solid var(--border)">${stat('Pieces done this week', s.wk.pieces)}</div>`;
+      return `
+        <div class="card" style="margin:0; border:2px solid ${isActive ? 'var(--accent)' : 'var(--border)'}; cursor:pointer" onclick="goToProduction('${biz}')" title="Open ${labels[biz]} production planner">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.6rem">
+            <div style="font-weight:800; font-size:15px">${emoji[biz]} ${labels[biz]}${isActive ? ' <span style="font-size:9px; color:var(--accent)">● ACTIVE</span>' : ''}</div>
+            <span style="font-size:11px; color:var(--accent); font-weight:700; white-space:nowrap">View production →</span>
+          </div>
+          ${headline}
+          <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:0.4rem">
+            ${stat('Due this wk', s.dueThisWeek, s.dueThisWeek ? '#d97706' : null)}
+            ${stat('Low stock', s.low, s.low ? '#dc2626' : null)}
+            ${stat('Fabric to order', s.fabricToOrder, s.fabricToOrder ? '#d97706' : null)}
+            ${stat('Fabric OOS', s.fabricOOS, s.fabricOOS ? '#dc2626' : null)}
+          </div>
+          <div style="display:flex; gap:0.4rem; margin-top:0.6rem" onclick="event.stopPropagation()">
+            <button class="btn btn-sm" style="flex:1" onclick="goToProduction('${biz}','planner')">🗓️ Planner</button>
+            <button class="btn btn-sm" style="flex:1" onclick="goToProduction('${biz}','stations')">🏭 Stations</button>
+            <button class="btn btn-sm" style="flex:1" onclick="goToProduction('${biz}','orders')">📋 Orders</button>
+          </div>
+        </div>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div class="card">
+        <div class="card-title">🏢 Businesses — tap a card to go to its production</div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:1rem">${tiles}</div>
+      </div>`;
+  }
+  window.renderBusinessOverview = renderBusinessOverview;
+
   function renderDashboard() {
+    try { renderBusinessOverview(); } catch (e) { console.warn('Business overview render failed:', e); }
+    try { renderCommandCentre(); } catch (e) { console.warn('Command centre render failed:', e); }
     const orders = currentData().orders;
     const pending = orders.filter(o => o.status === 'pending').length;
     const producing = orders.filter(o => o.status === 'in-production').length;
@@ -4591,6 +5489,7 @@
   function renderOrders() {
     let orders = currentData().orders.filter(o => o.status !== 'delivered' && o.status !== 'done');
     const today = new Date();
+    const bomProducts = Object.keys(currentData().productBoms || {}).sort();
     
     // Apply search filter
     const searchInput = document.getElementById('order-search');
@@ -4645,6 +5544,20 @@
           <div style="font-size:11px; color:var(--text-muted); margin-bottom:0.75rem">
             Order: ${o.orderDate} | Due: <input type="date" value="${o.dueDate}" onchange="updateDueDate('${o.id}', this.value)" style="display:inline-block; width:auto; padding:2px 6px; font-size:11px; background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:4px">
           </div>
+          ${(() => {
+            const matched = !!(currentData().productBoms && currentData().productBoms[o.product]);
+            const opts = bomProducts.map(p => `<option value="${p.replace(/"/g, '&quot;')}" ${p === o.product ? 'selected' : ''}>${p}</option>`).join('');
+            const currentOpt = matched ? '' : `<option value="${(o.product || '').replace(/"/g, '&quot;')}" selected>${o.product || '(none)'} — unmatched</option>`;
+            return `
+          <div style="margin-bottom:0.75rem; display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap">
+            <label style="font-size:11px; color:var(--text-muted)">Product (BOM link):</label>
+            <select onchange="updateOrderProduct('${o.id}', this.value)" style="max-width:280px; padding:4px 6px; font-size:12px; background:var(--surface); border:1px solid ${matched ? 'var(--border)' : '#dc2626'}; color:var(--text); border-radius:4px">
+              ${currentOpt}${opts}
+            </select>
+            ${matched ? '' : '<span style="font-size:11px; color:#dc2626; font-weight:600">⚠️ not matched — pick the right product</span>'}
+          </div>`;
+          })()}
+          ${orderStageTrackerHtml(activeBiz, o)}
           ${canSeeCosts() ? `
           <div style="margin-bottom:0.75rem; display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap">
             <label style="font-size:11px; color:var(--text-muted)">Selling price / unit (R):</label>
@@ -4704,7 +5617,7 @@
   }
   
   function renderSchedule() {
-    const orders = currentData().orders.filter(o => o.status !== 'delivered').sort((a, b) => {
+    const orders = currentData().orders.filter(o => o.status !== 'delivered' && o.status !== 'done').sort((a, b) => {
       const dateA = a.dueDate ? new Date(a.dueDate).getTime() : 0;
       const dateB = b.dueDate ? new Date(b.dueDate).getTime() : 0;
       return dateA - dateB;
@@ -4789,7 +5702,18 @@
     if (!grid) return; // section never mounted
 
     const biz = currentData();
-    const orders = (biz.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done');
+    const active = o => o.status !== 'delivered' && o.status !== 'done';
+    // Non-rocking orders for this business flow through the week columns normally.
+    const orders = (biz.orders || []).filter(o => active(o) && !isRockingOrder(o));
+    // Rocking chairs are built in Bellville production: gathered across all businesses onto
+    // Bellville's planner. They are schedulable into the week columns just like any order;
+    // unscheduled ones wait in the dedicated 🪑 pool. Other businesses don't plan rockers.
+    const rockers = [];
+    if (activeBiz === 'bellville') {
+      ['bellville', 'pinkfoot', 'repticube'].forEach(b => (data[b] && data[b].orders ? data[b].orders : []).forEach(o => {
+        if (active(o) && isRockingOrder(o)) rockers.push(o);
+      }));
+    }
 
     const todayMonday = getMondayOf(new Date());
     const weeks = [0, 1, 2, 3].map(i => _addDaysIso(todayMonday, i * 7));
@@ -4798,8 +5722,9 @@
     const buckets = Object.fromEntries(weeks.map(w => [w, []]));
     const beyond = [];
     const unscheduled = [];
-    orders.forEach(o => {
-      if (!o.planWeek) { unscheduled.push(o); return; }
+    const rockingPool = []; // unscheduled rocking chairs (scheduled ones go into the week columns)
+    const placeInWeek = (o, unscheduledPool) => {
+      if (!o.planWeek) { unscheduledPool.push(o); return; }
       if (buckets[o.planWeek]) { buckets[o.planWeek].push(o); return; }
       if (o.planWeek < weeks[0]) {
         // scheduled to a past week — show in Current visually (without mutating planWeek)
@@ -4807,7 +5732,9 @@
       } else {
         beyond.push(o);
       }
-    });
+    };
+    orders.forEach(o => placeInWeek(o, unscheduled));
+    rockers.forEach(o => placeInWeek(o, rockingPool));
 
     const byDue = (a, b) => {
       const da = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
@@ -4817,6 +5744,7 @@
     Object.values(buckets).forEach(arr => arr.sort(byDue));
     beyond.sort((a, b) => (a.planWeek || '').localeCompare(b.planWeek || ''));
     unscheduled.sort(byDue);
+    rockingPool.sort(byDue);
 
     const colLabels = ['Current', 'Next week', 'In 2 weeks', 'In 3 weeks'];
 
@@ -4827,6 +5755,7 @@
           ${colLabels[i]}
           <span class="col-sub">${_formatWeekShort(w)}</span>
           <span class="col-sub">${buckets[w].length} order${buckets[w].length !== 1 ? 's' : ''}</span>
+          ${buckets[w].length ? `<button class="btn btn-sm" style="margin-top:4px; width:100%; font-size:10px" onclick="printWeekMaterials('${w}', '${colLabels[i]}')">📦 Materials needed</button>` : ''}
         </div>
         <div class="plan-col-body">
           ${buckets[w].map(o => planItemCard(o)).join('') || '<div class="empty" style="padding:0.75rem 0; font-size:11px">—</div>'}
@@ -4843,8 +5772,21 @@
       </div>
     ` : '';
 
+    // Unscheduled rocking chairs sit in their own pool; drag them onto a week to schedule.
+    // Dropping back here unschedules. Scheduled rockers appear in the week columns above.
+    const rockingHtml = (activeBiz === 'bellville' && rockers.length) ? `
+      <div class="card" style="margin-bottom:1rem; border-left:4px solid #9333ea">
+        <div class="card-title">🪑 ROCKING CHAIRS — Bellville production · drag onto a week to schedule (${rockingPool.length} unscheduled)</div>
+        <div class="plan-pool" ondragover="planDragOverUnscheduled(event)" ondragleave="planDragLeave(event)" ondrop="planDropUnscheduled(event)">
+          ${rockingPool.map(o => planItemCard(o)).join('') || '<div class="empty" style="padding:0.75rem 0; font-size:11px">All rocking chairs scheduled into weeks above</div>'}
+        </div>
+      </div>
+    ` : '';
+
     const html = `
+      ${capacityPlannerHtml(weeks, buckets, colLabels)}
       <div class="plan-grid">${colsHtml}</div>
+      ${rockingHtml}
       ${beyondHtml}
       <div class="card">
         <div class="card-title">📥 UNSCHEDULED (${unscheduled.length})</div>
@@ -4872,6 +5814,8 @@
 
     const inv = _escape(o.invoice || o.id);
     const prodLabel = (o.category ? '[' + o.category + '] ' : '') + (o.product || '') + (o.qty > 1 ? ' × ' + o.qty : '');
+    const rockerTag = (activeBiz === 'bellville' && isRockingOrder(o))
+      ? ` <span style="background:#f3e8ff; color:#7e22ce; padding:0 5px; border-radius:3px; font-size:9px; font-weight:700">🪑 ${((findOrderAnyBiz(o.id) || {}).biz || '').toUpperCase()}</span>` : '';
 
     return `
       <div class="plan-card ${overdueCls} ${statusCls}" draggable="true"
@@ -4879,9 +5823,10 @@
            ondragstart="planDragStart(event, '${_escape(o.id)}')"
            ondragend="planDragEnd(event)">
         <div class="pc-body">
-          <div class="pc-inv">#${inv}</div>
+          <div class="pc-inv">#${inv}${rockerTag}</div>
           <div class="pc-prod">${_escape(prodLabel)}</div>
           <div class="pc-cust">👤 ${_escape(o.customer)}</div>
+          ${o.fabric && !HIDE_FABRIC_FROM.includes(currentRole) ? `<div class="pc-cust">🎨 ${_escape(o.fabric)}</div>` : ''}
           ${dueText ? `<div class="pc-due">${_escape(dueText)}</div>` : ''}
           ${showPlanDate ? `<div class="pc-due">📅 Week of ${_escape(o.planWeek)}</div>` : ''}
         </div>
@@ -4894,6 +5839,523 @@
     `;
   }
   window.planItemCard = planItemCard;
+
+  // Printable version of the 4-week planner board
+  function printPlanner() {
+    const biz = activeBiz;
+    const bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
+    const bd = currentData();
+    const active = o => o.status !== 'delivered' && o.status !== 'done';
+    // Mirror the on-screen planner: non-rockers from this business, plus (for Bellville)
+    // every rocking chair across all businesses, since rockers are built in Bellville.
+    const orders = (bd.orders || []).filter(o => active(o) && !isRockingOrder(o));
+    if (biz === 'bellville') {
+      ['bellville', 'pinkfoot', 'repticube'].forEach(b => (data[b] && data[b].orders ? data[b].orders : []).forEach(o => {
+        if (active(o) && isRockingOrder(o)) orders.push(o);
+      }));
+    }
+
+    const todayMonday = getMondayOf(new Date());
+    const weeks = [0, 1, 2, 3].map(i => _addDaysIso(todayMonday, i * 7));
+    const buckets = Object.fromEntries(weeks.map(w => [w, []]));
+    const beyond = [];
+    const unscheduled = [];
+    orders.forEach(o => {
+      if (!o.planWeek) { unscheduled.push(o); return; }
+      if (buckets[o.planWeek]) { buckets[o.planWeek].push(o); return; }
+      if (o.planWeek < weeks[0]) buckets[weeks[0]].push(o);
+      else beyond.push(o);
+    });
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const byDue = (a, b) => (a.dueDate ? new Date(a.dueDate).getTime() : Infinity) - (b.dueDate ? new Date(b.dueDate).getTime() : Infinity);
+    Object.values(buckets).forEach(arr => arr.sort(byDue));
+    beyond.sort((a, b) => (a.planWeek || '').localeCompare(b.planWeek || ''));
+    unscheduled.sort(byDue);
+
+    const showFabric = !HIDE_FABRIC_FROM.includes(currentRole);
+    const colLabels = ['Current', 'Next week', 'In 2 weeks', 'In 3 weeks'];
+    const statusLabel = { 'pending': 'PENDING', 'in-production': 'IN PRODUCTION', 'done': 'DONE' };
+    const todayStr = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' });
+
+    const rowsFor = (arr) => arr.map((o, i) => {
+      const due = o.dueDate ? new Date(o.dueDate + 'T00:00:00') : null;
+      const daysLeft = due && !isNaN(due.getTime()) ? Math.ceil((due - today) / 86400000) : null;
+      const urgencyMark = daysLeft !== null && daysLeft < 0 ? ' ⚠️ OVERDUE' : daysLeft !== null && daysLeft <= 7 ? ' ⏰' : '';
+      let fabricStatusText = '—', fabricBg = '';
+      if (o.fabric) {
+        const fs = o.fabricStatus || 'waiting';
+        if (o.fabricOOS) { fabricStatusText = '🔴 OUT OF STOCK' + (o.fabricStockETA ? ' (ETA ' + o.fabricStockETA + ')' : ''); fabricBg = 'background:#fee2e2;'; }
+        else if (fs === 'received') { fabricStatusText = '✅ RECEIVED'; fabricBg = 'background:#d1fae5;'; }
+        else if (fs === 'ordered') { fabricStatusText = '📦 ORDERED'; fabricBg = 'background:#fef3c7;'; }
+        else { fabricStatusText = '⏳ WAITING'; fabricBg = 'background:#fee2e2;'; }
+      }
+      return `
+        <tr>
+          <td>${i + 1}</td>
+          <td style="font-weight:bold; font-size:13px">#${_escape(o.invoice || o.id)}</td>
+          <td>${_escape(o.orderDate || '—')}</td>
+          <td>${_escape(o.product || '')}${o.category ? ' [' + _escape(o.category) + ']' : ''}${(biz === 'bellville' && isRockingOrder(o)) ? ' 🪑 ' + _escape(((findOrderAnyBiz(o.id) || {}).biz || '').toUpperCase()) : ''}</td>
+          ${showFabric ? `<td>${_escape(o.fabric || '—')}</td><td style="${fabricBg} font-weight:bold; font-size:10px">${fabricStatusText}</td>` : ''}
+          <td style="text-align:center">${o.qty || 1}</td>
+          <td>${_escape(o.customer || '')}</td>
+          <td><strong>${statusLabel[o.status] || o.status}</strong></td>
+          <td>${_escape(o.dueDate || '—')}${urgencyMark}</td>
+          <td>${_escape(o.notes || '')}</td>
+        </tr>`;
+    }).join('');
+
+    // One page per week, each as a Production-List-style table
+    const page = (label, sub, arr, first) => `
+      <section class="week-page${first ? ' first' : ''}">
+        <div class="header">
+          <div>
+            <div class="biz-name">${bizNames[biz]}</div>
+            <div class="date">Production Planner · ${todayStr}</div>
+          </div>
+          <div class="title">${label}${sub ? `<div class="wk-sub">${sub}</div>` : ''}<div class="wk-sub">${arr.length} order${arr.length !== 1 ? 's' : ''}</div></div>
+        </div>
+        ${arr.length ? `
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>Invoice</th><th>Order Date</th><th>Product</th>
+              ${showFabric ? '<th>Fabric</th><th>Fabric Status</th>' : ''}
+              <th>Qty</th><th>Customer</th><th>Status</th><th>Due Date</th><th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>${rowsFor(arr)}</tbody>
+        </table>` : '<div class="empty">No orders this week</div>'}
+      </section>`;
+
+    let pages = weeks.map((w, i) => page(colLabels[i], _formatWeekShort(w), buckets[w], i === 0)).join('');
+    if (beyond.length) pages += page('Scheduled beyond 3 weeks', '', beyond, false);
+    if (unscheduled.length) pages += page('Unscheduled', '', unscheduled, false);
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<title>Planner — ${bizNames[biz]}</title>
+<style>
+  @page { size: A4 landscape; margin: 10mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; color: #000; }
+  body { background: #fff; font-size: 11px; }
+  .week-page { page-break-before: always; }
+  .week-page.first { page-break-before: avoid; }
+  .header { border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: flex-start; }
+  .biz-name { font-size: 18px; font-weight: 900; letter-spacing: 0.05em; }
+  .date { font-size: 10px; color: #555; margin-top: 2px; }
+  .title { font-size: 16px; font-weight: 900; text-align: right; }
+  .wk-sub { font-size: 10px; font-weight: normal; color: #555; }
+  table { width: 100%; border-collapse: collapse; font-size: 10px; }
+  th, td { padding: 5px 6px; border: 1px solid #999; text-align: left; vertical-align: top; }
+  th { background: #000; color: #fff; font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  tr:nth-child(even) { background: #fafafa; }
+  td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .empty { padding: 20px; color: #999; text-align: center; border: 1px solid #ddd; }
+  .no-print { padding: 12px; text-align: right; background: #f0f0f0; }
+  @media print { .no-print { display: none; } }
+</style>
+</head>
+<body>
+  <div class="no-print">
+    <button onclick="window.print()" style="padding:8px 16px; font-weight:bold; cursor:pointer; background:#000; color:#fff; border:none; border-radius:4px">🖨️ PRINT</button>
+    <button onclick="window.close()" style="padding:8px 16px; cursor:pointer; margin-left:8px">CLOSE</button>
+    <span style="font-size:11px; color:#555; margin-left:10px">Each week prints on its own page.</span>
+  </div>
+  ${pages}
+</body>
+</html>`;
+
+    const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Click the pop-up icon in the address bar and allow pop-ups for this site, then try Print again.'); return; }
+    win.document.write(html);
+    win.document.close();
+  }
+  window.printPlanner = printPlanner;
+
+  // ----- Per-week material requirements (aggregate each order's BOM) -----
+  // Returns { matId: totalQtyRequired } for a set of orders in a business.
+  function weekMaterialRequirements(biz, orders) {
+    const bd = data[biz]; const req = {};
+    (orders || []).forEach(o => {
+      const prodBom = bd && bd.productBoms ? bd.productBoms[o.product] : null;
+      if (!prodBom || !prodBom.materials) return;
+      const qty = parseFloat(o.qty || 1);
+      Object.entries(prodBom.materials).forEach(([id, per]) => { req[id] = (req[id] || 0) + (parseFloat(per) || 0) * qty; });
+    });
+    return req;
+  }
+
+  // Recompute which active orders fall in a given plan week (current week absorbs past weeks)
+  function ordersForPlanWeek(biz, weekIso) {
+    const orders = (data[biz]?.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done');
+    const todayMonday = getMondayOf(new Date());
+    const firstWeek = todayMonday;
+    return orders.filter(o => {
+      if (!o.planWeek) return false;
+      if (o.planWeek === weekIso) return true;
+      if (weekIso === firstWeek && o.planWeek < firstWeek) return true; // past-week orders show under Current
+      return false;
+    });
+  }
+
+  // Build a print-ready materials table (name, unit, required, stock, shortfall, est cost)
+  function materialsReqTableHtml(biz, req) {
+    const mats = data[biz]?.materialsLibrary || [];
+    const rows = Object.entries(req)
+      .map(([id, qty]) => ({ m: mats.find(x => x.id === id), qty }))
+      .filter(r => r.m)
+      .sort((a, b) => (a.m.name || '').localeCompare(b.m.name || ''));
+    if (rows.length === 0) return { html: '<div class="empty">No BOM materials for this week\'s products.</div>', total: 0 };
+    let total = 0;
+    const body = rows.map(({ m, qty }) => {
+      const stock = parseFloat(m.stock || 0);
+      const shortfall = Math.max(0, qty - stock);
+      const cost = qty * (parseFloat(m.cost) || 0);
+      total += cost;
+      const sfStyle = shortfall > 0 ? 'background:#fee2e2; -webkit-print-color-adjust:exact; print-color-adjust:exact;' : '';
+      return `
+        <tr>
+          <td>${(m.name || '')}</td>
+          <td>${m.unit || ''}</td>
+          <td style="text-align:right; font-weight:bold">${qty.toFixed(2)}</td>
+          <td style="text-align:right">${stock.toFixed(2)}</td>
+          <td style="text-align:right; ${sfStyle} font-weight:bold">${shortfall > 0 ? shortfall.toFixed(2) : '—'}</td>
+          <td style="text-align:right">R${cost.toFixed(2)}</td>
+        </tr>`;
+    }).join('');
+    const html = `
+      <table>
+        <thead><tr><th>Material</th><th>Unit</th><th>Required</th><th>In stock</th><th>Shortfall</th><th>Est. cost</th></tr></thead>
+        <tbody>${body}</tbody>
+        <tfoot><tr><td colspan="5" style="text-align:right; font-weight:bold">Est. total material cost</td><td style="text-align:right; font-weight:bold">R${total.toFixed(2)}</td></tr></tfoot>
+      </table>`;
+    return { html, total };
+  }
+
+  // View / print the materials required to complete a given plan week
+  function printWeekMaterials(weekIso, label) {
+    const biz = activeBiz;
+    const bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
+    const orders = ordersForPlanWeek(biz, weekIso);
+    if (orders.length === 0) { alert('No orders scheduled in this week yet.'); return; }
+    const req = weekMaterialRequirements(biz, orders);
+    const table = materialsReqTableHtml(biz, req);
+    const ordersList = orders.map(o => `<li>#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}${o.qty > 1 ? ' × ' + o.qty : ''}${o.fabric ? ' <span style="color:#555">(' + _escape(o.fabric) + ')</span>' : ''}</li>`).join('');
+    const notCounted = orders.filter(o => unmatchedReason(biz, o.product));
+    const notCountedHtml = notCounted.length ? `
+      <h3 style="color:#b91c1c">⚠️ Not counted in materials (${notCounted.length})</h3>
+      <p style="font-size:11px; color:#555; margin-bottom:4px">These orders' products aren't matched to a BOM, so their materials are NOT in the table above. Fix the product name or add a BOM.</p>
+      <ul>${notCounted.map(o => `<li>#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}${o.qty > 1 ? ' × ' + o.qty : ''} <span style="color:#b91c1c">(${unmatchedReason(biz, o.product)})</span></li>`).join('')}</ul>` : '';
+    const range = (typeof _formatWeekShort === 'function') ? _formatWeekShort(weekIso) : weekIso;
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<title>Materials — ${label} — ${bizNames[biz]}</title>
+<style>
+  @page { size: A4 portrait; margin: 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; color: #000; }
+  body { background: #fff; font-size: 12px; }
+  .header { border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: flex-start; }
+  .biz-name { font-size: 18px; font-weight: 900; letter-spacing: 0.05em; }
+  .date { font-size: 10px; color: #555; margin-top: 2px; }
+  .title { font-size: 16px; font-weight: 900; text-align: right; }
+  .sub { font-size: 10px; color: #555; }
+  h3 { font-size: 13px; margin: 14px 0 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th, td { padding: 5px 7px; border: 1px solid #999; text-align: left; }
+  th { background: #000; color: #fff; text-transform: uppercase; font-size: 10px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  tr:nth-child(even) td { background: #fafafa; }
+  ul { margin: 4px 0 0 20px; font-size: 11px; }
+  li { margin: 2px 0; }
+  .empty { padding: 14px; color: #999; text-align: center; }
+  .no-print { padding: 12px; text-align: right; background: #f0f0f0; }
+  @media print { .no-print { display: none; } }
+</style>
+</head>
+<body>
+  <div class="no-print">
+    <button onclick="window.print()" style="padding:8px 16px; font-weight:bold; cursor:pointer; background:#000; color:#fff; border:none; border-radius:4px">🖨️ PRINT</button>
+    <button onclick="window.close()" style="padding:8px 16px; cursor:pointer; margin-left:8px">CLOSE</button>
+  </div>
+  <div class="header">
+    <div>
+      <div class="biz-name">${bizNames[biz]}</div>
+      <div class="date">Materials required to complete this week</div>
+    </div>
+    <div class="title">${label}<div class="sub">${range} · ${orders.length} order${orders.length !== 1 ? 's' : ''}</div></div>
+  </div>
+  <h3>Materials required</h3>
+  ${table.html}
+  ${notCountedHtml}
+  <h3>Orders in this week (${orders.length})</h3>
+  <ul>${ordersList}</ul>
+</body>
+</html>`;
+
+    const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Click the pop-up icon in the address bar and allow pop-ups for this site, then try again.'); return; }
+    win.document.write(html);
+    win.document.close();
+  }
+  window.printWeekMaterials = printWeekMaterials;
+
+  // ============================================
+  // CAPACITY PLANNER (Bellville only) — reads profit-engine unit weights
+  // ============================================
+  let capacityWeekIndex = 0; // which of the 4 planner weeks the summary analyses
+  let capPanelOpen = false;   // settings panel open/closed
+
+  const DEFAULT_CAPACITY_STAGES = [
+    { key: 'frameCutting', name: 'Frame Cutting', capacity: 30, workers: 'Ricardo', exclude: [], start: true },
+    { key: 'frameMaking', name: 'Frame Making', capacity: 22.5, workers: 'Stanley', exclude: ['Headboard'] },
+    { key: 'liningUp', name: 'Lining Up', capacity: 27.5, workers: 'Blessing', exclude: [] },
+    { key: 'foamingUp', name: 'Foaming Up', capacity: 27.5, workers: 'Baba', exclude: [] },
+    { key: 'foamCutting', name: 'Foam Cutting/Dacron', capacity: 35, workers: 'Samuel', exclude: [], separate: true },
+    { key: 'upholstering', name: 'Upholstering', capacity: 35, workers: 'Ashraf + Stephan', exclude: [] },
+    { key: 'sewing', name: 'Sewing', capacity: 22.5, workers: 'Sharon + Yammy', exclude: ['Headboard', 'Ottoman'] },
+    { key: 'fabricCutting', name: 'Fabric Cutting', capacity: 27.5, workers: 'Agatha', exclude: [], start: true },
+    { key: 'finishing', name: 'Finishing', capacity: 30, workers: 'Unus + Harry', exclude: [] }
+  ];
+  const DEFAULT_ERIC = { capacity: 15, products: ['Daybed Pillay', 'Sofa Pillay Pine', 'Sofa Pillay Ash/Oak', 'Woodland Daybed', 'Skyler Daybed', 'Oak Sofa'] };
+
+  function ensureCapacitySettings() {
+    if (!data.capacitySettings || !Array.isArray(data.capacitySettings.stages) || data.capacitySettings.stages.length === 0) {
+      data.capacitySettings = { stages: JSON.parse(JSON.stringify(DEFAULT_CAPACITY_STAGES)) };
+    } else {
+      const byKey = Object.fromEntries(data.capacitySettings.stages.map(s => [s.key, s]));
+      DEFAULT_CAPACITY_STAGES.forEach(d => {
+        if (!byKey[d.key]) data.capacitySettings.stages.push(JSON.parse(JSON.stringify(d)));
+        else {
+          if (!byKey[d.key].name) { byKey[d.key].name = d.name; byKey[d.key].workers = d.workers; }
+          if (!Array.isArray(byKey[d.key].exclude)) byKey[d.key].exclude = (d.exclude || []).slice(); // backfill stage exclusions
+          if (typeof byKey[d.key].start !== 'boolean') byKey[d.key].start = !!d.start; // backfill starting-point flag
+          if (typeof byKey[d.key].separate !== 'boolean') byKey[d.key].separate = !!d.separate; // backfill independent-department flag
+        }
+      });
+    }
+    if (!data.ericSettings || typeof data.ericSettings !== 'object') data.ericSettings = JSON.parse(JSON.stringify(DEFAULT_ERIC));
+    if (typeof data.ericSettings.capacity !== 'number') data.ericSettings.capacity = DEFAULT_ERIC.capacity;
+    if (!Array.isArray(data.ericSettings.products)) data.ericSettings.products = DEFAULT_ERIC.products.slice();
+    return data.capacitySettings;
+  }
+
+  function _capTokens(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean); }
+  function _matchesEric(product) {
+    const prodTokens = new Set(_capTokens(product));
+    return (data.ericSettings.products || []).some(entry => {
+      const et = _capTokens(entry);
+      return et.length > 0 && et.every(t => prodTokens.has(t));
+    });
+  }
+  function _orderCategory(o) {
+    return (data.bellville.productBoms && data.bellville.productBoms[o.product] ? data.bellville.productBoms[o.product].category : '') || o.category || '';
+  }
+  // Does a stage skip this category? (case-insensitive exact match)
+  function _stageExcludes(stage, cat) {
+    const c = String(cat || '').trim().toLowerCase();
+    return (stage.exclude || []).some(x => String(x).trim().toLowerCase() === c);
+  }
+  // Per-stage weighted load for a set of orders (a product only loads stages it goes through)
+  function _capLoad(orders) {
+    const stages = data.capacitySettings.stages;
+    const stageLoad = {}; stages.forEach(s => stageLoad[s.key] = 0);
+    let totalWeight = 0, ericCount = 0;
+    (orders || []).forEach(o => {
+      const qty = parseInt(o.qty) || 1;
+      const cat = _orderCategory(o);
+      const w = (categoryWeightInfo('bellville', cat).weight) * qty; // same source as profit engine; missing => 1
+      totalWeight += w;
+      stages.forEach(s => { if (!_stageExcludes(s, cat)) stageLoad[s.key] += w; });
+      if (_matchesEric(o.product)) ericCount += qty;
+    });
+    return { totalWeight, ericCount, stageLoad };
+  }
+
+  function setCapacityWeek(i) { capacityWeekIndex = parseInt(i) || 0; renderPlanner(); }
+  function toggleCapPanel() { capPanelOpen = !capPanelOpen; renderPlanner(); }
+  function updateCapacityStage(key, value) { ensureCapacitySettings(); snapshotState(); const s = data.capacitySettings.stages.find(x => x.key === key); if (s) s.capacity = parseFloat(value) || 0; saveData(); renderPlanner(); }
+  function updateEricCapacity(value) { ensureCapacitySettings(); snapshotState(); data.ericSettings.capacity = parseFloat(value) || 0; saveData(); renderPlanner(); }
+  function updateEricProducts(value) { ensureCapacitySettings(); snapshotState(); data.ericSettings.products = String(value).split('\n').map(s => s.trim()).filter(Boolean); saveData(); renderPlanner(); }
+  function updateStageExclude(key, value) { ensureCapacitySettings(); snapshotState(); const s = data.capacitySettings.stages.find(x => x.key === key); if (s) s.exclude = String(value).split(',').map(x => x.trim()).filter(Boolean); saveData(); renderPlanner(); }
+  function updateStageStart(key, checked) { ensureCapacitySettings(); snapshotState(); const s = data.capacitySettings.stages.find(x => x.key === key); if (s) s.start = !!checked; saveData(); render(); }
+  function updateStageSeparate(key, checked) { ensureCapacitySettings(); snapshotState(); const s = data.capacitySettings.stages.find(x => x.key === key); if (s) s.separate = !!checked; saveData(); render(); }
+  window.updateStageSeparate = updateStageSeparate;
+  window.updateStageExclude = updateStageExclude;
+  window.updateStageStart = updateStageStart;
+  window.setCapacityWeek = setCapacityWeek;
+  window.toggleCapPanel = toggleCapPanel;
+  window.updateCapacityStage = updateCapacityStage;
+  window.updateEricCapacity = updateEricCapacity;
+  window.updateEricProducts = updateEricProducts;
+
+  // Returns the capacity summary HTML for the selected week ('' for non-Bellville)
+  function capacityPlannerHtml(weeks, buckets, colLabels) {
+    if (activeBiz !== 'bellville') return '';
+    ensureCapacitySettings();
+    const idx = Math.min(Math.max(0, capacityWeekIndex), weeks.length - 1);
+    const wk = weeks[idx];
+    const orders = buckets[wk] || [];
+    const { totalWeight, ericCount, stageLoad } = _capLoad(orders);
+    const stages = data.capacitySettings.stages;
+    const eric = data.ericSettings;
+    const ericCap = parseFloat(eric.capacity) || 0;
+
+    const colour = pct => (pct >= 100 ? '#dc2626' : pct >= 80 ? '#d97706' : '#16a34a');
+    const pctOf = (load, cap) => cap > 0 ? (load / cap * 100) : (load > 0 ? Infinity : 0);
+    const bar = (pct, col) => `<div style="background:var(--bg); border-radius:4px; height:9px; overflow:hidden; flex:1; min-width:60px"><div style="height:100%; width:${Math.min(100, isFinite(pct) ? pct : 100)}%; background:${col}"></div></div>`;
+
+    const rows = stages.map(s => { const cap = parseFloat(s.capacity) || 0; const load = stageLoad[s.key] || 0; return { name: s.name, workers: s.workers, cap, load, pct: pctOf(load, cap), skip: (s.exclude || []) }; });
+    rows.sort((a, b) => (isFinite(b.pct) ? b.pct : 1e9) - (isFinite(a.pct) ? a.pct : 1e9)); // busiest/over first
+
+    const rowHtml = r => {
+      const col = colour(r.pct);
+      const pctTxt = r.cap > 0 ? (isFinite(r.pct) ? r.pct.toFixed(0) + '%' : '∞') : (r.load > 0 ? 'no cap' : '0%');
+      return `<div style="display:flex; align-items:center; gap:0.5rem; padding:3px 0; font-size:12px">
+        <div style="width:200px; flex-shrink:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis"><strong>${r.name}</strong> <span style="color:var(--text-muted); font-size:10px">${r.workers || ''}</span>${r.skip.length ? `<span style="color:var(--text-muted); font-size:9px" title="Skips: ${r.skip.join(', ')}"> · skips ${r.skip.join(', ')}</span>` : ''}</div>
+        ${bar(r.pct, col)}
+        <div style="width:110px; text-align:right; flex-shrink:0">${r.load.toFixed(1)} / ${r.cap} <strong style="color:${col}">${pctTxt}</strong></div>
+      </div>`;
+    };
+
+    const ericPct = pctOf(ericCount, ericCap);
+    const ericCol = colour(ericPct);
+    const ericRow = `<div style="display:flex; align-items:center; gap:0.5rem; padding:3px 0; font-size:12px; border-top:1px dashed var(--border); margin-top:4px">
+        <div style="width:200px; flex-shrink:0"><strong>Eric — Oak Frames</strong> <span style="color:var(--text-muted); font-size:10px">parallel workshop</span></div>
+        ${bar(ericPct, ericCol)}
+        <div style="width:110px; text-align:right; flex-shrink:0">${ericCount} / ${ericCap} <strong style="color:${ericCol}">${ericCap > 0 ? (isFinite(ericPct) ? ericPct.toFixed(0) + '%' : '∞') : (ericCount > 0 ? 'no cap' : '0%')}</strong></div>
+      </div>`;
+
+    const overloaded = rows.filter(r => r.load > r.cap).map(r => `${r.name} (over by ${(r.load - r.cap).toFixed(1)})`);
+    if (ericCount > ericCap) overloaded.push(`Eric (over by ${(ericCount - ericCap)})`);
+    const verdict = overloaded.length
+      ? `<div style="margin-top:0.6rem; padding:0.5rem 0.75rem; background:#fef2f2; border:1px solid #fecaca; border-radius:6px; color:#b91c1c; font-weight:700; font-size:13px">⛔ OVERLOADED: ${overloaded.join(', ')}</div>`
+      : `<div style="margin-top:0.6rem; padding:0.5rem 0.75rem; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; color:#166534; font-weight:700; font-size:13px">✅ Week achievable</div>`;
+
+    const weekOptions = weeks.map((w, i) => `<option value="${i}" ${i === idx ? 'selected' : ''}>${colLabels[i]} (${_formatWeekShort(w)})</option>`).join('');
+
+    const settingsPanel = capPanelOpen ? `
+      <div style="margin-top:0.75rem; padding:0.75rem; background:var(--bg); border-radius:6px; font-size:12px">
+        <div style="font-weight:700; margin-bottom:0.4rem">Stage capacity & which categories skip the stage</div>
+        <div style="display:grid; grid-template-columns:1fr; gap:0.35rem">
+          ${stages.map(s => `<div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
+            <span style="width:150px; flex-shrink:0; font-weight:600">${s.name}</span>
+            <label style="font-size:11px; display:flex; align-items:center; gap:0.3rem">cap/wk <input type="number" step="0.5" value="${s.capacity}" onchange="updateCapacityStage('${s.key}', this.value)" style="width:70px; padding:3px 5px"></label>
+            <label style="font-size:11px; display:flex; align-items:center; gap:0.3rem" title="A starting point shows ALL active orders in parallel (not just the next in sequence)"><input type="checkbox" ${s.start ? 'checked' : ''} onchange="updateStageStart('${s.key}', this.checked)" style="width:15px; height:15px"> start point</label>
+            <label style="font-size:11px; display:flex; align-items:center; gap:0.3rem" title="A separate department runs in parallel and is NOT part of the sequential flow — it never blocks other stations"><input type="checkbox" ${s.separate ? 'checked' : ''} onchange="updateStageSeparate('${s.key}', this.checked)" style="width:15px; height:15px"> ◆ separate</label>
+            <label style="font-size:11px; display:flex; align-items:center; gap:0.3rem; flex:1; min-width:200px">skip categories <input value="${(s.exclude || []).join(', ').replace(/"/g, '&quot;')}" onchange="updateStageExclude('${s.key}', this.value)" placeholder="e.g. Headboard, Ottoman" style="flex:1; min-width:120px; max-width:260px; padding:3px 5px"></label>
+          </div>`).join('')}
+        </div>
+        <div style="display:flex; gap:1rem; align-items:flex-start; margin-top:0.75rem; flex-wrap:wrap">
+          <label style="display:flex; align-items:center; gap:0.5rem; font-weight:700">Eric oak-frame capacity / week<input type="number" step="1" value="${eric.capacity}" onchange="updateEricCapacity(this.value)" style="width:80px; padding:3px 5px"></label>
+        </div>
+        <div style="margin-top:0.6rem">
+          <div style="font-weight:700; margin-bottom:0.25rem">Products needing an Eric oak frame (one per line; matched by words in the product name)</div>
+          <textarea onchange="updateEricProducts(this.value)" style="width:100%; min-height:90px; padding:0.5rem; font-family:inherit; font-size:12px; border:1px solid var(--border); border-radius:4px">${(eric.products || []).join('\n')}</textarea>
+        </div>
+      </div>` : '';
+
+    return `
+      <div class="card" style="border-left:4px solid var(--accent)">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.5rem">
+          <div class="card-title" style="margin:0">🏭 Capacity — ${colLabels[idx]}</div>
+          <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
+            <select onchange="setCapacityWeek(this.value)" style="padding:4px 8px; font-size:12px">${weekOptions}</select>
+            <button class="btn btn-sm" onclick="printWorkerJobCards('${wk}', '${colLabels[idx]}')">🖨️ Worker job cards</button>
+            <button class="btn btn-sm" onclick="toggleCapPanel()">⚙️ Capacity settings</button>
+          </div>
+        </div>
+        <div style="font-size:11px; color:var(--text-muted); margin-bottom:0.5rem">${orders.length} order${orders.length !== 1 ? 's' : ''} · total weighted load ${totalWeight.toFixed(1)} pieces. Bars: green &lt;80% · amber 80–99% · red ≥100%.</div>
+        ${rows.map(rowHtml).join('')}
+        ${ericRow}
+        ${verdict}
+        ${settingsPanel}
+      </div>`;
+  }
+  window.capacityPlannerHtml = capacityPlannerHtml;
+
+  // Print one job-card sheet per worker/stage for the selected week
+  function printWorkerJobCards(weekIso, label) {
+    if (activeBiz !== 'bellville') { alert('Worker job cards are for Bellville.'); return; }
+    ensureCapacitySettings();
+    const biz = 'bellville';
+    const orders = ordersForPlanWeek(biz, weekIso);
+    if (orders.length === 0) { alert('No orders scheduled in this week yet.'); return; }
+    const range = (typeof _formatWeekShort === 'function') ? _formatWeekShort(weekIso) : weekIso;
+    const stages = data.capacitySettings.stages;
+    const byDue = (a, b) => (a.dueDate ? new Date(a.dueDate).getTime() : Infinity) - (b.dueDate ? new Date(b.dueDate).getTime() : Infinity);
+    const sorted = [...orders].sort(byDue);
+
+    const rowsFor = list => list.map((o, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td style="font-weight:bold">#${_escape(o.invoice || o.id)}</td>
+        <td>${_escape(o.product || '')}${o.category ? ' [' + _escape(o.category) + ']' : ''}</td>
+        <td>${_escape(o.fabric || '—')}</td>
+        <td style="text-align:center">${o.qty || 1}</td>
+        <td>${_escape(o.dueDate || '—')}</td>
+        <td class="chk"></td>
+      </tr>`).join('');
+
+    const page = (title, who, list, first) => `
+      <section class="wc${first ? ' first' : ''}">
+        <div class="head">
+          <div><div class="biz">BELLVILLE FURNITURE</div><div class="sub">Job Card · ${label} · ${range}</div></div>
+          <div class="stage">${title}<div class="who">${who || ''}</div></div>
+        </div>
+        ${list.length ? `<table>
+          <thead><tr><th>#</th><th>Invoice</th><th>Product</th><th>Fabric</th><th>Qty</th><th>Due</th><th>Done</th></tr></thead>
+          <tbody>${rowsFor(list)}</tbody></table>` : '<div class="empty">No items for this stage this week</div>'}
+        <div class="sign">Worker: __________________________   Date: ______________   Checked by: __________________________</div>
+      </section>`;
+
+    let pages = stages.map((s, i) => page(s.name, s.workers, sorted.filter(o => !_stageExcludes(s, _orderCategory(o))), i === 0)).join('');
+    const ericOrders = sorted.filter(o => _matchesEric(o.product));
+    pages += page('Eric — Oak Frames', 'parallel workshop', ericOrders, false);
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<title>Worker Job Cards — ${label} — Bellville</title>
+<style>
+  @page { size: A4 portrait; margin: 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; color: #000; }
+  body { background: #fff; font-size: 12px; }
+  .wc { page-break-before: always; }
+  .wc.first { page-break-before: avoid; }
+  .head { border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: flex-start; }
+  .biz { font-size: 16px; font-weight: 900; letter-spacing: 0.05em; }
+  .sub { font-size: 10px; color: #555; margin-top: 2px; }
+  .stage { font-size: 20px; font-weight: 900; text-align: right; }
+  .who { font-size: 12px; font-weight: normal; color: #333; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { padding: 7px 8px; border: 1px solid #999; text-align: left; }
+  th { background: #000; color: #fff; text-transform: uppercase; font-size: 10px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  td.chk { width: 44px; text-align: center; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .empty { padding: 16px; color: #999; text-align: center; border: 1px solid #ddd; }
+  .sign { margin-top: 24px; font-size: 11px; color: #333; }
+  .no-print { padding: 12px; text-align: right; background: #f0f0f0; }
+  @media print { .no-print { display: none; } }
+</style>
+</head>
+<body>
+  <div class="no-print">
+    <button onclick="window.print()" style="padding:8px 16px; font-weight:bold; cursor:pointer; background:#000; color:#fff; border:none; border-radius:4px">🖨️ PRINT</button>
+    <button onclick="window.close()" style="padding:8px 16px; cursor:pointer; margin-left:8px">CLOSE</button>
+    <span style="font-size:11px; color:#555; margin-left:10px">One page per worker/stage.</span>
+  </div>
+  ${pages}
+</body>
+</html>`;
+
+    const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Click the pop-up icon in the address bar and allow pop-ups for this site, then try again.'); return; }
+    win.document.write(html);
+    win.document.close();
+  }
+  window.printWorkerJobCards = printWorkerJobCards;
 
   // ----- Drag handlers (desktop) -----
   function planDragStart(e, orderId) {
@@ -4944,7 +6406,7 @@
 
   // ----- Mutation: shared by drag handlers AND tap menu -----
   function setPlanWeek(orderId, mondayIso) {
-    const order = currentData().orders.find(o => o.id === orderId);
+    const order = (findOrderAnyBiz(orderId) || {}).o;
     if (!order) { closePlanMenu(); return; }
     // Normalize: null/'' = unschedule. Anything else gets snapped to Monday.
     let normalized = null;
@@ -4974,7 +6436,7 @@
 
   function openPlanMenu(orderId, anchorEl) {
     closePlanMenu();
-    const order = currentData().orders.find(o => o.id === orderId);
+    const order = (findOrderAnyBiz(orderId) || {}).o;
     if (!order) return;
 
     const w0 = getMondayOf(new Date());
@@ -5152,16 +6614,17 @@
     }, 200);
   }
   
-  let currentRole = null;
-  
+  // currentRole is declared near the top of the script (early init)
+
   // Role permissions: which tabs each role can see
   const ROLE_PERMISSIONS = {
-    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'costs', 'staff', 'materials', 'schedule', 'planner'],
+    admin: ['dashboard', 'intake', 'orders', 'stations', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'costs', 'staff', 'materials', 'schedule', 'planner'],
     sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished'],
-    factory: ['dashboard', 'orders', 'done', 'calendar', 'bom', 'schedule', 'planner'],
+    factory: ['dashboard', 'orders', 'stations', 'done', 'calendar', 'bom', 'schedule', 'planner'],
     dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'finished'],
     fabric: ['dashboard', 'calendar', 'fabric'],
-    manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner']
+    manager: ['dashboard', 'intake', 'orders', 'stations', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner'],
+    station: ['stations']
   };
   
   // Roles that should NOT see fabric ordering info on dashboard or order cards
@@ -5221,9 +6684,13 @@
     if (fabricCard) fabricCard.style.display = hideFabricOrdering ? 'none' : '';
     if (oosCard) oosCard.style.display = '';  // Everyone sees OOS
     
+    // Station/department logins are locked to one business — hide the switcher
+    const bizSwitch = document.getElementById('biz-switcher');
+    if (bizSwitch) bizSwitch.style.display = (currentRole === 'station') ? 'none' : '';
+
     // Show role indicator
     const roleEl = document.getElementById('current-role');
-    if (roleEl) roleEl.textContent = currentRole.toUpperCase();
+    if (roleEl) roleEl.textContent = currentRole === 'station' && currentStation ? ('STATION · ' + currentStation.toUpperCase()) : currentRole.toUpperCase();
   }
   
   function initAuth() {
@@ -5236,20 +6703,30 @@
           const userDocRef = window.firebaseFns.doc(window.firebaseDb, 'users', user.uid);
           const userSnap = await window.firebaseFns.getDoc(userDocRef);
           if (userSnap.exists()) {
-            currentRole = userSnap.data().role || 'admin';
+            const ud = userSnap.data();
+            currentRole = ud.role || 'admin';
+            currentStation = ud.station || null;
+            currentStationBiz = ud.biz || null;
           } else {
             // No role record — treat as admin (legacy user)
             currentRole = 'admin';
+            currentStation = null; currentStationBiz = null;
           }
         } catch (err) {
           console.warn('Could not load user role:', err);
           currentRole = 'admin';
+          currentStation = null; currentStationBiz = null;
         }
-        
+
         document.getElementById('login-overlay').style.display = 'none';
         document.getElementById('main-app').style.display = 'block';
         document.getElementById('current-user-email').textContent = user.email;
+        if (currentRole === 'station') {
+          if (currentStationBiz) switchBiz(currentStationBiz); // lock to their business
+          if (currentStation) stationStage = currentStation;   // lock to their station
+        }
         applyRolePermissions();
+        if (currentRole === 'station') showSection('stations');
         startSync();
       } else {
         currentUser = null;
@@ -5380,15 +6857,25 @@
   }
   
   async function doSignup() {
-    const email = document.getElementById('signup-email').value.trim();
+    let email = document.getElementById('signup-email').value.trim();
     const password = document.getElementById('signup-password').value;
     const role = document.getElementById('signup-role').value;
-    if (!email || password.length < 6) {
-      document.getElementById('auth-status').textContent = 'Email + password (min 6 chars) required';
-      return;
-    }
     if (!role) {
       document.getElementById('auth-status').textContent = 'Please select your role';
+      return;
+    }
+    const extra = {};
+    if (role === 'station') {
+      extra.biz = document.getElementById('signup-biz').value;
+      extra.station = document.getElementById('signup-station').value;
+      if (!extra.biz || !extra.station) {
+        document.getElementById('auth-status').textContent = 'Pick a business and station for this department login';
+        return;
+      }
+      email = stationEmail(extra.biz, extra.station); // derive — floor only needs station + password
+    }
+    if (!email || password.length < 6) {
+      document.getElementById('auth-status').textContent = 'Email + password (min 6 chars) required';
       return;
     }
     document.getElementById('auth-status').textContent = '⏳ Creating account...';
@@ -5396,7 +6883,7 @@
       const userCred = await window.firebaseFns.createUser(window.firebaseAuth, email, password);
       // Save role to Firestore
       const userDoc = window.firebaseFns.doc(window.firebaseDb, 'users', userCred.user.uid);
-      await window.firebaseFns.setDoc(userDoc, { email, role, createdAt: new Date().toISOString() });
+      await window.firebaseFns.setDoc(userDoc, Object.assign({ email, role, createdAt: new Date().toISOString() }, extra));
       document.getElementById('auth-status').textContent = '';
     } catch (err) {
       document.getElementById('auth-status').textContent = '✗ ' + (err.code === 'auth/email-already-in-use' ? 'Email already in use' : err.message);
@@ -5406,6 +6893,8 @@
   function toggleLoginMode() {
     const loginMode = document.getElementById('login-mode');
     const signupMode = document.getElementById('signup-mode');
+    const stationMode = document.getElementById('station-mode');
+    if (stationMode) stationMode.style.display = 'none';
     if (loginMode.style.display === 'none') {
       loginMode.style.display = 'block';
       signupMode.style.display = 'none';
@@ -5415,6 +6904,129 @@
     }
     document.getElementById('auth-status').textContent = '';
   }
+
+  // Deterministic per-station account email (so the floor only types a password)
+  function stationEmail(biz, station) {
+    const slug = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    return `${slug(biz)}-${slug(station)}@stations.local`;
+  }
+  function showStationLogin() {
+    document.getElementById('login-mode').style.display = 'none';
+    document.getElementById('signup-mode').style.display = 'none';
+    document.getElementById('station-mode').style.display = 'block';
+    document.getElementById('auth-status').textContent = '';
+    populateStationLoginStations();
+  }
+  function showStaffLogin() {
+    document.getElementById('station-mode').style.display = 'none';
+    document.getElementById('signup-mode').style.display = 'none';
+    document.getElementById('login-mode').style.display = 'block';
+    document.getElementById('auth-status').textContent = '';
+  }
+  function populateStationLoginStations() {
+    const biz = document.getElementById('station-login-biz') ? document.getElementById('station-login-biz').value : 'bellville';
+    const sel = document.getElementById('station-login-station');
+    if (!sel) return;
+    const stages = (typeof getProductionStages === 'function') ? getProductionStages(biz) : [];
+    sel.innerHTML = stages.map(s => `<option value="${String(s).replace(/"/g, '&quot;')}">${s}</option>`).join('') || '<option value="">(no stations)</option>';
+  }
+  async function doStationLogin() {
+    const biz = document.getElementById('station-login-biz').value;
+    const station = document.getElementById('station-login-station').value;
+    const pin = document.getElementById('station-login-pin').value;
+    if (!biz || !station || !pin) { document.getElementById('auth-status').textContent = 'Pick a station and enter its password'; return; }
+    document.getElementById('auth-status').textContent = '⏳ Signing in...';
+    try {
+      await window.firebaseFns.signIn(window.firebaseAuth, stationEmail(biz, station), pin);
+      document.getElementById('auth-status').textContent = '';
+    } catch (err) {
+      document.getElementById('auth-status').textContent = '✗ ' + (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found' ? 'Wrong station password (or station not set up yet)' : err.message);
+    }
+  }
+  window.showStationLogin = showStationLogin;
+  window.showStaffLogin = showStaffLogin;
+  window.populateStationLoginStations = populateStationLoginStations;
+  window.doStationLogin = doStationLogin;
+
+  // ----- Admin: create all station logins at once (without logging the admin out) -----
+  const _pwSlug = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+  function renderStationLoginsAdmin() {
+    const el = document.getElementById('station-logins-admin');
+    if (!el) return;
+    if (currentRole !== 'admin') { el.innerHTML = ''; return; }
+    const biz = activeBiz;
+    const stages = (typeof getProductionStages === 'function') ? getProductionStages(biz) : [];
+    const accounts = data.stationAccounts || {};
+    const rows = stages.map(s => {
+      const exists = !!accounts[stationEmail(biz, s)];
+      return `<div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; padding:4px 0; border-bottom:1px solid var(--border)">
+        <span style="width:180px; font-weight:600">${s}</span>
+        <input type="text" id="stpw-${_pwSlug(s)}" placeholder="password (min 6)" autocomplete="off" style="width:170px; padding:4px 6px">
+        <span style="font-size:11px; color:${exists ? '#16a34a' : 'var(--text-muted)'}">${exists ? '✓ created' : 'not created'}</span>
+      </div>`;
+    }).join('');
+    el.innerHTML = `
+      <div class="card" style="border-left:4px solid var(--accent)">
+        <div class="card-title">🏭 Station Logins — ${biz} (admin)</div>
+        <p style="font-size:12px; color:var(--text-muted)">Set a password for each station and create them all at once — <strong>you stay logged in</strong>. Already-created stations are marked ✓ and skipped. Switch business (top) to set up PinkFoot / ReptiCube. The floor signs in via <strong>🏭 Station Login</strong> with just the station + password.</p>
+        <div style="display:flex; gap:0.5rem; align-items:center; margin:0.5rem 0; flex-wrap:wrap">
+          <input type="text" id="stpw-all" placeholder="set all to…" autocomplete="off" style="width:170px; padding:4px 6px">
+          <button class="btn btn-sm" onclick="fillAllStationPw()">Apply to all</button>
+        </div>
+        ${rows || '<div class="empty">No stations defined for this business.</div>'}
+        <button class="btn btn-primary" style="margin-top:0.75rem" onclick="createAllStationLogins()">Create all station logins</button>
+        <div id="station-create-status" style="font-size:12px; margin-top:0.5rem; color:var(--text-muted)"></div>
+      </div>`;
+  }
+
+  function fillAllStationPw() {
+    const v = (document.getElementById('stpw-all') || {}).value || '';
+    (getProductionStages(activeBiz) || []).forEach(s => { const el = document.getElementById('stpw-' + _pwSlug(s)); if (el) el.value = v; });
+  }
+
+  async function createAllStationLogins() {
+    if (currentRole !== 'admin') return;
+    const biz = activeBiz;
+    const st = document.getElementById('station-create-status');
+    const jobs = (getProductionStages(biz) || [])
+      .map(s => ({ station: s, pw: ((document.getElementById('stpw-' + _pwSlug(s)) || {}).value || '').trim() }))
+      .filter(j => j.pw);
+    if (!jobs.length) { if (st) st.textContent = 'Enter at least one password (min 6 chars).'; return; }
+    const tooShort = jobs.filter(j => j.pw.length < 6);
+    if (tooShort.length) { if (st) st.textContent = 'Min 6 chars needed for: ' + tooShort.map(j => j.station).join(', '); return; }
+    if (st) st.textContent = '⏳ Creating…';
+    // Secondary Firebase app so the admin's own session is untouched
+    let secAuth, secDb;
+    try {
+      let secApp = window._stationCreatorApp;
+      if (!secApp) { secApp = window.firebaseFns.initializeApp(window.firebaseConfig, 'station-creator'); window._stationCreatorApp = secApp; }
+      secAuth = window.firebaseFns.getAuth(secApp);
+      secDb = window.firebaseFns.getFirestore(secApp);
+    } catch (e) { if (st) st.textContent = '✗ Could not start creator: ' + e.message; return; }
+    if (!data.stationAccounts) data.stationAccounts = {};
+    let created = 0, existed = 0, failed = 0;
+    for (const j of jobs) {
+      const email = stationEmail(biz, j.station);
+      try {
+        const cred = await window.firebaseFns.createUser(secAuth, email, j.pw);
+        await window.firebaseFns.setDoc(window.firebaseFns.doc(secDb, 'users', cred.user.uid), { email, role: 'station', biz, station: j.station, createdAt: new Date().toISOString() });
+        data.stationAccounts[email] = true; created++;
+      } catch (e) {
+        if (e.code === 'auth/email-already-in-use') { data.stationAccounts[email] = true; existed++; }
+        else { failed++; console.warn('Station create failed:', j.station, e); }
+      }
+    }
+    try { await window.firebaseFns.signOut(secAuth); } catch (e) {}
+    snapshotState();
+    saveData();
+    renderStationLoginsAdmin();
+    if (st) st.textContent = `Done: ${created} created, ${existed} already existed${failed ? `, ${failed} failed (see console)` : ''}.`;
+    toast(`Station logins: ${created} created, ${existed} existed${failed ? ', ' + failed + ' failed' : ''}`, failed ? 'warn' : 'success', 4000);
+  }
+  window.renderStationLoginsAdmin = renderStationLoginsAdmin;
+  window.fillAllStationPw = fillAllStationPw;
+  window.createAllStationLogins = createAllStationLogins;
   
   async function doLogout() {
     if (confirm('Sign out?')) {
@@ -5426,11 +7038,33 @@
   window.doLogin = doLogin;
   window.doSignup = doSignup;
   window.toggleLoginMode = toggleLoginMode;
+
+  // Signup: show station/business pickers only for the Station role
+  function onSignupRoleChange() {
+    const role = document.getElementById('signup-role').value;
+    const block = document.getElementById('signup-station-block');
+    const emailBlock = document.getElementById('signup-email-block');
+    if (block) block.style.display = (role === 'station') ? 'block' : 'none';
+    if (emailBlock) emailBlock.style.display = (role === 'station') ? 'none' : 'block'; // station email is auto-derived
+    if (role === 'station') populateSignupStations();
+  }
+  function populateSignupStations() {
+    const biz = document.getElementById('signup-biz') ? document.getElementById('signup-biz').value : 'bellville';
+    const sel = document.getElementById('signup-station');
+    if (!sel) return;
+    const stages = (typeof getProductionStages === 'function') ? getProductionStages(biz) : [];
+    sel.innerHTML = stages.map(s => `<option value="${String(s).replace(/"/g, '&quot;')}">${s}</option>`).join('') || '<option value="">(no stations)</option>';
+  }
+  window.onSignupRoleChange = onSignupRoleChange;
+  window.populateSignupStations = populateSignupStations;
   window.doLogout = doLogout;
   
+  // Initial render — now that every module-level variable above is initialized
+  switchBiz('bellville');
+
   // Start Firebase
   waitForFirebase();
-  
+
 </script>
 
 </div> <!-- end main-app -->
