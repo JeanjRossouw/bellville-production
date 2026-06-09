@@ -4262,13 +4262,16 @@
   function setStationStage(s) { stationStage = s; renderStations(); }
   window.setStationStage = setStationStage;
 
-  // "Working as" — which staff member is completing work at a station (per business + stage).
-  // Non-timed stages auto-default to the first eligible worker (e.g. Spray Paint → TK,
-  // Sand → Lilian). Timed stages (Assemble) never auto-default — the carpenter must pick
-  // their own name before START, so the time is credited correctly.
+  // "Working as" — which staff member is completing work at a station (per business + role).
+  // Keyed by role so picking your name once carries across both of that role's stations
+  // (a carpenter chosen at Assemble is still chosen at Final Assembly; a sander across
+  // both sanding stations, etc.). Non-timed stages auto-default to the first eligible
+  // worker (e.g. Spray Paint → TK, Sand → Lilian). Timed stages (Assemble) never
+  // auto-default — the carpenter must pick their own name before START.
+  function _workerKey(biz, stage) { return 'current-worker-' + biz + '-' + (stageRole(biz, stage) || ('stage:' + stage)); }
   function currentWorkerFor(biz, stage) {
     let stored = '';
-    try { stored = localStorage.getItem('current-worker-' + biz + '-' + stage) || ''; } catch (e) {}
+    try { stored = localStorage.getItem(_workerKey(biz, stage)) || ''; } catch (e) {}
     const all = ((data[biz] && data[biz].staff) || []).map(s => s.name);
     if (stored && all.indexOf(stored) !== -1) return stored;
     if (!stageTimed(biz, stage)) {
@@ -4278,7 +4281,7 @@
     return '';
   }
   function setCurrentWorker(biz, stage, name) {
-    try { if (name) localStorage.setItem('current-worker-' + biz + '-' + stage, name); else localStorage.removeItem('current-worker-' + biz + '-' + stage); } catch (e) {}
+    try { if (name) localStorage.setItem(_workerKey(biz, stage), name); else localStorage.removeItem(_workerKey(biz, stage)); } catch (e) {}
     renderStations();
   }
   window.setCurrentWorker = setCurrentWorker;
