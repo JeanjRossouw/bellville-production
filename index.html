@@ -2710,21 +2710,24 @@
   }
 
   function renderImmediate() {
-    renderDashboard();
-    renderOrders();
-    if (typeof renderStations === 'function') renderStations();
-    renderDoneOrders();
-    renderDispatch();
-    renderFinished();
-    renderStaff();
-    renderFabricOrders();
+    // Each section is isolated: if one render throws on unusual data, the others
+    // (e.g. Stations) must still render rather than silently disappearing.
+    const safe = (label, fn) => { try { if (typeof fn === 'function') fn(); } catch (e) { console.error('Render failed:', label, e); } };
+    safe('dashboard', renderDashboard);
+    safe('orders', renderOrders);
+    safe('stations', typeof renderStations === 'function' ? renderStations : null);
+    safe('done', renderDoneOrders);
+    safe('dispatch', renderDispatch);
+    safe('finished', renderFinished);
+    safe('staff', renderStaff);
+    safe('fabric', renderFabricOrders);
     // renderMaterials() removed — was a stub that wrote 'coming soon' into a
     // non-existent element. Inventory rendering happens via renderInventory()
     // which is called from showSection('materials'). BOM rendering similarly.
-    renderSchedule();
+    safe('schedule', renderSchedule);
     // Planner needs to live-update for cross-device sync, but only does work
     // if #planner-grid exists in the DOM (so it's free when the section is unmounted).
-    if (typeof renderPlanner === 'function') renderPlanner();
+    safe('planner', typeof renderPlanner === 'function' ? renderPlanner : null);
   }
   
   function renderDoneOrders() {
