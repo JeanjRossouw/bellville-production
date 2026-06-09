@@ -4148,9 +4148,23 @@
 
   // ----- Per-stage (division) production progress on each order -----
   const _DEFAULT_STAGES_BY_BIZ = {
-    pinkfoot: ['Cut Wood', 'Assemble', 'Sand', 'Primer', 'Sand 2nd', 'Final Paint', 'Final Assemble', 'Spot Check', 'Pack'],
+    pinkfoot: ['Cut', 'Assemble', 'Sand', 'Prime', 'Sand (assembly)', 'Spray Paint'],
     repticube: ['CNC Board', 'CNC Windows', 'Sand Board', 'Fit Window', 'Clean', 'Pack']
   };
+  // Editable production-stage list for the non-Bellville businesses (woodwork etc.).
+  // Stored on the business so it can be customised; falls back to the default above.
+  function bizStages(biz) {
+    const bd = data[biz];
+    if (bd && Array.isArray(bd.productionStages) && bd.productionStages.length) return bd.productionStages.slice();
+    return (_DEFAULT_STAGES_BY_BIZ[biz] || []).slice();
+  }
+  function ensureBizStages(biz) {
+    if (!data[biz]) return;
+    if (!Array.isArray(data[biz].productionStages) || !data[biz].productionStages.length) {
+      data[biz].productionStages = (_DEFAULT_STAGES_BY_BIZ[biz] || []).slice();
+    }
+    return data[biz].productionStages;
+  }
   // Rocking chairs are built in Bellville production regardless of which business owns the order
   function isRockingOrder(o) {
     return /rocking|rocker/i.test(o.category || '') || /rocking|rocker/i.test(o.product || '');
@@ -4186,7 +4200,7 @@
         return (data.capacitySettings.stages || []).filter(s => !_stageExcludes(s, cat)).map(s => s.name);
       } catch (e) { return []; }
     }
-    return _DEFAULT_STAGES_BY_BIZ[prodBiz] || [];
+    return bizStages(prodBiz);
   }
 
   function toggleOrderStage(orderId, stage) {
@@ -4208,10 +4222,66 @@
   function setStationStage(s) { stationStage = s; renderStations(); }
   window.setStationStage = setStationStage;
 
+  // "Working as" — which staff member is currently completing work (per business, per device).
+  function currentWorkerFor(biz) {
+    try { return localStorage.getItem('current-worker-' + biz) || ''; } catch (e) { return ''; }
+  }
+  function setCurrentWorker(biz, name) {
+    try { if (name) localStorage.setItem('current-worker-' + biz, name); else localStorage.removeItem('current-worker-' + biz); } catch (e) {}
+    renderStations();
+  }
+  window.setCurrentWorker = setCurrentWorker;
+
+  // ----- Editable production stages for non-Bellville businesses (admin) -----
+  function addBizStage(biz) {
+    const name = (prompt('New stage name:') || '').trim();
+    if (!name) return;
+    snapshotState(); const list = ensureBizStages(biz);
+    if (list.indexOf(name) === -1) list.push(name);
+    saveData(); render();
+  }
+  function renameBizStage(biz, index, value) {
+    const name = (value || '').trim(); if (!name) { render(); return; }
+    snapshotState(); const list = ensureBizStages(biz);
+    const old = list[index];
+    if (old === name) return;
+    list[index] = name;
+    // carry per-order progress across the rename so nothing resets
+    (data[biz]?.orders || []).forEach(o => {
+      if (o.stageDone && old in o.stageDone) { o.stageDone[name] = o.stageDone[old]; delete o.stageDone[old]; }
+      if (o.stageDoneAt && old in o.stageDoneAt) { o.stageDoneAt[name] = o.stageDoneAt[old]; delete o.stageDoneAt[old]; }
+      if (o.stageWorker && old in o.stageWorker) { o.stageWorker[name] = o.stageWorker[old]; delete o.stageWorker[old]; }
+    });
+    saveData(); render();
+  }
+  function moveBizStage(biz, index, dir) {
+    snapshotState(); const list = ensureBizStages(biz);
+    const j = index + dir;
+    if (j < 0 || j >= list.length) return;
+    const t = list[index]; list[index] = list[j]; list[j] = t;
+    saveData(); render();
+  }
+  function deleteBizStage(biz, index) {
+    const list = ensureBizStages(biz);
+    if (!confirm('Remove stage "' + list[index] + '"? Progress recorded at this stage will be cleared.')) return;
+    snapshotState();
+    const name = list[index]; list.splice(index, 1);
+    (data[biz]?.orders || []).forEach(o => {
+      if (o.stageDone) delete o.stageDone[name];
+      if (o.stageDoneAt) delete o.stageDoneAt[name];
+      if (o.stageWorker) delete o.stageWorker[name];
+    });
+    saveData(); render();
+  }
+  window.addBizStage = addBizStage;
+  window.renameBizStage = renameBizStage;
+  window.moveBizStage = moveBizStage;
+  window.deleteBizStage = deleteBizStage;
+
   // Full division list for a business (for the station selector)
   function getProductionStages(biz) {
     if (biz === 'bellville') { try { ensureCapacitySettings(); return (data.capacitySettings.stages || []).map(s => s.name); } catch (e) { return []; } }
-    return _DEFAULT_STAGES_BY_BIZ[biz] || [];
+    return bizStages(biz);
   }
   // The stage an order is currently waiting at (first not-done in its sequential stage list);
   // null if finished. Independent/separate departments are skipped — they don't gate the flow.
@@ -4265,6 +4335,9 @@
     o.stageDone[stage] = true;
     if (!o.stageDoneAt || typeof o.stageDoneAt !== 'object') o.stageDoneAt = {};
     o.stageDoneAt[stage] = new Date().toISOString(); // when this department finished — feeds the daily report
+    if (!o.stageWorker || typeof o.stageWorker !== 'object') o.stageWorker = {};
+    const worker = currentWorkerFor(activeBiz);
+    if (worker) o.stageWorker[stage] = worker; else delete o.stageWorker[stage]; // who did it — feeds the per-worker report
     if (o.status === 'pending') {
       o.status = 'in-production';
       if (!o.startDate) o.startDate = new Date().toISOString().split('T')[0];
@@ -4331,18 +4404,23 @@
       const daysLeft = due && !isNaN(due.getTime()) ? Math.ceil((due - today) / 86400000) : null;
       const overdue = daysLeft !== null && daysLeft < 0;
       const rockerTag = (biz === 'bellville' && isRockingOrder(o)) ? ' <span style="background:#f3e8ff; color:#7e22ce; padding:1px 6px; border-radius:3px; font-size:9px; font-weight:700">🪑 ' + ((findOrderAnyBiz(o.id) || {}).biz || '').toUpperCase() + '</span>' : '';
+      const doneByLine = stages.filter(s => o.stageDone && o.stageDone[s] && o.stageWorker && o.stageWorker[s])
+        .map(s => `${escHtml(s)}: <b>${escHtml(o.stageWorker[s])}</b>`).join(' · ');
       return `<div class="order-card" style="display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap; ${overdue ? 'border-left:4px solid #dc2626' : ''}">
         <div style="flex:1; min-width:200px">
           <div style="font-weight:700; font-size:15px">#${escHtml(o.invoice || o.id)} — ${escHtml(o.product || '')}${o.qty > 1 ? ' × ' + o.qty : ''}${rockerTag}</div>
           <div style="font-size:12px; color:var(--text-muted)">${escHtml(o.customer || '')}${o.fabric ? ' · 🎨 ' + escHtml(o.fabric) : ''}</div>
           <div style="font-size:11px; color:${overdue ? '#dc2626' : 'var(--text-muted)'}; margin-top:2px">Due ${escHtml(o.dueDate || '—')}${daysLeft !== null ? (overdue ? ` (${Math.abs(daysLeft)}d overdue)` : ` (${daysLeft}d)`) : ''} · progress ${doneCount}/${stages.length}</div>
+          ${doneByLine ? `<div style="font-size:10px; color:var(--text-muted); margin-top:2px">✓ ${doneByLine}</div>` : ''}
         </div>
         <button onclick="completeStage('${o.id}', '${escJs(stationStage)}')" style="background:#16a34a; color:#fff; border:none; border-radius:8px; padding:0.9rem 1.6rem; font-size:15px; font-weight:800; cursor:pointer; white-space:nowrap">✓ DONE</button>
       </div>`;
     }).join('');
 
     el.innerHTML = `
+      ${workerSelectorHtml(biz)}
       ${selectorCard}
+      ${stageEditorHtml(biz)}
       ${stationReportOpen ? stationReportPanelHtml(biz) : ''}
       <div class="card">
         <div class="card-title">${escHtml(stationStage)} — ${queue.length} waiting${locked ? '' : ''}</div>
@@ -4350,6 +4428,44 @@
       </div>`;
   }
   window.renderStations = renderStations;
+
+  // "Working as" picker — credits DONE presses to the chosen staff member
+  function workerSelectorHtml(biz) {
+    const staff = (data[biz] && data[biz].staff) || [];
+    const cur = currentWorkerFor(biz);
+    if (!staff.length) {
+      return `<div class="card" style="border-left:4px solid #d97706"><div style="font-size:12px">👷 Add your team on the <b>Staff</b> tab to track who completes each step.</div></div>`;
+    }
+    const opts = ['<option value="">— select —</option>'].concat(staff.map(s =>
+      `<option value="${_escape(s.name)}" ${s.name === cur ? 'selected' : ''}>${_escape(s.name)}${s.role ? ' (' + _escape(s.role) + ')' : ''}</option>`)).join('');
+    return `<div class="card" style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap; ${cur ? '' : 'border-left:4px solid #d97706'}">
+      <span style="font-weight:700">👷 Working as:</span>
+      <select onchange="setCurrentWorker('${biz}', this.value)" style="padding:6px 10px; font-size:14px; min-width:180px">${opts}</select>
+      ${cur ? `<span style="font-size:12px; color:var(--text-muted)">DONE presses are credited to <b>${_escape(cur)}</b></span>`
+            : `<span style="font-size:12px; color:#b45309">Select your name so your work is counted</span>`}
+    </div>`;
+  }
+
+  // Editable stage list for non-Bellville businesses (admin only; Bellville uses capacity settings)
+  function stageEditorHtml(biz) {
+    if (biz === 'bellville' || currentRole !== 'admin') return '';
+    const list = bizStages(biz);
+    const rows = list.map((s, i) => `
+      <div style="display:flex; gap:0.4rem; align-items:center; margin-bottom:4px">
+        <span style="width:18px; color:var(--text-muted); font-size:11px">${i + 1}</span>
+        <input value="${_escape(s)}" onchange="renameBizStage('${biz}', ${i}, this.value)" style="flex:1; min-width:120px; padding:4px 6px">
+        <button class="btn btn-sm" onclick="moveBizStage('${biz}', ${i}, -1)" ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button class="btn btn-sm" onclick="moveBizStage('${biz}', ${i}, 1)" ${i === list.length - 1 ? 'disabled' : ''}>↓</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteBizStage('${biz}', ${i})">✕</button>
+      </div>`).join('');
+    return `<details class="card">
+      <summary style="cursor:pointer; font-weight:700">⚙️ Edit production stages (${list.length})</summary>
+      <div style="margin-top:0.6rem">${rows}
+        <button class="btn btn-sm" onclick="addBizStage('${biz}')" style="margin-top:4px">➕ Add stage</button>
+        <div style="font-size:11px; color:var(--text-muted); margin-top:6px">Order top→bottom is the production flow. Renaming carries existing progress across.</div>
+      </div>
+    </details>`;
+  }
 
   // All orders produced at this business (any status), so the report can include finished work.
   function _productionOrdersAll(biz) {
@@ -4368,6 +4484,9 @@
   let stationReportOpen = false;
   let reportFrom = null, reportTo = null;   // 'YYYY-MM-DD' (inclusive); null = open-ended
   let reportPreset = 'last7';
+  let reportMode = 'dept';                  // 'dept' = by department/stage, 'worker' = by person
+  function setReportMode(m) { reportMode = m; renderStations(); }
+  window.setReportMode = setReportMode;
 
   function _localDayStr(date) {
     const d = (date instanceof Date) ? date : new Date(date);
@@ -4386,7 +4505,8 @@
         if (!day) return;
         if (fromStr && day < fromStr) return;
         if (toStr && day > toStr) return;
-        events.push({ day, stage, qty: o.qty || 1, order: o });
+        const worker = (o.stageWorker && o.stageWorker[stage]) ? o.stageWorker[stage] : 'Unassigned';
+        events.push({ day, stage, worker, qty: o.qty || 1, order: o });
       });
     });
     const stageOrder = getProductionStages(biz).slice();
@@ -4436,6 +4556,53 @@
     return `${matrixTable}<div style="font-size:14px; font-weight:800; margin:6px 0; border-bottom:2px solid #000; padding-bottom:3px">Detailed breakdown</div>${detail}`;
   }
 
+  // Per-worker view: units each person completed per day + what stages they did.
+  function _workerReportTablesHtml(biz, R) {
+    const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const fmtDayHdr = d => new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' });
+    if (!R.days.length) return `<p style="padding:14px; text-align:center; color:#666; font-style:italic">No completions recorded in this date range.</p>`;
+    // workers: staff list first (in order), then any extra names found (e.g. Unassigned)
+    const staffNames = ((data[biz] && data[biz].staff) || []).map(s => s.name);
+    const workers = staffNames.slice();
+    R.events.forEach(e => { if (workers.indexOf(e.worker) === -1) workers.push(e.worker); });
+    // keep only workers who actually have events in range
+    const active = workers.filter(w => R.events.some(e => e.worker === w));
+    if (!active.length) return `<p style="padding:14px; text-align:center; color:#666; font-style:italic">No completions recorded in this date range.</p>`;
+    const cell = {}, rowT = {}, colT = {}; let grand = 0;
+    active.forEach(w => colT[w] = 0);
+    R.days.forEach(d => { cell[d] = {}; rowT[d] = 0; active.forEach(w => cell[d][w] = 0); });
+    R.events.forEach(e => { if (cell[e.day] && e.worker in cell[e.day]) { cell[e.day][e.worker] += e.qty; rowT[e.day] += e.qty; colT[e.worker] += e.qty; grand += e.qty; } });
+    const rows = R.days.map(d => `
+      <tr><td style="border:1px solid #999; padding:4px 6px; font-weight:bold; white-space:nowrap">${esc(fmtDayHdr(d))}</td>
+        ${active.map(w => `<td style="border:1px solid #999; padding:4px 6px; text-align:center${cell[d][w] ? '' : '; color:#bbb'}">${cell[d][w] || ''}</td>`).join('')}
+        <td style="border:1px solid #999; padding:4px 6px; text-align:center; font-weight:bold; background:#f1f5f9">${rowT[d]}</td></tr>`).join('');
+    const matrixTable = `
+      <table style="width:100%; border-collapse:collapse; margin-bottom:14px">
+        <thead><tr>
+          <th style="border:1px solid #999; padding:4px 6px; background:#1f2937; color:#fff; font-size:10px; text-transform:uppercase">Day</th>
+          ${active.map(w => `<th style="border:1px solid #999; padding:4px 6px; background:#1f2937; color:#fff; font-size:10px; text-transform:uppercase">${esc(w)}</th>`).join('')}
+          <th style="border:1px solid #999; padding:4px 6px; background:#1f2937; color:#fff; font-size:10px; text-transform:uppercase">Total</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr><td style="border:1px solid #999; padding:4px 6px; font-weight:bold; background:#e5e7eb">TOTAL</td>
+          ${active.map(w => `<td style="border:1px solid #999; padding:4px 6px; text-align:center; font-weight:bold; background:#e5e7eb">${colT[w] || 0}</td>`).join('')}
+          <td style="border:1px solid #999; padding:4px 6px; text-align:center; font-weight:bold; background:#e5e7eb">${grand}</td></tr></tfoot>
+      </table>`;
+    // Per-person breakdown: total + what stages they did
+    const perPerson = active.sort((a, b) => colT[b] - colT[a]).map(w => {
+      const byStage = {};
+      R.events.filter(e => e.worker === w).forEach(e => { byStage[e.stage] = (byStage[e.stage] || 0) + e.qty; });
+      const chips = Object.keys(byStage).sort((a, b) => byStage[b] - byStage[a]).map(s =>
+        `<span style="display:inline-block; background:#eef2ff; color:#3730a3; border-radius:4px; padding:1px 7px; margin:2px; font-size:11px">${esc(s)}: <b>${byStage[s]}</b></span>`).join('');
+      return `<div style="margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid #ddd"><div style="font-weight:700; font-size:13px">${esc(w)} — ${colT[w]} unit(s)</div><div style="margin-top:2px">${chips}</div></div>`;
+    }).join('');
+    return `${matrixTable}<div style="font-size:14px; font-weight:800; margin:6px 0; border-bottom:2px solid #000; padding-bottom:3px">What each person did</div>${perPerson}`;
+  }
+
+  function _reportTablesHtml(biz, R) {
+    return reportMode === 'worker' ? _workerReportTablesHtml(biz, R) : _deptReportTablesHtml(biz, R);
+  }
+
   function _reportRangeLabel() {
     if (reportFrom && reportTo) return reportFrom === reportTo ? reportFrom : `${reportFrom} → ${reportTo}`;
     if (reportFrom) return `from ${reportFrom}`;
@@ -4478,21 +4645,26 @@
       return `<button onclick="setReportPreset('${k}')" style="border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'}; background:${sel ? 'var(--accent)' : 'var(--surface)'}; color:${sel ? '#fff' : 'var(--text)'}; border-radius:6px; padding:5px 9px; font-size:11px; cursor:pointer; font-weight:${sel ? '700' : '500'}">${label}</button>`;
     }).join('');
     const R = _deptReportData(biz, reportFrom, reportTo);
+    const modeBtn = (m, label) => {
+      const sel = reportMode === m;
+      return `<button onclick="setReportMode('${m}')" style="border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'}; background:${sel ? 'var(--accent)' : 'var(--surface)'}; color:${sel ? '#fff' : 'var(--text)'}; border-radius:6px; padding:5px 11px; font-size:12px; cursor:pointer; font-weight:${sel ? '700' : '500'}">${label}</button>`;
+    };
     return `
       <div class="card" style="border-left:4px solid #2563eb">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem">
-          <span class="card-title" style="margin:0">📊 Department report — ${_escape(_reportRangeLabel())} · ${R.grand} unit(s)</span>
+          <span class="card-title" style="margin:0">📊 Production report — ${_escape(_reportRangeLabel())} · ${R.grand} unit(s)</span>
           <span style="display:flex; gap:0.4rem">
             <button class="btn btn-sm" onclick="printDepartmentReport()" title="Open a printable version of this report">🖨️ Print / PDF</button>
             <button class="btn btn-sm" onclick="closeStationReport()">✕ Close</button>
           </span>
         </div>
+        <div style="display:flex; gap:0.4rem; margin-bottom:0.6rem">${modeBtn('dept', '🏭 By department')} ${modeBtn('worker', '👷 By worker')}</div>
         <div style="display:flex; gap:0.35rem; flex-wrap:wrap; margin-bottom:0.5rem">${presetBtns}</div>
         <div style="display:flex; gap:0.8rem; flex-wrap:wrap; align-items:center; margin-bottom:0.8rem; font-size:12px">
           <label style="display:flex; align-items:center; gap:0.3rem">From <input type="date" value="${reportFrom || ''}" onchange="setReportFrom(this.value)" style="padding:3px 5px"></label>
           <label style="display:flex; align-items:center; gap:0.3rem">To <input type="date" value="${reportTo || ''}" onchange="setReportTo(this.value)" style="padding:3px 5px"></label>
         </div>
-        <div style="overflow-x:auto">${_deptReportTablesHtml(biz, R)}</div>
+        <div style="overflow-x:auto">${_reportTablesHtml(biz, R)}</div>
       </div>`;
   }
 
@@ -4515,11 +4687,11 @@
 </style></head><body>
   <div class="header">
     <div><div class="biz-name">${bizNames[biz] || biz}</div><div class="date">Department Report · generated ${todayStr}</div></div>
-    <div class="title">What each department completed<br>${_escape(_reportRangeLabel())} · ${R.grand} unit(s)</div>
+    <div class="title">${reportMode === 'worker' ? 'What each worker completed' : 'What each department completed'}<br>${_escape(_reportRangeLabel())} · ${R.grand} unit(s)</div>
   </div>
   <button class="no-print" onclick="window.print()" style="padding:8px 16px; font-size:14px; font-weight:700; margin-bottom:10px; cursor:pointer">🖨️ Print / Save PDF</button>
-  ${_deptReportTablesHtml(biz, R)}
-  <p style="font-size:10px; color:#666; margin-top:10px">Counts are units (order qty) marked done at each department. Only completions recorded after this feature was deployed appear here.</p>
+  ${_reportTablesHtml(biz, R)}
+  <p style="font-size:10px; color:#666; margin-top:10px">Counts are units (order qty) marked done. Only completions recorded after this feature was deployed appear here.</p>
 </body></html>`;
     const w = window.open('', '_blank');
     if (!w) { alert('Please allow pop-ups to view the report.'); return; }
