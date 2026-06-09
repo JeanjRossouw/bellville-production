@@ -4148,9 +4148,19 @@
 
   // ----- Per-stage (division) production progress on each order -----
   const _DEFAULT_STAGES_BY_BIZ = {
-    pinkfoot: ['Cut', 'Assemble', 'Sand', 'Prime', 'Sand (assembly)', 'Spray Paint'],
+    pinkfoot: ['Cut', 'Assemble', 'Sand', 'Prime', 'Sand (assembly)', 'Spray Paint', 'Final Assembly'],
     repticube: ['CNC Board', 'CNC Windows', 'Sand Board', 'Fit Window', 'Clean', 'Pack']
   };
+  // Woodwork team — seeded into PinkFoot's staff on first run (if none added yet)
+  const _DEFAULT_PINKFOOT_STAFF = [
+    { name: 'Fareed', role: 'Carpenter' },
+    { name: 'Pang', role: 'Carpenter' },
+    { name: 'Jerome', role: 'Carpenter' },
+    { name: 'Aswell', role: 'Cutter' },
+    { name: 'TK', role: 'Spray Painter' },
+    { name: 'Lilian', role: 'Sander' },
+    { name: 'Julia', role: 'Sander' }
+  ];
   // Editable production-stage list for the non-Bellville businesses (woodwork etc.).
   // Stored on the business so it can be customised; falls back to the default above.
   function bizStages(biz) {
@@ -6748,6 +6758,21 @@
   }
   
   loadData();
+  // Seed the woodwork team into PinkFoot once (only if no staff added yet)
+  try {
+    if (data.pinkfoot && !data.pinkfoot._woodworkStaffSeeded) {
+      if (!Array.isArray(data.pinkfoot.staff) || data.pinkfoot.staff.length === 0) {
+        data.pinkfoot.staff = _DEFAULT_PINKFOOT_STAFF.map((s, i) => ({ id: 'STAFF-WW-' + i, name: s.name, role: s.role, phone: '' }));
+      }
+      // If stages were already persisted without the new Final Assembly step, add it after Spray Paint
+      const ps = data.pinkfoot.productionStages;
+      if (Array.isArray(ps) && ps.indexOf('Spray Paint') !== -1 && ps.indexOf('Final Assembly') === -1) {
+        ps.splice(ps.indexOf('Spray Paint') + 1, 0, 'Final Assembly');
+      }
+      data.pinkfoot._woodworkStaffSeeded = true;
+      saveData();
+    }
+  } catch (e) { console.warn('Woodwork staff seed failed:', e); }
   render();
   updateUndoButton();
   
