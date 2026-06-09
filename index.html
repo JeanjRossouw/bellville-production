@@ -4161,6 +4161,35 @@
     { name: 'Lilian', role: 'Sander' },
     { name: 'Julia', role: 'Sander' }
   ];
+  // Per-stage behaviour for the woodwork line. role = which staff role does this stage
+  // (the "Working as" picker defaults to them); timed = pick name → START → DONE so we
+  // can measure how long it takes. Falls back to {} for any stage not listed.
+  const _DEFAULT_STAGE_CONFIG = {
+    pinkfoot: {
+      'Cut': { role: 'Cutter' },
+      'Assemble': { role: 'Carpenter', timed: true },
+      'Sand': { role: 'Sander' },
+      'Prime': { role: 'Spray Painter' },
+      'Sand (assembly)': { role: 'Sander' },
+      'Spray Paint': { role: 'Spray Painter' },
+      'Final Assembly': { role: 'Carpenter', timed: true }
+    }
+  };
+  function stageCfg(biz, stage) {
+    const stored = data[biz] && data[biz].stageConfig && data[biz].stageConfig[stage];
+    if (stored) return stored;
+    return (_DEFAULT_STAGE_CONFIG[biz] && _DEFAULT_STAGE_CONFIG[biz][stage]) || {};
+  }
+  function stageRole(biz, stage) { return stageCfg(biz, stage).role || ''; }
+  function stageTimed(biz, stage) { return !!stageCfg(biz, stage).timed; }
+  function ensureStageConfig(biz) { if (!data[biz].stageConfig) data[biz].stageConfig = {}; return data[biz].stageConfig; }
+  // Staff who normally do this stage (role match); falls back to all staff if no match
+  function stageEligibleWorkers(biz, stage) {
+    const staff = (data[biz] && data[biz].staff) || [];
+    const role = stageRole(biz, stage);
+    if (role) { const m = staff.filter(s => (s.role || '').toLowerCase() === role.toLowerCase()); if (m.length) return m; }
+    return staff;
+  }
   // Editable production-stage list for the non-Bellville businesses (woodwork etc.).
   // Stored on the business so it can be customised; falls back to the default above.
   function bizStages(biz) {
@@ -4232,15 +4261,42 @@
   function setStationStage(s) { stationStage = s; renderStations(); }
   window.setStationStage = setStationStage;
 
-  // "Working as" — which staff member is currently completing work (per business, per device).
-  function currentWorkerFor(biz) {
-    try { return localStorage.getItem('current-worker-' + biz) || ''; } catch (e) { return ''; }
+  // "Working as" — which staff member is completing work at a station (per business + stage).
+  // Non-timed stages auto-default to the first eligible worker (e.g. Spray Paint → TK,
+  // Sand → Lilian). Timed stages (Assemble) never auto-default — the carpenter must pick
+  // their own name before START, so the time is credited correctly.
+  function currentWorkerFor(biz, stage) {
+    let stored = '';
+    try { stored = localStorage.getItem('current-worker-' + biz + '-' + stage) || ''; } catch (e) {}
+    const all = ((data[biz] && data[biz].staff) || []).map(s => s.name);
+    if (stored && all.indexOf(stored) !== -1) return stored;
+    if (!stageTimed(biz, stage)) {
+      const elig = stageEligibleWorkers(biz, stage);
+      if (elig.length) return elig[0].name;
+    }
+    return '';
   }
-  function setCurrentWorker(biz, name) {
-    try { if (name) localStorage.setItem('current-worker-' + biz, name); else localStorage.removeItem('current-worker-' + biz); } catch (e) {}
+  function setCurrentWorker(biz, stage, name) {
+    try { if (name) localStorage.setItem('current-worker-' + biz + '-' + stage, name); else localStorage.removeItem('current-worker-' + biz + '-' + stage); } catch (e) {}
     renderStations();
   }
   window.setCurrentWorker = setCurrentWorker;
+
+  // Timed stages: record who started and when, so DONE can compute the duration
+  function startStage(orderId, stage) {
+    const found = findOrderAnyBiz(orderId); if (!found) return;
+    const o = found.o;
+    const worker = currentWorkerFor(activeBiz, stage);
+    if (!worker) { toast('Select your name first so the time is recorded against you', 'warn'); return; }
+    snapshotState();
+    if (!o.stageStartedAt || typeof o.stageStartedAt !== 'object') o.stageStartedAt = {};
+    if (!o.stageStartedBy || typeof o.stageStartedBy !== 'object') o.stageStartedBy = {};
+    o.stageStartedAt[stage] = new Date().toISOString();
+    o.stageStartedBy[stage] = worker;
+    saveData(); render();
+    toast(stage + ' started — ' + worker, 'success');
+  }
+  window.startStage = startStage;
 
   // ----- Editable production stages for non-Bellville businesses (admin) -----
   function addBizStage(biz) {
@@ -4256,11 +4312,13 @@
     const old = list[index];
     if (old === name) return;
     list[index] = name;
-    // carry per-order progress across the rename so nothing resets
+    // carry per-stage config and per-order progress across the rename so nothing resets
+    const cfg = data[biz].stageConfig;
+    if (cfg && old in cfg) { cfg[name] = cfg[old]; delete cfg[old]; }
     (data[biz]?.orders || []).forEach(o => {
-      if (o.stageDone && old in o.stageDone) { o.stageDone[name] = o.stageDone[old]; delete o.stageDone[old]; }
-      if (o.stageDoneAt && old in o.stageDoneAt) { o.stageDoneAt[name] = o.stageDoneAt[old]; delete o.stageDoneAt[old]; }
-      if (o.stageWorker && old in o.stageWorker) { o.stageWorker[name] = o.stageWorker[old]; delete o.stageWorker[old]; }
+      ['stageDone', 'stageDoneAt', 'stageWorker', 'stageStartedAt', 'stageStartedBy', 'stageDurationMin'].forEach(k => {
+        if (o[k] && old in o[k]) { o[k][name] = o[k][old]; delete o[k][old]; }
+      });
     });
     saveData(); render();
   }
@@ -4276,17 +4334,30 @@
     if (!confirm('Remove stage "' + list[index] + '"? Progress recorded at this stage will be cleared.')) return;
     snapshotState();
     const name = list[index]; list.splice(index, 1);
+    if (data[biz].stageConfig) delete data[biz].stageConfig[name];
     (data[biz]?.orders || []).forEach(o => {
-      if (o.stageDone) delete o.stageDone[name];
-      if (o.stageDoneAt) delete o.stageDoneAt[name];
-      if (o.stageWorker) delete o.stageWorker[name];
+      ['stageDone', 'stageDoneAt', 'stageWorker', 'stageStartedAt', 'stageStartedBy', 'stageDurationMin'].forEach(k => { if (o[k]) delete o[k][name]; });
     });
+    saveData(); render();
+  }
+  function setBizStageRole(biz, stage, role) {
+    snapshotState(); const cfg = ensureStageConfig(biz);
+    if (!cfg[stage]) cfg[stage] = {};
+    if (role) cfg[stage].role = role; else delete cfg[stage].role;
+    saveData(); render();
+  }
+  function toggleBizStageTimed(biz, stage, checked) {
+    snapshotState(); const cfg = ensureStageConfig(biz);
+    if (!cfg[stage]) cfg[stage] = {};
+    if (checked) cfg[stage].timed = true; else delete cfg[stage].timed;
     saveData(); render();
   }
   window.addBizStage = addBizStage;
   window.renameBizStage = renameBizStage;
   window.moveBizStage = moveBizStage;
   window.deleteBizStage = deleteBizStage;
+  window.setBizStageRole = setBizStageRole;
+  window.toggleBizStageTimed = toggleBizStageTimed;
 
   // Full division list for a business (for the station selector)
   function getProductionStages(biz) {
@@ -4346,8 +4417,16 @@
     if (!o.stageDoneAt || typeof o.stageDoneAt !== 'object') o.stageDoneAt = {};
     o.stageDoneAt[stage] = new Date().toISOString(); // when this department finished — feeds the daily report
     if (!o.stageWorker || typeof o.stageWorker !== 'object') o.stageWorker = {};
-    const worker = currentWorkerFor(activeBiz);
+    // On timed stages credit whoever pressed START (the person who did the work);
+    // otherwise the current "working as" selection.
+    const startedBy = (o.stageStartedBy && o.stageStartedBy[stage]) || '';
+    const worker = (stageTimed(activeBiz, stage) && startedBy) ? startedBy : currentWorkerFor(activeBiz, stage);
     if (worker) o.stageWorker[stage] = worker; else delete o.stageWorker[stage]; // who did it — feeds the per-worker report
+    // If this stage was started (timed), record how long it took
+    if (o.stageStartedAt && o.stageStartedAt[stage]) {
+      const ms = Date.now() - new Date(o.stageStartedAt[stage]).getTime();
+      if (ms >= 0) { if (!o.stageDurationMin || typeof o.stageDurationMin !== 'object') o.stageDurationMin = {}; o.stageDurationMin[stage] = Math.round(ms / 60000); }
+    }
     if (o.status === 'pending') {
       o.status = 'in-production';
       if (!o.startDate) o.startDate = new Date().toISOString().split('T')[0];
@@ -4406,6 +4485,8 @@
       </div>`;
 
     const today = new Date(); today.setHours(0, 0, 0, 0);
+    const stationTimed = stageTimed(biz, stationStage);
+    const fmtClock = ts => { try { return new Date(ts).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
     const queue = ordersAtStage(biz, stationStage).sort((a, b) => (a.dueDate ? new Date(a.dueDate).getTime() : Infinity) - (b.dueDate ? new Date(b.dueDate).getTime() : Infinity));
     const cards = queue.map(o => {
       const stages = getProductionStagesForOrder(biz, o);
@@ -4423,7 +4504,15 @@
           <div style="font-size:11px; color:${overdue ? '#dc2626' : 'var(--text-muted)'}; margin-top:2px">Due ${escHtml(o.dueDate || '—')}${daysLeft !== null ? (overdue ? ` (${Math.abs(daysLeft)}d overdue)` : ` (${daysLeft}d)`) : ''} · progress ${doneCount}/${stages.length}</div>
           ${doneByLine ? `<div style="font-size:10px; color:var(--text-muted); margin-top:2px">✓ ${doneByLine}</div>` : ''}
         </div>
-        <button onclick="completeStage('${o.id}', '${escJs(stationStage)}')" style="background:#16a34a; color:#fff; border:none; border-radius:8px; padding:0.9rem 1.6rem; font-size:15px; font-weight:800; cursor:pointer; white-space:nowrap">✓ DONE</button>
+        ${(() => {
+          const startedAt = o.stageStartedAt && o.stageStartedAt[stationStage];
+          const startedBy = o.stageStartedBy && o.stageStartedBy[stationStage];
+          if (stationTimed && !startedAt) {
+            return `<button onclick="startStage('${o.id}', '${escJs(stationStage)}')" style="background:#2563eb; color:#fff; border:none; border-radius:8px; padding:0.9rem 1.6rem; font-size:15px; font-weight:800; cursor:pointer; white-space:nowrap">▶ START</button>`;
+          }
+          const startInfo = (stationTimed && startedAt) ? `<div style="font-size:11px; color:#2563eb; text-align:right; margin-bottom:4px">⏱ started ${fmtClock(startedAt)}${startedBy ? ' · ' + escHtml(startedBy) : ''}</div>` : '';
+          return `<div style="display:flex; flex-direction:column; align-items:flex-end">${startInfo}<button onclick="completeStage('${o.id}', '${escJs(stationStage)}')" style="background:#16a34a; color:#fff; border:none; border-radius:8px; padding:0.9rem 1.6rem; font-size:15px; font-weight:800; cursor:pointer; white-space:nowrap">✓ DONE</button></div>`;
+        })()}
       </div>`;
     }).join('');
 
@@ -4439,20 +4528,28 @@
   }
   window.renderStations = renderStations;
 
-  // "Working as" picker — credits DONE presses to the chosen staff member
+  // "Working as" picker — credits work at the current station to the chosen staff member.
+  // Defaults to the station's role (e.g. Spray Paint → TK); timed stations require a pick.
   function workerSelectorHtml(biz) {
+    if (!stationStage) return '';
     const staff = (data[biz] && data[biz].staff) || [];
-    const cur = currentWorkerFor(biz);
     if (!staff.length) {
       return `<div class="card" style="border-left:4px solid #d97706"><div style="font-size:12px">👷 Add your team on the <b>Staff</b> tab to track who completes each step.</div></div>`;
     }
+    const stage = stationStage, timed = stageTimed(biz, stage), role = stageRole(biz, stage);
+    const cur = currentWorkerFor(biz, stage);
     const opts = ['<option value="">— select —</option>'].concat(staff.map(s =>
       `<option value="${_escape(s.name)}" ${s.name === cur ? 'selected' : ''}>${_escape(s.name)}${s.role ? ' (' + _escape(s.role) + ')' : ''}</option>`)).join('');
-    return `<div class="card" style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap; ${cur ? '' : 'border-left:4px solid #d97706'}">
-      <span style="font-weight:700">👷 Working as:</span>
-      <select onchange="setCurrentWorker('${biz}', this.value)" style="padding:6px 10px; font-size:14px; min-width:180px">${opts}</select>
-      ${cur ? `<span style="font-size:12px; color:var(--text-muted)">DONE presses are credited to <b>${_escape(cur)}</b></span>`
-            : `<span style="font-size:12px; color:#b45309">Select your name so your work is counted</span>`}
+    const need = timed && !cur;
+    let hint;
+    if (timed) hint = cur ? `⏱ Timed station — press START then DONE on each piece. Credited to <b>${_escape(cur)}</b>.`
+                          : `⏱ Timed station — <b>pick your name</b>, then press START on the piece you begin.`;
+    else hint = cur ? `DONE is credited to <b>${_escape(cur)}</b>${role ? ` · ${_escape(role)} station` : ''}`
+                    : `Select who's working`;
+    return `<div class="card" style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap; ${need ? 'border-left:4px solid #d97706' : ''}">
+      <span style="font-weight:700">👷 ${_escape(stage)} — working as:</span>
+      <select onchange="setCurrentWorker('${biz}', '${_escapeJsAttr(stage)}', this.value)" style="padding:6px 10px; font-size:14px; min-width:170px">${opts}</select>
+      <span style="font-size:12px; color:${need ? '#b45309' : 'var(--text-muted)'}">${hint}</span>
     </div>`;
   }
 
@@ -4460,19 +4557,29 @@
   function stageEditorHtml(biz) {
     if (biz === 'bellville' || currentRole !== 'admin') return '';
     const list = bizStages(biz);
-    const rows = list.map((s, i) => `
-      <div style="display:flex; gap:0.4rem; align-items:center; margin-bottom:4px">
+    // role options = distinct staff roles + any role already configured
+    const roleSet = [];
+    ((data[biz] && data[biz].staff) || []).forEach(s => { if (s.role && roleSet.indexOf(s.role) === -1) roleSet.push(s.role); });
+    list.forEach(s => { const r = stageRole(biz, s); if (r && roleSet.indexOf(r) === -1) roleSet.push(r); });
+    const rows = list.map((s, i) => {
+      const role = stageRole(biz, s), timed = stageTimed(biz, s);
+      const roleOpts = ['<option value="">Anyone</option>'].concat(roleSet.map(r => `<option value="${_escape(r)}" ${r === role ? 'selected' : ''}>${_escape(r)}</option>`)).join('');
+      return `
+      <div style="display:flex; gap:0.4rem; align-items:center; margin-bottom:5px; flex-wrap:wrap">
         <span style="width:18px; color:var(--text-muted); font-size:11px">${i + 1}</span>
-        <input value="${_escape(s)}" onchange="renameBizStage('${biz}', ${i}, this.value)" style="flex:1; min-width:120px; padding:4px 6px">
+        <input value="${_escape(s)}" onchange="renameBizStage('${biz}', ${i}, this.value)" style="flex:1; min-width:110px; padding:4px 6px">
+        <select onchange="setBizStageRole('${biz}', '${_escapeJsAttr(s)}', this.value)" title="Who does this stage" style="padding:4px; font-size:12px">${roleOpts}</select>
+        <label style="font-size:11px; display:flex; align-items:center; gap:3px" title="Pick name → START → DONE, to time how long it takes"><input type="checkbox" ${timed ? 'checked' : ''} onchange="toggleBizStageTimed('${biz}', '${_escapeJsAttr(s)}', this.checked)">⏱ timed</label>
         <button class="btn btn-sm" onclick="moveBizStage('${biz}', ${i}, -1)" ${i === 0 ? 'disabled' : ''}>↑</button>
         <button class="btn btn-sm" onclick="moveBizStage('${biz}', ${i}, 1)" ${i === list.length - 1 ? 'disabled' : ''}>↓</button>
         <button class="btn btn-sm btn-danger" onclick="deleteBizStage('${biz}', ${i})">✕</button>
-      </div>`).join('');
+      </div>`;
+    }).join('');
     return `<details class="card">
       <summary style="cursor:pointer; font-weight:700">⚙️ Edit production stages (${list.length})</summary>
       <div style="margin-top:0.6rem">${rows}
         <button class="btn btn-sm" onclick="addBizStage('${biz}')" style="margin-top:4px">➕ Add stage</button>
-        <div style="font-size:11px; color:var(--text-muted); margin-top:6px">Order top→bottom is the production flow. Renaming carries existing progress across.</div>
+        <div style="font-size:11px; color:var(--text-muted); margin-top:6px">Order top→bottom is the production flow. <b>Role</b> sets who the station defaults to; <b>⏱ timed</b> makes that station ask for a name then START/DONE so you can see how long it takes. Renaming carries progress across.</div>
       </div>
     </details>`;
   }
@@ -4516,7 +4623,8 @@
         if (fromStr && day < fromStr) return;
         if (toStr && day > toStr) return;
         const worker = (o.stageWorker && o.stageWorker[stage]) ? o.stageWorker[stage] : 'Unassigned';
-        events.push({ day, stage, worker, qty: o.qty || 1, order: o });
+        const durMin = (o.stageDurationMin && o.stageDurationMin[stage] != null) ? o.stageDurationMin[stage] : null;
+        events.push({ day, stage, worker, qty: o.qty || 1, durMin, order: o });
       });
     });
     const stageOrder = getProductionStages(biz).slice();
@@ -4598,13 +4706,21 @@
           ${active.map(w => `<td style="border:1px solid #999; padding:4px 6px; text-align:center; font-weight:bold; background:#e5e7eb">${colT[w] || 0}</td>`).join('')}
           <td style="border:1px solid #999; padding:4px 6px; text-align:center; font-weight:bold; background:#e5e7eb">${grand}</td></tr></tfoot>
       </table>`;
-    // Per-person breakdown: total + what stages they did
+    // Per-person breakdown: total + what stages they did (with avg time on timed stages)
+    const fmtDur = m => { m = Math.round(m); return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`; };
     const perPerson = active.sort((a, b) => colT[b] - colT[a]).map(w => {
-      const byStage = {};
-      R.events.filter(e => e.worker === w).forEach(e => { byStage[e.stage] = (byStage[e.stage] || 0) + e.qty; });
-      const chips = Object.keys(byStage).sort((a, b) => byStage[b] - byStage[a]).map(s =>
-        `<span style="display:inline-block; background:#eef2ff; color:#3730a3; border-radius:4px; padding:1px 7px; margin:2px; font-size:11px">${esc(s)}: <b>${byStage[s]}</b></span>`).join('');
-      return `<div style="margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid #ddd"><div style="font-weight:700; font-size:13px">${esc(w)} — ${colT[w]} unit(s)</div><div style="margin-top:2px">${chips}</div></div>`;
+      const byStage = {}, durSum = {}, durN = {};
+      R.events.filter(e => e.worker === w).forEach(e => {
+        byStage[e.stage] = (byStage[e.stage] || 0) + e.qty;
+        if (e.durMin != null) { durSum[e.stage] = (durSum[e.stage] || 0) + e.durMin; durN[e.stage] = (durN[e.stage] || 0) + 1; }
+      });
+      const chips = Object.keys(byStage).sort((a, b) => byStage[b] - byStage[a]).map(s => {
+        const t = durN[s] ? ` <span style="color:#2563eb">· avg ${esc(fmtDur(durSum[s] / durN[s]))}</span>` : '';
+        return `<span style="display:inline-block; background:#eef2ff; color:#3730a3; border-radius:4px; padding:1px 7px; margin:2px; font-size:11px">${esc(s)}: <b>${byStage[s]}</b>${t}</span>`;
+      }).join('');
+      const totMin = Object.values(durSum).reduce((a, b) => a + b, 0);
+      const timeNote = totMin > 0 ? ` <span style="font-weight:400; color:#2563eb">· ${esc(fmtDur(totMin))} timed</span>` : '';
+      return `<div style="margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid #ddd"><div style="font-weight:700; font-size:13px">${esc(w)} — ${colT[w]} unit(s)${timeNote}</div><div style="margin-top:2px">${chips}</div></div>`;
     }).join('');
     return `${matrixTable}<div style="font-size:14px; font-weight:800; margin:6px 0; border-bottom:2px solid #000; padding-bottom:3px">What each person did</div>${perPerson}`;
   }
@@ -5881,6 +5997,8 @@
   function _escape(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
+  // Escape a value for use inside a single-quoted JS string in an inline handler
+  function _escapeJsAttr(s) { return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
 
   function renderPlanner() {
     const grid = document.getElementById('planner-grid');
