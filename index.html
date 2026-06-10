@@ -5282,6 +5282,117 @@
   function setDashScope(s) { dashScope = s; renderCommandCentre(); }
   window.setDashScope = setDashScope;
 
+  // ----- Profit & Loss (selectable week or month) -----
+  let plMode = 'month';   // 'week' | 'month'
+  let plWeekDate = null;  // ISO date inside the chosen week; null = current week
+  let plMonth = null;     // 'YYYY-MM'; null = current month
+  function setPlMode(m) { plMode = m; renderCommandCentre(); }
+  function setPlWeekDate(v) { plWeekDate = v || null; renderCommandCentre(); }
+  function setPlMonth(v) { plMonth = v || null; renderCommandCentre(); }
+  window.setPlMode = setPlMode;
+  window.setPlWeekDate = setPlWeekDate;
+  window.setPlMonth = setPlMonth;
+
+  function _monthEndIso(y, m1) { return `${y}-${String(m1).padStart(2, '0')}-${String(new Date(y, m1, 0).getDate()).padStart(2, '0')}`; }
+  // Resolve the selected P&L period into {from,to} and the comparable previous period
+  function _plRange() {
+    if (plMode === 'week') {
+      const mon = getMondayOf(plWeekDate || new Date()) || getMondayOf(new Date());
+      return { from: mon, to: _addDaysIso(mon, 6), prevFrom: _addDaysIso(mon, -7), prevTo: _addDaysIso(mon, -1),
+        label: 'Week of ' + new Date(mon + 'T00:00:00').toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' }), prevLabel: 'prev week' };
+    }
+    const now = new Date();
+    const ym = plMonth || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const [y, m] = ym.split('-').map(Number);
+    const from = `${ym}-01`, to = _monthEndIso(y, m);
+    const pd = new Date(y, m - 2, 1), py = pd.getFullYear(), pm = pd.getMonth() + 1;
+    return { from, to, prevFrom: `${py}-${String(pm).padStart(2, '0')}-01`, prevTo: _monthEndIso(py, pm),
+      label: new Date(y, m - 1, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' }), prevLabel: 'prev month' };
+  }
+  // Completed line items in a date range (for the per-order P&L breakdown)
+  function _plLineItems(fromIso, toIso) {
+    const items = [];
+    dashOrders().forEach(({ biz, o }) => {
+      if (o.status !== 'done' && o.status !== 'delivered') return;
+      const cd = _completionDate(o);
+      if (!cd || cd < fromIso || cd > toIso) return;
+      const qty = parseInt(o.qty) || 1;
+      const c = orderCosting(biz, o);
+      const rev = _orderNetRevenue(biz, o, c);
+      const cost = (Number(c.trueCost) || 0) * qty;
+      const revenue = rev.net * qty;
+      items.push({ biz, inv: o.invoice || o.id, name: o.product || '', qty, cd, revenue, cost, profit: revenue - cost, defaulted: rev.defaulted });
+    });
+    return items.sort((a, b) => (a.cd < b.cd ? 1 : a.cd > b.cd ? -1 : 0));
+  }
+
+  function _plCardHtml() {
+    const pl = _plRange();
+    const cur = _periodSummary(pl.from, pl.to);
+    const prev = _periodSummary(pl.prevFrom, pl.prevTo);
+    const items = _plLineItems(pl.from, pl.to);
+    const now = new Date();
+    const curYm = plMonth || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const curWk = plWeekDate || _todayIsoLocal();
+    const pcol = n => n >= 0 ? '#16a34a' : '#dc2626';
+    const mpct = (m, valid) => valid ? (m * 100).toFixed(1) + '%' : '—';
+    const tile = (label, value, accent, sub) => `
+      <div class="card" style="margin:0; padding:0.8rem 0.95rem">
+        <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted)">${label}</div>
+        <div style="font-size:22px; font-weight:800; color:${accent || 'var(--text)'}; line-height:1.15; margin-top:2px">${value}</div>
+        ${sub ? `<div style="font-size:11px; color:var(--text-muted); margin-top:2px">${sub}</div>` : ''}
+      </div>`;
+    const modeBtn = (m, lbl) => `<button class="btn btn-sm" onclick="setPlMode('${m}')" style="${plMode === m ? 'background:var(--accent); color:#fff; border-color:var(--accent)' : 'background:transparent'}">${lbl}</button>`;
+    const picker = plMode === 'week'
+      ? `<label style="font-size:12px; display:flex; align-items:center; gap:0.3rem">Week of <input type="date" value="${curWk}" onchange="setPlWeekDate(this.value)" style="padding:4px 6px"></label>`
+      : `<label style="font-size:12px; display:flex; align-items:center; gap:0.3rem">Month <input type="month" value="${curYm}" onchange="setPlMonth(this.value)" style="padding:4px 6px"></label>`;
+    // Per-business split (only meaningful when viewing all combined)
+    let bizSplit = '';
+    if (dashScope === 'all') {
+      const rows = ['bellville', 'pinkfoot', 'repticube'].map(b => {
+        const bi = items.filter(x => x.biz === b);
+        if (!bi.length) return '';
+        const rev = bi.reduce((a, x) => a + x.revenue, 0), cost = bi.reduce((a, x) => a + x.cost, 0), prof = rev - cost;
+        return `<tr><td style="padding:3px 6px">${b}</td><td style="padding:3px 6px; text-align:right">${_rand0(rev)}</td><td style="padding:3px 6px; text-align:right">${_rand0(cost)}</td><td style="padding:3px 6px; text-align:right; font-weight:700; color:${pcol(prof)}">${_rand0(prof)}</td></tr>`;
+      }).join('');
+      if (rows) bizSplit = `<div style="margin-top:0.75rem; overflow-x:auto"><table style="width:100%; border-collapse:collapse; font-size:12px">
+        <thead><tr style="color:var(--text-muted); text-align:right"><th style="text-align:left; padding:3px 6px">Business</th><th style="padding:3px 6px">Revenue</th><th style="padding:3px 6px">Cost</th><th style="padding:3px 6px">Profit</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
+    }
+    const itemsList = items.length ? `<details style="margin-top:0.75rem"><summary style="cursor:pointer; font-weight:700; font-size:13px">📄 ${items.length} completed order(s) in this period</summary>
+      <div style="overflow-x:auto; margin-top:0.5rem"><table style="width:100%; border-collapse:collapse; font-size:12px">
+        <thead><tr style="color:var(--text-muted)"><th style="text-align:left; padding:3px 6px">Date</th><th style="text-align:left; padding:3px 6px">Order</th><th style="text-align:right; padding:3px 6px">Revenue</th><th style="text-align:right; padding:3px 6px">Cost</th><th style="text-align:right; padding:3px 6px">Profit</th></tr></thead>
+        <tbody>${items.map(x => `<tr style="border-top:1px solid var(--border)">
+          <td style="padding:3px 6px; white-space:nowrap">${x.cd}</td>
+          <td style="padding:3px 6px">#${_escape(x.inv)} ${_escape(x.name)}${x.qty > 1 ? ' ×' + x.qty : ''}${dashScope === 'all' ? ` <span style="color:var(--text-muted); font-size:10px">(${x.biz})</span>` : ''}${x.defaulted ? ' <span title="No selling price — estimated at cost +50%" style="color:#d97706">~</span>' : ''}</td>
+          <td style="padding:3px 6px; text-align:right">${_rand0(x.revenue)}</td>
+          <td style="padding:3px 6px; text-align:right">${_rand0(x.cost)}</td>
+          <td style="padding:3px 6px; text-align:right; font-weight:600; color:${pcol(x.profit)}">${_rand0(x.profit)}</td></tr>`).join('')}</tbody>
+      </table></div></details>` : '<div class="empty" style="margin-top:0.5rem">No completed orders in this period</div>';
+    return `
+      <div class="card" style="border-left:4px solid #16a34a">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.6rem; margin-bottom:0.6rem">
+          <div class="card-title" style="margin:0">💰 Profit &amp; Loss — ${_escape(pl.label)}</div>
+          <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
+            <span style="display:flex; gap:0.3rem; background:var(--bg); padding:3px; border-radius:8px">${modeBtn('week', 'Week')}${modeBtn('month', 'Month')}</span>
+            ${picker}
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:0.7rem">
+          ${tile('Revenue (net)', _rand0(cur.revenue), null, 'was ' + _rand0(prev.revenue) + ' ' + pl.prevLabel)}
+          ${tile('Material cost', _rand0(cur.matCost))}
+          ${tile('Labour + overhead', _rand0(cur.loCost))}
+          ${tile('Total cost', _rand0(cur.cost), null, 'was ' + _rand0(prev.cost) + ' ' + pl.prevLabel)}
+          ${tile('Gross profit', _rand0(cur.profit), pcol(cur.profit), 'was ' + _rand0(prev.profit) + ' ' + pl.prevLabel)}
+          ${tile('Margin', mpct(cur.margin, cur.marginValid), pcol(cur.profit))}
+          ${tile('Pieces completed', cur.pieces, null, 'weighted ' + cur.weighted.toFixed(1))}
+        </div>
+        ${cur.defaultedPieces > 0 ? `<div style="margin-top:0.6rem; font-size:12px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:0.5rem 0.7rem">⚠️ ${cur.defaultedPieces} piece(s) had no selling price — revenue estimated at <b>cost + 50%</b> (marked “~”). Set a selling price on those orders for exact figures.</div>` : ''}
+        ${bizSplit}
+        ${itemsList}
+      </div>`;
+  }
+
   function _todayIsoLocal() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -5304,25 +5415,40 @@
     return o.dueDate ? String(o.dueDate).slice(0, 10) : null;
   }
 
-  // Aggregate completed orders (done/delivered) whose completion date is within [mon,sun]
+  // Net revenue for an order. If no selling price is set, default to a 50% markup on true
+  // cost (cost × 1.5) so the P&L isn't blank — flagged so the owner knows it's an estimate.
+  function _orderNetRevenue(biz, o, c) {
+    const cc = c || orderCosting(biz, o);
+    const sp = Number(cc.sellingPrice) || 0;
+    if (sp > 0) return { net: Number(cc.netPrice) || 0, defaulted: false };
+    return { net: (Number(cc.trueCost) || 0) * 1.5, defaulted: true };
+  }
+
+  // Aggregate completed orders (done/delivered) whose completion date is within [fromIso,toIso].
   // Reads profit-engine values via orderCosting (frozen for done/delivered). Totals scale by qty.
-  function _weekSummary(monIso, sunIso) {
-    let pieces = 0, weighted = 0, revenue = 0, cost = 0;
+  function _periodSummary(fromIso, toIso) {
+    let pieces = 0, weighted = 0, revenue = 0, cost = 0, matCost = 0, loCost = 0, defaultedPieces = 0;
     dashOrders().forEach(({ biz, o }) => {
       if (o.status !== 'done' && o.status !== 'delivered') return;
       const cd = _completionDate(o);
-      if (!cd || cd < monIso || cd > sunIso) return;
+      if (!cd || cd < fromIso || cd > toIso) return;
       const qty = parseInt(o.qty) || 1;
       const c = orderCosting(biz, o);
+      const rev = _orderNetRevenue(biz, o, c);
       pieces += qty;
       weighted += (Number(c.weight) || 1) * qty;
-      revenue += (Number(c.netPrice) || 0) * qty;   // netPrice already strips VAT per business
+      revenue += rev.net * qty;
       cost += (Number(c.trueCost) || 0) * qty;
+      matCost += (Number(c.materialCost) || 0) * qty;
+      loCost += (Number(c.labourOverheadShare) || 0) * qty;
+      if (rev.defaulted) defaultedPieces += qty;
     });
     const profit = revenue - cost;
     const margin = revenue > 0 ? profit / revenue : 0;
-    return { pieces, weighted, revenue, cost, profit, margin, marginValid: revenue > 0 };
+    return { pieces, weighted, revenue, cost, matCost, loCost, profit, margin, marginValid: revenue > 0, defaultedPieces };
   }
+  // Back-compat thin wrapper (week = a [mon,sun] range)
+  function _weekSummary(monIso, sunIso) { return _periodSummary(monIso, sunIso); }
 
   // Per-business low stock (replicates material-requirements logic for any biz)
   function _materialRequirementsFor(biz) {
@@ -5428,7 +5554,9 @@
         if (cd && cd >= thisMon && cd <= thisSun) {
           const qty = parseInt(o.qty) || 1;
           const c = orderCosting(biz, o);
-          completed.push({ biz, name: o.product || '', inv: o.invoice || o.id, profit: (Number(c.profit) || 0) * qty, margin: c.marginValid ? c.margin : null });
+          const rev = _orderNetRevenue(biz, o, c);
+          const unitProfit = rev.net - (Number(c.trueCost) || 0);
+          completed.push({ biz, name: o.product || '', inv: o.invoice || o.id, profit: unitProfit * qty, margin: rev.net > 0 ? unitProfit / rev.net : null, defaulted: rev.defaulted });
         }
       }
     });
@@ -5464,6 +5592,8 @@
           <button class="btn btn-sm" onclick="setDashScope('all')" style="${dashScope === 'all' ? 'background:var(--accent); color:#fff; border-color:var(--accent)' : 'background:transparent'}">All Combined</button>
         </div>
       </div>
+
+      ${_plCardHtml()}
 
       <div class="card">
         <div class="card-title">📅 This Week ${noData ? '<span style="font-size:11px; font-weight:normal; color:var(--text-muted)">— no completions yet this week</span>' : ''}</div>
@@ -5531,7 +5661,7 @@
       const qty = parseInt(o.qty) || 1;
       const c = orderCosting(biz, o);
       pieces += qty;
-      revenue += (Number(c.netPrice) || 0) * qty;
+      revenue += _orderNetRevenue(biz, o, c).net * qty;
       cost += (Number(c.trueCost) || 0) * qty;
     });
     const profit = revenue - cost;
