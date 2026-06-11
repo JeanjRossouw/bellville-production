@@ -232,7 +232,6 @@
       <label>Your Role</label>
       <select id="signup-role" onchange="onSignupRoleChange()" style="margin-bottom:1rem">
         <option value="">-- Select your role --</option>
-        <option value="admin">Admin (full access)</option>
         <option value="sales">Sales Staff</option>
         <option value="factory">Factory Floor</option>
         <option value="dispatch">Dispatch / Driver</option>
@@ -7574,11 +7573,11 @@
   // Role permissions: which tabs each role can see
   const ROLE_PERMISSIONS = {
     admin: ['dashboard', 'intake', 'orders', 'stations', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'costs', 'staff', 'materials', 'schedule', 'planner'],
-    sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished'],
-    factory: ['dashboard', 'orders', 'stations', 'done', 'calendar', 'bom', 'schedule', 'planner'],
-    dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'finished'],
-    fabric: ['dashboard', 'calendar', 'fabric'],
-    manager: ['dashboard', 'intake', 'orders', 'stations', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner'],
+    sales: ['intake', 'orders', 'done', 'calendar', 'dispatch', 'finished'],
+    factory: ['orders', 'stations', 'done', 'calendar', 'bom', 'schedule', 'planner'],
+    dispatch: ['done', 'calendar', 'dispatch', 'finished'],
+    fabric: ['calendar', 'fabric'],
+    manager: ['intake', 'orders', 'stations', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner'],
     station: ['stations']
   };
   
@@ -7819,6 +7818,10 @@
     const role = document.getElementById('signup-role').value;
     if (!role) {
       document.getElementById('auth-status').textContent = 'Please select your role';
+      return;
+    }
+    if (role === 'admin') {
+      document.getElementById('auth-status').textContent = 'Admin accounts can’t be self-registered.';
       return;
     }
     const extra = {};
