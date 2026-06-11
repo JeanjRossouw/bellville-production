@@ -780,6 +780,18 @@
   
   <!-- INVENTORY / MATERIALS -->
   <div id="section-materials" class="section">
+    <div class="card" style="border-left:4px solid #16a34a">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>📥 Goods Received (GRV)</span>
+        <button class="btn btn-primary" onclick="openGrvDialog()">＋ New GRV / Receive Stock</button>
+      </div>
+      <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
+        Receive a supplier delivery: snap the invoice, enter the supplier's codes &amp; descriptions with quantities,
+        allocate each line to a raw material (or create a new one), and it's added straight to stock.
+      </p>
+      <div id="grv-history"></div>
+    </div>
+
     <div class="card">
       <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
         <span>📦 CURRENT STOCK</span>
@@ -841,7 +853,63 @@
       </div>
     </div>
   </div>
-  
+
+  <!-- GRV (Goods Received) MODAL -->
+  <div id="grv-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; align-items:center; justify-content:center; padding:1rem">
+    <div style="max-width:920px; width:100%; background:var(--surface,#fff); border-radius:12px; padding:1.5rem; max-height:92vh; overflow-y:auto">
+      <h2 style="margin-bottom:1rem">📥 Receive Stock (GRV)</h2>
+      <div class="row">
+        <div class="f1">
+          <label>Supplier</label>
+          <input id="grv-supplier" list="grv-supplier-list" placeholder="e.g., Builders Express" autocomplete="off">
+          <datalist id="grv-supplier-list"></datalist>
+        </div>
+        <div class="f1"><label>Invoice #</label><input id="grv-invoice" placeholder="e.g., INV-12345" autocomplete="off"></div>
+        <div class="f1"><label>Date received</label><input type="date" id="grv-date"></div>
+      </div>
+      <div class="row">
+        <div class="f1">
+          <label>Invoice photo (optional)</label>
+          <input type="file" id="grv-photo" accept="image/*" capture="environment" onchange="grvOnPhoto(this)">
+          <div id="grv-photo-preview" style="margin-top:0.5rem"></div>
+        </div>
+      </div>
+      <div style="margin-top:1rem">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+          <label style="font-weight:700">Line items</label>
+          <div style="display:flex; gap:0.5rem">
+            <button class="btn btn-sm" onclick="grvAddLine()">＋ Add line</button>
+            <button class="btn btn-sm" onclick="grvToggleBulk()">📋 Bulk paste</button>
+          </div>
+        </div>
+        <div id="grv-bulk" style="display:none; margin-top:0.5rem">
+          <textarea id="grv-bulk-text" rows="4" style="width:100%; font-family:monospace; font-size:12px" placeholder="One line per item:  code, description, qty, cost&#10;e.g.  PINE-2x4, Pine 2x4 2.4m, 20, 85.50"></textarea>
+          <button class="btn btn-sm" onclick="grvParseBulk()" style="margin-top:0.25rem">Parse into lines</button>
+        </div>
+        <div style="overflow-x:auto; margin-top:0.5rem">
+          <table style="width:100%; border-collapse:collapse; font-size:13px; min-width:760px">
+            <thead><tr style="text-align:left; color:var(--text-muted)">
+              <th style="padding:4px">Supplier code</th><th style="padding:4px">Description</th>
+              <th style="padding:4px; width:80px">Qty</th><th style="padding:4px; width:90px">Unit</th>
+              <th style="padding:4px; width:110px">Unit cost (R)</th><th style="padding:4px; width:210px">Allocate to material</th><th style="width:32px"></th>
+            </tr></thead>
+            <tbody id="grv-lines-body"></tbody>
+          </table>
+        </div>
+      </div>
+      <div id="grv-modal-status" style="font-size:12px; color:var(--text-muted); margin-top:0.5rem"></div>
+      <div style="display:flex; gap:0.5rem; justify-content:flex-end; margin-top:1rem">
+        <button class="btn" onclick="closeGrvDialog()">Cancel</button>
+        <button class="btn btn-primary" onclick="grvReceive()">✓ Receive into stock</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- IMAGE LIGHTBOX -->
+  <div id="img-lightbox" onclick="closeLightbox()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:10000; align-items:center; justify-content:center; padding:1rem">
+    <img id="img-lightbox-img" alt="invoice" style="max-width:96%; max-height:96%; border-radius:6px">
+  </div>
+
   <!-- SCHEDULE -->
   <div id="section-schedule" class="section">
     <div class="card">
@@ -979,7 +1047,7 @@
     if (sec === 'bom') renderBomSection();
     if (sec === 'costs') renderCostSettings();
     if (sec === 'stations') renderStations();
-    if (sec === 'materials') renderInventory();
+    if (sec === 'materials') { renderInventory(); try { renderGrvSection(); } catch (e) {} }
     if (sec === 'intake') populateProductDatalist();
     if (sec === 'done') renderDoneOrders();
     if (sec === 'planner') renderPlanner();
@@ -1507,7 +1575,203 @@
     closeStockInDialog();
     renderInventory();
   }
-  
+
+  // ===== Goods Received (GRV) — capture a supplier delivery straight into raw-material stock =====
+  let grvDraft = { photo: null, lines: [] };
+  function ensureGrvs() { const b = currentData(); if (!Array.isArray(b.grvs)) b.grvs = []; return b.grvs; }
+
+  function openGrvDialog() {
+    const mats = currentData().materialsLibrary || [];
+    grvDraft = { photo: null, lines: [] };
+    document.getElementById('grv-supplier').value = '';
+    document.getElementById('grv-invoice').value = '';
+    document.getElementById('grv-date').value = new Date().toISOString().split('T')[0];
+    document.getElementById('grv-photo').value = '';
+    document.getElementById('grv-photo-preview').innerHTML = '';
+    document.getElementById('grv-bulk').style.display = 'none';
+    document.getElementById('grv-bulk-text').value = '';
+    document.getElementById('grv-modal-status').textContent = '';
+    document.getElementById('grv-supplier-list').innerHTML = (currentData().suppliers || []).map(s => `<option value="${_escape(s.name)}">`).join('');
+    grvAddLine();
+    document.getElementById('grv-modal').style.display = 'flex';
+  }
+  function closeGrvDialog() { document.getElementById('grv-modal').style.display = 'none'; }
+
+  function grvAddLine() { grvDraft.lines.push({ code: '', desc: '', qty: '', unit: 'Each', cost: '', matId: '' }); renderGrvDraft(); }
+  function grvRemoveLine(i) { grvDraft.lines.splice(i, 1); if (!grvDraft.lines.length) grvAddLine(); else renderGrvDraft(); }
+  function grvSetLine(i, field, val) {
+    const ln = grvDraft.lines[i]; if (!ln) return;
+    ln[field] = val;
+    if (field === 'code' || field === 'matId') {
+      if (field === 'code') {
+        const code = String(val).trim().toLowerCase();
+        const m = code && (currentData().materialsLibrary || []).find(x => (x.supplierCode || '').toLowerCase() === code);
+        if (m) { ln.matId = m.id; if (!ln.desc) ln.desc = m.name; if (!ln.unit || ln.unit === 'Each') ln.unit = m.unit || 'Each'; }
+      }
+      renderGrvDraft();
+    }
+  }
+  function grvToggleBulk() { const b = document.getElementById('grv-bulk'); b.style.display = b.style.display === 'none' ? 'block' : 'none'; }
+  function grvParseBulk() {
+    const txt = document.getElementById('grv-bulk-text').value || '';
+    txt.split('\n').map(l => l.trim()).filter(Boolean).forEach(r => {
+      const p = r.split(/\t|,|;/).map(s => s.trim());
+      const code = p[0] || '', desc = p[1] || '', qty = p[2] || '', cost = p[3] || '';
+      if (!code && !desc) return;
+      const line = { code, desc, qty, unit: 'Each', cost, matId: '' };
+      const m = code && (currentData().materialsLibrary || []).find(x => (x.supplierCode || '').toLowerCase() === code.toLowerCase());
+      if (m) { line.matId = m.id; if (!line.desc) line.desc = m.name; line.unit = m.unit || 'Each'; }
+      grvDraft.lines.push(line);
+    });
+    grvDraft.lines = grvDraft.lines.filter(l => l.code || l.desc || l.qty || l.cost);
+    if (!grvDraft.lines.length) grvAddLine();
+    document.getElementById('grv-bulk-text').value = '';
+    document.getElementById('grv-bulk').style.display = 'none';
+    renderGrvDraft();
+  }
+  function renderGrvDraft() {
+    const body = document.getElementById('grv-lines-body'); if (!body) return;
+    const mats = currentData().materialsLibrary || [];
+    body.innerHTML = grvDraft.lines.map((ln, i) => {
+      const opts = `<option value="">➕ New material</option>` + mats.map(m => `<option value="${m.id}" ${ln.matId === m.id ? 'selected' : ''}>${_escape(m.name)}${m.unit ? ' (' + _escape(m.unit) + ')' : ''}</option>`).join('');
+      return `<tr>
+        <td style="padding:2px"><input value="${_escape(ln.code)}" onchange="grvSetLine(${i},'code',this.value)" style="width:110px" autocomplete="off"></td>
+        <td style="padding:2px"><input value="${_escape(ln.desc)}" onchange="grvSetLine(${i},'desc',this.value)" style="width:100%; min-width:150px" autocomplete="off"></td>
+        <td style="padding:2px"><input type="number" step="0.01" value="${_escape(ln.qty)}" onchange="grvSetLine(${i},'qty',this.value)" style="width:75px"></td>
+        <td style="padding:2px"><input value="${_escape(ln.unit)}" onchange="grvSetLine(${i},'unit',this.value)" style="width:80px" autocomplete="off"></td>
+        <td style="padding:2px"><input type="number" step="0.01" value="${_escape(ln.cost)}" onchange="grvSetLine(${i},'cost',this.value)" style="width:100px"></td>
+        <td style="padding:2px"><select onchange="grvSetLine(${i},'matId',this.value)" style="width:200px">${opts}</select>${ln.matId ? '' : ' <span style="font-size:10px; color:#16a34a; font-weight:700">new</span>'}</td>
+        <td style="padding:2px; text-align:center"><button class="btn btn-sm btn-danger" onclick="grvRemoveLine(${i})">✕</button></td>
+      </tr>`;
+    }).join('');
+  }
+
+  // Downscale + JPEG-compress an image File to a data URL (keeps the invoice legible but small)
+  function _compressImage(file, maxDim, quality) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        const img = new Image();
+        img.onload = () => {
+          let w = img.width, h = img.height;
+          if (w > h && w > maxDim) { h = Math.round(h * maxDim / w); w = maxDim; }
+          else if (h >= w && h > maxDim) { w = Math.round(w * maxDim / h); h = maxDim; }
+          const c = document.createElement('canvas'); c.width = w; c.height = h;
+          c.getContext('2d').drawImage(img, 0, 0, w, h);
+          resolve(c.toDataURL('image/jpeg', quality));
+        };
+        img.onerror = reject; img.src = e.target.result;
+      };
+      reader.onerror = reject; reader.readAsDataURL(file);
+    });
+  }
+  async function grvOnPhoto(input) {
+    const f = input.files && input.files[0]; if (!f) return;
+    const status = document.getElementById('grv-modal-status'); status.textContent = 'Processing photo…';
+    try {
+      grvDraft.photo = await _compressImage(f, 1400, 0.6);
+      document.getElementById('grv-photo-preview').innerHTML =
+        `<img src="${grvDraft.photo}" style="max-height:160px; border-radius:6px; border:1px solid var(--border)"> ` +
+        `<button class="btn btn-sm" onclick="grvClearPhoto()">Remove</button> ` +
+        `<span style="font-size:11px; color:var(--text-muted)">~${Math.round(grvDraft.photo.length / 1024)} KB</span>`;
+      status.textContent = '';
+    } catch (e) { status.textContent = 'Could not read image: ' + e.message; }
+  }
+  function grvClearPhoto() { grvDraft.photo = null; document.getElementById('grv-photo').value = ''; document.getElementById('grv-photo-preview').innerHTML = ''; }
+
+  // Invoice photos live in a SEPARATE Firestore collection so the main (1 MB) data doc stays small
+  async function _grvSavePhoto(photoId, dataUrl) {
+    if (!window.firebaseDb || !window.firebaseFns) throw new Error('offline');
+    await window.firebaseFns.setDoc(window.firebaseFns.doc(window.firebaseDb, 'grv-photos', photoId), { image: dataUrl, createdAt: new Date().toISOString() });
+  }
+  async function _grvLoadPhoto(photoId) {
+    if (!window.firebaseDb || !window.firebaseFns) return null;
+    const snap = await window.firebaseFns.getDoc(window.firebaseFns.doc(window.firebaseDb, 'grv-photos', photoId));
+    return snap.exists() ? snap.data().image : null;
+  }
+
+  async function grvReceive() {
+    const supplier = document.getElementById('grv-supplier').value.trim();
+    const invoice = document.getElementById('grv-invoice').value.trim();
+    const date = document.getElementById('grv-date').value || new Date().toISOString().split('T')[0];
+    const status = document.getElementById('grv-modal-status');
+    const valid = grvDraft.lines.filter(l => (parseFloat(l.qty) || 0) > 0 && (l.desc || l.code || l.matId));
+    if (!valid.length) { status.textContent = '⚠️ Add at least one line with a quantity.'; return; }
+    for (const l of valid) { if (!l.matId && !String(l.desc).trim()) { status.textContent = '⚠️ Every line needs a material — pick one, or give a description to create a new one.'; return; } }
+
+    snapshotState();
+    const biz = currentData();
+    if (!biz.materialsLibrary) biz.materialsLibrary = [];
+    const recordLines = [];
+    valid.forEach(l => {
+      const qty = parseFloat(l.qty) || 0;
+      const cost = parseFloat(l.cost);
+      let mat = l.matId ? biz.materialsLibrary.find(m => m.id === l.matId) : null;
+      if (!mat) {
+        mat = { id: 'm' + Date.now() + Math.floor(Math.random() * 1000), name: (l.desc || l.code || 'New material').trim(), unit: (l.unit || 'Each').trim(), cost: isNaN(cost) ? 0 : cost, stock: 0, supplierCode: (l.code || '').trim() };
+        biz.materialsLibrary.push(mat);
+      }
+      mat.stock = (parseFloat(mat.stock || 0)) + qty;
+      if (!isNaN(cost) && cost > 0) mat.cost = cost;             // keep the latest purchase cost
+      if ((l.code || '').trim() && !mat.supplierCode) mat.supplierCode = (l.code || '').trim();
+      logStockMovement(mat.id, qty, 'GRV' + (invoice ? ' #' + invoice : '') + (supplier ? ' · ' + supplier : ''), (l.code ? l.code + ' ' : '') + (l.desc || mat.name));
+      recordLines.push({ code: l.code || '', desc: l.desc || mat.name, qty, unit: mat.unit, cost: isNaN(cost) ? null : cost, matId: mat.id });
+    });
+
+    const grv = { id: 'GRV-' + Date.now(), supplier, invoice, date, photoId: null, lines: recordLines, total: recordLines.reduce((a, x) => a + (x.cost ? x.cost * x.qty : 0), 0), receivedAt: new Date().toISOString(), user: (currentUser && currentUser.email) ? currentUser.email.split('@')[0] : 'system' };
+
+    let photoWarn = '';
+    if (grvDraft.photo) {
+      const photoId = 'grvph-' + Date.now();
+      try { await _grvSavePhoto(photoId, grvDraft.photo); grv.photoId = photoId; }
+      catch (e) { photoWarn = ' (invoice photo could not be saved — check connection/permissions)'; console.warn('GRV photo save failed:', e); }
+    }
+    ensureGrvs().unshift(grv);
+    saveData();
+    closeGrvDialog();
+    renderInventory(); renderGrvSection();
+    try { renderRawMaterialCosts(); } catch (e) {}
+    toast(`GRV received — ${recordLines.length} line(s) added to stock${photoWarn}`, photoWarn ? 'warn' : 'success', 4000);
+  }
+
+  function renderGrvSection() {
+    const el = document.getElementById('grv-history'); if (!el) return;
+    const grvs = currentData().grvs || [];
+    if (!grvs.length) { el.innerHTML = '<div class="empty">No goods received yet. Tap “New GRV” to capture a delivery.</div>'; return; }
+    el.innerHTML = grvs.slice(0, 50).map(g => {
+      const lines = (g.lines || []).map(l => `<tr>
+        <td style="padding:2px 6px">${_escape(l.code || '')}</td>
+        <td style="padding:2px 6px">${_escape(l.desc || '')}</td>
+        <td style="padding:2px 6px; text-align:right; white-space:nowrap">${l.qty} ${_escape(l.unit || '')}</td>
+        <td style="padding:2px 6px; text-align:right">${l.cost != null ? _rand0(l.cost * l.qty) : '—'}</td></tr>`).join('');
+      return `<details style="border:1px solid var(--border); border-radius:8px; padding:0.5rem 0.75rem; margin-bottom:0.5rem">
+        <summary style="cursor:pointer; font-weight:600">${_escape(g.date || '')} · ${_escape(g.supplier || '(no supplier)')}${g.invoice ? ' · #' + _escape(g.invoice) : ''} <span style="color:var(--text-muted); font-weight:400">— ${(g.lines || []).length} line(s)${g.total ? ' · ' + _rand0(g.total) : ''}</span></summary>
+        <div style="margin-top:0.5rem">
+          ${g.photoId ? `<button class="btn btn-sm" onclick="grvViewPhoto('${g.id}')">🖼 View invoice photo</button>` : ''}
+          <div style="overflow-x:auto; margin-top:0.4rem"><table style="width:100%; border-collapse:collapse; font-size:12px">
+            <thead><tr style="color:var(--text-muted); text-align:left"><th style="padding:2px 6px">Code</th><th style="padding:2px 6px">Description</th><th style="padding:2px 6px; text-align:right">Qty</th><th style="padding:2px 6px; text-align:right">Value</th></tr></thead>
+            <tbody>${lines}</tbody></table></div>
+          <div style="margin-top:0.4rem; font-size:11px; color:var(--text-muted)">Received by ${_escape(g.user || '')}${g.receivedAt ? ' · ' + new Date(g.receivedAt).toLocaleString('en-ZA') : ''}</div>
+        </div>
+      </details>`;
+    }).join('');
+  }
+  async function grvViewPhoto(grvId) {
+    const g = (currentData().grvs || []).find(x => x.id === grvId);
+    if (!g || !g.photoId) return;
+    const lb = document.getElementById('img-lightbox'), img = document.getElementById('img-lightbox-img');
+    img.alt = 'Loading…'; img.removeAttribute('src'); lb.style.display = 'flex';
+    try { const url = await _grvLoadPhoto(g.photoId); if (url) img.src = url; else { closeLightbox(); toast('Invoice photo not found', 'warn'); } }
+    catch (e) { closeLightbox(); toast('Could not load photo: ' + e.message, 'error'); }
+  }
+  function closeLightbox() { document.getElementById('img-lightbox').style.display = 'none'; }
+
+  window.openGrvDialog = openGrvDialog; window.closeGrvDialog = closeGrvDialog;
+  window.grvAddLine = grvAddLine; window.grvRemoveLine = grvRemoveLine; window.grvSetLine = grvSetLine;
+  window.grvToggleBulk = grvToggleBulk; window.grvParseBulk = grvParseBulk;
+  window.grvOnPhoto = grvOnPhoto; window.grvClearPhoto = grvClearPhoto; window.grvReceive = grvReceive;
+  window.renderGrvSection = renderGrvSection; window.grvViewPhoto = grvViewPhoto; window.closeLightbox = closeLightbox;
+
   function deductMaterialsForOrder(biz, order) {
     // Called when an order moves to "in production"
     if (order.materialsDeducted) return; // Already deducted
