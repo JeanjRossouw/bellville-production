@@ -892,7 +892,7 @@
       <div class="row">
         <div class="f1">
           <label>Supplier</label>
-          <input id="grv-supplier" list="grv-supplier-list" placeholder="e.g., Builders Express" autocomplete="off">
+          <input id="grv-supplier" list="grv-supplier-list" placeholder="e.g., Builders Express" autocomplete="off" onchange="grvOnSupplierChange()">
           <datalist id="grv-supplier-list"></datalist>
         </div>
         <div class="f1"><label>Invoice #</label><input id="grv-invoice" placeholder="e.g., INV-12345" autocomplete="off"></div>
@@ -1709,14 +1709,28 @@
     const ln = grvDraft.lines[i]; if (!ln) return;
     ln[field] = val;
     if (field === 'code' || field === 'matId') {
-      if (field === 'code') {
-        const code = String(val).trim().toLowerCase();
-        const m = code && (currentData().materialsLibrary || []).find(x => (x.supplierCode || '').toLowerCase() === code);
-        if (m) { ln.matId = m.id; if (!ln.desc) ln.desc = m.name; if (!ln.unit || ln.unit === 'Each') ln.unit = m.unit || 'Each'; }
-      }
+      if (field === 'code') grvApplyCode(ln);
       renderGrvDraft();
     }
     grvUpdateTotals();
+  }
+  // Look up a supplier code → fill the line (supplier catalog first, then a material's saved code)
+  function grvApplyCode(ln) {
+    const code = String(ln.code || '').trim().toLowerCase(); if (!code) return;
+    const mats = currentData().materialsLibrary || [];
+    const sup = (document.getElementById('grv-supplier') ? document.getElementById('grv-supplier').value : '').trim().toLowerCase();
+    const cat = data.supplierCatalog || {};
+    let hit = (sup && cat[sup] && cat[sup][code]) ? cat[sup][code] : null;
+    if (!hit) { for (const s in cat) { if (cat[s] && cat[s][code]) { hit = cat[s][code]; break; } } } // any supplier with this code
+    if (hit) {
+      if (hit.matId && mats.some(m => m.id === hit.matId)) ln.matId = hit.matId;
+      if (!ln.desc && hit.desc) ln.desc = hit.desc;
+      if ((!ln.unit || ln.unit === 'Each') && hit.unit) ln.unit = hit.unit;
+      if ((ln.cost === '' || ln.cost == null) && hit.cost != null) ln.cost = hit.cost;
+      return;
+    }
+    const m = mats.find(x => (x.supplierCode || '').toLowerCase() === code); // fallback: a material's own code
+    if (m) { ln.matId = m.id; if (!ln.desc) ln.desc = m.name; if (!ln.unit || ln.unit === 'Each') ln.unit = m.unit || 'Each'; }
   }
   // Live totals — prices are EX VAT; VAT/incl shown only to reconcile against the paper invoice
   function grvUpdateTotals() {
@@ -1727,6 +1741,8 @@
       ? `Subtotal (ex VAT): <b>R${sub.toFixed(2)}</b> &nbsp;·&nbsp; VAT 15%: R${vat.toFixed(2)} &nbsp;·&nbsp; Total incl VAT: <b>R${(sub + vat).toFixed(2)}</b>`
       : '';
   }
+  function grvOnSupplierChange() { grvDraft.lines.forEach(l => { if (l.code) grvApplyCode(l); }); renderGrvDraft(); }
+  window.grvOnSupplierChange = grvOnSupplierChange;
   function grvToggleBulk() { const b = document.getElementById('grv-bulk'); b.style.display = b.style.display === 'none' ? 'block' : 'none'; }
   function grvParseBulk() {
     const txt = document.getElementById('grv-bulk-text').value || '';
@@ -1735,8 +1751,7 @@
       const code = p[0] || '', desc = p[1] || '', qty = p[2] || '', cost = p[3] || '';
       if (!code && !desc) return;
       const line = { code, desc, qty, unit: 'Each', cost, matId: '' };
-      const m = code && (currentData().materialsLibrary || []).find(x => (x.supplierCode || '').toLowerCase() === code.toLowerCase());
-      if (m) { line.matId = m.id; if (!line.desc) line.desc = m.name; line.unit = m.unit || 'Each'; }
+      if (code) grvApplyCode(line); // auto-fill from supplier catalog / saved material code
       grvDraft.lines.push(line);
     });
     grvDraft.lines = grvDraft.lines.filter(l => l.code || l.desc || l.qty || l.cost);
@@ -1819,6 +1834,13 @@
     snapshotState();
     const biz = currentData();
     if (!biz.materialsLibrary) biz.materialsLibrary = [];
+    // Remember the supplier so it's a one-click pick next time
+    if (supplier) {
+      if (!biz.suppliers) biz.suppliers = [];
+      if (!biz.suppliers.some(s => (s.name || '').toLowerCase() === supplier.toLowerCase())) biz.suppliers.push({ id: 'SUP-' + Date.now(), name: supplier });
+    }
+    if (!data.supplierCatalog) data.supplierCatalog = {};
+    const supKey = supplier.toLowerCase();
     const recordLines = [];
     let priceUpdates = 0, newItems = 0;
     valid.forEach(l => {
@@ -1834,6 +1856,9 @@
       mat.stock = (parseFloat(mat.stock || 0)) + qty;
       if (!isNaN(cost) && cost > 0 && cost !== oldCost) { mat.cost = cost; priceUpdates++; }   // update price to latest ex-VAT cost
       if ((l.code || '').trim() && !mat.supplierCode) mat.supplierCode = (l.code || '').trim();
+      // Remember this supplier code → product, so typing the code next time auto-fills the line
+      const codeKey = (l.code || '').trim().toLowerCase();
+      if (supKey && codeKey) { if (!data.supplierCatalog[supKey]) data.supplierCatalog[supKey] = {}; data.supplierCatalog[supKey][codeKey] = { matId: mat.id, desc: l.desc || mat.name, unit: mat.unit, cost: isNaN(cost) ? null : cost }; }
       const note = (l.code ? l.code + ' ' : '') + (l.desc || mat.name) + (!isNaN(cost) && cost > 0 ? ` @ R${cost.toFixed(2)} ex VAT` : '');
       logStockMovement(mat.id, qty, 'GRV' + (invoice ? ' #' + invoice : '') + (supplier ? ' · ' + supplier : ''), note);
       recordLines.push({ code: l.code || '', desc: l.desc || mat.name, qty, unit: mat.unit, cost: isNaN(cost) ? null : cost, matId: mat.id });
