@@ -857,7 +857,8 @@
   <!-- GRV (Goods Received) MODAL -->
   <div id="grv-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; align-items:center; justify-content:center; padding:1rem">
     <div style="max-width:920px; width:100%; background:var(--surface,#fff); border-radius:12px; padding:1.5rem; max-height:92vh; overflow-y:auto">
-      <h2 style="margin-bottom:1rem">📥 Receive Stock (GRV)</h2>
+      <h2 style="margin-bottom:0.5rem">📥 Receive Stock (GRV)</h2>
+      <p style="font-size:12px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:0.4rem 0.6rem; margin-bottom:1rem">💡 Enter supplier prices <b>EX VAT</b> — that figure is stored as the item's cost and <b>updates the price</b> when received. (VAT is shown below just to reconcile against the paper invoice.)</p>
       <div class="row">
         <div class="f1">
           <label>Supplier</label>
@@ -883,7 +884,7 @@
           </div>
         </div>
         <div id="grv-bulk" style="display:none; margin-top:0.5rem">
-          <textarea id="grv-bulk-text" rows="4" style="width:100%; font-family:monospace; font-size:12px" placeholder="One line per item:  code, description, qty, cost&#10;e.g.  PINE-2x4, Pine 2x4 2.4m, 20, 85.50"></textarea>
+          <textarea id="grv-bulk-text" rows="4" style="width:100%; font-family:monospace; font-size:12px" placeholder="One line per item:  code, description, qty, cost (ex VAT)&#10;e.g.  PINE-2x4, Pine 2x4 2.4m, 20, 85.50"></textarea>
           <button class="btn btn-sm" onclick="grvParseBulk()" style="margin-top:0.25rem">Parse into lines</button>
         </div>
         <div style="overflow-x:auto; margin-top:0.5rem">
@@ -891,11 +892,12 @@
             <thead><tr style="text-align:left; color:var(--text-muted)">
               <th style="padding:4px">Supplier code</th><th style="padding:4px">Description</th>
               <th style="padding:4px; width:80px">Qty</th><th style="padding:4px; width:90px">Unit</th>
-              <th style="padding:4px; width:110px">Unit cost (R)</th><th style="padding:4px; width:210px">Allocate to material</th><th style="width:32px"></th>
+              <th style="padding:4px; width:120px">Unit cost ex VAT (R)</th><th style="padding:4px; width:210px">Allocate to material</th><th style="width:32px"></th>
             </tr></thead>
             <tbody id="grv-lines-body"></tbody>
           </table>
         </div>
+        <div id="grv-totals" style="text-align:right; font-size:13px; margin-top:0.5rem; color:var(--text-muted)"></div>
       </div>
       <div id="grv-modal-status" style="font-size:12px; color:var(--text-muted); margin-top:0.5rem"></div>
       <div style="display:flex; gap:0.5rem; justify-content:flex-end; margin-top:1rem">
@@ -1684,6 +1686,16 @@
       }
       renderGrvDraft();
     }
+    grvUpdateTotals();
+  }
+  // Live totals — prices are EX VAT; VAT/incl shown only to reconcile against the paper invoice
+  function grvUpdateTotals() {
+    const el = document.getElementById('grv-totals'); if (!el) return;
+    const sub = grvDraft.lines.reduce((a, l) => a + (parseFloat(l.qty) || 0) * (parseFloat(l.cost) || 0), 0);
+    const vat = sub * (typeof VAT_RATE === 'number' ? VAT_RATE : 0.15);
+    el.innerHTML = sub > 0
+      ? `Subtotal (ex VAT): <b>R${sub.toFixed(2)}</b> &nbsp;·&nbsp; VAT 15%: R${vat.toFixed(2)} &nbsp;·&nbsp; Total incl VAT: <b>R${(sub + vat).toFixed(2)}</b>`
+      : '';
   }
   function grvToggleBulk() { const b = document.getElementById('grv-bulk'); b.style.display = b.style.display === 'none' ? 'block' : 'none'; }
   function grvParseBulk() {
@@ -1707,7 +1719,7 @@
     const body = document.getElementById('grv-lines-body'); if (!body) return;
     const mats = currentData().materialsLibrary || [];
     body.innerHTML = grvDraft.lines.map((ln, i) => {
-      const opts = `<option value="">➕ New material</option>` + mats.map(m => `<option value="${m.id}" ${ln.matId === m.id ? 'selected' : ''}>${_escape(m.name)}${m.unit ? ' (' + _escape(m.unit) + ')' : ''}</option>`).join('');
+      const opts = `<option value="">➕ NEW item — create from this line</option>` + mats.map(m => `<option value="${m.id}" ${ln.matId === m.id ? 'selected' : ''}>${_escape(m.name)}${m.unit ? ' (' + _escape(m.unit) + ')' : ''}</option>`).join('');
       return `<tr>
         <td style="padding:2px"><input value="${_escape(ln.code)}" onchange="grvSetLine(${i},'code',this.value)" style="width:110px" autocomplete="off"></td>
         <td style="padding:2px"><input value="${_escape(ln.desc)}" onchange="grvSetLine(${i},'desc',this.value)" style="width:100%; min-width:150px" autocomplete="off"></td>
@@ -1718,6 +1730,7 @@
         <td style="padding:2px; text-align:center"><button class="btn btn-sm btn-danger" onclick="grvRemoveLine(${i})">✕</button></td>
       </tr>`;
     }).join('');
+    grvUpdateTotals();
   }
 
   // Downscale + JPEG-compress an image File to a data URL (keeps the invoice legible but small)
@@ -1777,22 +1790,28 @@
     const biz = currentData();
     if (!biz.materialsLibrary) biz.materialsLibrary = [];
     const recordLines = [];
+    let priceUpdates = 0, newItems = 0;
     valid.forEach(l => {
       const qty = parseFloat(l.qty) || 0;
-      const cost = parseFloat(l.cost);
+      const cost = parseFloat(l.cost);          // EX VAT — stored directly as the item cost
       let mat = l.matId ? biz.materialsLibrary.find(m => m.id === l.matId) : null;
       if (!mat) {
         mat = { id: 'm' + Date.now() + Math.floor(Math.random() * 1000), name: (l.desc || l.code || 'New material').trim(), unit: (l.unit || 'Each').trim(), cost: isNaN(cost) ? 0 : cost, stock: 0, supplierCode: (l.code || '').trim() };
         biz.materialsLibrary.push(mat);
+        newItems++;
       }
+      const oldCost = parseFloat(mat.cost) || 0;
       mat.stock = (parseFloat(mat.stock || 0)) + qty;
-      if (!isNaN(cost) && cost > 0) mat.cost = cost;             // keep the latest purchase cost
+      if (!isNaN(cost) && cost > 0 && cost !== oldCost) { mat.cost = cost; priceUpdates++; }   // update price to latest ex-VAT cost
       if ((l.code || '').trim() && !mat.supplierCode) mat.supplierCode = (l.code || '').trim();
-      logStockMovement(mat.id, qty, 'GRV' + (invoice ? ' #' + invoice : '') + (supplier ? ' · ' + supplier : ''), (l.code ? l.code + ' ' : '') + (l.desc || mat.name));
+      const note = (l.code ? l.code + ' ' : '') + (l.desc || mat.name) + (!isNaN(cost) && cost > 0 ? ` @ R${cost.toFixed(2)} ex VAT` : '');
+      logStockMovement(mat.id, qty, 'GRV' + (invoice ? ' #' + invoice : '') + (supplier ? ' · ' + supplier : ''), note);
       recordLines.push({ code: l.code || '', desc: l.desc || mat.name, qty, unit: mat.unit, cost: isNaN(cost) ? null : cost, matId: mat.id });
     });
 
-    const grv = { id: 'GRV-' + Date.now(), supplier, invoice, date, photoId: null, lines: recordLines, total: recordLines.reduce((a, x) => a + (x.cost ? x.cost * x.qty : 0), 0), receivedAt: new Date().toISOString(), user: (currentUser && currentUser.email) ? currentUser.email.split('@')[0] : 'system' };
+    const subtotal = recordLines.reduce((a, x) => a + (x.cost ? x.cost * x.qty : 0), 0);   // ex VAT
+    const vat = subtotal * (typeof VAT_RATE === 'number' ? VAT_RATE : 0.15);
+    const grv = { id: 'GRV-' + Date.now(), supplier, invoice, date, photoId: null, lines: recordLines, total: subtotal, vat, totalIncl: subtotal + vat, receivedAt: new Date().toISOString(), user: (currentUser && currentUser.email) ? currentUser.email.split('@')[0] : 'system' };
 
     let photoWarn = '';
     if (grvDraft.photo) {
@@ -1805,7 +1824,8 @@
     closeGrvDialog();
     renderInventory(); renderGrvSection();
     try { renderRawMaterialCosts(); } catch (e) {}
-    toast(`GRV received — ${recordLines.length} line(s) added to stock${photoWarn}`, photoWarn ? 'warn' : 'success', 4000);
+    const extras = [priceUpdates ? `${priceUpdates} price(s) updated` : '', newItems ? `${newItems} new item(s)` : ''].filter(Boolean).join(', ');
+    toast(`GRV received — ${recordLines.length} line(s) into stock${extras ? ' · ' + extras : ''}${photoWarn}`, photoWarn ? 'warn' : 'success', 4000);
   }
 
   function renderGrvSection() {
@@ -1818,13 +1838,16 @@
         <td style="padding:2px 6px">${_escape(l.desc || '')}</td>
         <td style="padding:2px 6px; text-align:right; white-space:nowrap">${l.qty} ${_escape(l.unit || '')}</td>
         <td style="padding:2px 6px; text-align:right">${l.cost != null ? _rand0(l.cost * l.qty) : '—'}</td></tr>`).join('');
+      const vat = (g.vat != null) ? g.vat : (g.total || 0) * (typeof VAT_RATE === 'number' ? VAT_RATE : 0.15);
+      const incl = (g.totalIncl != null) ? g.totalIncl : (g.total || 0) + vat;
       return `<details style="border:1px solid var(--border); border-radius:8px; padding:0.5rem 0.75rem; margin-bottom:0.5rem">
-        <summary style="cursor:pointer; font-weight:600">${_escape(g.date || '')} · ${_escape(g.supplier || '(no supplier)')}${g.invoice ? ' · #' + _escape(g.invoice) : ''} <span style="color:var(--text-muted); font-weight:400">— ${(g.lines || []).length} line(s)${g.total ? ' · ' + _rand0(g.total) : ''}</span></summary>
+        <summary style="cursor:pointer; font-weight:600">${_escape(g.date || '')} · ${_escape(g.supplier || '(no supplier)')}${g.invoice ? ' · #' + _escape(g.invoice) : ''} <span style="color:var(--text-muted); font-weight:400">— ${(g.lines || []).length} line(s)${g.total ? ' · ' + _rand0(g.total) + ' ex VAT' : ''}</span></summary>
         <div style="margin-top:0.5rem">
           ${g.photoId ? `<button class="btn btn-sm" onclick="grvViewPhoto('${g.id}')">🖼 View invoice photo</button>` : ''}
           <div style="overflow-x:auto; margin-top:0.4rem"><table style="width:100%; border-collapse:collapse; font-size:12px">
-            <thead><tr style="color:var(--text-muted); text-align:left"><th style="padding:2px 6px">Code</th><th style="padding:2px 6px">Description</th><th style="padding:2px 6px; text-align:right">Qty</th><th style="padding:2px 6px; text-align:right">Value</th></tr></thead>
+            <thead><tr style="color:var(--text-muted); text-align:left"><th style="padding:2px 6px">Code</th><th style="padding:2px 6px">Description</th><th style="padding:2px 6px; text-align:right">Qty</th><th style="padding:2px 6px; text-align:right">Value (ex VAT)</th></tr></thead>
             <tbody>${lines}</tbody></table></div>
+          ${g.total ? `<div style="text-align:right; font-size:12px; margin-top:0.3rem; color:var(--text-muted)">Subtotal (ex VAT): <b>${_rand0(g.total)}</b> · VAT 15%: ${_rand0(vat)} · Total incl VAT: <b>${_rand0(incl)}</b></div>` : ''}
           <div style="margin-top:0.4rem; font-size:11px; color:var(--text-muted)">Received by ${_escape(g.user || '')}${g.receivedAt ? ' · ' + new Date(g.receivedAt).toLocaleString('en-ZA') : ''}</div>
         </div>
       </details>`;
@@ -4082,7 +4105,7 @@
             <tr style="background:var(--bg); text-align:left">
               <th style="padding:0.5rem; border:1px solid var(--border)">Material</th>
               <th style="padding:0.5rem; border:1px solid var(--border); width:140px">Unit</th>
-              <th style="padding:0.5rem; border:1px solid var(--border); width:200px">Cost per unit (R)</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); width:200px">Cost per unit (R, ex VAT)</th>
             </tr>
           </thead>
           <tbody>
