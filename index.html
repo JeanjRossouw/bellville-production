@@ -951,14 +951,90 @@
   // Undo history (last 20 states)
   let history = [];
   const MAX_HISTORY = 20;
-  
+
+  // ============================================
+  // SHARED FACTORY STOCK — one materials/stock pool for all businesses
+  // (Each business's .materialsLibrary / .stockMovements / .grvs reference the same
+  //  canonical top-level arrays, so GRV, BOMs and production deductions all hit one pool.)
+  // ============================================
+  const _BIZ_KEYS = ['bellville', 'pinkfoot', 'repticube'];
+  function _normName(s) { return String(s == null ? '' : s).trim().toLowerCase(); }
+
+  // One-time migration: merge the three per-business libraries into one shared pool,
+  // combining duplicate names (summing stock) and re-pointing every BOM to the merged ids.
+  function migrateToSharedStock() {
+    if (!data || data._stockUnified) return false;
+    const sources = [];
+    if (Array.isArray(data.materialsLibrary)) sources.push(...data.materialsLibrary);
+    _BIZ_KEYS.forEach(b => { if (data[b] && Array.isArray(data[b].materialsLibrary)) sources.push(...data[b].materialsLibrary); });
+    const merged = [], byName = {}, idMap = {};
+    sources.forEach(m => {
+      if (!m || !m.id) return;
+      const key = _normName(m.name);
+      if (key && byName[key]) {
+        const t = byName[key];
+        t.stock = (parseFloat(t.stock) || 0) + (parseFloat(m.stock) || 0);
+        if ((!t.cost || t.cost === 0) && parseFloat(m.cost)) t.cost = parseFloat(m.cost) || 0;
+        if ((!t.unit || t.unit === 'Each') && m.unit) t.unit = m.unit;
+        if (!t.reorderPoint && m.reorderPoint) t.reorderPoint = m.reorderPoint;
+        if (!t.supplierCode && m.supplierCode) t.supplierCode = m.supplierCode;
+        idMap[m.id] = t.id;
+      } else {
+        const copy = Object.assign({}, m); copy.stock = parseFloat(copy.stock) || 0;
+        merged.push(copy); if (key) byName[key] = copy; idMap[m.id] = copy.id;
+      }
+    });
+    data.materialsLibrary = merged;
+    // re-point every product BOM (all businesses) to the merged material ids
+    _BIZ_KEYS.forEach(b => {
+      const pb = data[b] && data[b].productBoms; if (!pb) return;
+      Object.keys(pb).forEach(prod => {
+        const mats = pb[prod] && pb[prod].materials; if (!mats) return;
+        const remap = {};
+        Object.entries(mats).forEach(([id, qty]) => { const nid = idMap[id] || id; remap[nid] = (remap[nid] || 0) + (parseFloat(qty) || 0); });
+        pb[prod].materials = remap;
+      });
+    });
+    // merge stock-movement logs and GRVs (remapping their material ids)
+    let moves = Array.isArray(data.stockMovements) ? data.stockMovements.slice() : [];
+    _BIZ_KEYS.forEach(b => { if (data[b] && Array.isArray(data[b].stockMovements)) moves.push(...data[b].stockMovements.map(mv => Object.assign({}, mv, { matId: idMap[mv.matId] || mv.matId }))); });
+    moves.sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
+    data.stockMovements = moves.slice(0, 200);
+    let grvs = Array.isArray(data.grvs) ? data.grvs.slice() : [];
+    _BIZ_KEYS.forEach(b => { if (data[b] && Array.isArray(data[b].grvs)) grvs.push(...data[b].grvs.map(g => Object.assign({}, g, { lines: (g.lines || []).map(l => Object.assign({}, l, { matId: idMap[l.matId] || l.matId })) }))); });
+    grvs.sort((a, b) => String(b.receivedAt || b.date || '').localeCompare(String(a.receivedAt || a.date || '')));
+    data.grvs = grvs;
+    _BIZ_KEYS.forEach(b => { if (data[b]) { delete data[b].materialsLibrary; delete data[b].stockMovements; delete data[b].grvs; } });
+    data._stockUnified = true;
+    return true;
+  }
+  // Point each business at the shared arrays (call after every load/parse)
+  function linkSharedStock() {
+    if (!data) return;
+    if (!Array.isArray(data.materialsLibrary)) data.materialsLibrary = [];
+    if (!Array.isArray(data.stockMovements)) data.stockMovements = [];
+    if (!Array.isArray(data.grvs)) data.grvs = [];
+    _BIZ_KEYS.forEach(b => { if (data[b]) { data[b].materialsLibrary = data.materialsLibrary; data[b].stockMovements = data.stockMovements; data[b].grvs = data.grvs; } });
+  }
+  function _postLoadStock() { try { migrateToSharedStock(); } catch (e) { console.error('Stock migration failed:', e); } linkSharedStock(); }
+  // Serialize without triple-copying the shared arrays (per-business refs are stripped,
+  // only the canonical top-level copies are written; relinked on load).
+  function _serializeData() {
+    const saved = {};
+    _BIZ_KEYS.forEach(b => { if (data[b]) { saved[b] = { ml: data[b].materialsLibrary, sm: data[b].stockMovements, gv: data[b].grvs }; delete data[b].materialsLibrary; delete data[b].stockMovements; delete data[b].grvs; } });
+    let str;
+    try { str = JSON.stringify(data); }
+    finally { _BIZ_KEYS.forEach(b => { if (data[b] && saved[b]) { data[b].materialsLibrary = saved[b].ml; data[b].stockMovements = saved[b].sm; data[b].grvs = saved[b].gv; } }); }
+    return str;
+  }
+
   function snapshotState() {
     // Save current state before making a change
-    history.push(JSON.stringify(data));
+    history.push(_serializeData());
     if (history.length > MAX_HISTORY) history.shift();
     updateUndoButton();
   }
-  
+
   function undo() {
     if (history.length === 0) {
       toast('Nothing to undo', 'info');
@@ -966,7 +1042,8 @@
     }
     const previous = history.pop();
     data = JSON.parse(previous);
-    localStorage.setItem('production-data', JSON.stringify(data));
+    _postLoadStock();
+    localStorage.setItem('production-data', _serializeData());
     updateUndoButton();
     saveData();
     render();
@@ -1429,23 +1506,21 @@
   }
   
   function calculateMaterialRequirements() {
-    // Calculate total material needed across all pending + in-production orders that haven't been deducted yet
-    const biz = currentData();
+    // Stock is one shared factory pool, so requirements aggregate across ALL businesses'
+    // pending + in-production orders that haven't been deducted yet.
     const required = {};
-    
-    (biz.orders || []).forEach(o => {
-      // Skip orders that are done, delivered, or already deducted
-      if (o.status === 'delivered' || o.status === 'done' || o.materialsDeducted) return;
-      
-      const prodBom = biz.productBoms?.[o.product];
-      if (!prodBom || !prodBom.materials) return;
-      
-      const qty = parseFloat(o.qty || 1);
-      Object.entries(prodBom.materials).forEach(([matId, perUnit]) => {
-        required[matId] = (required[matId] || 0) + (perUnit * qty);
+    _BIZ_KEYS.forEach(b => {
+      const bd = data[b]; if (!bd) return;
+      (bd.orders || []).forEach(o => {
+        if (o.status === 'delivered' || o.status === 'done' || o.materialsDeducted) return;
+        const prodBom = bd.productBoms?.[o.product];
+        if (!prodBom || !prodBom.materials) return;
+        const qty = parseFloat(o.qty || 1);
+        Object.entries(prodBom.materials).forEach(([matId, perUnit]) => {
+          required[matId] = (required[matId] || 0) + (perUnit * qty);
+        });
       });
     });
-    
     return required;
   }
   
@@ -1473,22 +1548,21 @@
   }
   
   function logStockMovement(matId, delta, reason, notes, bizKey) {
-    // bizKey is optional — defaults to activeBiz. Pass it explicitly when logging
-    // for a biz other than the currently-viewed one (e.g. dispatch tab operates
-    // across all 3 businesses).
-    const bizData = bizKey ? data[bizKey] : currentData();
-    if (!bizData) return;
-    if (!bizData.stockMovements) bizData.stockMovements = [];
-    bizData.stockMovements.unshift({
+    // Stock is one shared factory pool — all movements go to the single shared log.
+    // (bizKey retained for call-site compatibility but no longer routes to a per-biz log.)
+    if (!Array.isArray(data.stockMovements)) data.stockMovements = [];
+    data.stockMovements.unshift({
       timestamp: new Date().toISOString(),
       matId,
       delta,
       reason,
       notes: notes || '',
+      biz: bizKey || (typeof activeBiz !== 'undefined' ? activeBiz : ''),
       user: (typeof currentUser !== 'undefined' && currentUser?.email) ? currentUser.email.split('@')[0] : 'system'
     });
-    // Keep last 200
-    bizData.stockMovements = bizData.stockMovements.slice(0, 200);
+    // Keep last 200 — truncate IN PLACE so the shared reference is preserved
+    if (data.stockMovements.length > 200) data.stockMovements.length = 200;
+    linkSharedStock();
   }
   
   function renderStockMovements() {
@@ -3405,10 +3479,13 @@
   function initBomDefaults() {
     // Guard against being called before constants are defined (during early dashboard render)
     if (typeof DEFAULT_MATERIALS_BELLVILLE === 'undefined' || typeof DEFAULT_PRODUCT_GROUPS_BELLVILLE === 'undefined') return;
+    linkSharedStock();
+    // Seed the default materials into the shared pool once, only if it's empty
+    if (data.materialsLibrary.length === 0 && !data._bomSeeded) {
+      JSON.parse(JSON.stringify(DEFAULT_MATERIALS_BELLVILLE)).forEach(m => data.materialsLibrary.push(m));
+      data._bomSeeded = true;
+    }
     ['bellville', 'pinkfoot', 'repticube'].forEach(biz => {
-      if (!data[biz].materialsLibrary || data[biz].materialsLibrary.length === 0) {
-        data[biz].materialsLibrary = biz === 'bellville' ? JSON.parse(JSON.stringify(DEFAULT_MATERIALS_BELLVILLE)) : [];
-      }
       if (!data[biz].productBoms) {
         data[biz].productBoms = {};
         if (biz === 'bellville') {
@@ -5824,7 +5901,9 @@
         }
       }
     });
-    const lowList = dashBizList().flatMap(_lowStockFor);
+    // Stock is shared, so the same low material can surface under several businesses — dedupe by name
+    const _lowSeen = {};
+    const lowList = dashBizList().flatMap(_lowStockFor).filter(m => { if (_lowSeen[m.name]) return false; _lowSeen[m.name] = 1; return true; });
     const top = [...completed].sort((a, b) => b.profit - a.profit).slice(0, 5);
     const losses = completed.filter(x => x.margin !== null && x.margin < 0).sort((a, b) => a.margin - b.margin).slice(0, 5);
 
@@ -7231,7 +7310,7 @@
   window.closePlanMenu = closePlanMenu;
 
   function saveData() {
-    localStorage.setItem('production-data', JSON.stringify(data));
+    localStorage.setItem('production-data', _serializeData());
     document.getElementById('save-status').textContent = '✓ saved';
     setTimeout(() => { document.getElementById('save-status').textContent = '— unsaved'; }, 2000);
   }
@@ -7241,11 +7320,11 @@
     if (stored) {
       try {
         const loaded = JSON.parse(stored);
-        data = { 
+        data = Object.assign({}, loaded, {
           bellville: { orders: [], products: {}, inventory: {}, ...(loaded.bellville || {}) },
           repticube: { orders: [], products: {}, inventory: {}, ...(loaded.repticube || {}) },
           pinkfoot: { orders: [], products: {}, inventory: {}, ...(loaded.pinkfoot || {}) }
-        };
+        });
       } catch (e) {
         console.error('Load failed', e);
         // Reset to clean if corrupted
@@ -7256,6 +7335,7 @@
         };
       }
     }
+    _postLoadStock();
   }
   
   function clearAllData() {
@@ -7269,6 +7349,7 @@
       repticube: { orders: [], products: {}, inventory: {} },
       pinkfoot: { orders: [], products: {}, inventory: {} }
     };
+    _postLoadStock();
     localStorage.removeItem('production-data');
     // Push the empty state to cloud immediately so the next snapshot doesn't restore old data.
     saveData();
@@ -7510,7 +7591,8 @@
           data[biz].inventory = data[biz].inventory || {};
           data[biz].staff = data[biz].staff || [];
         });
-        localStorage.setItem('production-data', JSON.stringify(data));
+        _postLoadStock();
+        localStorage.setItem('production-data', _serializeData());
         lastSyncedPayload = payload;
         render();
         if (typeof populateProductDatalist === 'function') populateProductDatalist();
@@ -7528,7 +7610,7 @@
     clearTimeout(saveTimeout);
     updateSyncStatus('☁ Saving…', 'info');
     saveTimeout = setTimeout(async () => {
-      const serialized = JSON.stringify(data);
+      const serialized = _serializeData();
       try {
         const docRef = window.firebaseFns.doc(window.firebaseDb, 'shared-data', 'production');
         await window.firebaseFns.setDoc(docRef, {
