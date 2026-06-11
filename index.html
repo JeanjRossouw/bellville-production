@@ -888,7 +888,7 @@
   <div id="grv-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; align-items:center; justify-content:center; padding:1rem">
     <div style="max-width:920px; width:100%; background:var(--surface,#fff); border-radius:12px; padding:1.5rem; max-height:92vh; overflow-y:auto">
       <h2 style="margin-bottom:0.5rem">📥 Receive Stock (GRV)</h2>
-      <p style="font-size:12px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:0.4rem 0.6rem; margin-bottom:1rem">💡 Enter supplier prices <b>EX VAT</b> — that figure is stored as the item's cost and <b>updates the price</b> when received. (VAT is shown below just to reconcile against the paper invoice.)</p>
+      <p style="font-size:12px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:0.4rem 0.6rem; margin-bottom:1rem">💡 Choose whether the prices you enter are <b>ex VAT</b> or <b>incl VAT</b> (below). Either way the item's stored cost is ex VAT, and it <b>updates the price</b> when received.</p>
       <div class="row">
         <div class="f1">
           <label>Supplier</label>
@@ -908,7 +908,14 @@
       </div>
       <div style="margin-top:1rem">
         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
-          <label style="font-weight:700">Line items</label>
+          <span style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap">
+            <label style="font-weight:700">Line items</label>
+            <span style="font-size:12px; display:flex; align-items:center; gap:0.5rem; background:var(--bg); padding:3px 8px; border-radius:6px">
+              Prices:
+              <label style="display:flex; align-items:center; gap:0.2rem; cursor:pointer"><input type="radio" name="grv-vat" value="excl" checked onchange="grvSetVatMode('excl')"> ex VAT</label>
+              <label style="display:flex; align-items:center; gap:0.2rem; cursor:pointer"><input type="radio" name="grv-vat" value="incl" onchange="grvSetVatMode('incl')"> incl VAT</label>
+            </span>
+          </span>
           <div style="display:flex; gap:0.5rem">
             <button class="btn btn-sm" onclick="grvAddLine()">＋ Add line</button>
             <button class="btn btn-sm" onclick="grvToggleBulk()">📋 Bulk paste</button>
@@ -923,7 +930,7 @@
             <thead><tr style="text-align:left; color:var(--text-muted)">
               <th style="padding:4px">Supplier code</th><th style="padding:4px">Description</th>
               <th style="padding:4px; width:80px">Qty</th><th style="padding:4px; width:90px">Unit</th>
-              <th style="padding:4px; width:120px">Unit cost ex VAT (R)</th><th style="padding:4px; width:210px">Allocate to material</th><th style="width:32px"></th>
+              <th style="padding:4px; width:120px" id="grv-cost-header">Unit cost ex VAT (R)</th><th style="padding:4px; width:210px">Allocate to material</th><th style="width:32px"></th>
             </tr></thead>
             <tbody id="grv-lines-body"></tbody>
           </table>
@@ -1684,12 +1691,21 @@
   }
 
   // ===== Goods Received (GRV) — capture a supplier delivery straight into raw-material stock =====
-  let grvDraft = { photo: null, lines: [] };
+  let grvDraft = { photo: null, lines: [], vatMode: 'excl' };
   function ensureGrvs() { const b = currentData(); if (!Array.isArray(b.grvs)) b.grvs = []; return b.grvs; }
+  function grvSetVatMode(mode) {
+    grvDraft.vatMode = (mode === 'incl') ? 'incl' : 'excl';
+    const h = document.getElementById('grv-cost-header');
+    if (h) h.textContent = grvDraft.vatMode === 'incl' ? 'Unit cost incl VAT (R)' : 'Unit cost ex VAT (R)';
+    grvUpdateTotals();
+  }
+  window.grvSetVatMode = grvSetVatMode;
 
   function openGrvDialog() {
     const mats = currentData().materialsLibrary || [];
-    grvDraft = { photo: null, lines: [] };
+    grvDraft = { photo: null, lines: [], vatMode: 'excl' };
+    const exclRadio = document.querySelector('input[name="grv-vat"][value="excl"]'); if (exclRadio) exclRadio.checked = true;
+    const ch = document.getElementById('grv-cost-header'); if (ch) ch.textContent = 'Unit cost ex VAT (R)';
     document.getElementById('grv-supplier').value = '';
     document.getElementById('grv-invoice').value = '';
     document.getElementById('grv-date').value = new Date().toISOString().split('T')[0];
@@ -1736,10 +1752,13 @@
   // Live totals — prices are EX VAT; VAT/incl shown only to reconcile against the paper invoice
   function grvUpdateTotals() {
     const el = document.getElementById('grv-totals'); if (!el) return;
-    const sub = grvDraft.lines.reduce((a, l) => a + (parseFloat(l.qty) || 0) * (parseFloat(l.cost) || 0), 0);
-    const vat = sub * (typeof VAT_RATE === 'number' ? VAT_RATE : 0.15);
-    el.innerHTML = sub > 0
-      ? `Subtotal (ex VAT): <b>R${sub.toFixed(2)}</b> &nbsp;·&nbsp; VAT 15%: R${vat.toFixed(2)} &nbsp;·&nbsp; Total incl VAT: <b>R${(sub + vat).toFixed(2)}</b>`
+    const rate = (typeof VAT_RATE === 'number' ? VAT_RATE : 0.15);
+    const incl = grvDraft.vatMode === 'incl';
+    const entered = grvDraft.lines.reduce((a, l) => a + (parseFloat(l.qty) || 0) * (parseFloat(l.cost) || 0), 0);
+    const exVat = incl ? entered / (1 + rate) : entered;
+    const vat = exVat * rate;
+    el.innerHTML = exVat > 0
+      ? `Ex VAT: <b>R${exVat.toFixed(2)}</b> &nbsp;·&nbsp; VAT 15%: R${vat.toFixed(2)} &nbsp;·&nbsp; Incl VAT: <b>R${(exVat + vat).toFixed(2)}</b>${incl ? ' <span style="color:var(--text-muted)">· entered incl VAT, stored ex VAT</span>' : ''}`
       : '';
   }
   function grvOnSupplierChange() { grvDraft.lines.forEach(l => { if (l.code) grvApplyCode(l); }); renderGrvDraft(); }
@@ -1835,8 +1854,10 @@
         return ln;
       });
       if (!grvDraft.lines.length) grvAddLine();
+      const exclRadio = document.querySelector('input[name="grv-vat"][value="excl"]'); if (exclRadio) exclRadio.checked = true;
+      grvSetVatMode('excl'); // scanned prices are ex VAT
       renderGrvDraft();
-      status.textContent = `✓ Filled ${lines.length} line(s) from the invoice — check them, allocate any new items, then Receive.`;
+      status.textContent = `✓ Filled ${lines.length} line(s) from the invoice (ex VAT) — check them, allocate any new items, then Receive.`;
     } catch (e) {
       status.textContent = 'Scan unavailable (' + e.message + '). You can still enter lines manually.';
     }
@@ -1875,9 +1896,13 @@
     const supKey = supplier.toLowerCase();
     const recordLines = [];
     let priceUpdates = 0, newItems = 0;
+    const _vatRate = (typeof VAT_RATE === 'number' ? VAT_RATE : 0.15);
+    const _inclMode = grvDraft.vatMode === 'incl';
     valid.forEach(l => {
       const qty = parseFloat(l.qty) || 0;
-      const cost = parseFloat(l.cost);          // EX VAT — stored directly as the item cost
+      const enteredCost = parseFloat(l.cost);
+      // store EX VAT: if the user entered incl-VAT prices, strip VAT (÷1.15)
+      const cost = isNaN(enteredCost) ? NaN : (_inclMode ? Math.round((enteredCost / (1 + _vatRate)) * 100) / 100 : enteredCost);
       let mat = l.matId ? biz.materialsLibrary.find(m => m.id === l.matId) : null;
       if (!mat) {
         mat = { id: 'm' + Date.now() + Math.floor(Math.random() * 1000), name: (l.desc || l.code || 'New material').trim(), unit: (l.unit || 'Each').trim(), cost: isNaN(cost) ? 0 : cost, stock: 0, supplierCode: (l.code || '').trim() };
