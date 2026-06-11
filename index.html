@@ -903,6 +903,7 @@
           <label>Invoice photo (optional)</label>
           <input type="file" id="grv-photo" accept="image/*" capture="environment" onchange="grvOnPhoto(this)">
           <div id="grv-photo-preview" style="margin-top:0.5rem"></div>
+          <button class="btn btn-sm" onclick="grvScan()" style="margin-top:0.4rem">📸 Scan invoice &amp; auto-fill lines</button>
         </div>
       </div>
       <div style="margin-top:1rem">
@@ -1810,6 +1811,37 @@
     } catch (e) { status.textContent = 'Could not read image: ' + e.message; }
   }
   function grvClearPhoto() { grvDraft.photo = null; document.getElementById('grv-photo').value = ''; document.getElementById('grv-photo-preview').innerHTML = ''; }
+
+  // Send the invoice photo to the serverless scanner (Claude vision) and pre-fill the lines
+  async function grvScan() {
+    if (!grvDraft.photo) { alert('Take or choose a photo of the invoice first.'); return; }
+    const status = document.getElementById('grv-modal-status');
+    status.textContent = '🔎 Reading the invoice… this can take a few seconds.';
+    try {
+      const r = await fetch('/.netlify/functions/scan-invoice', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: grvDraft.photo })
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      const supEl = document.getElementById('grv-supplier'), invEl = document.getElementById('grv-invoice'), dateEl = document.getElementById('grv-date');
+      if (data.supplier && !supEl.value) supEl.value = data.supplier;
+      if (data.invoice && !invEl.value) invEl.value = data.invoice;
+      if (data.date && /^\d{4}-\d{2}-\d{2}$/.test(data.date)) dateEl.value = data.date;
+      const lines = Array.isArray(data.lines) ? data.lines : [];
+      if (!lines.length) { status.textContent = 'No line items detected — please enter them manually.'; return; }
+      grvDraft.lines = lines.map(l => {
+        const ln = { code: String(l.code || ''), desc: String(l.description || ''), qty: (l.qty != null ? l.qty : '') + '', unit: String(l.unit || 'Each'), cost: (l.unitCost != null ? l.unitCost : '') + '', matId: '' };
+        if (ln.code) grvApplyCode(ln);   // match remembered supplier codes
+        return ln;
+      });
+      if (!grvDraft.lines.length) grvAddLine();
+      renderGrvDraft();
+      status.textContent = `✓ Filled ${lines.length} line(s) from the invoice — check them, allocate any new items, then Receive.`;
+    } catch (e) {
+      status.textContent = 'Scan unavailable (' + e.message + '). You can still enter lines manually.';
+    }
+  }
+  window.grvScan = grvScan;
 
   // Invoice photos live in a SEPARATE Firestore collection so the main (1 MB) data doc stays small
   async function _grvSavePhoto(photoId, dataUrl) {

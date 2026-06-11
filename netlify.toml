@@ -1,0 +1,7 @@
+# Serves the static app (index.html) and bundles the serverless function.
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
