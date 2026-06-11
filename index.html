@@ -770,7 +770,38 @@
       <div class="card-title">TEAM</div>
       <div id="staff-list"><div class="empty">No staff added yet</div></div>
     </div>
-    
+
+    <div class="card" style="border-left:4px solid #7c3aed">
+      <div class="card-title">🧰 STAFF TOOLS — issue &amp; track</div>
+      <p style="font-size:13px; color:var(--text-muted); margin-bottom:0.75rem">Give a tool to a staff member and keep track of who has what. Mark it returned when it comes back.</p>
+      <div class="row">
+        <div class="f1">
+          <label>Staff member</label>
+          <select id="tool-staff"></select>
+        </div>
+        <div class="f1">
+          <label>Tool</label>
+          <input id="tool-name" list="tool-presets" placeholder="e.g., Tape measure" autocomplete="off">
+          <datalist id="tool-presets">
+            <option value="Tape measure"></option><option value="Staple gun"></option>
+            <option value="Hammer"></option><option value="Screwdriver set"></option>
+            <option value="Cordless drill"></option><option value="Glue gun"></option>
+            <option value="Scissors"></option><option value="Stanley knife"></option>
+            <option value="Sander"></option><option value="Clamps"></option>
+            <option value="Spanner set"></option><option value="Safety goggles"></option>
+          </datalist>
+        </div>
+        <div class="f2" style="min-width:70px"><label>Qty</label><input type="number" id="tool-qty" value="1" min="1" step="1"></div>
+        <div class="f1"><label>Serial / notes (optional)</label><input id="tool-notes" placeholder="e.g., serial #, condition" autocomplete="off"></div>
+        <div class="f2" style="min-width:90px"><label>&nbsp;</label><button class="btn btn-primary" onclick="issueTool()">ISSUE</button></div>
+      </div>
+      <div id="tools-out-list" style="margin-top:1rem"></div>
+      <details style="margin-top:1rem">
+        <summary style="cursor:pointer; font-weight:700; font-size:13px">📋 Tool history (issues &amp; returns)</summary>
+        <div id="tools-history" style="margin-top:0.5rem"></div>
+      </details>
+    </div>
+
     <div class="card">
       <div class="card-title">📢 BROADCAST TO ALL STAFF</div>
       <textarea id="broadcast-msg" placeholder="Type a message to send to all staff via WhatsApp..." style="width:100%; min-height:80px; padding:0.75rem; background:rgba(0,0,0,0.3); border:1px solid var(--border); color:var(--text); font-family:inherit; font-size:13px"></textarea>
@@ -3013,7 +3044,101 @@
     
     const list = document.getElementById('staff-list');
     if (list) list.innerHTML = html || '<div class="empty">No staff added yet</div>';
+
+    try { renderStaffTools(); } catch (e) { console.warn('Staff tools render failed:', e); }
   }
+
+  // ===== Staff tools — issue a tool to a person and track who has what =====
+  function ensureToolLog() { const b = currentData(); if (!Array.isArray(b.toolLog)) b.toolLog = []; return b.toolLog; }
+
+  function issueTool() {
+    const staffId = document.getElementById('tool-staff').value;
+    const tool = document.getElementById('tool-name').value.trim();
+    const qty = Math.max(1, parseInt(document.getElementById('tool-qty').value) || 1);
+    const notes = document.getElementById('tool-notes').value.trim();
+    const staff = (currentData().staff || []).find(s => s.id === staffId);
+    if (!staff) { alert('Pick a staff member (add them in the team list first).'); return; }
+    if (!tool) { alert('Enter a tool name.'); return; }
+    snapshotState();
+    ensureToolLog().unshift({
+      id: 'TOOL-' + Date.now(),
+      staffId: staff.id, staffName: staff.name,
+      tool, qty, notes,
+      issuedAt: new Date().toISOString(),
+      issuedBy: (currentUser && currentUser.email) ? currentUser.email.split('@')[0] : 'system',
+      returnedAt: null
+    });
+    document.getElementById('tool-name').value = '';
+    document.getElementById('tool-qty').value = '1';
+    document.getElementById('tool-notes').value = '';
+    saveData();
+    renderStaffTools();
+    toast(`Issued ${qty}× ${tool} to ${staff.name}`, 'success');
+  }
+  function returnTool(id) {
+    const t = (currentData().toolLog || []).find(x => x.id === id);
+    if (!t || t.returnedAt) return;
+    snapshotState();
+    t.returnedAt = new Date().toISOString();
+    saveData();
+    renderStaffTools();
+    toast(`${t.tool} returned by ${t.staffName}`, 'success');
+  }
+  function deleteToolLog(id) {
+    if (!confirm('Delete this tool record?')) return;
+    snapshotState();
+    currentData().toolLog = (currentData().toolLog || []).filter(x => x.id !== id);
+    saveData();
+    renderStaffTools();
+  }
+  window.issueTool = issueTool; window.returnTool = returnTool; window.deleteToolLog = deleteToolLog;
+
+  function renderStaffTools() {
+    const staff = currentData().staff || [];
+    const sel = document.getElementById('tool-staff');
+    if (sel) {
+      const cur = sel.value;
+      sel.innerHTML = staff.length
+        ? staff.map(s => `<option value="${s.id}">${_escape(s.name)}${s.role ? ' (' + _escape(s.role) + ')' : ''}</option>`).join('')
+        : '<option value="">— add staff first —</option>';
+      if (cur && staff.some(s => s.id === cur)) sel.value = cur;
+    }
+    const log = currentData().toolLog || [];
+    const out = log.filter(t => !t.returnedAt);
+
+    // Currently-held tools grouped by staff member
+    const outEl = document.getElementById('tools-out-list');
+    if (outEl) {
+      if (!out.length) {
+        outEl.innerHTML = '<div class="empty">No tools currently issued</div>';
+      } else {
+        const byStaff = {};
+        out.forEach(t => { (byStaff[t.staffName] = byStaff[t.staffName] || []).push(t); });
+        outEl.innerHTML = Object.keys(byStaff).sort().map(name => `
+          <div class="order-card" style="margin-bottom:0.5rem">
+            <div style="font-weight:700; margin-bottom:0.4rem">${_escape(name)} <span style="font-weight:400; color:var(--text-muted); font-size:12px">— ${byStaff[name].reduce((a, t) => a + (t.qty || 1), 0)} item(s)</span></div>
+            ${byStaff[name].map(t => `<div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; padding:3px 0; border-top:1px solid var(--border); flex-wrap:wrap">
+              <span style="font-size:13px">${t.qty > 1 ? t.qty + '× ' : ''}${_escape(t.tool)}${t.notes ? ` <span style="color:var(--text-muted); font-size:11px">(${_escape(t.notes)})</span>` : ''} <span style="color:var(--text-muted); font-size:11px">· since ${String(t.issuedAt).slice(0, 10)}</span></span>
+              <span style="display:flex; gap:0.4rem"><button class="btn btn-sm" onclick="returnTool('${t.id}')">↩ Returned</button><button class="btn btn-sm btn-danger" onclick="deleteToolLog('${t.id}')">✕</button></span>
+            </div>`).join('')}
+          </div>`).join('');
+      }
+    }
+
+    // Full history
+    const histEl = document.getElementById('tools-history');
+    if (histEl) {
+      histEl.innerHTML = log.length ? `<table style="width:100%; border-collapse:collapse; font-size:12px">
+        <thead><tr style="color:var(--text-muted); text-align:left"><th style="padding:2px 6px">Issued</th><th style="padding:2px 6px">Staff</th><th style="padding:2px 6px">Tool</th><th style="padding:2px 6px">Status</th></tr></thead>
+        <tbody>${log.slice(0, 100).map(t => `<tr style="border-top:1px solid var(--border)">
+          <td style="padding:2px 6px; white-space:nowrap">${String(t.issuedAt).slice(0, 10)}</td>
+          <td style="padding:2px 6px">${_escape(t.staffName)}</td>
+          <td style="padding:2px 6px">${t.qty > 1 ? t.qty + '× ' : ''}${_escape(t.tool)}</td>
+          <td style="padding:2px 6px; white-space:nowrap">${t.returnedAt ? '<span style="color:#16a34a">↩ returned ' + String(t.returnedAt).slice(0, 10) + '</span>' : '<span style="color:#d97706">out</span>'}</td>
+        </tr>`).join('')}</tbody></table>` : '<div class="empty">No tool history yet</div>';
+    }
+  }
+  window.renderStaffTools = renderStaffTools;
   
   function msgStaff(id) {
     const s = (currentData().staff || []).find(x => x.id === id);
