@@ -2090,7 +2090,7 @@
   
   // ----- Multi-product intake: one invoice can carry several products -----
   let intakeLines = [];
-  function _blankIntakeLine() { return { product: '', category: '', qty: '1', fabric: '', price: '' }; }
+  function _blankIntakeLine() { return { product: '', category: '', qty: '1', fabric: '', price: '', specs: '' }; }
   function addIntakeLine() { intakeLines.push(_blankIntakeLine()); renderIntakeLines(); }
   function removeIntakeLine(i) { intakeLines.splice(i, 1); if (!intakeLines.length) intakeLines.push(_blankIntakeLine()); renderIntakeLines(); }
   function setIntakeLine(i, field, val) { if (intakeLines[i]) intakeLines[i][field] = val; } // no re-render — keeps input focus
@@ -2101,13 +2101,18 @@
     const isPink = activeBiz === 'pinkfoot';
     const cats = ['', 'Cot', 'Compactum', 'Rocking Chair', 'Other'];
     host.innerHTML = intakeLines.map((ln, i) => `
-      <div style="display:flex; gap:0.4rem; align-items:flex-end; flex-wrap:wrap; padding:6px 0; border-bottom:1px solid var(--border)">
-        ${isPink ? `<div style="min-width:120px"><label style="font-size:10px; color:var(--text-muted)">Category</label><select onchange="setIntakeLine(${i},'category',this.value)" style="width:100%; padding:5px">${cats.map(c => `<option value="${c}" ${ln.category === c ? 'selected' : ''}>${c || 'Select…'}</option>`).join('')}</select></div>` : ''}
-        <div style="flex:2; min-width:150px"><label style="font-size:10px; color:var(--text-muted)">Product</label><input list="bom-products-list" value="${_escape(ln.product)}" oninput="setIntakeLine(${i},'product',this.value)" placeholder="Type product…" style="width:100%; padding:5px"></div>
-        <div style="width:60px"><label style="font-size:10px; color:var(--text-muted)">Qty</label><input type="number" min="1" value="${_escape(ln.qty)}" onchange="setIntakeLine(${i},'qty',this.value)" style="width:100%; padding:5px"></div>
-        <div style="flex:1; min-width:120px"><label style="font-size:10px; color:var(--text-muted)">Fabric / colour</label><input value="${_escape(ln.fabric)}" oninput="setIntakeLine(${i},'fabric',this.value)" placeholder="optional" style="width:100%; padding:5px"></div>
-        <div style="width:120px"><label style="font-size:10px; color:var(--text-muted)">Price/unit (incl VAT)</label><input type="number" step="0.01" value="${_escape(ln.price)}" onchange="setIntakeLine(${i},'price',this.value)" placeholder="0.00" style="width:100%; padding:5px"></div>
-        <button class="btn btn-sm btn-danger" onclick="removeIntakeLine(${i})" ${intakeLines.length <= 1 ? 'disabled' : ''} title="Remove this product">✕</button>
+      <div style="padding:8px 0; border-bottom:1px solid var(--border)">
+        <div style="display:flex; gap:0.4rem; align-items:flex-end; flex-wrap:wrap">
+          ${isPink ? `<div style="min-width:120px"><label style="font-size:10px; color:var(--text-muted)">Category</label><select onchange="setIntakeLine(${i},'category',this.value)" style="width:100%; padding:5px">${cats.map(c => `<option value="${c}" ${ln.category === c ? 'selected' : ''}>${c || 'Select…'}</option>`).join('')}</select></div>` : ''}
+          <div style="flex:2; min-width:150px"><label style="font-size:10px; color:var(--text-muted)">Product</label><input list="bom-products-list" value="${_escape(ln.product)}" oninput="setIntakeLine(${i},'product',this.value)" placeholder="Type product…" style="width:100%; padding:5px"></div>
+          <div style="width:60px"><label style="font-size:10px; color:var(--text-muted)">Qty</label><input type="number" min="1" value="${_escape(ln.qty)}" onchange="setIntakeLine(${i},'qty',this.value)" style="width:100%; padding:5px"></div>
+          <div style="flex:1; min-width:120px"><label style="font-size:10px; color:var(--text-muted)">Fabric / colour</label><input value="${_escape(ln.fabric)}" oninput="setIntakeLine(${i},'fabric',this.value)" placeholder="optional" style="width:100%; padding:5px"></div>
+          <div style="width:120px"><label style="font-size:10px; color:var(--text-muted)">Price/unit (incl VAT)</label><input type="number" step="0.01" value="${_escape(ln.price)}" onchange="setIntakeLine(${i},'price',this.value)" placeholder="0.00" style="width:100%; padding:5px"></div>
+          <button class="btn btn-sm btn-danger" onclick="removeIntakeLine(${i})" ${intakeLines.length <= 1 ? 'disabled' : ''} title="Remove this product">✕</button>
+        </div>
+        <div style="margin-top:5px"><label style="font-size:10px; color:var(--text-muted)">📐 Custom details / sizes (for custom or made-to-measure items)</label>
+          <textarea oninput="setIntakeLine(${i},'specs',this.value)" rows="2" placeholder="e.g. 2.4m × 0.9m, oak legs, extra-firm foam, buttoned back…" style="width:100%; padding:5px; font-size:12px; font-family:inherit; resize:vertical">${_escape(ln.specs || '')}</textarea>
+        </div>
       </div>`).join('');
   }
   window.renderIntakeLines = renderIntakeLines;
@@ -2143,6 +2148,7 @@
         id, invoice, customer, phone, product,
         category: cat,
         fabric: String(l.fabric || '').trim(),
+        specs: String(l.specs || '').trim(),
         qty: parseInt(l.qty) || 1,
         orderDate: today, dueDate, status: 'pending', startDate: null,
         paymentStatus,
@@ -2737,6 +2743,16 @@
       render();
     }
   }
+  function updateSpecs(orderId, specs) {
+    const order = currentData().orders.find(o => o.id === orderId);
+    if (order && (order.specs || '') !== specs) {
+      snapshotState();
+      order.specs = specs;
+      saveData();
+      render();
+    }
+  }
+  window.updateSpecs = updateSpecs;
   
   function addSupplier() {
     const name = document.getElementById('supplier-name').value.trim();
@@ -5087,6 +5103,7 @@
           <div style="font-weight:700; font-size:15px">#${escHtml(o.invoice || o.id)} — ${escHtml(o.product || '')}${o.qty > 1 ? ' × ' + o.qty : ''}${rockerTag}</div>
           <div style="font-size:12px; color:var(--text-muted)">${escHtml(o.customer || '')}${o.fabric ? ' · 🎨 ' + escHtml(o.fabric) : ''}</div>
           <div style="font-size:11px; color:${overdue ? '#dc2626' : 'var(--text-muted)'}; margin-top:2px">Due ${escHtml(o.dueDate || '—')}${daysLeft !== null ? (overdue ? ` (${Math.abs(daysLeft)}d overdue)` : ` (${daysLeft}d)`) : ''} · progress ${doneCount}/${stages.length}</div>
+          ${o.specs ? `<div style="font-size:11px; color:#1e40af; background:#eff6ff; border:1px solid #bfdbfe; border-radius:4px; padding:3px 6px; margin-top:3px">📐 ${escHtml(o.specs)}</div>` : ''}
           ${doneByLine ? `<div style="font-size:10px; color:var(--text-muted); margin-top:2px">✓ ${doneByLine}</div>` : ''}
         </div>
         ${(() => {
@@ -6576,6 +6593,10 @@
           </div>`;
           })() : '')}
           ${orderStageTrackerHtml(activeBiz, o)}
+          <div style="margin-bottom:0.75rem; padding:0.6rem 0.75rem; background:${o.specs ? '#eff6ff' : 'var(--bg)'}; border:1px solid ${o.specs ? '#bfdbfe' : 'var(--border)'}; border-radius:6px">
+            <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:0.3rem">📐 Custom details / sizes</label>
+            <textarea rows="2" placeholder="Sizes & specifics for a custom/made-to-measure item…" onblur="updateSpecs('${o.id}', this.value)" style="width:100%; font-family:inherit; font-size:12px; padding:0.5rem; border:1px solid var(--border); border-radius:4px; resize:vertical; min-height:38px">${o.specs || ''}</textarea>
+          </div>
           ${canSeeCosts() ? `
           <div style="margin-bottom:0.75rem; display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap">
             <label style="font-size:11px; color:var(--text-muted)">Selling price / unit (R):</label>
@@ -6903,6 +6924,7 @@
     const body = `
       <div style="font-weight:700; font-size:15px">#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}${o.qty > 1 ? ' × ' + o.qty : ''}</div>
       <div style="font-size:12px; color:var(--text-muted); margin-bottom:0.5rem">👤 ${_escape(o.customer || '')} · ${_escape((o.status || '').toUpperCase())}${rocker ? ' · 🪑 built at Bellville' : ''}</div>
+      ${o.specs ? `<div style="font-size:12px; color:#1e40af; background:#eff6ff; border:1px solid #bfdbfe; border-radius:6px; padding:0.5rem 0.7rem; margin-bottom:0.6rem">📐 ${_escape(o.specs)}</div>` : ''}
       <div style="padding:0.5rem 0.7rem; background:var(--bg); border-radius:6px; margin-bottom:0.6rem">${where} <span style="color:var(--text-muted); font-size:12px">· ${doneCount}/${stages.length} stages</span></div>
       ${rows || '<div class="empty">No stages</div>'}
       ${(o.status !== 'delivered' && stages.length && currentIdx >= 0) ? `<button class="btn btn-primary" style="margin-top:0.8rem; width:100%" onclick="goToStationFor('${_escape(o.id)}')">Open this station →</button>` : ''}`;
