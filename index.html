@@ -395,6 +395,7 @@
         <label style="font-weight:700">Products on this order <span style="color:var(--text-muted); font-weight:normal">— add as many as the customer ordered</span></label>
         <div id="intake-products" style="margin-top:0.4rem"></div>
         <datalist id="bom-products-list"></datalist>
+        <div style="font-size:11px; color:var(--text-muted); margin-top:0.35rem">💡 Not in the list? Just type the item name — it'll be added to the system automatically.</div>
         <button class="btn btn-sm" onclick="addIntakeLine()" style="margin-top:0.5rem">➕ Add another product</button>
       </div>
       <div class="row" style="margin-top:0.75rem">
@@ -2128,15 +2129,19 @@
     const dueDate = new Date(Date.now() + 28 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
     snapshotState();
-    let added = 0;
+    if (!currentData().productBoms) currentData().productBoms = {};
+    let added = 0, newItems = 0;
     lines.forEach((l, idx) => {
       const product = String(l.product).trim();
+      const cat = activeBiz === 'pinkfoot' ? (l.category || '') : '';
+      // If this item isn't in the system yet, register it so it's listed & matched next time
+      if (!currentData().productBoms[product]) { currentData().productBoms[product] = { category: cat, materials: {} }; newItems++; }
       const slug = product.replace(/[^a-z0-9]/gi, '').toUpperCase().substring(0, 20);
       let id = 'INV-' + invoice + '-' + slug, n = 2;
       while (currentData().orders.some(o => o.id === id)) { id = 'INV-' + invoice + '-' + slug + '-' + n; n++; }
       currentData().orders.push({
         id, invoice, customer, phone, product,
-        category: activeBiz === 'pinkfoot' ? (l.category || '') : '',
+        category: cat,
         fabric: String(l.fabric || '').trim(),
         qty: parseInt(l.qty) || 1,
         orderDate: today, dueDate, status: 'pending', startDate: null,
@@ -2149,7 +2154,9 @@
 
     saveData();
     render();
-    status.innerHTML = `✓ Added ${added} product${added !== 1 ? 's' : ''} to invoice ${invoice} (Due: ${dueDate})`;
+    try { populateProductDatalist(); } catch (e) {}
+    status.innerHTML = `✓ Added ${added} product${added !== 1 ? 's' : ''} to invoice ${invoice} (Due: ${dueDate})` +
+      (newItems ? ` · ${newItems} new item${newItems !== 1 ? 's' : ''} added to the catalogue` : '');
 
     // reset for the next order
     document.getElementById('intake-invoice').value = '';
