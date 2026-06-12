@@ -374,12 +374,6 @@
           <input id="intake-phone" placeholder="e.g., 0821234567">
         </div>
         <div class="f1">
-          <label>Fabric / Color (optional)</label>
-          <input id="intake-fabric" placeholder="e.g., Full Grain Wild - Tobacco">
-        </div>
-      </div>
-      <div class="row">
-        <div class="f1">
           <label>Payment Status</label>
           <select id="intake-payment">
             <option value="deposit">💰 Deposit only (50%)</option>
@@ -389,38 +383,22 @@
             <option value="unpaid">⚠️ Unpaid</option>
           </select>
         </div>
+      </div>
+      <div class="row">
         <div class="f1">
-          <label>Amount Outstanding (R)</label>
+          <label>Amount Outstanding (R) <span style="color:var(--text-muted); font-weight:normal">(for the whole invoice)</span></label>
           <input id="intake-outstanding" type="number" step="0.01" placeholder="0.00 (optional)">
         </div>
+        <div class="f1"></div>
       </div>
-      <div class="row">
-        <div class="f1" id="category-row" style="display:none">
-          <label>Category</label>
-          <select id="intake-category">
-            <option value="">Select category...</option>
-            <option value="Cot">Cot</option>
-            <option value="Compactum">Compactum</option>
-            <option value="Rocking Chair">Rocking Chair</option>
-            <option value="Other">Other</option>
-          </select>
-        </div>
-        <div class="f1">
-          <label>Product <span style="color:var(--text-muted); font-weight:normal">(type to search, or type custom)</span></label>
-          <input id="intake-product" list="bom-products-list" placeholder="Start typing product name...">
-          <datalist id="bom-products-list"></datalist>
-        </div>
-        <div class="f2" style="min-width:80px">
-          <label>Qty</label>
-          <input id="intake-qty" type="number" value="1" min="1">
-        </div>
-        <div class="f1" style="min-width:140px">
-          <label>Selling price / unit (R) <span style="color:var(--text-muted); font-weight:normal">(incl. VAT)</span></label>
-          <input id="intake-price" type="number" step="0.01" placeholder="0.00 (optional)">
-        </div>
+      <div style="margin-top:0.5rem">
+        <label style="font-weight:700">Products on this order <span style="color:var(--text-muted); font-weight:normal">— add as many as the customer ordered</span></label>
+        <div id="intake-products" style="margin-top:0.4rem"></div>
+        <datalist id="bom-products-list"></datalist>
+        <button class="btn btn-sm" onclick="addIntakeLine()" style="margin-top:0.5rem">➕ Add another product</button>
       </div>
-      <div class="row">
-        <div class="f2" style="min-width:100px">
+      <div class="row" style="margin-top:0.75rem">
+        <div class="f2" style="min-width:120px">
           <label>&nbsp;</label>
           <button class="btn btn-primary" onclick="addOrder()">ADD ORDER</button>
         </div>
@@ -1147,12 +1125,9 @@
       btn.style.color = ['bellville', 'repticube', 'pinkfoot'][i] === biz ? '#0f0f0f' : 'var(--text)';
     });
     
-    // Show category dropdown only for PinkFoot
-    const categoryRow = document.getElementById('category-row');
-    if (categoryRow) {
-      categoryRow.style.display = biz === 'pinkfoot' ? 'block' : 'none';
-    }
-    
+    // Re-render the multi-product intake lines (category column shows only for PinkFoot)
+    try { renderIntakeLines(); } catch (e) {}
+
     render();
     if (typeof populateProductDatalist === 'function') populateProductDatalist();
   }
@@ -1176,7 +1151,7 @@
     if (sec === 'costs') renderCostSettings();
     if (sec === 'stations') renderStations();
     if (sec === 'materials') { renderInventory(); try { renderGrvSection(); } catch (e) {} }
-    if (sec === 'intake') populateProductDatalist();
+    if (sec === 'intake') { populateProductDatalist(); try { renderIntakeLines(); } catch (e) {} }
     if (sec === 'done') renderDoneOrders();
     if (sec === 'planner') renderPlanner();
   }
@@ -2112,74 +2087,78 @@
   window.confirmStockIn = confirmStockIn;
   window.showMaterialReport = showMaterialReport;
   
+  // ----- Multi-product intake: one invoice can carry several products -----
+  let intakeLines = [];
+  function _blankIntakeLine() { return { product: '', category: '', qty: '1', fabric: '', price: '' }; }
+  function addIntakeLine() { intakeLines.push(_blankIntakeLine()); renderIntakeLines(); }
+  function removeIntakeLine(i) { intakeLines.splice(i, 1); if (!intakeLines.length) intakeLines.push(_blankIntakeLine()); renderIntakeLines(); }
+  function setIntakeLine(i, field, val) { if (intakeLines[i]) intakeLines[i][field] = val; } // no re-render — keeps input focus
+  window.addIntakeLine = addIntakeLine; window.removeIntakeLine = removeIntakeLine; window.setIntakeLine = setIntakeLine;
+  function renderIntakeLines() {
+    const host = document.getElementById('intake-products'); if (!host) return;
+    if (!intakeLines.length) intakeLines.push(_blankIntakeLine());
+    const isPink = activeBiz === 'pinkfoot';
+    const cats = ['', 'Cot', 'Compactum', 'Rocking Chair', 'Other'];
+    host.innerHTML = intakeLines.map((ln, i) => `
+      <div style="display:flex; gap:0.4rem; align-items:flex-end; flex-wrap:wrap; padding:6px 0; border-bottom:1px solid var(--border)">
+        ${isPink ? `<div style="min-width:120px"><label style="font-size:10px; color:var(--text-muted)">Category</label><select onchange="setIntakeLine(${i},'category',this.value)" style="width:100%; padding:5px">${cats.map(c => `<option value="${c}" ${ln.category === c ? 'selected' : ''}>${c || 'Select…'}</option>`).join('')}</select></div>` : ''}
+        <div style="flex:2; min-width:150px"><label style="font-size:10px; color:var(--text-muted)">Product</label><input list="bom-products-list" value="${_escape(ln.product)}" oninput="setIntakeLine(${i},'product',this.value)" placeholder="Type product…" style="width:100%; padding:5px"></div>
+        <div style="width:60px"><label style="font-size:10px; color:var(--text-muted)">Qty</label><input type="number" min="1" value="${_escape(ln.qty)}" onchange="setIntakeLine(${i},'qty',this.value)" style="width:100%; padding:5px"></div>
+        <div style="flex:1; min-width:120px"><label style="font-size:10px; color:var(--text-muted)">Fabric / colour</label><input value="${_escape(ln.fabric)}" oninput="setIntakeLine(${i},'fabric',this.value)" placeholder="optional" style="width:100%; padding:5px"></div>
+        <div style="width:120px"><label style="font-size:10px; color:var(--text-muted)">Price/unit (incl VAT)</label><input type="number" step="0.01" value="${_escape(ln.price)}" onchange="setIntakeLine(${i},'price',this.value)" placeholder="0.00" style="width:100%; padding:5px"></div>
+        <button class="btn btn-sm btn-danger" onclick="removeIntakeLine(${i})" ${intakeLines.length <= 1 ? 'disabled' : ''} title="Remove this product">✕</button>
+      </div>`).join('');
+  }
+  window.renderIntakeLines = renderIntakeLines;
+
   function addOrder() {
     const invoice = document.getElementById('intake-invoice').value.trim();
     const customer = document.getElementById('intake-customer').value.trim();
     const phone = document.getElementById('intake-phone').value.trim();
-    const fabric = document.getElementById('intake-fabric').value.trim();
-    const product = document.getElementById('intake-product').value.trim();
-    const qty = parseInt(document.getElementById('intake-qty').value) || 1;
-    const category = activeBiz === 'pinkfoot' ? document.getElementById('intake-category').value : '';
     const paymentStatus = document.getElementById('intake-payment')?.value || 'deposit';
     const outstanding = parseFloat(document.getElementById('intake-outstanding')?.value) || 0;
-    const sellingPrice = parseFloat(document.getElementById('intake-price')?.value) || 0;
-    
-    if (!invoice || !customer || !product) {
-      document.getElementById('order-status').innerHTML = '✗ Fill in invoice, customer, and product';
-      return;
-    }
-    
-    if (activeBiz === 'pinkfoot' && !category) {
-      document.getElementById('order-status').innerHTML = '✗ Select a category';
-      return;
-    }
-    
-    // Build unique ID using invoice + product
-    const productSlug = product.replace(/[^a-z0-9]/gi, '').toUpperCase().substring(0, 20);
-    const orderId = 'INV-' + invoice + '-' + productSlug;
-    if (currentData().orders.find(o => o.id === orderId)) {
-      document.getElementById('order-status').innerHTML = '✗ This product is already on invoice ' + invoice;
-      return;
-    }
-    
+    const status = document.getElementById('order-status');
+
+    if (!invoice || !customer) { status.innerHTML = '✗ Fill in invoice and customer'; return; }
+    const lines = intakeLines.filter(l => String(l.product || '').trim());
+    if (!lines.length) { status.innerHTML = '✗ Add at least one product'; return; }
+    if (activeBiz === 'pinkfoot' && lines.some(l => !l.category)) { status.innerHTML = '✗ Select a category for each product'; return; }
+
     const today = new Date().toISOString().split('T')[0];
     const dueDate = new Date(Date.now() + 28 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    
-    const order = {
-      id: orderId,
-      invoice,
-      customer,
-      phone,
-      product,
-      category,
-      fabric,
-      qty,
-      orderDate: today,
-      dueDate,
-      status: 'pending',
-      startDate: null,
-      paymentStatus,
-      outstanding,
-      sellingPrice
-    };
 
     snapshotState();
-    currentData().orders.push(order);
-    document.getElementById('order-status').innerHTML = `✓ Order added (Due: ${dueDate})`;
-    
+    let added = 0;
+    lines.forEach((l, idx) => {
+      const product = String(l.product).trim();
+      const slug = product.replace(/[^a-z0-9]/gi, '').toUpperCase().substring(0, 20);
+      let id = 'INV-' + invoice + '-' + slug, n = 2;
+      while (currentData().orders.some(o => o.id === id)) { id = 'INV-' + invoice + '-' + slug + '-' + n; n++; }
+      currentData().orders.push({
+        id, invoice, customer, phone, product,
+        category: activeBiz === 'pinkfoot' ? (l.category || '') : '',
+        fabric: String(l.fabric || '').trim(),
+        qty: parseInt(l.qty) || 1,
+        orderDate: today, dueDate, status: 'pending', startDate: null,
+        paymentStatus,
+        outstanding: idx === 0 ? outstanding : 0,  // outstanding belongs to the invoice — put it on the first line only (avoids double-counting)
+        sellingPrice: parseFloat(l.price) || 0
+      });
+      added++;
+    });
+
+    saveData();
+    render();
+    status.innerHTML = `✓ Added ${added} product${added !== 1 ? 's' : ''} to invoice ${invoice} (Due: ${dueDate})`;
+
+    // reset for the next order
     document.getElementById('intake-invoice').value = '';
     document.getElementById('intake-customer').value = '';
     document.getElementById('intake-phone').value = '';
-    document.getElementById('intake-fabric').value = '';
-    document.getElementById('intake-product').value = '';
-    document.getElementById('intake-qty').value = '1';
-    if (document.getElementById('intake-price')) document.getElementById('intake-price').value = '';
-    if (document.getElementById('intake-category')) document.getElementById('intake-category').value = '';
     if (document.getElementById('intake-payment')) document.getElementById('intake-payment').value = 'deposit';
     if (document.getElementById('intake-outstanding')) document.getElementById('intake-outstanding').value = '';
-    
-    saveData();
-    render();
+    intakeLines = [_blankIntakeLine()];
+    renderIntakeLines();
   }
   
   function importCSV() {
@@ -4680,6 +4659,10 @@
   function canSeeCosts() {
     return typeof canSeeTab === 'function' ? canSeeTab('costs') : true;
   }
+  // Only roles with BOM access may re-link an order to a different BOM product (hidden from sales)
+  function canLinkBom() {
+    return typeof canSeeTab === 'function' ? canSeeTab('bom') : true;
+  }
 
   const money = n => 'R' + (Number(n) || 0).toFixed(2);
 
@@ -6572,7 +6555,7 @@
           <div style="font-size:11px; color:var(--text-muted); margin-bottom:0.75rem">
             Order: ${o.orderDate} | Due: <input type="date" value="${o.dueDate}" onchange="updateDueDate('${o.id}', this.value)" style="display:inline-block; width:auto; padding:2px 6px; font-size:11px; background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:4px">
           </div>
-          ${(() => {
+          ${(canLinkBom() ? (() => {
             const matched = !!(currentData().productBoms && currentData().productBoms[o.product]);
             const opts = bomProducts.map(p => `<option value="${p.replace(/"/g, '&quot;')}" ${p === o.product ? 'selected' : ''}>${p}</option>`).join('');
             const currentOpt = matched ? '' : `<option value="${(o.product || '').replace(/"/g, '&quot;')}" selected>${o.product || '(none)'} — unmatched</option>`;
@@ -6584,7 +6567,7 @@
             </select>
             ${matched ? '' : '<span style="font-size:11px; color:#dc2626; font-weight:600">⚠️ not matched — pick the right product</span>'}
           </div>`;
-          })()}
+          })() : '')}
           ${orderStageTrackerHtml(activeBiz, o)}
           ${canSeeCosts() ? `
           <div style="margin-bottom:0.75rem; display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap">
