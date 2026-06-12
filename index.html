@@ -950,6 +950,17 @@
     <img id="img-lightbox-img" alt="invoice" style="max-width:96%; max-height:96%; border-radius:6px">
   </div>
 
+  <!-- GENERIC INFO MODAL (order progress, unpaid list, …) -->
+  <div id="info-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; align-items:center; justify-content:center; padding:1rem" onclick="if(event.target===this)closeInfoModal()">
+    <div style="max-width:520px; width:100%; background:var(--surface,#fff); border-radius:12px; padding:1.25rem; max-height:90vh; overflow-y:auto">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; margin-bottom:0.75rem">
+        <h2 id="info-modal-title" style="margin:0; font-size:18px">Details</h2>
+        <button class="btn btn-sm" onclick="closeInfoModal()">✕</button>
+      </div>
+      <div id="info-modal-body"></div>
+    </div>
+  </div>
+
   <!-- SCHEDULE -->
   <div id="section-schedule" class="section">
     <div class="card">
@@ -6147,9 +6158,9 @@
         <div style="font-size:24px; font-weight:800; color:${accent || 'var(--text)'}; line-height:1.15; margin-top:2px">${value}</div>
         ${sub ? `<div style="margin-top:3px">${sub}</div>` : ''}
       </div>`;
-    const flag = (label, value, accent, sub) => `
-      <div class="card" style="margin:0; padding:0.85rem 1rem">
-        <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted)">${label}</div>
+    const flag = (label, value, accent, sub, onclick) => `
+      <div class="card" style="margin:0; padding:0.85rem 1rem${onclick ? '; cursor:pointer; border-color:' + accent : ''}"${onclick ? ` onclick="${onclick}" title="Click to view"` : ''}>
+        <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted)">${label}${onclick ? ' ›' : ''}</div>
         <div style="font-size:24px; font-weight:800; color:${accent}; line-height:1.15; margin-top:2px">${value}</div>
         ${sub ? `<div style="font-size:11px; color:var(--text-muted); margin-top:2px">${sub}</div>` : ''}
       </div>`;
@@ -6181,7 +6192,7 @@
       <div class="card">
         <div class="card-title">🚩 Money & Production Flags</div>
         ${grid(`
-          ${flag('Unpaid / partial', unpaidCount, unpaidCount ? '#dc2626' : '#16a34a', 'Outstanding: ' + _rand0(outstanding))}
+          ${flag('Unpaid / partial', unpaidCount, unpaidCount ? '#dc2626' : '#16a34a', 'Outstanding: ' + _rand0(outstanding), unpaidCount ? 'showUnpaidOrders()' : '')}
           ${flag('Overdue (not done)', overdue, overdue ? '#dc2626' : '#16a34a', 'past due date')}
           ${flag('Due this week', dueThisWeek, dueThisWeek ? '#d97706' : '#16a34a', 'not yet done')}
           ${flag('Fabric not received', fabricNotRec, fabricNotRec ? '#d97706' : '#16a34a', 'active orders')}
@@ -6841,7 +6852,7 @@
            data-order-id="${_escape(o.id)}"
            ondragstart="planDragStart(event, '${_escape(o.id)}')"
            ondragend="planDragEnd(event)">
-        <div class="pc-body">
+        <div class="pc-body" onclick="showOrderProgress('${_escape(o.id)}')" style="cursor:pointer" title="Show where this order is in manufacturing">
           <div class="pc-inv">#${inv}${rockerTag}</div>
           <div class="pc-prod">${_escape(prodLabel)}</div>
           <div class="pc-cust">👤 ${_escape(o.customer)}</div>
@@ -6858,6 +6869,97 @@
     `;
   }
   window.planItemCard = planItemCard;
+
+  // ---- Generic info modal + order-progress / unpaid-orders navigation ----
+  function openInfoModal(title, bodyHtml) {
+    document.getElementById('info-modal-title').textContent = title;
+    document.getElementById('info-modal-body').innerHTML = bodyHtml;
+    document.getElementById('info-modal').style.display = 'flex';
+  }
+  function closeInfoModal() { const m = document.getElementById('info-modal'); if (m) m.style.display = 'none'; }
+  window.openInfoModal = openInfoModal; window.closeInfoModal = closeInfoModal;
+
+  // Where is this order in manufacturing?
+  function showOrderProgress(orderId) {
+    const found = findOrderAnyBiz(orderId); if (!found) return;
+    const biz = found.biz, o = found.o;
+    const stages = getProductionStagesForOrder(biz, o);
+    const done = (o.stageDone && typeof o.stageDone === 'object') ? o.stageDone : {};
+    const doneCount = stages.filter(s => done[s]).length;
+    const currentIdx = stages.findIndex(s => !done[s]);
+    const allDone = stages.length && doneCount === stages.length;
+    let where;
+    if (o.status === 'delivered') where = '✅ Delivered';
+    else if (o.status === 'done' || allDone) where = '🎁 Complete — ready for dispatch';
+    else if (!stages.length) where = 'No production stages defined';
+    else if (doneCount === 0) where = '⏳ Not started — waiting at <b>' + _escape(stages[0]) + '</b>';
+    else where = '▶ Currently at <b>' + _escape(stages[currentIdx]) + '</b>';
+
+    const fmt = ts => { try { return new Date(ts).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }); } catch (e) { return ''; } };
+    const rows = stages.map((s, i) => {
+      const isD = !!done[s], isCur = !isD && i === currentIdx;
+      const worker = (o.stageWorker && o.stageWorker[s]) ? o.stageWorker[s] : '';
+      const at = (o.stageDoneAt && o.stageDoneAt[s]) ? o.stageDoneAt[s] : '';
+      const col = isD ? '#16a34a' : (isCur ? '#d97706' : 'var(--text-muted)');
+      const meta = isD ? `<span style="color:var(--text-muted); font-size:11px">${worker ? _escape(worker) : ''}${worker && at ? ' · ' : ''}${at ? fmt(at) : ''}</span>`
+                       : (isCur ? '<span style="color:#d97706; font-size:11px">in progress</span>' : '');
+      return `<div style="display:flex; align-items:center; gap:0.5rem; padding:5px 0; border-bottom:1px solid var(--border)">
+        <span style="width:18px; text-align:center; color:${col}; font-weight:700">${isD ? '✓' : (isCur ? '▶' : '○')}</span>
+        <span style="flex:1; font-weight:${isCur ? '700' : '500'}; color:${col}">${_escape(s)}</span>${meta}
+      </div>`;
+    }).join('');
+
+    const rocker = isRockingOrder(o);
+    const body = `
+      <div style="font-weight:700; font-size:15px">#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}${o.qty > 1 ? ' × ' + o.qty : ''}</div>
+      <div style="font-size:12px; color:var(--text-muted); margin-bottom:0.5rem">👤 ${_escape(o.customer || '')} · ${_escape((o.status || '').toUpperCase())}${rocker ? ' · 🪑 built at Bellville' : ''}</div>
+      <div style="padding:0.5rem 0.7rem; background:var(--bg); border-radius:6px; margin-bottom:0.6rem">${where} <span style="color:var(--text-muted); font-size:12px">· ${doneCount}/${stages.length} stages</span></div>
+      ${rows || '<div class="empty">No stages</div>'}
+      ${(o.status !== 'delivered' && stages.length && currentIdx >= 0) ? `<button class="btn btn-primary" style="margin-top:0.8rem; width:100%" onclick="goToStationFor('${_escape(o.id)}')">Open this station →</button>` : ''}`;
+    openInfoModal('Manufacturing status', body);
+  }
+  window.showOrderProgress = showOrderProgress;
+
+  function goToStationFor(orderId) {
+    const found = findOrderAnyBiz(orderId); if (!found) return;
+    const o = found.o, prodBiz = isRockingOrder(o) ? 'bellville' : found.biz;
+    const stages = getProductionStagesForOrder(found.biz, o);
+    const done = (o.stageDone && typeof o.stageDone === 'object') ? o.stageDone : {};
+    const cur = stages.find(s => !done[s]) || stages[0];
+    closeInfoModal();
+    if (activeBiz !== prodBiz) switchBiz(prodBiz);
+    showSection('stations');
+    if (cur && typeof setStationStage === 'function') setStationStage(cur);
+  }
+  window.goToStationFor = goToStationFor;
+
+  // Unpaid / partial orders → click one to jump to it in Active Orders
+  function showUnpaidOrders() {
+    const list = [];
+    dashOrders().forEach(({ biz, o }) => {
+      if (o.paymentStatus && o.paymentStatus !== 'paid' && o.status !== 'delivered') {
+        list.push({ biz, id: o.id, invoice: o.invoice || o.id, customer: o.customer || '', outstanding: parseFloat(o.outstanding) || 0, status: o.paymentStatus });
+      }
+    });
+    if (!list.length) { openInfoModal('Unpaid / partial orders', '<div class="empty">None 🎉</div>'); return; }
+    list.sort((a, b) => b.outstanding - a.outstanding);
+    const rows = list.map(u => `
+      <div onclick="goToOrder('${u.biz}','${_escape(String(u.id))}','${_escape(String(u.invoice))}')" style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; padding:0.5rem 0.6rem; border:1px solid var(--border); border-radius:6px; margin-bottom:0.4rem; cursor:pointer">
+        <div><div style="font-weight:700">#${_escape(String(u.invoice))} ${dashScope === 'all' ? '<span style="font-size:10px; color:var(--text-muted)">(' + u.biz + ')</span>' : ''}</div><div style="font-size:12px; color:var(--text-muted)">${_escape(u.customer)}</div></div>
+        <div style="text-align:right; white-space:nowrap"><div style="color:#991b1b; font-weight:700">${u.outstanding > 0 ? _rand0(u.outstanding) : '—'}</div><div style="font-size:10px; color:var(--text-muted)">${_escape(u.status)}</div></div>
+      </div>`).join('');
+    openInfoModal('Unpaid / partial orders (' + list.length + ')', rows);
+  }
+  window.showUnpaidOrders = showUnpaidOrders;
+
+  function goToOrder(biz, id, invoice) {
+    closeInfoModal();
+    if (biz && activeBiz !== biz && typeof switchBiz === 'function') switchBiz(biz);
+    showSection('orders');
+    const s = document.getElementById('order-search'); if (s) s.value = invoice || '';
+    if (typeof renderOrders === 'function') renderOrders();
+  }
+  window.goToOrder = goToOrder;
 
   // Printable version of the 4-week planner board
   function printPlanner() {
