@@ -1862,6 +1862,64 @@
     return snap.exists() ? snap.data().image : null;
   }
 
+  // Generic photo storage — keeps base64 OUT of the 1 MB shared-data doc (each photo is its own doc)
+  async function _savePhotoDoc(coll, id, dataUrl) {
+    if (!window.firebaseDb || !window.firebaseFns) throw new Error('offline');
+    await window.firebaseFns.setDoc(window.firebaseFns.doc(window.firebaseDb, coll, id), { image: dataUrl, createdAt: new Date().toISOString() });
+  }
+  async function _loadPhotoDoc(coll, id) {
+    if (!window.firebaseDb || !window.firebaseFns) return null;
+    const snap = await window.firebaseFns.getDoc(window.firebaseFns.doc(window.firebaseDb, coll, id));
+    return snap.exists() ? snap.data().image : null;
+  }
+  const _dpCache = {}; // delivery photo id -> dataUrl (per device, instant display)
+  function hydrateDeliveryThumbs() {
+    try {
+      (document.querySelectorAll('img[data-dphid]') || []).forEach(async el => {
+        if (el.getAttribute('src')) return;
+        const id = el.getAttribute('data-dphid');
+        let url = _dpCache[id];
+        if (!url) { try { url = await _loadPhotoDoc('delivery-photos', id); if (url) _dpCache[id] = url; } catch (e) {} }
+        if (url) el.src = url;
+      });
+    } catch (e) {}
+  }
+  async function viewDeliveryPhoto(id) {
+    const lb = document.getElementById('img-lightbox'), img = document.getElementById('img-lightbox-img');
+    if (lb) { img.alt = 'Loading…'; img.removeAttribute('src'); lb.style.display = 'flex'; }
+    let url = _dpCache[id];
+    if (!url) { try { url = await _loadPhotoDoc('delivery-photos', id); if (url) _dpCache[id] = url; } catch (e) {} }
+    if (url) img.src = url; else { if (lb) lb.style.display = 'none'; toast('Photo not available offline', 'warn'); }
+  }
+  window.hydrateDeliveryThumbs = hydrateDeliveryThumbs; window.viewDeliveryPhoto = viewDeliveryPhoto;
+
+  // One-time-ish migration: move legacy base64 delivery photos out of the shared-data doc.
+  // This is what brings an over-1 MB doc back under the limit so cloud sync starts working again.
+  let _dpMigrating = false;
+  async function migrateDeliveryPhotos() {
+    if (_dpMigrating || !window.firebaseDb || !window.firebaseFns) return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+    const targets = [];
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => (data[b] && data[b].orders ? data[b].orders : []).forEach(o => { if (Array.isArray(o.deliveryPhotos) && o.deliveryPhotos.length) targets.push(o); }));
+    if (!targets.length) return;
+    _dpMigrating = true;
+    let moved = 0;
+    try {
+      for (const o of targets) {
+        if (!Array.isArray(o.deliveryPhotoIds)) o.deliveryPhotoIds = [];
+        const keep = [];
+        for (const b64 of o.deliveryPhotos) {
+          const id = 'dph-' + Date.now() + '-' + Math.floor(Math.random() * 100000);
+          try { await _savePhotoDoc('delivery-photos', id, b64); o.deliveryPhotoIds.push(id); _dpCache[id] = b64; moved++; }
+          catch (e) { keep.push(b64); } // couldn't upload — leave it so it isn't lost
+        }
+        if (keep.length) o.deliveryPhotos = keep; else delete o.deliveryPhotos;
+      }
+      if (moved) { saveData(); try { render(); } catch (e) {} console.log('Migrated ' + moved + ' delivery photo(s) out of the shared doc'); }
+    } finally { _dpMigrating = false; }
+  }
+  window.migrateDeliveryPhotos = migrateDeliveryPhotos;
+
   async function grvReceive() {
     const supplier = document.getElementById('grv-supplier').value.trim();
     const invoice = document.getElementById('grv-invoice').value.trim();
@@ -3527,11 +3585,17 @@
               ` : '<div style="font-size:10px; color:var(--warn)">⚠️ No phone for WhatsApp</div>'}
             </div>
           </div>
-          ${o.deliveryPhotos && o.deliveryPhotos.length > 0 ? `
+          ${((o.deliveryPhotoIds && o.deliveryPhotoIds.length) || (o.deliveryPhotos && o.deliveryPhotos.length)) ? `
           <div style="margin-top:0.75rem; padding-top:0.75rem; border-top:1px solid var(--border)">
-            <div style="font-size:10px; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase; letter-spacing:0.05em">📷 Delivery Photos (${o.deliveryPhotos.length})</div>
+            <div style="font-size:10px; color:var(--text-muted); margin-bottom:0.5rem; text-transform:uppercase; letter-spacing:0.05em">📷 Delivery Photos (${(o.deliveryPhotoIds ? o.deliveryPhotoIds.length : 0) + (o.deliveryPhotos ? o.deliveryPhotos.length : 0)})</div>
             <div style="display:flex; gap:0.5rem; flex-wrap:wrap">
-              ${o.deliveryPhotos.map((p, i) => `
+              ${(o.deliveryPhotoIds || []).map(id => `
+                <div style="position:relative; width:80px; height:80px">
+                  <img data-dphid="${id}" onclick="viewDeliveryPhoto('${id}')" style="width:80px; height:80px; object-fit:cover; cursor:pointer; border:1px solid var(--border); background:var(--bg)">
+                  <button onclick="removeDeliveryPhotoId('${o._biz}', '${o.id}', '${id}')" style="position:absolute; top:-5px; right:-5px; background:var(--accent); color:#fff; border:none; width:20px; height:20px; cursor:pointer; font-size:10px; line-height:1">✕</button>
+                </div>
+              `).join('')}
+              ${(o.deliveryPhotos || []).map((p, i) => `
                 <div style="position:relative; width:80px; height:80px">
                   <img src="${p}" onclick="viewPhoto('${p.replace(/'/g, "\\'")}')" style="width:80px; height:80px; object-fit:cover; cursor:pointer; border:1px solid var(--border)">
                   <button onclick="removeDeliveryPhoto('${o._biz}', '${o.id}', ${i})" style="position:absolute; top:-5px; right:-5px; background:var(--accent); color:#fff; border:none; width:20px; height:20px; cursor:pointer; font-size:10px; line-height:1">✕</button>
@@ -3546,6 +3610,7 @@
     
     const list = document.getElementById('dispatch-list');
     if (list) list.innerHTML = html || '<div class="empty">No orders match this filter</div>';
+    try { hydrateDeliveryThumbs(); } catch (e) {}
   }
   
   let calCurrentDate = new Date();
@@ -5745,27 +5810,42 @@
         
         // Compress to ~70% quality JPEG
         const compressed = canvas.toDataURL('image/jpeg', 0.7);
-        
+
         snapshotState();
-        if (!order.deliveryPhotos) order.deliveryPhotos = [];
-        order.deliveryPhotos.push(compressed);
-        
-        try {
-          saveData();
-          render();
-        } catch (err) {
-          if (err.name === 'QuotaExceededError') {
-            order.deliveryPhotos.pop();
-            alert('Storage full! Delete some old photos first.');
-          } else {
-            alert('Error saving: ' + err.message);
+        const photoId = 'dph-' + Date.now() + '-' + Math.floor(Math.random() * 100000);
+        _dpCache[photoId] = compressed; // instant display on this device
+        (async () => {
+          try {
+            await _savePhotoDoc('delivery-photos', photoId, compressed); // store OUTSIDE the synced doc
+            if (!order.deliveryPhotoIds) order.deliveryPhotoIds = [];
+            order.deliveryPhotoIds.push(photoId);
+          } catch (e) {
+            // offline / not permitted — keep base64 on the order so it isn't lost; migration moves it later
+            if (!order.deliveryPhotos) order.deliveryPhotos = [];
+            order.deliveryPhotos.push(compressed);
           }
-        }
+          try { saveData(); render(); }
+          catch (err) {
+            if (err.name === 'QuotaExceededError') { if (order.deliveryPhotos) order.deliveryPhotos.pop(); alert('Storage full! Delete some old photos first.'); }
+            else alert('Error saving: ' + err.message);
+          }
+        })();
       };
       img.src = e.target.result;
     };
     reader.readAsDataURL(file);
   }
+
+  function removeDeliveryPhotoId(biz, orderId, photoId) {
+    if (!confirm('Remove this photo?')) return;
+    snapshotState();
+    const order = data[biz]?.orders?.find(o => o.id === orderId);
+    if (order && Array.isArray(order.deliveryPhotoIds)) {
+      order.deliveryPhotoIds = order.deliveryPhotoIds.filter(x => x !== photoId);
+      saveData(); render();
+    }
+  }
+  window.removeDeliveryPhotoId = removeDeliveryPhotoId;
   
   function removeDeliveryPhoto(biz, orderId, idx) {
     if (!confirm('Remove this photo?')) return;
@@ -7879,6 +7959,7 @@
         applyRolePermissions();
         if (currentRole === 'station') showSection('stations');
         startSync();
+        try { setTimeout(() => { migrateDeliveryPhotos().catch(() => {}); }, 2500); } catch (e) {}
       } else {
         currentUser = null;
         currentRole = null;
@@ -7940,6 +8021,8 @@
         render();
         if (typeof populateProductDatalist === 'function') populateProductDatalist();
       }
+      // Offload any legacy base64 delivery photos so the shared doc stays under Firestore's 1 MB cap
+      try { setTimeout(() => { migrateDeliveryPhotos().catch(() => {}); }, 1500); } catch (e) {}
       updateSyncStatus(fromCache ? '⚠️ Offline (cached)' : '☁ Synced', fromCache ? 'warn' : 'success');
     }, (err) => {
       console.error('Sync error:', err);
