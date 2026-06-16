@@ -4117,7 +4117,7 @@
     const mats = biz.materialsLibrary || [];
     const products = biz.productBoms || {};
     const showCost = canSeeCosts();
-    const extraCols = showCost ? 3 : 0;
+    const extraCols = showCost ? 5 : 0;
     const filterCat = document.getElementById('bom-category')?.value || '';
     const searchQuery = (document.getElementById('bom-search')?.value || '').toLowerCase();
     
@@ -4208,10 +4208,16 @@
           ${showCost ? (() => {
             const tc = computeTrueCost(activeBiz, prodName);
             const be = breakEvenPrice(activeBiz, tc.trueCost);
+            const sp = prod.sellingPrice || 0;
+            const prof = computeProfit(activeBiz, sp, tc.trueCost);
+            const pcol = !sp ? 'var(--text-muted)' : (prof.profit >= 0 ? 'var(--success)' : 'var(--accent)');
+            const marginTxt = !sp ? '—' : (prof.marginValid ? (prof.margin * 100).toFixed(0) + '%' : '—');
             return `
             <td style="padding:0.5rem; border:1px solid var(--border); text-align:right; background:var(--bg); color:var(--text-muted)">R${tc.labourOverheadShare.toFixed(2)}${tc.weightMissing ? ' <span title="No unit weight for this category — using 1" style="color:#92400e">⚠️</span>' : ''}</td>
             <td style="padding:0.5rem; border:1px solid var(--border); text-align:right; font-weight:700; background:var(--bg)">R${tc.trueCost.toFixed(2)}</td>
-            <td style="padding:0.5rem; border:1px solid var(--border); text-align:right; background:var(--bg)" title="${isVatRegistered(activeBiz) ? 'True cost grossed up by 15% VAT' : 'True cost (not VAT-registered)'}">R${be.toFixed(2)}</td>`;
+            <td style="padding:0.5rem; border:1px solid var(--border); text-align:right; background:var(--bg)" title="${isVatRegistered(activeBiz) ? 'True cost grossed up by 15% VAT' : 'True cost (not VAT-registered)'}">R${be.toFixed(2)}</td>
+            <td style="padding:0.4rem; border:1px solid var(--border); text-align:right; background:var(--bg)"><input type="number" step="0.01" value="${sp || ''}" placeholder="0.00" onchange="setProductSellPrice('${pn}', this.value)" onclick="event.stopPropagation()" style="width:90px; padding:4px 6px; font-size:12px; text-align:right; background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:4px; margin:0"></td>
+            <td style="padding:0.5rem; border:1px solid var(--border); text-align:right; background:var(--bg); color:${pcol}; font-weight:600" title="${sp ? (isVatRegistered(activeBiz) ? 'Net (ex-VAT) price ' + money(prof.netPrice) + ' − true cost' : 'Sell price − true cost') : 'No selling price set'}">${sp ? money(prof.profit) + '<br><span style="font-size:10px; font-weight:normal">' + marginTxt + '</span>' : '—'}</td>`;
           })() : ''}
           <td style="padding:0.5rem; border:1px solid var(--border); text-align:center; white-space:nowrap">
             <button class="btn btn-sm" onclick="toggleCutList('${pn}')" title="Edit cutting list" style="padding:2px 6px; font-size:10px; ${cut ? 'background:#dbeafe; border-color:#3b82f6; color:#1e40af' : ''}">✂️${(prod.cutList || []).length ? ' ' + prod.cutList.length : ''}</button>
@@ -4235,6 +4241,8 @@
               <th style="padding:0.5rem; border:1px solid var(--border); background:var(--bg)" title="Labour + overhead share for this category">Labour+OH</th>
               <th style="padding:0.5rem; border:1px solid var(--border); background:var(--bg)" title="Material + labour/overhead">True Cost</th>
               <th style="padding:0.5rem; border:1px solid var(--border); background:var(--bg)" title="Break-even price${isVatRegistered(activeBiz) ? ' (incl. 15% VAT)' : ''}">Break-even</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); background:var(--bg)" title="Retail selling price (incl. VAT)">Sell Price</th>
+              <th style="padding:0.5rem; border:1px solid var(--border); background:var(--bg)" title="Profit per unit and margin %${isVatRegistered(activeBiz) ? ' (VAT stripped from sell price)' : ''}">Margin</th>
               ` : ''}
               <th style="padding:0.5rem; border:1px solid var(--border); background:var(--bg)"></th>
             </tr>
@@ -4243,8 +4251,13 @@
         </table>
       </div>
       
-      <div style="margin-top:1rem; display:flex; gap:0.5rem; flex-wrap:wrap">
+      <div style="margin-top:1rem; display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center">
         <button class="btn" onclick="addNewProductBom()">+ Add Product</button>
+        ${showCost ? `
+        <button class="btn" onclick="exportSellPriceSheet()" title="Download a CSV of every product with a Selling Price column to fill in">⬇️ Export price sheet</button>
+        <button class="btn" onclick="document.getElementById('sellprice-file').click()" title="Upload the filled-in CSV to set selling prices">⬆️ Import prices</button>
+        <input type="file" id="sellprice-file" accept=".csv,text/csv" style="display:none" onchange="handleSellPriceFile(this)">
+        ` : ''}
         <span style="font-size:12px; color:var(--text-muted); align-self:center">${productList.length} product${productList.length !== 1 ? 's' : ''} shown</span>
       </div>
     `;
@@ -4691,6 +4704,85 @@
     const margin = netPrice > 0 ? profit / netPrice : 0;   // guard divide-by-zero
     return { sellingPrice: sp, netPrice, profit, margin, marginValid: netPrice > 0 };
   }
+
+  // --- Per-product selling prices (VAT-inclusive retail) -------------------
+  function setProductSellPrice(prodName, value) {
+    const biz = currentData();
+    if (!biz || !biz.productBoms || !biz.productBoms[prodName]) return;
+    biz.productBoms[prodName].sellingPrice = parseFloat(value) || 0;
+    saveData();
+    renderProductBomTable();
+  }
+  window.setProductSellPrice = setProductSellPrice;
+
+  function _csvCell(v) { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+  function _parseCsvLine(line) {
+    const cells = []; let cur = '', q = false;
+    for (let j = 0; j < line.length; j++) {
+      const ch = line[j];
+      if (ch === '"') { if (q && line[j + 1] === '"') { cur += '"'; j++; } else q = !q; }
+      else if (ch === ',' && !q) { cells.push(cur.trim()); cur = ''; }
+      else cur += ch;
+    }
+    cells.push(cur.trim());
+    return cells;
+  }
+
+  // Download a fill-in sheet of every product for the active business
+  function exportSellPriceSheet() {
+    const biz = currentData(); const prods = (biz && biz.productBoms) || {};
+    const names = Object.keys(prods).sort((a, b) =>
+      (prods[a].category || '').localeCompare(prods[b].category || '') || a.localeCompare(b));
+    const rows = [['Business', 'Category', 'Product', 'MaterialCost', 'TrueCost', 'BreakEven_inclVAT', 'SellingPrice_inclVAT']];
+    names.forEach(name => {
+      const tc = computeTrueCost(activeBiz, name);
+      const be = breakEvenPrice(activeBiz, tc.trueCost);
+      rows.push([activeBiz, prods[name].category || '', name, tc.materialCost.toFixed(2), tc.trueCost.toFixed(2), be.toFixed(2), prods[name].sellingPrice || '']);
+    });
+    const csv = rows.map(r => r.map(_csvCell).join(',')).join('\r\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = activeBiz + '-selling-prices.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  window.exportSellPriceSheet = exportSellPriceSheet;
+
+  function handleSellPriceFile(input) {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = e => { try { applySellPriceCsv(e.target.result); } catch (err) { alert('Could not read sheet: ' + err.message); } input.value = ''; };
+    r.readAsText(f);
+  }
+  window.handleSellPriceFile = handleSellPriceFile;
+
+  // Apply a filled-in sheet. Accepts our export format, or any CSV/lines with
+  // a product name and a price (e.g. "Lisa Sofa, 4500" or "Lisa Sofa = 4500").
+  function applySellPriceCsv(text) {
+    const biz = currentData(); const prods = (biz && biz.productBoms) || {};
+    const byName = {}; Object.keys(prods).forEach(n => byName[n.trim().toLowerCase()] = n);
+    const lines = String(text).split(/\r?\n/).filter(l => l.trim());
+    let matched = 0; const missed = [];
+    lines.forEach((line, idx) => {
+      const cols = _parseCsvLine(line.replace(/=/g, ','));
+      if (idx === 0 && /product/i.test(line) && /price/i.test(line)) return; // header row
+      let name, price;
+      if (cols.length >= 7) { name = cols[2]; price = cols[6]; }            // full export sheet
+      else if (cols.length >= 2) { name = cols[0]; price = cols[cols.length - 1]; }
+      else return;
+      const key = (name || '').trim().toLowerCase();
+      const p = parseFloat(String(price).replace(/[^\d.]/g, ''));
+      if (!key) return;
+      if (byName[key]) { if (!isNaN(p) && p > 0) { prods[byName[key]].sellingPrice = p; matched++; } }
+      else missed.push(name);
+    });
+    saveData(); renderProductBomTable();
+    alert('Updated ' + matched + ' selling price' + (matched !== 1 ? 's' : '') + '.' +
+      (missed.length ? '\n\nNot matched (' + missed.length + '): ' + missed.slice(0, 12).join(', ') + (missed.length > 12 ? '…' : '') : ''));
+  }
+  window.applySellPriceCsv = applySellPriceCsv;
 
   // Costing for an order: frozen snapshot for done/delivered, otherwise live
   function orderCosting(biz, order) {
