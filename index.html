@@ -937,6 +937,17 @@
     </div>
   </div>
 
+  <style>
+    /* Dedicated till mode: hide manager chrome, show only the POS full-screen. */
+    body.pos-mode .tabs { display: none !important; }
+    body.pos-mode .section:not(#section-pos) { display: none !important; }
+    body.pos-mode #section-pos { display: block !important; }
+    body.pos-mode .container { max-width: 100%; }
+    body.pos-mode header button[onclick="clearAllData()"],
+    body.pos-mode #undo-btn,
+    body.pos-mode header .btn-primary[onclick="saveData()"] { display: none !important; }
+  </style>
+
   <!-- POS payment modal -->
   <div id="pos-pay-modal" style="display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,0.6); align-items:center; justify-content:center">
     <div class="card" style="width:400px; max-width:94vw; margin:0">
@@ -5518,6 +5529,45 @@ ${_PRODUCTION_PRINT_STYLES}
   }
   window.openDashboardWindow = openDashboardWindow;
 
+  // ---- Dedicated POS ("till") mode ------------------------------------
+  // Boots a clean, full-screen, cashier-only POS — for a separate site/domain
+  // (e.g. pos.repticube.co.za) that shares this codebase + backend, or via /pos
+  // or ?pos=1 on the main site. Same engine, just a focused view.
+  const IS_POS_MODE = (function () {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get('pos') === '1') return true;
+      if (/(^|\/)pos(\/|$)/i.test(window.location.pathname)) return true;
+      if (/^pos\./i.test(window.location.hostname)) return true;
+    } catch (e) {}
+    return false;
+  })();
+  // Lock the till to one business via ?biz=… or a business-named host (pos.repticube.*).
+  const POS_LOCK_BIZ = (function () {
+    try {
+      const b = new URLSearchParams(window.location.search).get('biz');
+      if (['bellville', 'pinkfoot', 'repticube'].includes(b)) return b;
+      const h = window.location.hostname.toLowerCase();
+      if (h.includes('repticube')) return 'repticube';
+      if (h.includes('pinkfoot')) return 'pinkfoot';
+      if (h.includes('bellville') && h.startsWith('pos.')) return 'bellville';
+    } catch (e) {}
+    return null;
+  })();
+
+  function enterPosOnlyMode() {
+    document.body.classList.add('pos-mode');
+    document.getElementById('main-app').style.display = 'block';
+    const emailEl = document.getElementById('current-user-email');
+    if (emailEl && currentUser) emailEl.textContent = currentUser.email;
+    if (POS_LOCK_BIZ) switchBiz(POS_LOCK_BIZ);
+    applyRolePermissions();
+    showSection('pos');
+    if (typeof renderPOS === 'function') renderPOS();
+    document.title = 'POS · ' + (POS_BIZ_NAMES[activeBiz] || activeBiz || 'Till');
+  }
+  window.enterPosOnlyMode = enterPosOnlyMode;
+
   // Live clock for the standalone dashboard window. Updates once per second.
   // Started by enterDashboardOnlyMode below.
   let _dashOnlyClockTimer = null;
@@ -8180,6 +8230,9 @@ ${totalsSection}
         if (IS_DASHBOARD_MODE) {
           // Second-screen / wall-mount mode — skip the normal app UI entirely
           enterDashboardOnlyMode();
+        } else if (IS_POS_MODE) {
+          // Dedicated till site/URL — full-screen POS only
+          enterPosOnlyMode();
         } else {
           document.getElementById('main-app').style.display = 'block';
           document.getElementById('current-user-email').textContent = user.email;

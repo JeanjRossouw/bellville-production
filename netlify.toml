@@ -7,3 +7,10 @@
 [functions]
   # esbuild bundles each function with its node_modules (e.g. jose, @netlify/blobs)
   node_bundler = "esbuild"
+
+# Friendly path for the dedicated till on the main site: /pos boots POS-only mode.
+# (A separate POS site can instead use a pos.* subdomain, which auto-detects.)
+[[redirects]]
+  from = "/pos"
+  to = "/index.html?pos=1"
+  status = 200
