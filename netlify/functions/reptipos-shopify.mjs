@@ -154,6 +154,45 @@ async function createOrder({ lineItems, note, idemKey, customerId }) {
   return result;
 }
 
+// Receive goods into stock: increment Shopify inventory at the primary location
+// for each line (GRV). idemKey makes a retry a no-op instead of double-adding.
+// lineItems: [{ inventoryItemId, qty, costCents? }]. Optionally update the
+// variant's cost so margins stay current.
+async function receiveStock({ lineItems, idemKey, updateCost }) {
+  const lines = (lineItems || []).filter(l => l.inventoryItemId && (Number(l.qty) || 0) !== 0);
+  if (lines.length === 0) { const e = new Error('No stock lines'); e.status = 400; throw e; }
+
+  let store = null;
+  if (idemKey) {
+    try { store = getStore('reptipos-grv'); const prior = await store.get(idemKey, { type: 'json' }); if (prior) return { ...prior, idempotent: true }; }
+    catch (e) { store = null; }
+  }
+
+  const locationId = await primaryLocationId(); // needs read_locations; receiving needs a location
+  if (!locationId) { const e = new Error('No Shopify location to receive into'); e.status = 400; throw e; }
+
+  const received = [];
+  for (const li of lines) {
+    const invItem = Number(li.inventoryItemId);
+    const qty = Number(li.qty) || 0;
+    const body = { location_id: Number(locationId), inventory_item_id: invItem, available_adjustment: qty };
+    try {
+      await shopify('/inventory_levels/adjust.json', { method: 'POST', body });
+    } catch (e) {
+      // Item may not be stocked at this location yet — connect, then retry.
+      await shopify('/inventory_levels/connect.json', { method: 'POST', body: { location_id: Number(locationId), inventory_item_id: invItem } }).catch(() => {});
+      await shopify('/inventory_levels/adjust.json', { method: 'POST', body });
+    }
+    if (updateCost && li.costCents != null) {
+      try { await shopify(`/inventory_items/${invItem}.json`, { method: 'PUT', body: { inventory_item: { id: invItem, cost: (Number(li.costCents) / 100).toFixed(2) } } }); } catch (e) { /* cost is non-critical */ }
+    }
+    received.push({ inventoryItemId: String(invItem), qty });
+  }
+  const result = { received: received.length, lineItems: received, locationId: String(locationId) };
+  if (store && idemKey) { try { await store.setJSON(idemKey, result); } catch (e) {} }
+  return result;
+}
+
 async function shopInfo() {
   try { const { json } = await shopify('/shop.json'); return json.shop ? json.shop.name : ''; }
   catch (e) { return ''; }
@@ -389,6 +428,7 @@ export const handler = async (event) => {
     if (body.action === 'searchCustomers') return json(200, { customers: await searchCustomers(body.q) });
     if (body.action === 'createCustomer') return json(200, { customer: await createCustomer(body) });
     if (body.action === 'customerOrders') return json(200, { orders: await customerOrders(body.customerId) });
+    if (body.action === 'receiveStock') return json(200, await receiveStock(body));
     if (body.action === 'docSave') return json(200, await docSave(body));
     if (body.action === 'docList') return json(200, { docs: await docList(body.type, body.customerId) });
     if (body.action === 'docDelete') return json(200, await draftDelete(body.id));

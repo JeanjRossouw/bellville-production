@@ -121,6 +121,7 @@
     <button id="queue-badge" onclick="flushQueue(true)" title="Sales waiting to sync — click to sync now" style="display:none; width:auto;padding:0 0.6rem;height:30px;font-size:0.78rem;border-radius:8px;border:1px solid var(--warn);background:transparent;color:var(--warn);cursor:pointer"></button>
     <button class="qbtn" title="Parked sales" onclick="openParked()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">⏸ Parked</button>
     <button class="qbtn" title="Sales orders &amp; quotes" onclick="openDocs('salesorder')" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📋 Orders</button>
+    <button class="qbtn" title="Receive stock (GRV) &amp; suppliers" onclick="openGrv()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📥 Receive</button>
     <button class="qbtn" title="Sales history" onclick="openSales()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📊 Sales</button>
     <button class="qbtn" title="Refund / return" onclick="openRefund()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">↩ Refund</button>
     <button class="qbtn" title="Register / cash-up" onclick="openReg()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🧾 Register</button>
@@ -179,6 +180,18 @@
   <div class="modal-card">
     <h2><span>Parked sales</span><button class="rm" onclick="closeParked()">✕</button></h2>
     <div id="park-body"></div>
+  </div>
+</div>
+
+<div class="modal" id="grv-modal">
+  <div class="modal-card" style="width:620px">
+    <h2><span>Receive stock &amp; suppliers</span><button class="rm" onclick="closeGrv()">✕</button></h2>
+    <div style="display:flex; gap:0.4rem; margin-bottom:0.7rem; flex-wrap:wrap">
+      <button class="qbtn" id="gtab-new" style="width:auto; padding:0 0.8rem" onclick="grvTab('new')">📥 New GRV</button>
+      <button class="qbtn" id="gtab-list" style="width:auto; padding:0 0.8rem" onclick="grvTab('list')">🧾 GRVs &amp; payments</button>
+      <button class="qbtn" id="gtab-sup" style="width:auto; padding:0 0.8rem" onclick="grvTab('suppliers')">🏭 Suppliers</button>
+    </div>
+    <div id="grv-body"></div>
   </div>
 </div>
 
@@ -1278,6 +1291,202 @@
     } catch (e) { const el = document.getElementById('prof-acct'); if (el) el.textContent = 'Could not load account: ' + (e.message || e); }
   }
 
+  // ---- Purchasing: GRV (goods received) + suppliers + supplier accounts ----
+  // Stock increments go to Shopify (source of truth); suppliers, GRVs and
+  // supplier-account payments live in Firestore (Shopify has no payables).
+  function fbReady() { return !!(window.fb && window.fb.db); }
+  async function fbAdd(coll, data) { const { db, fns } = window.fb; const ref = await fns.addDoc(fns.collection(db, coll), data); return ref.id; }
+  async function fbSet(coll, id, data) { const { db, fns } = window.fb; await fns.setDoc(fns.doc(db, coll, id), data, { merge: true }); }
+  async function fbList(coll, orderField, dir) {
+    const { db, fns } = window.fb;
+    const q = orderField ? fns.query(fns.collection(db, coll), fns.orderBy(orderField, dir || 'asc')) : fns.collection(db, coll);
+    const snap = await fns.getDocs(q); const out = []; snap.forEach(d => out.push({ id: d.id, ...d.data() })); return out;
+  }
+
+  let suppliersCache = [], grvsCache = [], grvLines = [], grvSupplierId = null, grvInFlight = false, grvCurTab = 'new';
+  function openGrv() { document.getElementById('grv-modal').classList.add('show'); grvTab('new'); }
+  function closeGrv() { document.getElementById('grv-modal').classList.remove('show'); }
+  function grvTab(t) {
+    grvCurTab = t;
+    document.getElementById('gtab-new').style.background = t === 'new' ? 'var(--accent)' : 'var(--panel2)';
+    document.getElementById('gtab-list').style.background = t === 'list' ? 'var(--accent)' : 'var(--panel2)';
+    document.getElementById('gtab-sup').style.background = t === 'suppliers' ? 'var(--accent)' : 'var(--panel2)';
+    if (t === 'new') renderGrvNew(); else if (t === 'list') renderGrvList(); else renderSuppliers();
+  }
+  function grvTotalCents() { return grvLines.reduce((t, l) => t + l.costCents * l.qty, 0); }
+  async function ensureSuppliers() { if (!suppliersCache.length && fbReady()) { try { suppliersCache = await fbList('suppliers', 'name', 'asc'); } catch (e) {} } }
+  async function renderGrvNew() {
+    const body = document.getElementById('grv-body');
+    if (!fbReady()) { body.innerHTML = '<div class="empty" style="padding:1.5rem">Need a connection to receive stock</div>'; return; }
+    await ensureSuppliers();
+    const supOpts = suppliersCache.map(s => `<option value="${s.id}" ${s.id === grvSupplierId ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
+    body.innerHTML = `
+      <div class="field"><label>Supplier</label>
+        <div style="display:flex;gap:0.4rem">
+          <select id="grv-sup" style="flex:1;padding:0.7rem;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" onchange="grvSupplierId=this.value">
+            <option value="">— select supplier —</option>${supOpts}</select>
+          <button class="qbtn" style="width:auto;padding:0 0.7rem" onclick="grvTab('suppliers')">+ New</button>
+        </div></div>
+      <div style="display:flex;gap:0.4rem">
+        <div class="field" style="flex:1"><label>Supplier invoice #</label><input id="grv-ref" placeholder="optional"></div>
+        <div class="field" style="width:160px"><label>Date</label><input id="grv-date" type="date" value="${new Date().toISOString().slice(0, 10)}"></div>
+      </div>
+      <div class="field"><label>Add item (scan / search the catalogue)</label>
+        <input id="grv-search" autocomplete="off" placeholder="🔍 product name / SKU / barcode" oninput="renderGrvSearch(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();grvSearchEnter()}">
+        <div id="grv-search-res" style="max-height:150px;overflow:auto"></div></div>
+      <div id="grv-lines"></div>
+      <div class="total" style="font-size:1.3rem;margin-top:0.6rem"><span>GRV TOTAL (cost)</span><span class="accent" id="grv-total">${money(grvTotalCents())}</span></div>
+      <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.85rem;cursor:pointer"><input type="checkbox" id="grv-updcost" checked style="width:auto"> Update product cost prices in Shopify</label>
+      <button class="btn btn-pay" style="margin-top:0.6rem" id="grv-confirm" onclick="confirmGrv()">📥 Receive into stock</button>`;
+    renderGrvLines();
+  }
+  function renderGrvSearch(q) {
+    const box = document.getElementById('grv-search-res'); if (!box) return;
+    const term = (q || '').trim().toLowerCase();
+    if (!term) { box.innerHTML = ''; return; }
+    const items = catalogue.filter(p => (p.name || '').toLowerCase().includes(term) || (p.sku || '').toLowerCase().includes(term) || (p.barcode || '').toLowerCase().includes(term)).slice(0, 8);
+    box.innerHTML = items.length ? items.map(p => `<div class="cust-result" onclick="addGrvLine('${p.variantId}')"><div><div style="font-weight:600">${esc(p.name)}</div><div style="font-size:0.72rem;color:var(--muted)">${esc(p.sku || '')} · stock ${Number(p.qty) || 0}</div></div></div>`).join('') : '<div class="empty" style="padding:0.6rem">No matches</div>';
+  }
+  function grvSearchEnter() { const f = document.getElementById('grv-search'); const code = f.value.trim(); if (!code) return; const hit = matchExact(code); if (hit) { addGrvLine(hit.variantId); f.value = ''; renderGrvSearch(''); } else toast('No exact barcode/SKU match'); }
+  function addGrvLine(variantId) {
+    const p = findProduct(variantId); if (!p) { toast('Not in catalogue'); return; }
+    const ex = grvLines.find(l => l.variantId === variantId);
+    if (ex) ex.qty++;
+    else {
+      if (!p.inventoryItemId) toast('No inventory id — refresh the catalogue (↻)');
+      grvLines.push({ variantId, inventoryItemId: p.inventoryItemId || '', name: p.name, sku: p.sku || '', qty: 1, costCents: 0 });
+    }
+    const f = document.getElementById('grv-search'); if (f) f.value = '';
+    renderGrvSearch(''); renderGrvLines();
+  }
+  function renderGrvLines() {
+    const el = document.getElementById('grv-lines'); if (!el) return;
+    if (!grvLines.length) { el.innerHTML = '<div class="empty" style="padding:0.6rem">No items yet — scan or search to add</div>'; const t = document.getElementById('grv-total'); if (t) t.textContent = money(0); return; }
+    el.innerHTML = grvLines.map((l, i) => `<div class="line">
+      <div class="lnm"><div class="t">${esc(l.name)}</div><div class="s">${esc(l.sku || '')}</div></div>
+      <input type="number" value="${l.qty}" min="0" style="width:54px;padding:0.4rem;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" oninput="grvSetQty(${i},this.value)" title="Qty received">
+      <input type="number" step="0.01" value="${(l.costCents / 100).toFixed(2)}" style="width:82px;padding:0.4rem;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" oninput="grvSetCost(${i},this.value)" title="Unit cost (R)">
+      <button class="rm" onclick="grvRemove(${i})">✕</button></div>`).join('');
+    const t = document.getElementById('grv-total'); if (t) t.textContent = money(grvTotalCents());
+  }
+  function grvSetQty(i, v) { grvLines[i].qty = Math.max(0, parseInt(v) || 0); const t = document.getElementById('grv-total'); if (t) t.textContent = money(grvTotalCents()); }
+  function grvSetCost(i, v) { grvLines[i].costCents = toCents(v); const t = document.getElementById('grv-total'); if (t) t.textContent = money(grvTotalCents()); }
+  function grvRemove(i) { grvLines.splice(i, 1); renderGrvLines(); }
+  async function confirmGrv() {
+    if (grvInFlight) return;
+    if (!fbReady()) { toast('Need a connection to record the GRV'); return; }
+    const supSel = document.getElementById('grv-sup'); const supId = grvSupplierId || (supSel ? supSel.value : '');
+    if (!supId) { toast('Select a supplier'); return; }
+    const lines = grvLines.filter(l => l.qty > 0 && l.inventoryItemId);
+    if (!lines.length) { toast('Add at least one item with qty + an inventory id'); return; }
+    const ref = (document.getElementById('grv-ref').value || '').trim();
+    const date = document.getElementById('grv-date').value || new Date().toISOString().slice(0, 10);
+    const updateCost = document.getElementById('grv-updcost').checked;
+    const total = lines.reduce((t, l) => t + l.costCents * l.qty, 0);
+    const units = lines.reduce((n, l) => n + l.qty, 0);
+    if (!confirm('Receive ' + units + ' unit(s) into stock for ' + money(total) + '?')) return;
+    grvInFlight = true;
+    const btn = document.getElementById('grv-confirm'); if (btn) { btn.disabled = true; btn.textContent = 'Receiving…'; }
+    const idemKey = uuid();
+    try {
+      const res = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'receiveStock', idemKey, updateCost, lineItems: lines.map(l => ({ inventoryItemId: l.inventoryItemId, qty: l.qty, costCents: l.costCents })) }) });
+      if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 140));
+      await res.json();
+      lines.forEach(l => { const p = findProduct(l.variantId); if (p) p.qty = (Number(p.qty) || 0) + l.qty; }); cacheCatalogue(); renderGrid();
+      const seq = (parseInt(localStorage.getItem('reptipos-grv-seq') || '0', 10) || 0) + 1; localStorage.setItem('reptipos-grv-seq', String(seq));
+      const sup = suppliersCache.find(s => s.id === supId);
+      const grvNumber = 'GRV-' + date.replace(/-/g, '') + '-' + String(seq).padStart(3, '0');
+      const grv = { grvNumber, supplierId: supId, supplierName: sup ? sup.name : '', supplierRef: ref, date, idemKey,
+        lineItems: lines.map(l => ({ variantId: l.variantId, inventoryItemId: l.inventoryItemId, name: l.name, sku: l.sku, qty: l.qty, costCents: l.costCents })),
+        totalCents: total, amountPaidCents: 0, status: 'open', payments: [], createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
+      const id = await fbAdd('grvs', grv); grv.id = id; grvsCache.unshift(grv);
+      printGrv(grv);
+      toast('Received into stock · ' + grvNumber);
+      grvLines = []; grvSupplierId = null;
+      grvTab('list');
+    } catch (e) { toast('Receive failed: ' + (e.message || e)); }
+    finally { grvInFlight = false; const b = document.getElementById('grv-confirm'); if (b) { b.disabled = false; b.textContent = '📥 Receive into stock'; } }
+  }
+  async function renderGrvList() {
+    const body = document.getElementById('grv-body');
+    if (!fbReady()) { body.innerHTML = '<div class="empty" style="padding:1.5rem">Need a connection to view GRVs</div>'; return; }
+    body.innerHTML = '<div class="empty" style="padding:1.5rem">Loading…</div>';
+    try {
+      grvsCache = await fbList('grvs', 'createdAt', 'desc');
+      if (!grvsCache.length) { body.innerHTML = '<div class="empty" style="padding:1.5rem">No GRVs yet</div>'; return; }
+      body.innerHTML = `<div style="max-height:55vh;overflow:auto">${grvsCache.map(grvRow).join('')}</div>`;
+    } catch (e) { body.innerHTML = `<div class="empty" style="padding:1.5rem;color:var(--warn)">${esc(String(e.message || e))}</div>`; }
+  }
+  function grvRow(g) {
+    const paid = g.amountPaidCents || 0; const bal = (g.totalCents || 0) - paid;
+    const status = bal <= 0 ? '✅ paid' : (paid > 0 ? '◐ partial' : '⏳ owing');
+    return `<div class="cust-result" style="cursor:default;flex-direction:column;align-items:stretch;gap:0.3rem">
+      <div style="display:flex;justify-content:space-between"><div style="font-weight:600">${esc(g.grvNumber || 'GRV')} · ${esc(g.supplierName || '')}</div><div style="font-weight:700">${money(g.totalCents || 0)}</div></div>
+      <div style="font-size:0.72rem;color:var(--muted)">${esc(g.date || '')}${g.supplierRef ? ' · inv ' + esc(g.supplierRef) : ''} · paid ${money(paid)} · balance ${money(bal)} · ${status}</div>
+      <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
+        ${bal > 0 ? `<button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="grvPay('${g.id}')">+ Payment</button>` : ''}
+        <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="printGrvById('${g.id}')">🖨️</button>
+      </div></div>`;
+  }
+  async function grvPay(id) {
+    const g = grvsCache.find(x => x.id === id); if (!g) return;
+    const bal = (g.totalCents || 0) - (g.amountPaidCents || 0);
+    closeGrv();
+    const payment = await takeTender({ title: 'Pay supplier (balance ' + money(bal) + ')', amountCents: bal, editable: true });
+    openGrv(); grvTab('list');
+    if (!payment) return;
+    if (payment.amountCents > bal) { toast('More than the balance owing'); return; }
+    try {
+      const payments = [...(g.payments || []), { amountCents: payment.amountCents, method: payment.method, at: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null }];
+      const amountPaidCents = (g.amountPaidCents || 0) + payment.amountCents;
+      const status = amountPaidCents >= (g.totalCents || 0) ? 'paid' : 'partial';
+      await fbSet('grvs', id, { payments, amountPaidCents, status });
+      g.payments = payments; g.amountPaidCents = amountPaidCents; g.status = status;
+      toast('Supplier payment recorded'); renderGrvList();
+    } catch (e) { toast('Failed: ' + (e.message || e)); }
+  }
+  async function renderSuppliers() {
+    const body = document.getElementById('grv-body');
+    if (!fbReady()) { body.innerHTML = '<div class="empty" style="padding:1.5rem">Need a connection to manage suppliers</div>'; return; }
+    body.innerHTML = '<div class="empty" style="padding:1.5rem">Loading…</div>';
+    try {
+      suppliersCache = await fbList('suppliers', 'name', 'asc');
+      let grvs = grvsCache; try { grvs = await fbList('grvs', 'createdAt', 'desc'); grvsCache = grvs; } catch (e) {}
+      const balBySup = {}; grvs.forEach(g => { const b = (g.totalCents || 0) - (g.amountPaidCents || 0); if (b > 0) balBySup[g.supplierId] = (balBySup[g.supplierId] || 0) + b; });
+      body.innerHTML = `
+        <div style="border:1px solid var(--border);border-radius:10px;padding:0.7rem;margin-bottom:0.8rem">
+          <div style="font-weight:700;font-size:0.85rem;margin-bottom:0.4rem">Add supplier</div>
+          <input id="sup-name" placeholder="Supplier name *" style="width:100%;margin-bottom:0.4rem">
+          <div style="display:flex;gap:0.4rem"><input id="sup-phone" placeholder="Phone" style="flex:1"><input id="sup-email" placeholder="Email" style="flex:1"></div>
+          <button class="btn btn-pay" style="margin-top:0.5rem" onclick="addSupplier()">+ Add supplier</button>
+        </div>
+        ${suppliersCache.length ? suppliersCache.map(s => { const b = balBySup[s.id] || 0; return `<div class="cust-result" style="cursor:default"><div><div style="font-weight:600">${esc(s.name)}</div><div style="font-size:0.72rem;color:var(--muted)">${esc(s.phone || '')}${s.phone && s.email ? ' · ' : ''}${esc(s.email || '')}</div></div><div style="text-align:right"><div style="font-size:0.7rem;color:var(--muted)">owing</div><div style="font-weight:700;color:${b > 0 ? 'var(--warn)' : 'var(--accent2)'}">${money(b)}</div></div></div>`; }).join('') : '<div class="empty" style="padding:1rem">No suppliers yet</div>'}`;
+    } catch (e) { body.innerHTML = `<div class="empty" style="padding:1.5rem;color:var(--warn)">${esc(String(e.message || e))}</div>`; }
+  }
+  async function addSupplier() {
+    const name = (document.getElementById('sup-name').value || '').trim();
+    if (!name) { toast('Enter a supplier name'); return; }
+    try {
+      await fbAdd('suppliers', { name, phone: (document.getElementById('sup-phone').value || '').trim(), email: (document.getElementById('sup-email').value || '').trim(), createdAt: new Date().toISOString() });
+      toast('Supplier added'); suppliersCache = await fbList('suppliers', 'name', 'asc'); renderSuppliers();
+    } catch (e) { toast('Failed: ' + (e.message || e)); }
+  }
+  function printGrvById(id) { const g = grvsCache.find(x => x.id === id); if (g) printGrv(g); }
+  function printGrv(g) {
+    const rows = (g.lineItems || []).map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">${money(i.costCents * i.qty)}</td></tr>`).join('');
+    const paid = g.amountPaidCents || 0; const bal = (g.totalCents || 0) - paid;
+    const html = `<h2 style="text-align:center;margin:.2rem 0">ReptiCube</h2>
+      <div class="c">GOODS RECEIVED ${esc(g.grvNumber || '')}</div>
+      <div class="c">${esc(g.date || '')}</div>
+      <div class="c">Supplier: ${esc(g.supplierName || '')}</div>
+      ${g.supplierRef ? `<div class="c">Invoice: ${esc(g.supplierRef)}</div>` : ''}
+      <table>${rows}<tr class="tot"><td>TOTAL</td><td style="text-align:right">${money(g.totalCents || 0)}</td></tr>
+        <tr><td>Paid</td><td style="text-align:right">${money(paid)}</td></tr>
+        <tr class="tot"><td>Balance owing</td><td style="text-align:right">${money(bal)}</td></tr></table>`;
+    printReport(html);
+  }
+
   // ---- Payments (Phase 2) ----
   function payOpen() {
     if (cart.length === 0) { toast('Cart is empty'); return; }
@@ -1525,6 +1734,7 @@
     saveQuote, openSalesOrder, closeSalesOrder, soBalancePreview, confirmSalesOrder,
     openDocs, closeDocs, docsTab, loadQuote, soAddPayment, soMarkReady, soFulfil, soCancel, printDocById,
     openProfile, closeProfile,
+    openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier,
     lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings,
     flushQueue,
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
