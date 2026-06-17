@@ -305,6 +305,7 @@
     <button class="tab" onclick="showSection('materials')">Materials</button>
     <button class="tab" onclick="showSection('schedule')">Schedule</button>
     <button class="tab" onclick="showSection('planner')">🗓️ Planner</button>
+    <button class="tab" onclick="showSection('pos')">🛒 POS</button>
   </div>
   
   <!-- DASHBOARD -->
@@ -338,6 +339,11 @@
       </div>
     </div>
     
+    <div class="card" id="pos-dash-card">
+      <div class="card-title">🛒 POS SALES</div>
+      <div id="pos-dash-content"></div>
+    </div>
+
     <div class="card">
       <div class="card-title">URGENT — DUE THIS WEEK</div>
       <div id="urgent-orders"><div class="empty">No urgent orders</div></div>
@@ -893,6 +899,41 @@
       <div id="planner-grid"></div>
     </div>
   </div>
+
+  <!-- POINT OF SALE -->
+  <div id="section-pos" class="section">
+    <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>🛒 POINT OF SALE — <span id="pos-biz-name"></span></span>
+        <span style="font-size:11px; color:var(--text-muted); font-weight:normal">Stock here is the master · sales record to this business</span>
+      </div>
+      <div style="display:flex; gap:1.5rem; flex-wrap:wrap; align-items:flex-start">
+        <!-- Product picker -->
+        <div style="flex:2 1 320px; min-width:300px">
+          <input id="pos-search" oninput="renderPOSGrid()" placeholder="🔍 Search name or scan/type SKU…" style="width:100%; margin-bottom:0.75rem">
+          <div id="pos-grid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:0.5rem"></div>
+        </div>
+        <!-- Cart / checkout -->
+        <div style="flex:1 1 280px; min-width:280px">
+          <div class="card-title" style="margin-top:0">CART</div>
+          <div id="pos-cart"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🧾 TODAY'S SALES</div>
+      <div id="pos-sales"><div class="empty">No sales yet today</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>📦 PRODUCT CATALOGUE (master stock)</span>
+        <button class="btn btn-sm" onclick="document.getElementById('pos-catalog-admin').style.display = document.getElementById('pos-catalog-admin').style.display==='none' ? '' : 'none'">Show / hide</button>
+      </div>
+      <div id="pos-catalog-admin"></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -925,7 +966,7 @@
   // Tab name array — order MUST match the order of .tab buttons in the DOM.
   // Used by showSection and applyRolePermissions. Declared at top so it's
   // initialized regardless of where in the script execution lands.
-  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner'];
+  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'pos'];
   
   // Undo history (last 20 states)
   let history = [];
@@ -1084,6 +1125,7 @@
     if (sec === 'intake') populateProductDatalist();
     if (sec === 'done') renderDoneOrders();
     if (sec === 'planner') renderPlanner();
+    if (sec === 'pos') renderPOS();
   }
   
   // ============================================
@@ -5981,8 +6023,10 @@ ${_PRODUCTION_PRINT_STYLES}
     } catch (e) {
       console.warn('Low stock render skipped:', e.message);
     }
+
+    if (typeof renderPOSDashboard === 'function') renderPOSDashboard();
   }
-  
+
   function renderOrders() {
     let orders = currentData().orders.filter(o => o.status !== 'delivered' && o.status !== 'done');
     const today = new Date();
@@ -6963,6 +7007,735 @@ ${totalsSection}
   }
   window.printWeeklyMaterialRequirements = printWeeklyMaterialRequirements;
 
+  // ============================================
+  // POINT OF SALE  (Phase 1 — standalone till)
+  // Master of products & stock for each business. Sales record locally and
+  // sync via the same Firestore doc. Xero / Shopify / factory integrations
+  // are later phases — see POS-BUILD-PLAN.md.
+  //
+  // DATA MODEL: shaped to mirror the Lightspeed Retail (R-Series) API so a
+  // future Lightspeed sync is a clean field map, not a redesign.
+  //   Catalog product = Lightspeed "Item":
+  //     itemID (LS id, null until synced), description (name), customSku,
+  //     systemSku, defaultCost, tax (bool), taxClassID, categoryID, archived,
+  //     itemType, isSpecialOrder (our made-to-order marker — mirrors the LS
+  //     SaleLine flag), Prices.ItemPrice[{amount,useType}],
+  //     ItemShops.ItemShop[{shopID,qoh,reorderPoint}].
+  //   Sale = Lightspeed "Sale":
+  //     saleID (null until synced), timeStamp, completed, completeTime, voided,
+  //     isTaxInclusive, total, taxTotal, calcSubtotal, shopID, employeeID,
+  //     customerID, SaleLines.SaleLine[], SalePayments.SalePayment[].
+  //   Fields prefixed "_" are local-only (no Lightspeed equivalent): _localId,
+  //     _cashierEmail, _description/_sku/_localItemId on lines, _cardRef.
+  // ============================================
+  const POS_VAT_RATE = 0.15;            // South Africa — prices are VAT-INCLUSIVE
+  const POS_BIZ_NAMES = { bellville: 'Bellville Furniture', pinkfoot: 'PinkFoot Boutique', repticube: 'ReptiCube' };
+  let posCart = [];                     // [{ productId, qty }] — productId is the item's _localId
+
+  // Lazy-ensure the POS arrays exist on the active business (data can arrive
+  // from cloud without them on pre-POS docs).
+  function posCatalogArr() {
+    const d = currentData();
+    if (!Array.isArray(d.posCatalog)) d.posCatalog = [];
+    return d.posCatalog;
+  }
+  function posSalesArr() {
+    const d = currentData();
+    if (!Array.isArray(d.posSales)) d.posSales = [];
+    return d.posSales;
+  }
+  function posFindProduct(id) { return posCatalogArr().find(p => p._localId === id) || null; }
+  function posMoney(n) { return 'R' + (Number(n) || 0).toFixed(2); }
+
+  // ---- Lightspeed Item accessors (keep UI code clean over the nested shape) ----
+  function liItemName(item) { return item.description || ''; }
+  function liItemSku(item) { return item.customSku || item.systemSku || ''; }
+  function liIsMTO(item) { return !!item.isSpecialOrder; }
+  function liItemPrice(item) {
+    const ip = item && item.Prices && item.Prices.ItemPrice;
+    if (Array.isArray(ip) && ip.length) {
+      const def = ip.find(p => p.useType === 'Default') || ip[0];
+      return Number(def.amount) || 0;
+    }
+    return 0;
+  }
+  function liSetItemPrice(item, amount) {
+    item.Prices = { ItemPrice: [{ amount: Number(amount) || 0, useType: 'Default', useTypeID: 1 }] };
+  }
+  function liItemShop(item) {
+    let arr = item && item.ItemShops && item.ItemShops.ItemShop;
+    if (!Array.isArray(arr) || !arr.length) {
+      arr = [{ shopID: activeBiz, qoh: 0, reorderPoint: 0 }];
+      item.ItemShops = { ItemShop: arr };
+    }
+    return arr[0];
+  }
+  function liQoh(item) { return liIsMTO(item) ? 0 : (Number(liItemShop(item).qoh) || 0); }
+  function liSetQoh(item, n) { liItemShop(item).qoh = Number(n) || 0; }
+  function liAdjustQoh(item, delta) { const s = liItemShop(item); s.qoh = (Number(s.qoh) || 0) + delta; }
+
+  // ---- Lightspeed Sale accessors ----
+  function liSaleLines(sale) {
+    const a = sale && sale.SaleLines && sale.SaleLines.SaleLine;
+    return Array.isArray(a) ? a : [];
+  }
+  function liSalePaymentRef(sale) {
+    const p = sale && sale.SalePayments && sale.SalePayments.SalePayment;
+    return (Array.isArray(p) && p.length && p[0]._cardRef) || '';
+  }
+  function liSaleItemCount(sale) { return liSaleLines(sale).reduce((n, li) => n + (Number(li.unitQuantity) || 0), 0); }
+
+  // VAT-inclusive split: given an inclusive total, return {excl, vat}.
+  function posVatSplit(inclusiveTotal) {
+    const vat = inclusiveTotal * (POS_VAT_RATE / (1 + POS_VAT_RATE));
+    return { excl: inclusiveTotal - vat, vat };
+  }
+
+  function renderPOS() {
+    const nameEl = document.getElementById('pos-biz-name');
+    if (nameEl) nameEl.textContent = POS_BIZ_NAMES[activeBiz] || activeBiz;
+    renderPOSGrid();
+    renderPOSCart();
+    renderPOSSales();
+    renderPOSCatalogAdmin();
+  }
+
+  function renderPOSGrid() {
+    const grid = document.getElementById('pos-grid');
+    if (!grid) return;
+    const q = (document.getElementById('pos-search')?.value || '').trim().toLowerCase();
+    let items = posCatalogArr().filter(p => !p.archived);
+    if (q) items = items.filter(p =>
+      liItemName(p).toLowerCase().includes(q) || liItemSku(p).toLowerCase().includes(q));
+    if (items.length === 0) {
+      grid.innerHTML = `<div class="empty" style="grid-column:1/-1">${posCatalogArr().length === 0 ? 'No products yet — add some in the catalogue below.' : 'No products match your search.'}</div>`;
+      return;
+    }
+    grid.innerHTML = items.map(p => {
+      const mto = liIsMTO(p);
+      const qoh = liQoh(p);
+      const oos = !mto && qoh <= 0;
+      const stockLabel = mto
+        ? '<span style="color:var(--info)">made to order</span>'
+        : `stock: <strong style="color:${oos ? 'var(--accent)' : 'var(--success)'}">${qoh}</strong>`;
+      return `
+        <button onclick="posAddToCart('${p._localId}')" ${oos ? 'disabled' : ''}
+          style="text-align:left; padding:0.6rem; border:1px solid var(--border); background:${oos ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.05)'}; border-radius:6px; cursor:${oos ? 'not-allowed' : 'pointer'}; opacity:${oos ? '0.5' : '1'}; color:var(--text)">
+          <div style="font-weight:600; font-size:13px; line-height:1.2">${_escape(liItemName(p))}</div>
+          <div style="font-size:10px; color:var(--text-muted); margin:0.2rem 0">${_escape(liItemSku(p))}</div>
+          <div style="font-size:14px; font-weight:700; color:var(--accent)">${posMoney(liItemPrice(p))}</div>
+          <div style="font-size:10px; color:var(--text-muted)">${stockLabel}</div>
+        </button>`;
+    }).join('');
+  }
+
+  function posAddToCart(id) {
+    const p = posFindProduct(id);
+    if (!p) return;
+    const line = posCart.find(l => l.productId === id);
+    const inCart = line ? line.qty : 0;
+    if (!liIsMTO(p) && inCart + 1 > liQoh(p)) {
+      toast(`Only ${liQoh(p)} of "${liItemName(p)}" in stock`, 'warn');
+      return;
+    }
+    if (line) line.qty++; else posCart.push({ productId: id, qty: 1 });
+    renderPOSCart();
+    renderPOSGrid();
+  }
+
+  function posChangeQty(id, delta) {
+    const line = posCart.find(l => l.productId === id);
+    if (!line) return;
+    const p = posFindProduct(id);
+    const next = line.qty + delta;
+    if (next <= 0) { posCart = posCart.filter(l => l.productId !== id); }
+    else {
+      if (p && !liIsMTO(p) && next > liQoh(p)) {
+        toast(`Only ${liQoh(p)} in stock`, 'warn');
+        return;
+      }
+      line.qty = next;
+    }
+    renderPOSCart();
+    renderPOSGrid();
+  }
+
+  function posCartTotal() {
+    return posCart.reduce((sum, l) => {
+      const p = posFindProduct(l.productId);
+      return sum + (p ? liItemPrice(p) * l.qty : 0);
+    }, 0);
+  }
+
+  function renderPOSCart() {
+    const el = document.getElementById('pos-cart');
+    if (!el) return;
+    if (posCart.length === 0) {
+      el.innerHTML = '<div class="empty">Cart is empty — tap a product to add it.</div>';
+      return;
+    }
+    const rows = posCart.map(l => {
+      const p = posFindProduct(l.productId);
+      if (!p) return '';
+      const unit = liItemPrice(p);
+      const lineTotal = unit * l.qty;
+      return `
+        <div style="display:flex; align-items:center; gap:0.4rem; padding:0.4rem 0; border-bottom:1px solid var(--border)">
+          <div style="flex:1; min-width:0">
+            <div style="font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${_escape(liItemName(p))}</div>
+            <div style="font-size:10px; color:var(--text-muted)">${posMoney(unit)} each</div>
+          </div>
+          <button class="btn btn-sm" onclick="posChangeQty('${p._localId}',-1)" style="padding:0.1rem 0.5rem">−</button>
+          <span style="min-width:20px; text-align:center; font-weight:600">${l.qty}</span>
+          <button class="btn btn-sm" onclick="posChangeQty('${p._localId}',1)" style="padding:0.1rem 0.5rem">+</button>
+          <span style="min-width:70px; text-align:right; font-weight:700">${posMoney(lineTotal)}</span>
+        </div>`;
+    }).join('');
+    const total = posCartTotal();
+    const { excl, vat } = posVatSplit(total);
+    el.innerHTML = `
+      ${rows}
+      <div style="margin-top:0.75rem; font-size:13px; color:var(--text-muted); display:flex; justify-content:space-between"><span>Subtotal (excl. VAT)</span><span>${posMoney(excl)}</span></div>
+      <div style="font-size:13px; color:var(--text-muted); display:flex; justify-content:space-between"><span>VAT (15%)</span><span>${posMoney(vat)}</span></div>
+      <div style="margin-top:0.3rem; font-size:18px; font-weight:800; display:flex; justify-content:space-between"><span>TOTAL</span><span style="color:var(--accent)">${posMoney(total)}</span></div>
+      <label style="margin-top:0.75rem; display:block">Card reference / auth code</label>
+      <input id="pos-card-ref" placeholder="e.g. terminal approval code" style="width:100%">
+      <div style="display:flex; gap:0.5rem; margin-top:0.75rem">
+        <button class="btn" onclick="posClearCart()" style="flex:1">Clear</button>
+        <button class="btn btn-primary" onclick="posCompleteSale()" style="flex:2">💳 COMPLETE SALE</button>
+      </div>`;
+  }
+
+  function posClearCart() {
+    if (posCart.length && !confirm('Clear the current cart?')) return;
+    posCart = [];
+    renderPOSCart();
+    renderPOSGrid();
+  }
+
+  function posCompleteSale() {
+    if (posCart.length === 0) { toast('Cart is empty', 'warn'); return; }
+    const cardRef = (document.getElementById('pos-card-ref')?.value || '').trim();
+    if (!cardRef) { toast('Enter the card reference / auth code from the terminal', 'warn'); return; }
+
+    // Final stock check (in case stock changed since adding)
+    for (const l of posCart) {
+      const p = posFindProduct(l.productId);
+      if (!p) { toast('A product in the cart no longer exists — please re-add it', 'error'); return; }
+      if (!liIsMTO(p) && l.qty > liQoh(p)) {
+        toast(`Not enough stock for "${liItemName(p)}" (${liQoh(p)} left)`, 'error');
+        return;
+      }
+    }
+
+    const total = posCartTotal();
+    const { excl, vat } = posVatSplit(total);
+    const now = new Date().toISOString();
+
+    // Build Lightspeed-shaped SaleLines
+    const saleLines = posCart.map(l => {
+      const p = posFindProduct(l.productId);
+      const unit = liItemPrice(p);
+      return {
+        saleLineID: null,
+        itemID: p.itemID || null,        // Lightspeed item id once synced
+        _localItemId: p._localId,
+        _description: liItemName(p),
+        _sku: liItemSku(p),
+        unitQuantity: l.qty,
+        unitPrice: unit,                 // VAT-inclusive
+        normalUnitPrice: unit,
+        discountAmount: 0,
+        tax: !!p.tax,
+        isSpecialOrder: liIsMTO(p),
+        calcTotal: unit * l.qty
+      };
+    });
+
+    const sale = {
+      saleID: null,                      // assigned by Lightspeed once synced
+      _localId: 'SALE-' + Date.now(),
+      timeStamp: now,
+      completeTime: now,
+      completed: true,
+      voided: false,
+      isTaxInclusive: true,
+      shopID: activeBiz,                 // maps to Lightspeed numeric shopID later
+      employeeID: null,
+      _cashierEmail: (currentUser && currentUser.email) || 'unknown',
+      customerID: null,
+      calcSubtotal: excl,
+      taxTotal: vat,
+      total: total,
+      totalDue: 0,
+      SaleLines: { SaleLine: saleLines },
+      SalePayments: { SalePayment: [{
+        salePaymentID: null,
+        amount: total,
+        paymentTypeID: null,
+        PaymentType: { name: 'Credit Card' },
+        _cardRef: cardRef
+      }] },
+      _synced: { lightspeed: false, xero: false, shopify: false }
+    };
+
+    snapshotState();
+    // Decrement master stock for stocked (not made-to-order) lines
+    saleLines.forEach(li => {
+      if (li.isSpecialOrder) return;
+      const p = posFindProduct(li._localItemId);
+      if (p) liAdjustQoh(p, -li.unitQuantity);
+    });
+    posSalesArr().unshift(sale);
+    const jobCount = posCreateProductionJobs(sale, saleLines);
+    saveData();
+
+    posCart = [];
+    renderPOS();
+    toast(`Sale completed — ${posMoney(total)}`, 'success');
+    if (jobCount > 0) toast(`${jobCount} production job(s) created in Active Orders`, 'info', 3500);
+    posPrintReceipt(sale);
+    posSyncSaleToXero(sale); // fire-and-forget; failures stay queued for retry
+    // Push new stock levels for sold (stocked) items down to Shopify.
+    const soldItems = saleLines.filter(li => !li.isSpecialOrder)
+      .map(li => posFindProduct(li._localItemId)).filter(Boolean);
+    posPushInventory(soldItems);
+  }
+
+  function posVoidSale(id) {
+    const sale = posSalesArr().find(s => s._localId === id);
+    if (!sale || sale.voided || !sale.completed) return;
+    if (!confirm(`Void this sale of ${posMoney(sale.total)}? Stock will be returned.`)) return;
+    snapshotState();
+    liSaleLines(sale).forEach(li => {
+      if (li.isSpecialOrder) return;
+      const p = posFindProduct(li._localItemId);
+      if (p) liAdjustQoh(p, Number(li.unitQuantity) || 0);
+    });
+    // Remove any still-pending production jobs this sale created.
+    if (Array.isArray(sale.productionJobIds) && sale.productionJobIds.length) {
+      const orders = currentData().orders || [];
+      sale.productionJobIds.forEach(jid => {
+        const idx = orders.findIndex(o => o.id === jid && o.status === 'pending');
+        if (idx >= 0) {
+          try { restoreMaterialsForOrder(activeBiz, orders[idx], 'POS sale voided'); } catch (e) { /* no BOM link */ }
+          orders.splice(idx, 1);
+        }
+      });
+    }
+    sale.voided = true;
+    sale.completed = false;
+    saveData();
+    renderPOS();
+    toast('Sale voided, stock returned', 'success');
+  }
+
+  function renderPOSSales() {
+    const el = document.getElementById('pos-sales');
+    if (!el) return;
+    const todayStr = new Date().toDateString();
+    const today = posSalesArr().filter(s => new Date(s.timeStamp).toDateString() === todayStr);
+    if (today.length === 0) { el.innerHTML = '<div class="empty">No sales yet today</div>'; return; }
+    const takings = today.filter(s => !s.voided).reduce((sum, s) => sum + s.total, 0);
+    const pendingXero = today.filter(s => s.completed && !s.voided && !(s._synced && s._synced.xero));
+    el.innerHTML = `
+      <div style="margin-bottom:0.75rem; font-size:14px">Today: <strong>${today.filter(s => !s.voided).length}</strong> sales · takings <strong style="color:var(--accent)">${posMoney(takings)}</strong></div>
+      ${pendingXero.length ? `<div style="margin-bottom:0.75rem; padding:0.5rem 0.75rem; border:1px solid var(--warn); border-radius:6px; font-size:12px; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap"><span>⚠️ ${pendingXero.length} sale(s) not yet synced to Xero</span><button class="btn btn-sm" onclick="posRetryXeroSync()">Retry Xero sync</button></div>` : ''}
+      ${today.map(s => {
+        const time = new Date(s.timeStamp).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' });
+        const xeroSynced = s._synced && s._synced.xero;
+        const xeroBadge = s.voided ? ''
+          : xeroSynced
+            ? `<span title="Xero invoice ${_escape(s.xeroInvoiceNumber || s.xeroInvoiceId || '')}" style="font-size:10px; color:var(--success)">✓ Xero</span>`
+            : '<span style="font-size:10px; color:var(--warn)">⏳ Xero</span>';
+        const jobBadge = (!s.voided && s.productionJobIds && s.productionJobIds.length)
+          ? `<span title="Production jobs created in Active Orders" style="font-size:10px; color:var(--info)">🏭 ${s.productionJobIds.length}</span>` : '';
+        return `
+          <div style="display:flex; align-items:center; gap:0.5rem; padding:0.5rem 0; border-bottom:1px solid var(--border); ${s.voided ? 'opacity:0.5; text-decoration:line-through' : ''}">
+            <div style="flex:1">
+              <div style="font-weight:600">${posMoney(s.total)} <span style="font-size:11px; color:var(--text-muted); font-weight:normal">· ${liSaleItemCount(s)} items · ${time}</span></div>
+              <div style="font-size:10px; color:var(--text-muted)">${_escape(s._cashierEmail || '')} · card ${_escape(liSalePaymentRef(s))}</div>
+            </div>
+            ${jobBadge}
+            ${xeroBadge}
+            <button class="btn btn-sm" onclick="posPrintReceipt(posSalesArr().find(x=>x._localId==='${s._localId}'))">🧾</button>
+            ${s.voided ? '<span style="font-size:10px; color:var(--accent)">VOIDED</span>' : `<button class="btn btn-sm" onclick="posVoidSale('${s._localId}')">Void</button>`}
+          </div>`;
+      }).join('')}`;
+  }
+
+  function posPrintReceipt(sale) {
+    if (!sale) return;
+    const w = window.open('', '_blank', 'width=380,height=600');
+    if (!w) { toast('Allow pop-ups to print receipts', 'warn'); return; }
+    const dt = new Date(sale.timeStamp).toLocaleString('en-ZA');
+    const rows = liSaleLines(sale).map(li =>
+      `<tr><td>${_escape(li._description)}${li.unitQuantity > 1 ? ` ×${li.unitQuantity}` : ''}</td><td style="text-align:right">R${(Number(li.calcTotal) || 0).toFixed(2)}</td></tr>`).join('');
+    w.document.write(`<!doctype html><html><head><title>Receipt ${sale._localId}</title>
+      <style>
+        body{font-family:'Courier New',monospace; width:300px; margin:0 auto; padding:12px; color:#000}
+        h2{text-align:center; margin:0.2rem 0}
+        .muted{color:#555; font-size:11px; text-align:center}
+        table{width:100%; border-collapse:collapse; margin:0.6rem 0; font-size:13px}
+        td{padding:2px 0}
+        .tot td{border-top:1px dashed #000; padding-top:4px; font-weight:bold}
+        .grand td{font-size:16px}
+      </style></head><body>
+      <h2>${_escape(POS_BIZ_NAMES[sale.shopID] || sale.shopID)}</h2>
+      <div class="muted">${dt}</div>
+      <div class="muted">Receipt ${sale._localId}</div>
+      <table>${rows}
+        <tr class="tot"><td>Subtotal (excl VAT)</td><td style="text-align:right">R${(Number(sale.calcSubtotal) || 0).toFixed(2)}</td></tr>
+        <tr><td>VAT (15%)</td><td style="text-align:right">R${(Number(sale.taxTotal) || 0).toFixed(2)}</td></tr>
+        <tr class="grand"><td>TOTAL</td><td style="text-align:right">R${(Number(sale.total) || 0).toFixed(2)}</td></tr>
+      </table>
+      <div class="muted">Paid by card · ref ${_escape(liSalePaymentRef(sale))}</div>
+      <div class="muted" style="margin-top:0.8rem">Thank you!</div>
+      <script>window.onload=function(){window.print();}<\/script>
+      </body></html>`);
+    w.document.close();
+  }
+
+  function renderPOSCatalogAdmin() {
+    const el = document.getElementById('pos-catalog-admin');
+    if (!el) return;
+    const cat = posCatalogArr().filter(p => !p.archived);
+    const rows = cat.map(p => {
+      const mto = liIsMTO(p);
+      return `
+      <tr>
+        <td style="padding:0.4rem; border:1px solid var(--border)">${_escape(liItemSku(p))}</td>
+        <td style="padding:0.4rem; border:1px solid var(--border)">${_escape(liItemName(p))}</td>
+        <td style="padding:0.4rem; border:1px solid var(--border)"><input type="number" step="0.01" value="${liItemPrice(p)}" onchange="posUpdateProduct('${p._localId}','price',this.value)" style="width:90px"></td>
+        <td style="padding:0.4rem; border:1px solid var(--border); text-align:center">${mto ? '—' : `<input type="number" value="${liQoh(p)}" onchange="posUpdateProduct('${p._localId}','qoh',this.value)" style="width:70px">`}</td>
+        <td style="padding:0.4rem; border:1px solid var(--border); text-align:center"><input type="checkbox" ${mto ? 'checked' : ''} onchange="posUpdateProduct('${p._localId}','isSpecialOrder',this.checked)"></td>
+        <td style="padding:0.4rem; border:1px solid var(--border); text-align:center" title="${p.shopifyProductId ? 'On Shopify' : 'Not yet on Shopify'}">${p.shopifyProductId ? '<span style="color:var(--success)">✓</span>' : '<span style="color:var(--warn)">⏳</span>'}</td>
+        <td style="padding:0.4rem; border:1px solid var(--border); text-align:center"><button class="btn btn-sm" onclick="posDeleteProduct('${p._localId}')">✕</button></td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = `
+      <div style="margin-bottom:1rem; font-size:12px; color:var(--text-muted); display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap">
+        <span>${_escape(POS_BIZ_NAMES[activeBiz] || activeBiz)} integrations:</span>
+        <button class="btn btn-sm" onclick="window.open('/.netlify/functions/xero-auth?action=connect&biz=${activeBiz}','_blank')">Connect to Xero</button>
+        <button class="btn btn-sm" onclick="posSyncAllToShopify()">Sync catalogue → Shopify</button>
+        <span style="opacity:0.7">— Xero connect is one-time per business.</span>
+      </div>
+      <div class="row" style="align-items:flex-end; gap:0.5rem; margin-bottom:1rem; flex-wrap:wrap">
+        <div><label>SKU</label><input id="pos-new-sku" placeholder="SKU/barcode" style="width:120px"></div>
+        <div class="f1"><label>Product name</label><input id="pos-new-name" placeholder="Name"></div>
+        <div><label>Price (incl VAT)</label><input id="pos-new-price" type="number" step="0.01" placeholder="0.00" style="width:110px"></div>
+        <div><label>Opening stock</label><input id="pos-new-stock" type="number" placeholder="0" style="width:90px"></div>
+        <div style="text-align:center"><label>Made to order</label><input id="pos-new-mto" type="checkbox" style="transform:scale(1.3); margin-top:0.5rem"></div>
+        <button class="btn btn-primary" onclick="posAddProduct()">+ Add product</button>
+      </div>
+      ${cat.length === 0 ? '<div class="empty">No products yet</div>' : `
+      <table style="width:100%; border-collapse:collapse; font-size:13px">
+        <thead><tr style="background:var(--bg)">
+          <th style="padding:0.4rem; border:1px solid var(--border); text-align:left">SKU</th>
+          <th style="padding:0.4rem; border:1px solid var(--border); text-align:left">Name</th>
+          <th style="padding:0.4rem; border:1px solid var(--border)">Price</th>
+          <th style="padding:0.4rem; border:1px solid var(--border)">Stock</th>
+          <th style="padding:0.4rem; border:1px solid var(--border)">MTO</th>
+          <th style="padding:0.4rem; border:1px solid var(--border)" title="On Shopify?">Shop</th>
+          <th style="padding:0.4rem; border:1px solid var(--border)"></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`}`;
+  }
+
+  function posAddProduct() {
+    const name = (document.getElementById('pos-new-name')?.value || '').trim();
+    if (!name) { toast('Enter a product name', 'warn'); return; }
+    const price = parseFloat(document.getElementById('pos-new-price')?.value) || 0;
+    const mto = !!document.getElementById('pos-new-mto')?.checked;
+    const openingStock = mto ? 0 : (parseInt(document.getElementById('pos-new-stock')?.value, 10) || 0);
+    snapshotState();
+    // Lightspeed "Item"-shaped product
+    const item = {
+      itemID: null,                      // assigned by Lightspeed once synced
+      _localId: 'POS-' + Date.now(),
+      description: name,
+      customSku: (document.getElementById('pos-new-sku')?.value || '').trim(),
+      systemSku: '',
+      defaultCost: 0,
+      tax: true,
+      taxClassID: null,
+      categoryID: null,
+      archived: false,
+      itemType: 'default',
+      isSpecialOrder: mto,               // our made-to-order marker
+      Prices: { ItemPrice: [{ amount: price, useType: 'Default', useTypeID: 1 }] },
+      ItemShops: { ItemShop: [{ shopID: activeBiz, qoh: openingStock, reorderPoint: 0 }] },
+      shopifyProductId: null, shopifyVariantId: null, shopifyInventoryItemId: null
+    };
+    posCatalogArr().push(item);
+    saveData();
+    renderPOS();
+    toast('Product added', 'success');
+    posSyncProductToShopify(item); // push to Shopify (POS is master)
+  }
+
+  function posUpdateProduct(id, field, value) {
+    const p = posFindProduct(id);
+    if (!p) return;
+    snapshotState();
+    if (field === 'price') liSetItemPrice(p, parseFloat(value) || 0);
+    else if (field === 'qoh') liSetQoh(p, parseInt(value, 10) || 0);
+    else if (field === 'isSpecialOrder') { p.isSpecialOrder = !!value; if (p.isSpecialOrder) liSetQoh(p, 0); }
+    saveData();
+    renderPOS();
+    posSyncProductToShopify(p); // reflect price/stock change in Shopify
+  }
+
+  function posDeleteProduct(id) {
+    const p = posFindProduct(id);
+    if (!p) return;
+    if (!confirm(`Delete "${liItemName(p)}" from the catalogue?`)) return;
+    snapshotState();
+    // Lightspeed-style soft delete (archived) so historic sales keep resolving.
+    p.archived = true;
+    posCart = posCart.filter(l => l.productId !== id);
+    saveData();
+    renderPOS();
+    toast('Product archived', 'success');
+  }
+
+  // ---- Xero sync (Phase 2) ----------------------------------------------
+  // Posts a completed sale to the Netlify function, which creates an AUTHORISED
+  // ACCREC invoice + payment in that business's Xero org. On failure the sale
+  // stays queued (_synced.xero = false) and the user can retry. Voided sales
+  // that were already synced are flagged for manual reversal (Xero won't let a
+  // paid invoice be voided automatically — a credit note is a later phase).
+  const POS_FN_BASE = '/.netlify/functions';
+  const posXeroInFlight = new Set();
+
+  async function posSyncSaleToXero(sale) {
+    if (!sale || sale.voided) return true;
+    if (sale._synced && sale._synced.xero) return true;
+    if (posXeroInFlight.has(sale._localId)) return false;
+    posXeroInFlight.add(sale._localId);
+    try {
+      let token = null;
+      try { if (currentUser && currentUser.getIdToken) token = await currentUser.getIdToken(); } catch (e) { /* fall through unauthenticated */ }
+      const res = await fetch(`${POS_FN_BASE}/xero-invoice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+        body: JSON.stringify({ biz: sale.shopID, sale })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 200));
+      const out = await res.json();
+      sale.xeroInvoiceId = out.invoiceID || null;
+      sale.xeroInvoiceNumber = out.invoiceNumber || null;
+      if (!sale._synced) sale._synced = {};
+      sale._synced.xero = true;
+      saveData();
+      renderPOSSales();
+      return true;
+    } catch (e) {
+      console.warn('Xero sync failed for', sale._localId, e);
+      if (!sale._synced) sale._synced = {};
+      sale._synced.xero = false;
+      renderPOSSales();
+      return false;
+    } finally {
+      posXeroInFlight.delete(sale._localId);
+    }
+  }
+
+  async function posRetryXeroSync() {
+    const pending = posSalesArr().filter(s => s.completed && !s.voided && !(s._synced && s._synced.xero));
+    if (pending.length === 0) { toast('Nothing to sync', 'info'); return; }
+    toast(`Syncing ${pending.length} sale(s) to Xero…`, 'info');
+    let ok = 0;
+    for (const s of pending) { if (await posSyncSaleToXero(s)) ok++; }
+    renderPOS();
+    toast(`Xero sync: ${ok}/${pending.length} succeeded`, ok === pending.length ? 'success' : 'warn');
+  }
+
+  // ---- Shopify sync (Phase 3) -------------------------------------------
+  // POS is the master of products & stock, so this pushes OUT to Shopify:
+  // products + price + inventory. (Inbound online orders are handled by the
+  // shopify-webhook function, which decrements master stock in Firestore.)
+  async function posShopifyPost(biz, payload) {
+    let token = null;
+    try { if (currentUser && currentUser.getIdToken) token = await currentUser.getIdToken(); } catch (e) { /* unauthenticated */ }
+    const res = await fetch(`${POS_FN_BASE}/shopify-sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+      body: JSON.stringify({ biz, ...payload })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 200));
+    return res.json();
+  }
+
+  async function posSyncProductToShopify(item) {
+    if (!item || item.archived) return false;
+    try {
+      const ids = await posShopifyPost(activeBiz, { action: 'product', product: {
+        _localId: item._localId,
+        description: liItemName(item),
+        customSku: liItemSku(item),
+        price: liItemPrice(item),
+        qoh: liQoh(item),
+        shopifyProductId: item.shopifyProductId || null,
+        shopifyVariantId: item.shopifyVariantId || null
+      } });
+      item.shopifyProductId = ids.shopifyProductId || item.shopifyProductId || null;
+      item.shopifyVariantId = ids.shopifyVariantId || item.shopifyVariantId || null;
+      item.shopifyInventoryItemId = ids.shopifyInventoryItemId || item.shopifyInventoryItemId || null;
+      saveData();
+      renderPOSCatalogAdmin();
+      return true;
+    } catch (e) {
+      console.warn('Shopify product sync failed', item._localId, e);
+      return false;
+    }
+  }
+
+  async function posPushInventory(items) {
+    const payloadItems = (items || [])
+      .filter(i => i && i.shopifyInventoryItemId && !liIsMTO(i))
+      .map(i => ({ shopifyInventoryItemId: i.shopifyInventoryItemId, qoh: liQoh(i) }));
+    if (payloadItems.length === 0) return;
+    try { await posShopifyPost(activeBiz, { action: 'inventory', items: payloadItems }); }
+    catch (e) { console.warn('Shopify inventory push failed', e); }
+  }
+
+  async function posSyncAllToShopify() {
+    const cat = posCatalogArr().filter(p => !p.archived);
+    if (cat.length === 0) { toast('No products to sync', 'info'); return; }
+    toast(`Syncing ${cat.length} product(s) to Shopify…`, 'info');
+    let ok = 0;
+    for (const item of cat) { if (await posSyncProductToShopify(item)) ok++; }
+    renderPOS();
+    toast(`Shopify sync: ${ok}/${cat.length} succeeded`, ok === cat.length ? 'success' : 'warn');
+  }
+
+  // ---- Made-to-order → factory (Phase 4) --------------------------------
+  // Each made-to-order sale line becomes a production job in the existing
+  // factory orders flow (same shape as the New Order / intake tab), so it shows
+  // up in Active Orders, the Planner, BOM material deduction, etc. The sale
+  // keeps the job ids so a void can remove the still-pending jobs.
+  function posCreateProductionJobs(sale, saleLines) {
+    const mtoLines = saleLines.filter(li => li.isSpecialOrder);
+    if (mtoLines.length === 0) return 0;
+    const today = new Date().toISOString().split('T')[0];
+    const dueDate = new Date(Date.now() + 28 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const d = currentData();
+    if (!Array.isArray(d.orders)) d.orders = [];
+    const orders = d.orders;
+    const jobIds = [];
+    mtoLines.forEach((li, i) => {
+      const slug = String(li._description || 'ITEM').replace(/[^a-z0-9]/gi, '').toUpperCase().substring(0, 20);
+      let id = `POS-${sale._localId}-${slug}`;
+      if (orders.find(o => o.id === id)) id += '-' + i;
+      const job = {
+        id,
+        invoice: sale._localId,
+        customer: 'POS Sale',
+        phone: '',
+        product: li._description || li._sku || 'Item',
+        category: '',
+        fabric: '',
+        qty: Number(li.unitQuantity) || 1,
+        orderDate: today,
+        dueDate,
+        status: 'pending',
+        startDate: null,
+        paymentStatus: 'paid',     // settled at the till
+        outstanding: 0,
+        source: 'pos',             // marks POS-originated jobs
+        posSaleId: sale._localId
+      };
+      orders.push(job);
+      // Deducts raw materials if the product name links to a BOM; no-op otherwise.
+      try { deductMaterialsForOrder(activeBiz, job); } catch (e) { console.warn('POS job material deduction failed:', e); }
+      jobIds.push(id);
+    });
+    sale.productionJobIds = jobIds;
+    return jobIds.length;
+  }
+
+  // ---- POS reporting (Phase 6) ------------------------------------------
+  // Renders the dashboard POS card: today's takings per business, current-biz
+  // week/month totals, top products this month, and Xero sync status.
+  function renderPOSDashboard() {
+    const el = document.getElementById('pos-dash-content');
+    if (!el) return;
+    const now = new Date();
+    const startToday = new Date(now); startToday.setHours(0, 0, 0, 0);
+    const startWeek = new Date(startToday); startWeek.setDate(startToday.getDate() - ((startToday.getDay() + 6) % 7)); // Monday
+    const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const sum = (arr) => arr.reduce((t, s) => t + (Number(s.total) || 0), 0);
+    const liveSales = (arr) => (arr || []).filter(s => s.completed && !s.voided);
+
+    // Today's takings per business
+    const allBizToday = ['bellville', 'pinkfoot', 'repticube'].map(b => {
+      const arr = liveSales(data[b] && data[b].posSales).filter(s => new Date(s.timeStamp) >= startToday);
+      return { b, name: POS_BIZ_NAMES[b], total: sum(arr), n: arr.length };
+    });
+
+    // Current-business roll-ups
+    const sales = liveSales(posSalesArr());
+    const inRange = (from) => sales.filter(s => new Date(s.timeStamp) >= from);
+    const todayS = inRange(startToday), weekS = inRange(startWeek), monthS = inRange(startMonth);
+    const pendingXero = sales.filter(s => !(s._synced && s._synced.xero)).length;
+
+    // Top products this month (current biz) by revenue
+    const prodMap = {};
+    monthS.forEach(s => liSaleLines(s).forEach(li => {
+      const key = li._description || li._sku || 'Item';
+      if (!prodMap[key]) prodMap[key] = { qty: 0, rev: 0 };
+      prodMap[key].qty += Number(li.unitQuantity) || 0;
+      prodMap[key].rev += Number(li.calcTotal) || 0;
+    }));
+    const top = Object.entries(prodMap).sort((a, b) => b[1].rev - a[1].rev).slice(0, 5);
+
+    const metric = (label, val, sub) => `<div class="metric"><div class="metric-label">${label}</div><div class="metric-value">${val}</div>${sub ? `<div style="font-size:10px; color:var(--text-muted)">${sub}</div>` : ''}</div>`;
+
+    el.innerHTML = `
+      <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.4rem">Today — all businesses</div>
+      <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1rem">
+        ${allBizToday.map(x => `<div style="flex:1; min-width:120px; padding:0.5rem 0.75rem; border:1px solid var(--border); border-radius:6px">
+          <div style="font-size:11px; color:var(--text-muted)">${_escape(x.name)}</div>
+          <div style="font-size:16px; font-weight:700; color:var(--accent)">${posMoney(x.total)}</div>
+          <div style="font-size:10px; color:var(--text-muted)">${x.n} sale${x.n === 1 ? '' : 's'}</div>
+        </div>`).join('')}
+      </div>
+      <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.4rem">${_escape(POS_BIZ_NAMES[activeBiz] || activeBiz)} — totals</div>
+      <div class="grid3">
+        ${metric('Today', posMoney(sum(todayS)), todayS.length + ' sales')}
+        ${metric('This week', posMoney(sum(weekS)), weekS.length + ' sales')}
+        ${metric('This month', posMoney(sum(monthS)), monthS.length + ' sales')}
+      </div>
+      ${pendingXero ? `<div style="margin-top:0.75rem; font-size:12px; color:var(--warn)">⚠️ ${pendingXero} sale(s) not yet synced to Xero — open the POS tab to retry.</div>` : ''}
+      <div style="margin-top:1rem; font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em">Top products (this month)</div>
+      ${top.length ? top.map(([name, v]) => `
+        <div style="display:flex; justify-content:space-between; padding:0.4rem 0; border-bottom:1px solid var(--border)">
+          <div style="flex:1">${_escape(name)} <span style="font-size:11px; color:var(--text-muted)">×${v.qty}</span></div>
+          <div style="font-weight:700">${posMoney(v.rev)}</div>
+        </div>`).join('') : '<div class="empty">No POS sales this month</div>'}
+    `;
+  }
+  window.renderPOSDashboard = renderPOSDashboard;
+
+  // Expose POS handlers for inline onclick/onchange
+  window.posSyncSaleToXero = posSyncSaleToXero;
+  window.posRetryXeroSync = posRetryXeroSync;
+  window.posSyncAllToShopify = posSyncAllToShopify;
+  window.renderPOS = renderPOS;
+  window.renderPOSGrid = renderPOSGrid;
+  window.posAddToCart = posAddToCart;
+  window.posChangeQty = posChangeQty;
+  window.posClearCart = posClearCart;
+  window.posCompleteSale = posCompleteSale;
+  window.posVoidSale = posVoidSale;
+  window.posPrintReceipt = posPrintReceipt;
+  window.posSalesArr = posSalesArr;
+  window.posAddProduct = posAddProduct;
+  window.posUpdateProduct = posUpdateProduct;
+  window.posDeleteProduct = posDeleteProduct;
+
   function saveData() {
     localStorage.setItem('production-data', JSON.stringify(data));
     document.getElementById('save-status').textContent = '✓ saved';
@@ -7059,12 +7832,13 @@ ${totalsSection}
   // currentRole declared at top of script (TDZ safety)
   // Role permissions: which tabs each role can see
   const ROLE_PERMISSIONS = {
-    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner'],
-    sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished'],
+    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'pos'],
+    sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'pos'],
     factory: ['dashboard', 'orders', 'done', 'calendar', 'bom', 'schedule', 'planner'],
     dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'finished'],
     fabric: ['dashboard', 'calendar', 'fabric'],
-    manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner']
+    cashier: ['dashboard', 'pos'],
+    manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'pos']
   };
   
   // Roles that should NOT see fabric ordering info on dashboard or order cards

@@ -1,0 +1,9 @@
+# Netlify config — static site + serverless functions for the POS integrations.
+# The site itself is still just index.html (published from the repo root).
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+[functions]
+  # esbuild bundles each function with its node_modules (e.g. jose, @netlify/blobs)
+  node_bundler = "esbuild"
