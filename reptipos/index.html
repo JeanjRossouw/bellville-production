@@ -189,8 +189,9 @@
       if (manual) toast('Catalogue updated');
     } catch (e) {
       console.warn('Catalogue refresh failed:', e);
-      st.textContent = catalogue.length ? (catalogue.length + ' products (cached)') : 'catalogue offline';
-      if (manual) toast('Could not reach Shopify — using cached');
+      st.textContent = catalogue.length ? (catalogue.length + ' products (cached)') : 'catalogue error';
+      st.title = String(e.message || e);
+      if (!catalogue.length) toast('Catalogue failed: ' + (e.message || e));
     }
   }
 

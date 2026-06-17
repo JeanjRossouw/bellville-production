@@ -138,7 +138,11 @@ export const handler = async (event) => {
   const json = (status, obj) => ({ statusCode: status, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) });
   try {
     if (body.action === 'getProducts') {
-      const [products, locationId] = await Promise.all([getProducts(), primaryLocationId()]);
+      const products = await getProducts();
+      // Location is optional (needs read_locations) and not required to sell —
+      // never let it block the catalogue.
+      let locationId = null;
+      try { locationId = await primaryLocationId(); } catch (e) { /* read_locations not granted */ }
       return json(200, { products, locationId });
     }
     if (body.action === 'createOrder') {
