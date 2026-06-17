@@ -1,0 +1,13 @@
+{
+  "name": "bellville-production",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Production management app + POS integrations (Netlify Functions).",
+  "scripts": {
+    "dev": "netlify dev"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0",
+    "jose": "^5.9.6"
+  }
+}

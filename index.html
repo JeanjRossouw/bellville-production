@@ -7286,6 +7286,7 @@ ${totalsSection}
     renderPOS();
     toast(`Sale completed — ${posMoney(total)}`, 'success');
     posPrintReceipt(sale);
+    posSyncSaleToXero(sale); // fire-and-forget; failures stay queued for retry
   }
 
   function posVoidSale(id) {
@@ -7312,16 +7313,24 @@ ${totalsSection}
     const today = posSalesArr().filter(s => new Date(s.timeStamp).toDateString() === todayStr);
     if (today.length === 0) { el.innerHTML = '<div class="empty">No sales yet today</div>'; return; }
     const takings = today.filter(s => !s.voided).reduce((sum, s) => sum + s.total, 0);
+    const pendingXero = today.filter(s => s.completed && !s.voided && !(s._synced && s._synced.xero));
     el.innerHTML = `
       <div style="margin-bottom:0.75rem; font-size:14px">Today: <strong>${today.filter(s => !s.voided).length}</strong> sales · takings <strong style="color:var(--accent)">${posMoney(takings)}</strong></div>
+      ${pendingXero.length ? `<div style="margin-bottom:0.75rem; padding:0.5rem 0.75rem; border:1px solid var(--warn); border-radius:6px; font-size:12px; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap"><span>⚠️ ${pendingXero.length} sale(s) not yet synced to Xero</span><button class="btn btn-sm" onclick="posRetryXeroSync()">Retry Xero sync</button></div>` : ''}
       ${today.map(s => {
         const time = new Date(s.timeStamp).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' });
+        const xeroSynced = s._synced && s._synced.xero;
+        const xeroBadge = s.voided ? ''
+          : xeroSynced
+            ? `<span title="Xero invoice ${_escape(s.xeroInvoiceNumber || s.xeroInvoiceId || '')}" style="font-size:10px; color:var(--success)">✓ Xero</span>`
+            : '<span style="font-size:10px; color:var(--warn)">⏳ Xero</span>';
         return `
           <div style="display:flex; align-items:center; gap:0.5rem; padding:0.5rem 0; border-bottom:1px solid var(--border); ${s.voided ? 'opacity:0.5; text-decoration:line-through' : ''}">
             <div style="flex:1">
               <div style="font-weight:600">${posMoney(s.total)} <span style="font-size:11px; color:var(--text-muted); font-weight:normal">· ${liSaleItemCount(s)} items · ${time}</span></div>
               <div style="font-size:10px; color:var(--text-muted)">${_escape(s._cashierEmail || '')} · card ${_escape(liSalePaymentRef(s))}</div>
             </div>
+            ${xeroBadge}
             <button class="btn btn-sm" onclick="posPrintReceipt(posSalesArr().find(x=>x._localId==='${s._localId}'))">🧾</button>
             ${s.voided ? '<span style="font-size:10px; color:var(--accent)">VOIDED</span>' : `<button class="btn btn-sm" onclick="posVoidSale('${s._localId}')">Void</button>`}
           </div>`;
@@ -7377,6 +7386,11 @@ ${totalsSection}
       </tr>`;
     }).join('');
     el.innerHTML = `
+      <div style="margin-bottom:1rem; font-size:12px; color:var(--text-muted); display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap">
+        <span>Xero (${_escape(POS_BIZ_NAMES[activeBiz] || activeBiz)}):</span>
+        <button class="btn btn-sm" onclick="window.open('/.netlify/functions/xero-auth?action=connect&biz=${activeBiz}','_blank')">Connect this business to Xero</button>
+        <span style="opacity:0.7">— one-time per business; needed before sales sync.</span>
+      </div>
       <div class="row" style="align-items:flex-end; gap:0.5rem; margin-bottom:1rem; flex-wrap:wrap">
         <div><label>SKU</label><input id="pos-new-sku" placeholder="SKU/barcode" style="width:120px"></div>
         <div class="f1"><label>Product name</label><input id="pos-new-name" placeholder="Name"></div>
@@ -7453,7 +7467,61 @@ ${totalsSection}
     toast('Product archived', 'success');
   }
 
+  // ---- Xero sync (Phase 2) ----------------------------------------------
+  // Posts a completed sale to the Netlify function, which creates an AUTHORISED
+  // ACCREC invoice + payment in that business's Xero org. On failure the sale
+  // stays queued (_synced.xero = false) and the user can retry. Voided sales
+  // that were already synced are flagged for manual reversal (Xero won't let a
+  // paid invoice be voided automatically — a credit note is a later phase).
+  const POS_FN_BASE = '/.netlify/functions';
+  const posXeroInFlight = new Set();
+
+  async function posSyncSaleToXero(sale) {
+    if (!sale || sale.voided) return true;
+    if (sale._synced && sale._synced.xero) return true;
+    if (posXeroInFlight.has(sale._localId)) return false;
+    posXeroInFlight.add(sale._localId);
+    try {
+      let token = null;
+      try { if (currentUser && currentUser.getIdToken) token = await currentUser.getIdToken(); } catch (e) { /* fall through unauthenticated */ }
+      const res = await fetch(`${POS_FN_BASE}/xero-invoice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+        body: JSON.stringify({ biz: sale.shopID, sale })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 200));
+      const out = await res.json();
+      sale.xeroInvoiceId = out.invoiceID || null;
+      sale.xeroInvoiceNumber = out.invoiceNumber || null;
+      if (!sale._synced) sale._synced = {};
+      sale._synced.xero = true;
+      saveData();
+      renderPOSSales();
+      return true;
+    } catch (e) {
+      console.warn('Xero sync failed for', sale._localId, e);
+      if (!sale._synced) sale._synced = {};
+      sale._synced.xero = false;
+      renderPOSSales();
+      return false;
+    } finally {
+      posXeroInFlight.delete(sale._localId);
+    }
+  }
+
+  async function posRetryXeroSync() {
+    const pending = posSalesArr().filter(s => s.completed && !s.voided && !(s._synced && s._synced.xero));
+    if (pending.length === 0) { toast('Nothing to sync', 'info'); return; }
+    toast(`Syncing ${pending.length} sale(s) to Xero…`, 'info');
+    let ok = 0;
+    for (const s of pending) { if (await posSyncSaleToXero(s)) ok++; }
+    renderPOS();
+    toast(`Xero sync: ${ok}/${pending.length} succeeded`, ok === pending.length ? 'success' : 'warn');
+  }
+
   // Expose POS handlers for inline onclick/onchange
+  window.posSyncSaleToXero = posSyncSaleToXero;
+  window.posRetryXeroSync = posRetryXeroSync;
   window.renderPOS = renderPOS;
   window.renderPOSGrid = renderPOSGrid;
   window.posAddToCart = posAddToCart;
