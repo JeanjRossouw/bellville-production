@@ -91,7 +91,8 @@ export async function listAllProducts(biz) {
   const { domain, token } = shopConfig(biz);
   if (!domain || !token) throw new Error(`Shopify not configured for "${biz}"`);
   const out = [];
-  let url = `https://${domain}/admin/api/${API_VERSION}/products.json?limit=250`;
+  // Active products only — drafts/archived shouldn't land on the till.
+  let url = `https://${domain}/admin/api/${API_VERSION}/products.json?limit=250&status=active`;
   while (url) {
     const res = await fetch(url, { headers: { 'X-Shopify-Access-Token': token, Accept: 'application/json' } });
     if (!res.ok) throw new Error(`Shopify list failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
