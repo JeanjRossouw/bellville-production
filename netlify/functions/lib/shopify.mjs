@@ -130,6 +130,7 @@ export async function listAllProducts(biz) {
     const data = await res.json();
     for (const p of data.products || []) {
       const variants = p.variants || [];
+      const image = (p.image && p.image.src) || (p.images && p.images[0] && p.images[0].src) || '';
       for (const v of variants) {
         const named = variants.length > 1 && v.title && v.title !== 'Default Title';
         out.push({
@@ -139,7 +140,9 @@ export async function listAllProducts(biz) {
           title: named ? `${p.title} — ${v.title}` : p.title,
           sku: v.sku || '',
           price: Number(v.price) || 0,
-          qoh: Number(v.inventory_quantity) || 0
+          qoh: Number(v.inventory_quantity) || 0,
+          category: p.product_type || '',
+          imageUrl: image
         });
       }
     }

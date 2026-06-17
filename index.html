@@ -900,23 +900,25 @@
     </div>
   </div>
 
-  <!-- POINT OF SALE -->
+  <!-- POINT OF SALE (Lightspeed-style till) -->
   <div id="section-pos" class="section">
-    <div class="card">
-      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
-        <span>🛒 POINT OF SALE — <span id="pos-biz-name"></span></span>
-        <span style="font-size:11px; color:var(--text-muted); font-weight:normal">Stock here is the master · sales record to this business</span>
-      </div>
-      <div style="display:flex; gap:1.5rem; flex-wrap:wrap; align-items:flex-start">
-        <!-- Product picker -->
-        <div style="flex:2 1 320px; min-width:300px">
-          <input id="pos-search" oninput="renderPOSGrid()" placeholder="🔍 Search name or scan/type SKU…" style="width:100%; margin-bottom:0.75rem">
-          <div id="pos-grid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:0.5rem"></div>
+    <div class="card" style="padding:0; overflow:hidden">
+      <div class="pos-shell" style="display:flex; align-items:stretch; min-height:62vh">
+        <!-- LEFT: product search + grid -->
+        <div style="flex:2 1 0; min-width:0; padding:1rem; display:flex; flex-direction:column">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; margin-bottom:0.6rem">
+            <span style="font-weight:700; font-size:14px">🛒 <span id="pos-biz-name"></span></span>
+            <span style="font-size:11px; color:var(--text-muted)">Stock here is the master</span>
+          </div>
+          <input id="pos-search" oninput="renderPOSGrid()" placeholder="🔍 Start typing or scanning…" autocomplete="off"
+            style="width:100%; padding:0.85rem 1rem; font-size:15px; border-radius:8px; margin-bottom:0.6rem">
+          <div id="pos-categories" style="display:flex; gap:0.4rem; flex-wrap:wrap; margin-bottom:0.7rem"></div>
+          <div id="pos-grid" style="flex:1; overflow:auto; display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); grid-auto-rows:min-content; gap:0.6rem; align-content:start"></div>
         </div>
-        <!-- Cart / checkout -->
-        <div style="flex:1 1 280px; min-width:280px">
-          <div class="card-title" style="margin-top:0">CART</div>
-          <div id="pos-cart"></div>
+        <!-- RIGHT: sell panel (customer → cart → pay) -->
+        <div style="flex:1 1 340px; min-width:300px; max-width:420px; border-left:1px solid var(--border); display:flex; flex-direction:column; background:rgba(255,255,255,0.02)">
+          <div id="pos-customer" style="padding:0.85rem; border-bottom:1px solid var(--border)"></div>
+          <div id="pos-cart" style="flex:1; overflow:auto; padding:0.85rem; display:flex; flex-direction:column"></div>
         </div>
       </div>
     </div>
@@ -932,6 +934,28 @@
         <button class="btn btn-sm" onclick="document.getElementById('pos-catalog-admin').style.display = document.getElementById('pos-catalog-admin').style.display==='none' ? '' : 'none'">Show / hide</button>
       </div>
       <div id="pos-catalog-admin"></div>
+    </div>
+  </div>
+
+  <style>
+    /* Dedicated till mode: hide manager chrome, show only the POS full-screen. */
+    body.pos-mode .tabs { display: none !important; }
+    body.pos-mode .section:not(#section-pos) { display: none !important; }
+    body.pos-mode #section-pos { display: block !important; }
+    body.pos-mode .container { max-width: 100%; }
+    body.pos-mode header button[onclick="clearAllData()"],
+    body.pos-mode #undo-btn,
+    body.pos-mode header .btn-primary[onclick="saveData()"] { display: none !important; }
+  </style>
+
+  <!-- POS payment modal -->
+  <div id="pos-pay-modal" style="display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,0.6); align-items:center; justify-content:center">
+    <div class="card" style="width:400px; max-width:94vw; margin:0">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center">
+        <span>Take payment</span>
+        <button class="btn btn-sm" onclick="posClosePay()">✕</button>
+      </div>
+      <div id="pos-pay-body"></div>
     </div>
   </div>
 </div>
@@ -5505,6 +5529,45 @@ ${_PRODUCTION_PRINT_STYLES}
   }
   window.openDashboardWindow = openDashboardWindow;
 
+  // ---- Dedicated POS ("till") mode ------------------------------------
+  // Boots a clean, full-screen, cashier-only POS — for a separate site/domain
+  // (e.g. pos.repticube.co.za) that shares this codebase + backend, or via /pos
+  // or ?pos=1 on the main site. Same engine, just a focused view.
+  const IS_POS_MODE = (function () {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get('pos') === '1') return true;
+      if (/(^|\/)pos(\/|$)/i.test(window.location.pathname)) return true;
+      if (/^pos\./i.test(window.location.hostname)) return true;
+    } catch (e) {}
+    return false;
+  })();
+  // Lock the till to one business via ?biz=… or a business-named host (pos.repticube.*).
+  const POS_LOCK_BIZ = (function () {
+    try {
+      const b = new URLSearchParams(window.location.search).get('biz');
+      if (['bellville', 'pinkfoot', 'repticube'].includes(b)) return b;
+      const h = window.location.hostname.toLowerCase();
+      if (h.includes('repticube')) return 'repticube';
+      if (h.includes('pinkfoot')) return 'pinkfoot';
+      if (h.includes('bellville') && h.startsWith('pos.')) return 'bellville';
+    } catch (e) {}
+    return null;
+  })();
+
+  function enterPosOnlyMode() {
+    document.body.classList.add('pos-mode');
+    document.getElementById('main-app').style.display = 'block';
+    const emailEl = document.getElementById('current-user-email');
+    if (emailEl && currentUser) emailEl.textContent = currentUser.email;
+    if (POS_LOCK_BIZ) switchBiz(POS_LOCK_BIZ);
+    applyRolePermissions();
+    showSection('pos');
+    if (typeof renderPOS === 'function') renderPOS();
+    document.title = 'POS · ' + (POS_BIZ_NAMES[activeBiz] || activeBiz || 'Till');
+  }
+  window.enterPosOnlyMode = enterPosOnlyMode;
+
   // Live clock for the standalone dashboard window. Updates once per second.
   // Started by enterDashboardOnlyMode below.
   let _dashOnlyClockTimer = null;
@@ -7054,6 +7117,8 @@ ${totalsSection}
   const POS_VAT_RATE = 0.15;            // South Africa — prices are VAT-INCLUSIVE
   const POS_BIZ_NAMES = { bellville: 'Bellville Furniture', pinkfoot: 'PinkFoot Boutique', repticube: 'ReptiCube' };
   let posCart = [];                     // [{ productId, qty }] — productId is the item's _localId
+  let posCategory = '';                 // active category filter ('' = all)
+  let posDashRange = 'today';            // dashboard period: 'today' | 'week' | 'month'
 
   // POS data lives in posStore[biz] (its own Firestore doc), not in `data`.
   function posBizStore(biz) {
@@ -7115,10 +7180,50 @@ ${totalsSection}
   function renderPOS() {
     const nameEl = document.getElementById('pos-biz-name');
     if (nameEl) nameEl.textContent = POS_BIZ_NAMES[activeBiz] || activeBiz;
+    renderPOSCustomer();
+    renderPOSCategories();
     renderPOSGrid();
     renderPOSCart();
     renderPOSSales();
     renderPOSCatalogAdmin();
+  }
+
+  // Customer panel (top of the sell column). Full client accounts land in Stage B;
+  // for now this shows the walk-in state and a disabled placeholder.
+  function renderPOSCustomer() {
+    const el = document.getElementById('pos-customer');
+    if (!el) return;
+    el.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem">
+        <div style="font-size:13px"><span style="color:var(--text-muted)">Customer:</span> <strong>Walk-in</strong></div>
+        <button class="btn btn-sm" disabled title="Client accounts coming next" style="opacity:0.5">+ Add customer</button>
+      </div>`;
+  }
+
+  function posCategoriesList() {
+    const set = new Set();
+    posCatalogArr().forEach(p => { if (!p.archived && p.category) set.add(p.category); });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }
+
+  function renderPOSCategories() {
+    const el = document.getElementById('pos-categories');
+    if (!el) return;
+    const cats = posCategoriesList();
+    if (cats.length === 0) { el.innerHTML = ''; return; }
+    const chip = (label, value) => {
+      const active = posCategory === value;
+      return `<button onclick="posSetCategory('${value.replace(/'/g, "\\'")}')"
+        style="padding:0.35rem 0.8rem; border-radius:999px; font-size:12px; cursor:pointer; border:1px solid var(--border);
+        background:${active ? 'var(--accent)' : 'transparent'}; color:${active ? '#0f0f0f' : 'var(--text)'}; font-weight:${active ? '700' : '500'}">${_escape(label)}</button>`;
+    };
+    el.innerHTML = chip('All', '') + cats.map(c => chip(c, c)).join('');
+  }
+
+  function posSetCategory(cat) {
+    posCategory = cat;
+    renderPOSCategories();
+    renderPOSGrid();
   }
 
   function renderPOSGrid() {
@@ -7126,25 +7231,29 @@ ${totalsSection}
     if (!grid) return;
     const q = (document.getElementById('pos-search')?.value || '').trim().toLowerCase();
     let items = posCatalogArr().filter(p => !p.archived);
+    if (posCategory) items = items.filter(p => (p.category || '') === posCategory);
     if (q) items = items.filter(p =>
       liItemName(p).toLowerCase().includes(q) || liItemSku(p).toLowerCase().includes(q));
     if (items.length === 0) {
-      grid.innerHTML = `<div class="empty" style="grid-column:1/-1">${posCatalogArr().length === 0 ? 'No products yet — add some in the catalogue below.' : 'No products match your search.'}</div>`;
+      grid.innerHTML = `<div class="empty" style="grid-column:1/-1">${posCatalogArr().length === 0 ? 'No products yet — import from Shopify or add below.' : 'No products match.'}</div>`;
       return;
     }
-    grid.innerHTML = items.map(p => {
+    grid.innerHTML = items.slice(0, 300).map(p => {
       const mto = liIsMTO(p);
       const qoh = liQoh(p);
       const oos = !mto && qoh <= 0;
+      const img = p.imageUrl
+        ? `<div style="height:84px; border-radius:6px; background:#fff center/cover no-repeat url('${_escape(p.imageUrl)}'); margin-bottom:0.4rem"></div>`
+        : `<div style="height:84px; border-radius:6px; background:rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:center; font-size:22px; margin-bottom:0.4rem">📦</div>`;
       const stockLabel = mto
         ? '<span style="color:var(--info)">made to order</span>'
-        : `stock: <strong style="color:${oos ? 'var(--accent)' : 'var(--success)'}">${qoh}</strong>`;
+        : `stock <strong style="color:${oos ? 'var(--accent)' : 'var(--success)'}">${qoh}</strong>`;
       return `
         <button onclick="posAddToCart('${p._localId}')" ${oos ? 'disabled' : ''}
-          style="text-align:left; padding:0.6rem; border:1px solid var(--border); background:${oos ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.05)'}; border-radius:6px; cursor:${oos ? 'not-allowed' : 'pointer'}; opacity:${oos ? '0.5' : '1'}; color:var(--text)">
-          <div style="font-weight:600; font-size:13px; line-height:1.2">${_escape(liItemName(p))}</div>
-          <div style="font-size:10px; color:var(--text-muted); margin:0.2rem 0">${_escape(liItemSku(p))}</div>
-          <div style="font-size:14px; font-weight:700; color:var(--accent)">${posMoney(liItemPrice(p))}</div>
+          style="text-align:left; padding:0.5rem; border:1px solid var(--border); background:${oos ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.05)'}; border-radius:8px; cursor:${oos ? 'not-allowed' : 'pointer'}; opacity:${oos ? '0.5' : '1'}; color:var(--text)">
+          ${img}
+          <div style="font-weight:600; font-size:12px; line-height:1.2; height:2.4em; overflow:hidden">${_escape(liItemName(p))}</div>
+          <div style="font-size:14px; font-weight:700; color:var(--accent); margin-top:0.2rem">${posMoney(liItemPrice(p))}</div>
           <div style="font-size:10px; color:var(--text-muted)">${stockLabel}</div>
         </button>`;
     }).join('');
@@ -7214,16 +7323,17 @@ ${totalsSection}
     }).join('');
     const total = posCartTotal();
     const { excl, vat } = posVatSplit(total);
+    const count = posCart.reduce((n, l) => n + l.qty, 0);
     el.innerHTML = `
-      ${rows}
-      <div style="margin-top:0.75rem; font-size:13px; color:var(--text-muted); display:flex; justify-content:space-between"><span>Subtotal (excl. VAT)</span><span>${posMoney(excl)}</span></div>
-      <div style="font-size:13px; color:var(--text-muted); display:flex; justify-content:space-between"><span>VAT (15%)</span><span>${posMoney(vat)}</span></div>
-      <div style="margin-top:0.3rem; font-size:18px; font-weight:800; display:flex; justify-content:space-between"><span>TOTAL</span><span style="color:var(--accent)">${posMoney(total)}</span></div>
-      <label style="margin-top:0.75rem; display:block">Card reference / auth code</label>
-      <input id="pos-card-ref" placeholder="e.g. terminal approval code" style="width:100%">
-      <div style="display:flex; gap:0.5rem; margin-top:0.75rem">
-        <button class="btn" onclick="posClearCart()" style="flex:1">Clear</button>
-        <button class="btn btn-primary" onclick="posCompleteSale()" style="flex:2">💳 COMPLETE SALE</button>
+      <div style="flex:1; overflow:auto">${rows}</div>
+      <div style="margin-top:0.6rem; padding-top:0.6rem; border-top:1px solid var(--border)">
+        <div style="font-size:12px; color:var(--text-muted); display:flex; justify-content:space-between"><span>Subtotal (excl. VAT)</span><span>${posMoney(excl)}</span></div>
+        <div style="font-size:12px; color:var(--text-muted); display:flex; justify-content:space-between"><span>VAT (15%)</span><span>${posMoney(vat)}</span></div>
+        <div style="margin:0.25rem 0 0.6rem; font-size:18px; font-weight:800; display:flex; justify-content:space-between"><span>TOTAL</span><span style="color:var(--accent)">${posMoney(total)}</span></div>
+        <div style="display:flex; gap:0.5rem">
+          <button class="btn" onclick="posClearCart()" style="flex:1">Clear</button>
+          <button class="btn btn-primary" onclick="posOpenPay()" style="flex:2; font-size:15px; padding:0.7rem">Pay · ${count} item${count === 1 ? '' : 's'} · ${posMoney(total)}</button>
+        </div>
       </div>`;
   }
 
@@ -7234,10 +7344,64 @@ ${totalsSection}
     renderPOSGrid();
   }
 
-  function posCompleteSale() {
+  // ---- Payment modal: choose Card / EFT / Cash / Online (Shopify) ----
+  const POS_PAY_METHODS = [
+    { key: 'card', label: '💳 Card', refLabel: 'Card approval / auth code', refRequired: true },
+    { key: 'eft', label: '🏦 EFT', refLabel: 'EFT reference', refRequired: true },
+    { key: 'cash', label: '💵 Cash', refLabel: 'Amount tendered (optional)', refRequired: false },
+    { key: 'online', label: '🌐 Online (Shopify)', refLabel: 'Shopify order # (optional)', refRequired: false }
+  ];
+
+  function posOpenPay() {
     if (posCart.length === 0) { toast('Cart is empty', 'warn'); return; }
-    const cardRef = (document.getElementById('pos-card-ref')?.value || '').trim();
-    if (!cardRef) { toast('Enter the card reference / auth code from the terminal', 'warn'); return; }
+    const modal = document.getElementById('pos-pay-modal');
+    const body = document.getElementById('pos-pay-body');
+    if (!modal || !body) return;
+    const total = posCartTotal();
+    body.innerHTML = `
+      <div style="font-size:22px; font-weight:800; text-align:center; margin-bottom:0.75rem">${posMoney(total)}</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem">
+        ${POS_PAY_METHODS.map(m => `<button class="btn" style="padding:0.9rem; font-size:14px" onclick="posPickPayMethod('${m.key}')">${m.label}</button>`).join('')}
+      </div>
+      <div id="pos-pay-detail" style="margin-top:0.85rem"></div>`;
+    modal.style.display = 'flex';
+  }
+
+  function posClosePay() {
+    const modal = document.getElementById('pos-pay-modal');
+    if (modal) modal.style.display = 'none';
+  }
+
+  function posPickPayMethod(key) {
+    const m = POS_PAY_METHODS.find(x => x.key === key);
+    const detail = document.getElementById('pos-pay-detail');
+    if (!m || !detail) return;
+    const note = key === 'online'
+      ? '<div style="font-size:11px; color:var(--text-muted); margin-bottom:0.4rem">Already paid via Shopify — this sale records the items &amp; stock but is NOT re-posted to Xero (Shopify books it).</div>'
+      : '';
+    detail.innerHTML = `
+      ${note}
+      <label style="display:block; font-size:12px; margin-bottom:0.2rem">${m.refLabel}</label>
+      <input id="pos-pay-ref" autocomplete="off" style="width:100%; margin-bottom:0.6rem">
+      <button class="btn btn-primary" style="width:100%; padding:0.7rem; font-size:15px" onclick="posConfirmPay('${m.key}')">Complete ${m.label} sale</button>`;
+    const ref = document.getElementById('pos-pay-ref');
+    if (ref) ref.focus();
+  }
+
+  function posConfirmPay(method) {
+    const m = POS_PAY_METHODS.find(x => x.key === method);
+    if (!m) return;
+    const reference = (document.getElementById('pos-pay-ref')?.value || '').trim();
+    if (m.refRequired && !reference) { toast(`Enter the ${m.refLabel.toLowerCase()}`, 'warn'); return; }
+    posClosePay();
+    posCompleteSale(method, reference);
+  }
+
+  // method: 'card' | 'eft' | 'cash' | 'online'
+  function posCompleteSale(method, reference) {
+    if (posCart.length === 0) { toast('Cart is empty', 'warn'); return; }
+    method = method || 'card';
+    reference = reference || '';
 
     // Final stock check (in case stock changed since adding)
     for (const l of posCart) {
@@ -7252,6 +7416,8 @@ ${totalsSection}
     const total = posCartTotal();
     const { excl, vat } = posVatSplit(total);
     const now = new Date().toISOString();
+    const PAY_NAMES = { card: 'Credit Card', eft: 'EFT', cash: 'Cash', online: 'Shopify (online)' };
+    const isOnline = method === 'online';
 
     // Build Lightspeed-shaped SaleLines
     const saleLines = posCart.map(l => {
@@ -7285,6 +7451,7 @@ ${totalsSection}
       employeeID: null,
       _cashierEmail: (currentUser && currentUser.email) || 'unknown',
       customerID: null,
+      paymentMethod: method,             // card | eft | cash | online
       calcSubtotal: excl,
       taxTotal: vat,
       total: total,
@@ -7294,10 +7461,13 @@ ${totalsSection}
         salePaymentID: null,
         amount: total,
         paymentTypeID: null,
-        PaymentType: { name: 'Credit Card' },
-        _cardRef: cardRef
+        PaymentType: { name: PAY_NAMES[method] || method },
+        _cardRef: reference
       }] },
-      _synced: { lightspeed: false, xero: false, shopify: false }
+      // Online sales are already booked in Xero by Shopify's own connection, so
+      // we mark Xero as not-applicable to avoid double-counting.
+      _synced: { lightspeed: false, xero: isOnline, shopify: false },
+      xeroSkip: isOnline
     };
 
     snapshotState();
@@ -7360,7 +7530,8 @@ ${totalsSection}
     const today = posSalesArr().filter(s => new Date(s.timeStamp).toDateString() === todayStr);
     if (today.length === 0) { el.innerHTML = '<div class="empty">No sales yet today</div>'; return; }
     const takings = today.filter(s => !s.voided).reduce((sum, s) => sum + s.total, 0);
-    const pendingXero = today.filter(s => s.completed && !s.voided && !(s._synced && s._synced.xero));
+    const pendingXero = today.filter(s => s.completed && !s.voided && !s.xeroSkip && !(s._synced && s._synced.xero));
+    const PAY_LABELS = { card: '💳 Card', eft: '🏦 EFT', cash: '💵 Cash', online: '🌐 Online' };
     el.innerHTML = `
       <div style="margin-bottom:0.75rem; font-size:14px">Today: <strong>${today.filter(s => !s.voided).length}</strong> sales · takings <strong style="color:var(--accent)">${posMoney(takings)}</strong></div>
       ${pendingXero.length ? `<div style="margin-bottom:0.75rem; padding:0.5rem 0.75rem; border:1px solid var(--warn); border-radius:6px; font-size:12px; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap"><span>⚠️ ${pendingXero.length} sale(s) not yet synced to Xero</span><button class="btn btn-sm" onclick="posRetryXeroSync()">Retry Xero sync</button></div>` : ''}
@@ -7368,16 +7539,20 @@ ${totalsSection}
         const time = new Date(s.timeStamp).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' });
         const xeroSynced = s._synced && s._synced.xero;
         const xeroBadge = s.voided ? ''
-          : xeroSynced
-            ? `<span title="Xero invoice ${_escape(s.xeroInvoiceNumber || s.xeroInvoiceId || '')}" style="font-size:10px; color:var(--success)">✓ Xero</span>`
-            : '<span style="font-size:10px; color:var(--warn)">⏳ Xero</span>';
+          : s.xeroSkip
+            ? '<span title="Booked in Xero by Shopify" style="font-size:10px; color:var(--info)">🌐 Shopify</span>'
+            : xeroSynced
+              ? `<span title="Xero invoice ${_escape(s.xeroInvoiceNumber || s.xeroInvoiceId || '')}" style="font-size:10px; color:var(--success)">✓ Xero</span>`
+              : '<span style="font-size:10px; color:var(--warn)">⏳ Xero</span>';
         const jobBadge = (!s.voided && s.productionJobIds && s.productionJobIds.length)
           ? `<span title="Production jobs created in Active Orders" style="font-size:10px; color:var(--info)">🏭 ${s.productionJobIds.length}</span>` : '';
+        const payLabel = PAY_LABELS[s.paymentMethod] || (s.paymentMethod || '');
+        const ref = liSalePaymentRef(s);
         return `
           <div style="display:flex; align-items:center; gap:0.5rem; padding:0.5rem 0; border-bottom:1px solid var(--border); ${s.voided ? 'opacity:0.5; text-decoration:line-through' : ''}">
             <div style="flex:1">
               <div style="font-weight:600">${posMoney(s.total)} <span style="font-size:11px; color:var(--text-muted); font-weight:normal">· ${liSaleItemCount(s)} items · ${time}</span></div>
-              <div style="font-size:10px; color:var(--text-muted)">${_escape(s._cashierEmail || '')} · card ${_escape(liSalePaymentRef(s))}</div>
+              <div style="font-size:10px; color:var(--text-muted)">${_escape(s._cashierEmail || '')} · ${_escape(payLabel)}${ref ? ' · ' + _escape(ref) : ''}</div>
             </div>
             ${jobBadge}
             ${xeroBadge}
@@ -7663,6 +7838,8 @@ ${totalsSection}
         item.shopifyProductId = sp.shopifyProductId;
         item.shopifyVariantId = sp.shopifyVariantId;
         item.shopifyInventoryItemId = sp.shopifyInventoryItemId;
+        if (sp.category) item.category = sp.category;
+        if (sp.imageUrl) item.imageUrl = sp.imageUrl;
         updated++;
       } else {
         cat.push({
@@ -7674,6 +7851,8 @@ ${totalsSection}
           defaultCost: 0,
           tax: true, taxClassID: null, categoryID: null,
           archived: false, itemType: 'default', isSpecialOrder: false,
+          category: sp.category || '',
+          imageUrl: sp.imageUrl || '',
           Prices: { ItemPrice: [{ amount: sp.price, useType: 'Default', useTypeID: 1 }] },
           ItemShops: { ItemShop: [{ shopID: activeBiz, qoh: sp.qoh, reorderPoint: 0 }] },
           shopifyProductId: sp.shopifyProductId,
@@ -7746,62 +7925,105 @@ ${totalsSection}
   // ---- POS reporting (Phase 6) ------------------------------------------
   // Renders the dashboard POS card: today's takings per business, current-biz
   // week/month totals, top products this month, and Xero sync status.
+  function posSetDashRange(r) { posDashRange = r; renderPOSDashboard(); }
+  window.posSetDashRange = posSetDashRange;
+
+  // Lightspeed Home–style sales overview: period toggle, takings vs last period,
+  // average sale value, average items/sale, and a sales bar chart.
   function renderPOSDashboard() {
     const el = document.getElementById('pos-dash-content');
     if (!el) return;
     const now = new Date();
-    const startToday = new Date(now); startToday.setHours(0, 0, 0, 0);
-    const startWeek = new Date(startToday); startWeek.setDate(startToday.getDate() - ((startToday.getDay() + 6) % 7)); // Monday
-    const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const sum = (arr) => arr.reduce((t, s) => t + (Number(s.total) || 0), 0);
-    const liveSales = (arr) => (arr || []).filter(s => s.completed && !s.voided);
+    const itemCount = (arr) => arr.reduce((t, s) => t + liSaleItemCount(s), 0);
+    const live = (arr) => (arr || []).filter(s => s.completed && !s.voided);
+    const startToday = new Date(now); startToday.setHours(0, 0, 0, 0);
 
-    // Today's takings per business
+    // Range boundaries + chart bucketing
+    let start, prevStart, buckets, bucketOf, bucketLabels, prevLabel;
+    if (posDashRange === 'week') {
+      start = new Date(startToday); start.setDate(startToday.getDate() - ((startToday.getDay() + 6) % 7));
+      prevStart = new Date(start); prevStart.setDate(start.getDate() - 7);
+      prevLabel = 'last week';
+      buckets = 7; bucketOf = d => (d.getDay() + 6) % 7;
+      bucketLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    } else if (posDashRange === 'month') {
+      start = new Date(now.getFullYear(), now.getMonth(), 1);
+      prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      prevLabel = 'last month';
+      const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      buckets = dim; bucketOf = d => d.getDate() - 1;
+      bucketLabels = Array.from({ length: dim }, (_, i) => ((i + 1) % 5 === 0) ? String(i + 1) : '');
+    } else {
+      start = startToday;
+      prevStart = new Date(start); prevStart.setDate(start.getDate() - 7);
+      prevLabel = 'last ' + now.toLocaleDateString('en-ZA', { weekday: 'long' });
+      buckets = 24; bucketOf = d => d.getHours();
+      bucketLabels = Array.from({ length: 24 }, (_, h) => (h % 6 === 0) ? (h + ':00') : '');
+    }
+    const elapsed = now - start;
+    const prevEnd = new Date(prevStart.getTime() + elapsed);
+
+    const sales = live(posSalesArr());
+    const cur = sales.filter(s => new Date(s.timeStamp) >= start);
+    const prev = sales.filter(s => { const t = new Date(s.timeStamp); return t >= prevStart && t < prevEnd; });
+
+    const takings = sum(cur), n = cur.length;
+    const avgSale = n ? takings / n : 0;
+    const avgItems = n ? itemCount(cur) / n : 0;
+    const delta = takings - sum(prev);
+    const hasPrev = prev.length > 0;
+
+    // Bar chart
+    const data = new Array(buckets).fill(0);
+    cur.forEach(s => { const i = bucketOf(new Date(s.timeStamp)); if (i >= 0 && i < buckets) data[i] += Number(s.total) || 0; });
+    const maxV = Math.max(1, ...data);
+    const chart = `
+      <div style="display:flex; align-items:flex-end; gap:2px; height:90px; margin-top:0.5rem">
+        ${data.map((v, i) => `<div title="${bucketLabels[i] || i}: ${posMoney(v)}" style="flex:1; display:flex; align-items:flex-end; height:100%">
+          <div style="width:100%; height:${Math.round(v / maxV * 100)}%; min-height:${v ? 3 : 0}px; background:${v ? 'var(--accent)' : 'rgba(255,255,255,0.06)'}; border-radius:2px 2px 0 0"></div>
+        </div>`).join('')}
+      </div>
+      <div style="display:flex; gap:2px; font-size:8px; color:var(--text-muted); margin-bottom:0.25rem">${data.map((v, i) => `<div style="flex:1; text-align:center">${bucketLabels[i] || ''}</div>`).join('')}</div>`;
+
+    const toggle = [['today', 'Today'], ['week', 'This week'], ['month', 'This month']].map(([r, lbl]) => {
+      const active = posDashRange === r;
+      return `<button onclick="posSetDashRange('${r}')" style="padding:0.3rem 0.8rem; border-radius:6px; font-size:12px; cursor:pointer; border:1px solid var(--border); background:${active ? 'var(--accent)' : 'transparent'}; color:${active ? '#0f0f0f' : 'var(--text)'}; font-weight:${active ? '700' : '500'}">${lbl}</button>`;
+    }).join('');
+
+    const metric = (label, val) => `<div class="metric"><div class="metric-label">${label}</div><div class="metric-value">${val}</div></div>`;
+    const deltaStr = hasPrev ? `${delta >= 0 ? '▲' : '▼'} ${posMoney(Math.abs(delta))} vs ${prevLabel}` : '';
+    const deltaColor = delta >= 0 ? 'var(--success)' : 'var(--accent)';
+
+    // All-business takings for today (kept from before)
     const allBizToday = ['bellville', 'pinkfoot', 'repticube'].map(b => {
-      const arr = liveSales(posStore[b] && posStore[b].sales).filter(s => new Date(s.timeStamp) >= startToday);
+      const arr = live(posStore[b] && posStore[b].sales).filter(s => new Date(s.timeStamp) >= startToday);
       return { b, name: POS_BIZ_NAMES[b], total: sum(arr), n: arr.length };
     });
-
-    // Current-business roll-ups
-    const sales = liveSales(posSalesArr());
-    const inRange = (from) => sales.filter(s => new Date(s.timeStamp) >= from);
-    const todayS = inRange(startToday), weekS = inRange(startWeek), monthS = inRange(startMonth);
-    const pendingXero = sales.filter(s => !(s._synced && s._synced.xero)).length;
-
-    // Top products this month (current biz) by revenue
-    const prodMap = {};
-    monthS.forEach(s => liSaleLines(s).forEach(li => {
-      const key = li._description || li._sku || 'Item';
-      if (!prodMap[key]) prodMap[key] = { qty: 0, rev: 0 };
-      prodMap[key].qty += Number(li.unitQuantity) || 0;
-      prodMap[key].rev += Number(li.calcTotal) || 0;
-    }));
-    const top = Object.entries(prodMap).sort((a, b) => b[1].rev - a[1].rev).slice(0, 5);
-
-    const metric = (label, val, sub) => `<div class="metric"><div class="metric-label">${label}</div><div class="metric-value">${val}</div>${sub ? `<div style="font-size:10px; color:var(--text-muted)">${sub}</div>` : ''}</div>`;
+    const pendingXero = sales.filter(s => !s.xeroSkip && !(s._synced && s._synced.xero)).length;
 
     el.innerHTML = `
-      <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.4rem">Today — all businesses</div>
-      <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1rem">
-        ${allBizToday.map(x => `<div style="flex:1; min-width:120px; padding:0.5rem 0.75rem; border:1px solid var(--border); border-radius:6px">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.5rem">
+        <strong style="font-size:13px">${_escape(POS_BIZ_NAMES[activeBiz] || activeBiz)}</strong>
+        <div style="display:flex; gap:0.4rem">${toggle}</div>
+      </div>
+      <div style="font-size:30px; font-weight:800; color:var(--accent); line-height:1.1">${posMoney(takings)}</div>
+      <div style="font-size:12px; color:${deltaColor}; min-height:1.1em; margin-bottom:0.25rem">${deltaStr}</div>
+      ${chart}
+      <div class="grid3" style="margin-top:0.5rem">
+        ${metric('Sales', n)}
+        ${metric('Avg sale', posMoney(avgSale))}
+        ${metric('Avg items/sale', avgItems.toFixed(1))}
+      </div>
+      ${pendingXero ? `<div style="margin-top:0.75rem; font-size:12px; color:var(--warn)">⚠️ ${pendingXero} sale(s) not yet synced to Xero — open the POS tab to retry.</div>` : ''}
+      <div style="margin-top:1rem; font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.4rem">Today — all businesses</div>
+      <div style="display:flex; gap:0.5rem; flex-wrap:wrap">
+        ${allBizToday.map(x => `<div style="flex:1; min-width:110px; padding:0.5rem 0.75rem; border:1px solid var(--border); border-radius:6px">
           <div style="font-size:11px; color:var(--text-muted)">${_escape(x.name)}</div>
           <div style="font-size:16px; font-weight:700; color:var(--accent)">${posMoney(x.total)}</div>
           <div style="font-size:10px; color:var(--text-muted)">${x.n} sale${x.n === 1 ? '' : 's'}</div>
         </div>`).join('')}
       </div>
-      <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.4rem">${_escape(POS_BIZ_NAMES[activeBiz] || activeBiz)} — totals</div>
-      <div class="grid3">
-        ${metric('Today', posMoney(sum(todayS)), todayS.length + ' sales')}
-        ${metric('This week', posMoney(sum(weekS)), weekS.length + ' sales')}
-        ${metric('This month', posMoney(sum(monthS)), monthS.length + ' sales')}
-      </div>
-      ${pendingXero ? `<div style="margin-top:0.75rem; font-size:12px; color:var(--warn)">⚠️ ${pendingXero} sale(s) not yet synced to Xero — open the POS tab to retry.</div>` : ''}
-      <div style="margin-top:1rem; font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em">Top products (this month)</div>
-      ${top.length ? top.map(([name, v]) => `
-        <div style="display:flex; justify-content:space-between; padding:0.4rem 0; border-bottom:1px solid var(--border)">
-          <div style="flex:1">${_escape(name)} <span style="font-size:11px; color:var(--text-muted)">×${v.qty}</span></div>
-          <div style="font-weight:700">${posMoney(v.rev)}</div>
-        </div>`).join('') : '<div class="empty">No POS sales this month</div>'}
     `;
   }
   window.renderPOSDashboard = renderPOSDashboard;
@@ -7823,6 +8045,11 @@ ${totalsSection}
   window.posAddProduct = posAddProduct;
   window.posUpdateProduct = posUpdateProduct;
   window.posDeleteProduct = posDeleteProduct;
+  window.posSetCategory = posSetCategory;
+  window.posOpenPay = posOpenPay;
+  window.posClosePay = posClosePay;
+  window.posPickPayMethod = posPickPayMethod;
+  window.posConfirmPay = posConfirmPay;
 
   function saveData() {
     localStorage.setItem('production-data', JSON.stringify(data));
@@ -8047,6 +8274,9 @@ ${totalsSection}
         if (IS_DASHBOARD_MODE) {
           // Second-screen / wall-mount mode — skip the normal app UI entirely
           enterDashboardOnlyMode();
+        } else if (IS_POS_MODE) {
+          // Dedicated till site/URL — full-screen POS only
+          enterPosOnlyMode();
         } else {
           document.getElementById('main-app').style.display = 'block';
           document.getElementById('current-user-email').textContent = user.email;
