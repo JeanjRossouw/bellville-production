@@ -42,30 +42,32 @@ async function accessToken() {
   return j.access_token;
 }
 
-function docUrl() {
+function docUrl(docId) {
   const pid = serviceAccount().project_id;
-  return `${FS_BASE}/projects/${pid}/databases/(default)/documents/shared-data/production`;
+  return `${FS_BASE}/projects/${pid}/databases/(default)/documents/shared-data/${docId}`;
 }
 
-export async function readSharedData() {
+// Read the JSON held in a doc's `data` string field. Returns {} if absent.
+export async function readDoc(docId) {
   const t = await accessToken();
-  const res = await fetch(docUrl(), { headers: { Authorization: `Bearer ${t}` } });
+  const res = await fetch(docUrl(docId), { headers: { Authorization: `Bearer ${t}` } });
+  if (res.status === 404) return {};
   if (!res.ok) throw new Error('Firestore read failed: ' + (await res.text()));
   const doc = await res.json();
   const str = (doc.fields && doc.fields.data && doc.fields.data.stringValue) || '{}';
   return JSON.parse(str);
 }
 
-export async function writeSharedData(data, updatedBy) {
+export async function writeDoc(docId, obj, updatedBy) {
   const t = await accessToken();
   const body = {
     fields: {
-      data: { stringValue: JSON.stringify(data) },
+      data: { stringValue: JSON.stringify(obj) },
       updatedAt: { stringValue: new Date().toISOString() },
       updatedBy: { stringValue: updatedBy || 'shopify-webhook' }
     }
   };
-  const url = docUrl() + '?updateMask.fieldPaths=data&updateMask.fieldPaths=updatedAt&updateMask.fieldPaths=updatedBy';
+  const url = docUrl(docId) + '?updateMask.fieldPaths=data&updateMask.fieldPaths=updatedAt&updateMask.fieldPaths=updatedBy';
   const res = await fetch(url, {
     method: 'PATCH',
     headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },

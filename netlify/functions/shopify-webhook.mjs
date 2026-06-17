@@ -9,7 +9,7 @@
 // its own inventory for the order), avoiding a sync loop.
 import crypto from 'node:crypto';
 import { getStore } from '@netlify/blobs';
-import { readSharedData, writeSharedData } from './lib/firestore.mjs';
+import { readDoc, writeDoc } from './lib/firestore.mjs';
 
 const BIZ_KEYS = ['bellville', 'pinkfoot', 'repticube'];
 
@@ -61,8 +61,8 @@ export const handler = async (event) => {
   }
 
   try {
-    const data = await readSharedData();
-    const cat = (data[biz] && data[biz].posCatalog) || [];
+    const posBiz = await readDoc('pos-' + biz);   // { catalog, sales }
+    const cat = (posBiz && posBiz.catalog) || [];
     let changed = 0;
     for (const li of lines) {
       const variantId = li.variant_id != null ? String(li.variant_id) : '';
@@ -74,7 +74,7 @@ export const handler = async (event) => {
         (sku && (p.customSku || '') === sku));
       if (item) { decrementItem(item, qty); changed++; }
     }
-    if (changed > 0) await writeSharedData(data, `shopify-order:${biz}:${order.id}`);
+    if (changed > 0) await writeDoc('pos-' + biz, posBiz, `shopify-order:${biz}:${order.id}`);
     await seen.set(orderKey, '1');
     return { statusCode: 200, body: `OK (${changed} item(s) adjusted)` };
   } catch (e) {

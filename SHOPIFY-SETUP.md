@@ -11,28 +11,43 @@ directions:
 
 Each business (Bellville / PinkFoot / ReptiCube) uses **its own Shopify store**.
 
-## 1. Create a custom app per store
+**Seeding from an existing store:** the catalogue panel has an **Import products
+← Shopify** button. It pulls every product (one POS item per variant) from that
+business's store, pre-filling the Shopify ids so they're already linked. Run it
+once to bootstrap the catalogue; after that the POS is the master and pushes
+changes out. Re-running is safe — matched products (by variant id, then SKU) are
+updated in place, not duplicated. Needs the same `SHOPIFY_*` env vars below.
 
-For each store: **Settings → Apps and sales channels → Develop apps → Create an
-app**. Grant Admin API scopes:
-`read_products, write_products, read_inventory, write_inventory, read_orders`.
-Install it and copy the **Admin API access token** (`shpat_…`).
+## 1. Create the app (Shopify Dev Dashboard)
+
+Shopify no longer issues static `shpat_` tokens from the store admin — custom
+apps are built in the **Dev Dashboard** and authenticate via the
+**client-credentials grant** (the integration trades the app's Client ID +
+secret for a short-lived token automatically).
+
+For each business's store:
+1. In the store admin → **Settings → Apps and sales channels → Develop apps** →
+   **Build apps in Dev Dashboard** (opens the Dev Dashboard).
+2. **Create an app** (e.g. `ReptiCube POS`). In its configuration, set an **App
+   URL** (your Netlify site URL is fine) and the **Admin API access scopes**:
+   `read_products, write_products, read_inventory, write_inventory, read_orders`.
+   Release the version.
+3. On the app's overview, **Install app** → select that store → Install.
+4. Open the app's **Settings** and copy the **Client ID** and **Client secret**.
 
 ## 2. Set Netlify environment variables
 
 Per business (append the upper-cased business key):
 
 ```
-SHOPIFY_STORE_DOMAIN_BELLVILLE=bellville.myshopify.com
-SHOPIFY_ADMIN_TOKEN_BELLVILLE=shpat_xxx
-SHOPIFY_LOCATION_ID_BELLVILLE=...        # optional; defaults to the primary location
-
-SHOPIFY_STORE_DOMAIN_PINKFOOT=...        SHOPIFY_ADMIN_TOKEN_PINKFOOT=...
-SHOPIFY_STORE_DOMAIN_REPTICUBE=...       SHOPIFY_ADMIN_TOKEN_REPTICUBE=...
+SHOPIFY_STORE_DOMAIN_REPTICUBE=repticube.myshopify.com
+SHOPIFY_CLIENT_ID_REPTICUBE=...
+SHOPIFY_CLIENT_SECRET_REPTICUBE=...
+SHOPIFY_LOCATION_ID_REPTICUBE=...        # optional; defaults to the primary location
 ```
 
-(A non-suffixed `SHOPIFY_STORE_DOMAIN` / `SHOPIFY_ADMIN_TOKEN` acts as a global
-fallback if you ever run a single store.)
+(A legacy `SHOPIFY_ADMIN_TOKEN_<BIZ>` static token is still honoured if you have
+one from an older store — set it and the client-credentials step is skipped.)
 
 ### For the inbound webhook (online order → master stock)
 

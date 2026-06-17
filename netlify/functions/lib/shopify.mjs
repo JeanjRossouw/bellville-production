@@ -1,8 +1,13 @@
-// Shopify Admin API helpers (one store per business). Auth is a custom-app
-// Admin API access token per store — no OAuth dance, just env vars:
-//   SHOPIFY_STORE_DOMAIN[_<BIZ>]   e.g. bellville.myshopify.com
-//   SHOPIFY_ADMIN_TOKEN[_<BIZ>]    Admin API access token (shpat_…)
-//   SHOPIFY_LOCATION_ID[_<BIZ>]    optional; defaults to the store's primary location
+// Shopify Admin API helpers (one store per business).
+//
+// Dev-Dashboard apps no longer issue static shpat_ tokens, so auth uses the
+// client-credentials grant (app Client ID + Client secret → short-lived token,
+// cached in-process). Env vars (per business, suffix _<BIZ>):
+//   SHOPIFY_STORE_DOMAIN[_<BIZ>]    e.g. repticube.myshopify.com
+//   SHOPIFY_CLIENT_ID[_<BIZ>]       Dev Dashboard app Client ID
+//   SHOPIFY_CLIENT_SECRET[_<BIZ>]   Dev Dashboard app Client secret
+//   SHOPIFY_ADMIN_TOKEN[_<BIZ>]     optional legacy static token (used if present)
+//   SHOPIFY_LOCATION_ID[_<BIZ>]     optional; defaults to the store's primary location
 const API_VERSION = '2024-10';
 export const BIZ_KEYS = ['bellville', 'pinkfoot', 'repticube'];
 
@@ -11,14 +16,39 @@ export function shopConfig(biz) {
   const pick = (n) => process.env[`${n}_${up}`] || process.env[n] || '';
   return {
     domain: pick('SHOPIFY_STORE_DOMAIN'),
-    token: pick('SHOPIFY_ADMIN_TOKEN'),
+    token: pick('SHOPIFY_ADMIN_TOKEN'),        // legacy static token (optional)
+    clientId: pick('SHOPIFY_CLIENT_ID'),
+    clientSecret: pick('SHOPIFY_CLIENT_SECRET'),
     location: pick('SHOPIFY_LOCATION_ID')
   };
 }
 
+// Resolve an Admin API token: a static token if configured, otherwise mint one
+// via the client-credentials grant and cache it until shortly before it expires.
+const shopTokenCache = {};
+async function shopAccessToken(biz) {
+  const cfg = shopConfig(biz);
+  if (cfg.token) return cfg.token; // legacy static token
+  if (!cfg.domain || !cfg.clientId || !cfg.clientSecret) {
+    throw new Error(`Shopify not configured for "${biz}" (need SHOPIFY_STORE_DOMAIN + SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET)`);
+  }
+  const cached = shopTokenCache[biz];
+  if (cached && Date.now() < cached.exp - 60000) return cached.token;
+  const res = await fetch(`https://${cfg.domain}/admin/oauth/access_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ client_id: cfg.clientId, client_secret: cfg.clientSecret, grant_type: 'client_credentials' })
+  });
+  if (!res.ok) throw new Error(`Shopify token grant failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+  const j = await res.json();
+  shopTokenCache[biz] = { token: j.access_token, exp: Date.now() + (Number(j.expires_in) || 86400) * 1000 };
+  return shopTokenCache[biz].token;
+}
+
 async function shopFetch(biz, path, { method = 'GET', body } = {}) {
-  const { domain, token } = shopConfig(biz);
-  if (!domain || !token) throw new Error(`Shopify not configured for "${biz}" (SHOPIFY_STORE_DOMAIN / SHOPIFY_ADMIN_TOKEN)`);
+  const { domain } = shopConfig(biz);
+  if (!domain) throw new Error(`SHOPIFY_STORE_DOMAIN not set for "${biz}"`);
+  const token = await shopAccessToken(biz);
   const res = await fetch(`https://${domain}/admin/api/${API_VERSION}${path}`, {
     method,
     headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -83,4 +113,39 @@ export async function setInventory(biz, inventoryItemId, qoh) {
     }).catch(() => {});
     await shopFetch(biz, '/inventory_levels/set.json', { method: 'POST', body });
   }
+}
+
+// Pull every product (one entry per variant) for an initial catalogue import.
+// Paginates via the Link header. Returns normalised rows the POS can ingest.
+export async function listAllProducts(biz) {
+  const { domain } = shopConfig(biz);
+  if (!domain) throw new Error(`SHOPIFY_STORE_DOMAIN not set for "${biz}"`);
+  const token = await shopAccessToken(biz);
+  const out = [];
+  // Active products only — drafts/archived shouldn't land on the till.
+  let url = `https://${domain}/admin/api/${API_VERSION}/products.json?limit=250&status=active`;
+  while (url) {
+    const res = await fetch(url, { headers: { 'X-Shopify-Access-Token': token, Accept: 'application/json' } });
+    if (!res.ok) throw new Error(`Shopify list failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+    const data = await res.json();
+    for (const p of data.products || []) {
+      const variants = p.variants || [];
+      for (const v of variants) {
+        const named = variants.length > 1 && v.title && v.title !== 'Default Title';
+        out.push({
+          shopifyProductId: String(p.id),
+          shopifyVariantId: String(v.id),
+          shopifyInventoryItemId: String(v.inventory_item_id || ''),
+          title: named ? `${p.title} — ${v.title}` : p.title,
+          sku: v.sku || '',
+          price: Number(v.price) || 0,
+          qoh: Number(v.inventory_quantity) || 0
+        });
+      }
+    }
+    const link = res.headers.get('link') || res.headers.get('Link') || '';
+    const m = link.match(/<([^>]+)>;\s*rel="next"/);
+    url = m ? m[1] : null;
+  }
+  return out;
 }
