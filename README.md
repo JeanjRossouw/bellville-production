@@ -33,7 +33,12 @@ required env vars are in `XERO-SETUP.md` (Phase 2 — accounting) and
   `shared-data/production` doc so a large imported catalogue can't blow the
   1 MB doc limit. (Legacy embedded `data.<biz>.posCatalog/posSales` is migrated
   out automatically on load.)
-  New `cashier` role sees only Dashboard + POS. The POS data model is shaped on
+  New `cashier` role sees only Dashboard + POS. **Clients & accounts:** the till
+  attaches a client to a sale and can take a **deposit / special order** on a
+  made-to-order item — the deposit loads onto the client's account, a production
+  job is created, and the open order is **Fulfilled & invoiced** to Xero (deposit
+  applied) when stock arrives. Clients + ledger live in the per-business POS doc
+  (`customers`, `accountTxns`). The POS data model is shaped on
   the **Lightspeed Retail (R-Series) API** (`Item` / `Sale` / `SaleLine` /
   `SalePayment`) so future Lightspeed sync is a clean field map; `_`-prefixed
   fields are local-only. Made-to-order sale lines (`isSpecialOrder`) auto-create

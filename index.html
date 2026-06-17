@@ -935,6 +935,14 @@
       </div>
       <div id="pos-catalog-admin"></div>
     </div>
+
+    <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>👥 CLIENTS &amp; ACCOUNTS</span>
+        <button class="btn btn-sm" onclick="document.getElementById('pos-customers').style.display = document.getElementById('pos-customers').style.display==='none' ? '' : 'none'">Show / hide</button>
+      </div>
+      <div id="pos-customers"></div>
+    </div>
   </div>
 
   <style>
@@ -956,6 +964,17 @@
         <button class="btn btn-sm" onclick="posClosePay()">✕</button>
       </div>
       <div id="pos-pay-body"></div>
+    </div>
+  </div>
+
+  <!-- POS customer modal -->
+  <div id="pos-cust-modal" style="display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,0.6); align-items:center; justify-content:center">
+    <div class="card" style="width:460px; max-width:94vw; margin:0; max-height:88vh; overflow:auto">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center">
+        <span>Customer</span>
+        <button class="btn btn-sm" onclick="posCloseCust()">✕</button>
+      </div>
+      <div id="pos-cust-body"></div>
     </div>
   </div>
 </div>
@@ -7123,15 +7142,22 @@ ${totalsSection}
   // POS data lives in posStore[biz] (its own Firestore doc), not in `data`.
   function posBizStore(biz) {
     const b = biz || activeBiz;
-    if (!posStore[b]) posStore[b] = { catalog: [], sales: [] };
-    if (!Array.isArray(posStore[b].catalog)) posStore[b].catalog = [];
-    if (!Array.isArray(posStore[b].sales)) posStore[b].sales = [];
-    return posStore[b];
+    if (!posStore[b]) posStore[b] = {};
+    const s = posStore[b];
+    if (!Array.isArray(s.catalog)) s.catalog = [];
+    if (!Array.isArray(s.sales)) s.sales = [];
+    if (!Array.isArray(s.customers)) s.customers = [];     // client records (with account balances)
+    if (!Array.isArray(s.accountTxns)) s.accountTxns = []; // account ledger (deposits/applications)
+    return s;
   }
   function posCatalogArr() { return posBizStore().catalog; }
   function posSalesArr() { return posBizStore().sales; }
+  function posCustomersArr() { return posBizStore().customers; }
+  function posTxnsArr() { return posBizStore().accountTxns; }
   function posFindProduct(id) { return posCatalogArr().find(p => p._localId === id) || null; }
+  function posFindCustomer(id) { return posCustomersArr().find(c => c.id === id) || null; }
   function posMoney(n) { return 'R' + (Number(n) || 0).toFixed(2); }
+  let posCustomerId = null;             // client attached to the active cart
 
   // ---- Lightspeed Item accessors (keep UI code clean over the nested shape) ----
   function liItemName(item) { return item.description || ''; }
@@ -7186,18 +7212,138 @@ ${totalsSection}
     renderPOSCart();
     renderPOSSales();
     renderPOSCatalogAdmin();
+    renderPOSCustomersList();
   }
 
-  // Customer panel (top of the sell column). Full client accounts land in Stage B;
-  // for now this shows the walk-in state and a disabled placeholder.
+  function renderPOSCustomersList() {
+    const el = document.getElementById('pos-customers');
+    if (!el) return;
+    const customers = posCustomersArr();
+    if (customers.length === 0) { el.innerHTML = '<div class="empty">No clients yet — add one from the till (＋ Add customer).</div>'; return; }
+    const sales = posSalesArr();
+    const openByCust = {};
+    sales.filter(s => s.isLayaway && !s.fulfilled && !s.voided).forEach(s => {
+      openByCust[s.customerID] = (openByCust[s.customerID] || 0) + (Number(s.balanceDue) || 0);
+    });
+    el.innerHTML = `
+      <table style="width:100%; border-collapse:collapse; font-size:13px">
+        <thead><tr style="background:var(--bg)">
+          <th style="padding:0.4rem; border:1px solid var(--border); text-align:left">Client</th>
+          <th style="padding:0.4rem; border:1px solid var(--border); text-align:left">Contact</th>
+          <th style="padding:0.4rem; border:1px solid var(--border); text-align:right">Account credit</th>
+          <th style="padding:0.4rem; border:1px solid var(--border); text-align:right">Open balance due</th>
+        </tr></thead>
+        <tbody>${customers.map(c => `
+          <tr>
+            <td style="padding:0.4rem; border:1px solid var(--border)">${_escape(c.name)}</td>
+            <td style="padding:0.4rem; border:1px solid var(--border)">${_escape(c.phone || c.email || '')}</td>
+            <td style="padding:0.4rem; border:1px solid var(--border); text-align:right; color:${(Number(c.accountBalance) || 0) > 0 ? 'var(--success)' : 'var(--text-muted)'}">${posMoney(c.accountBalance)}</td>
+            <td style="padding:0.4rem; border:1px solid var(--border); text-align:right; color:${(openByCust[c.id] || 0) > 0 ? 'var(--warn)' : 'var(--text-muted)'}">${posMoney(openByCust[c.id] || 0)}</td>
+          </tr>`).join('')}</tbody>
+      </table>`;
+  }
+
+  // Customer panel (top of the sell column).
   function renderPOSCustomer() {
     const el = document.getElementById('pos-customer');
     if (!el) return;
-    el.innerHTML = `
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem">
-        <div style="font-size:13px"><span style="color:var(--text-muted)">Customer:</span> <strong>Walk-in</strong></div>
-        <button class="btn btn-sm" disabled title="Client accounts coming next" style="opacity:0.5">+ Add customer</button>
+    const c = posCustomerId ? posFindCustomer(posCustomerId) : null;
+    if (c) {
+      const bal = Number(c.accountBalance) || 0;
+      el.innerHTML = `
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem">
+          <div style="min-width:0">
+            <div style="font-size:13px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${_escape(c.name)}</div>
+            <div style="font-size:11px; color:var(--text-muted)">${_escape(c.phone || c.email || '')}${bal > 0 ? ` · account credit <strong style="color:var(--success)">${posMoney(bal)}</strong>` : ''}</div>
+          </div>
+          <button class="btn btn-sm" onclick="posClearCustomer()">✕</button>
+        </div>`;
+    } else {
+      el.innerHTML = `
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem">
+          <div style="font-size:13px"><span style="color:var(--text-muted)">Customer:</span> <strong>Walk-in</strong></div>
+          <button class="btn btn-sm" onclick="posOpenCust()">+ Add customer</button>
+        </div>`;
+    }
+  }
+
+  function posClearCustomer() { posCustomerId = null; renderPOSCustomer(); renderPOSCart(); }
+
+  // ---- Customer picker / create modal ----
+  function posOpenCust() {
+    const modal = document.getElementById('pos-cust-modal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    renderCustModal('');
+  }
+  function posCloseCust() {
+    const modal = document.getElementById('pos-cust-modal');
+    if (modal) modal.style.display = 'none';
+  }
+  function renderCustModal(q) {
+    const body = document.getElementById('pos-cust-body');
+    if (!body) return;
+    const query = (q || '').trim().toLowerCase();
+    let list = posCustomersArr();
+    if (query) list = list.filter(c =>
+      (c.name || '').toLowerCase().includes(query) ||
+      (c.phone || '').toLowerCase().includes(query) ||
+      (c.email || '').toLowerCase().includes(query));
+    body.innerHTML = `
+      <input id="pos-cust-search" oninput="renderCustModal(this.value)" value="${_escape(q || '')}" placeholder="🔍 Search clients by name / phone / email" style="width:100%; margin-bottom:0.6rem">
+      <div style="max-height:220px; overflow:auto; margin-bottom:0.85rem">
+        ${list.length ? list.slice(0, 50).map(c => {
+          const bal = Number(c.accountBalance) || 0;
+          return `<div onclick="posAttachCustomer('${c.id}')" style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; padding:0.5rem; border-bottom:1px solid var(--border); cursor:pointer">
+            <div><div style="font-weight:600">${_escape(c.name)}</div><div style="font-size:11px; color:var(--text-muted)">${_escape(c.phone || c.email || '')}</div></div>
+            ${bal > 0 ? `<span style="font-size:11px; color:var(--success)">${posMoney(bal)} credit</span>` : ''}
+          </div>`;
+        }).join('') : '<div class="empty">No matching clients</div>'}
+      </div>
+      <div style="border-top:1px solid var(--border); padding-top:0.75rem">
+        <div style="font-size:12px; font-weight:700; margin-bottom:0.4rem">New client</div>
+        <input id="pos-cust-name" placeholder="Name *" style="width:100%; margin-bottom:0.4rem">
+        <div style="display:flex; gap:0.4rem">
+          <input id="pos-cust-phone" placeholder="Phone" style="flex:1">
+          <input id="pos-cust-email" placeholder="Email" style="flex:1">
+        </div>
+        <button class="btn btn-primary" style="width:100%; margin-top:0.5rem" onclick="posCreateCustomer()">+ Create &amp; attach</button>
       </div>`;
+  }
+  function posAttachCustomer(id) {
+    posCustomerId = id;
+    posCloseCust();
+    renderPOSCustomer();
+    renderPOSCart();
+  }
+  function posCreateCustomer() {
+    const name = (document.getElementById('pos-cust-name')?.value || '').trim();
+    if (!name) { toast('Enter a client name', 'warn'); return; }
+    snapshotState();
+    const c = {
+      id: 'CUST-' + Date.now(),
+      name,
+      phone: (document.getElementById('pos-cust-phone')?.value || '').trim(),
+      email: (document.getElementById('pos-cust-email')?.value || '').trim(),
+      accountBalance: 0,
+      createdAt: new Date().toISOString()
+    };
+    posCustomersArr().push(c);
+    savePos();
+    posAttachCustomer(c.id);
+    toast('Client created', 'success');
+  }
+  // Record an account ledger entry and keep the customer balance in step.
+  function posAddAccountTxn(customerId, type, amount, note, ref) {
+    const c = posFindCustomer(customerId);
+    if (!c) return;
+    const delta = (type === 'deposit') ? amount : -amount; // deposit credits; applied/refund debits
+    c.accountBalance = (Number(c.accountBalance) || 0) + delta;
+    posTxnsArr().unshift({
+      id: 'TXN-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+      customerId, datetime: new Date().toISOString(),
+      type, amount, balanceAfter: c.accountBalance, note: note || '', ref: ref || ''
+    });
   }
 
   function posCategoriesList() {
@@ -7358,13 +7504,61 @@ ${totalsSection}
     const body = document.getElementById('pos-pay-body');
     if (!modal || !body) return;
     const total = posCartTotal();
+    const cust = posCustomerId ? posFindCustomer(posCustomerId) : null;
+    const hasMTO = posCart.some(l => { const p = posFindProduct(l.productId); return p && liIsMTO(p); });
+    const depositBtn = cust
+      ? `<button class="btn" style="width:100%; padding:0.7rem; margin-top:0.6rem" onclick="posStartDeposit()">🧾 Special order — take deposit on ${_escape(cust.name)}'s account</button>`
+      : `<div style="font-size:11px; color:var(--text-muted); margin-top:0.6rem; text-align:center">Attach a customer to take a deposit / special order${hasMTO ? ' (cart has made-to-order items)' : ''}.</div>`;
     body.innerHTML = `
-      <div style="font-size:22px; font-weight:800; text-align:center; margin-bottom:0.75rem">${posMoney(total)}</div>
+      <div style="font-size:22px; font-weight:800; text-align:center; margin-bottom:0.25rem">${posMoney(total)}</div>
+      <div style="text-align:center; font-size:11px; color:var(--text-muted); margin-bottom:0.75rem">${cust ? 'Customer: <strong>' + _escape(cust.name) + '</strong>' : 'Walk-in'}</div>
+      <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.3rem">Pay in full</div>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem">
         ${POS_PAY_METHODS.map(m => `<button class="btn" style="padding:0.9rem; font-size:14px" onclick="posPickPayMethod('${m.key}')">${m.label}</button>`).join('')}
       </div>
+      ${depositBtn}
       <div id="pos-pay-detail" style="margin-top:0.85rem"></div>`;
     modal.style.display = 'flex';
+  }
+
+  // Deposit / special-order: take a part payment now, create a layaway + job,
+  // load it on the client's account, invoice out of Xero at fulfilment.
+  function posStartDeposit() {
+    const detail = document.getElementById('pos-pay-detail');
+    if (!detail) return;
+    const total = posCartTotal();
+    detail.innerHTML = `
+      <div style="border-top:1px solid var(--border); padding-top:0.75rem">
+        <label style="display:block; font-size:12px; margin-bottom:0.2rem">Deposit amount (of ${posMoney(total)})</label>
+        <input id="pos-dep-amt" type="number" step="0.01" value="${(total / 2).toFixed(2)}" style="width:100%; margin-bottom:0.5rem">
+        <label style="display:block; font-size:12px; margin-bottom:0.2rem">Paid by</label>
+        <div style="display:flex; gap:0.4rem; flex-wrap:wrap; margin-bottom:0.5rem">
+          ${POS_PAY_METHODS.filter(m => m.key !== 'online').map(m => `<button class="btn btn-sm" onclick="posSetDepMethod('${m.key}',this)">${m.label}</button>`).join('')}
+        </div>
+        <input id="pos-dep-ref" placeholder="Reference (optional)" style="width:100%; margin-bottom:0.5rem">
+        <input type="hidden" id="pos-dep-method" value="cash">
+        <button class="btn btn-primary" style="width:100%; padding:0.7rem" onclick="posConfirmDeposit()">Take deposit &amp; create order</button>
+      </div>`;
+    const amt = document.getElementById('pos-dep-amt');
+    if (amt) amt.focus();
+  }
+  function posSetDepMethod(key, btn) {
+    const h = document.getElementById('pos-dep-method');
+    if (h) h.value = key;
+    if (btn && btn.parentElement) {
+      Array.from(btn.parentElement.children).forEach(b => { b.style.background = ''; b.style.color = ''; });
+      btn.style.background = 'var(--accent)'; btn.style.color = '#0f0f0f';
+    }
+  }
+  function posConfirmDeposit() {
+    const total = posCartTotal();
+    const amount = parseFloat(document.getElementById('pos-dep-amt')?.value) || 0;
+    const method = document.getElementById('pos-dep-method')?.value || 'cash';
+    const ref = (document.getElementById('pos-dep-ref')?.value || '').trim();
+    if (amount <= 0) { toast('Enter a deposit amount', 'warn'); return; }
+    if (amount > total + 0.001) { toast('Deposit cannot exceed the total', 'warn'); return; }
+    posClosePay();
+    posCreateLayaway(method, ref, amount);
   }
 
   function posClosePay() {
@@ -7450,7 +7644,8 @@ ${totalsSection}
       shopID: activeBiz,                 // maps to Lightspeed numeric shopID later
       employeeID: null,
       _cashierEmail: (currentUser && currentUser.email) || 'unknown',
-      customerID: null,
+      customerID: posCustomerId || null,
+      _customerName: (posCustomerId && posFindCustomer(posCustomerId) && posFindCustomer(posCustomerId).name) || '',
       paymentMethod: method,             // card | eft | cash | online
       calcSubtotal: excl,
       taxTotal: vat,
@@ -7483,6 +7678,7 @@ ${totalsSection}
     if (jobCount > 0) saveData();    // production jobs live in the main data doc
 
     posCart = [];
+    posCustomerId = null;
     renderPOS();
     toast(`Sale completed — ${posMoney(total)}`, 'success');
     if (jobCount > 0) toast(`${jobCount} production job(s) created in Active Orders`, 'info', 3500);
@@ -7491,6 +7687,105 @@ ${totalsSection}
     // Push new stock levels for sold (stocked) items down to Shopify.
     const soldItems = saleLines.filter(li => !li.isSpecialOrder)
       .map(li => posFindProduct(li._localItemId)).filter(Boolean);
+    posPushInventory(soldItems);
+  }
+
+  // ---- Layaway / special order (deposit now, invoice at fulfilment) ----
+  function posCreateLayaway(method, reference, deposit) {
+    if (posCart.length === 0) { toast('Cart is empty', 'warn'); return; }
+    const cust = posCustomerId ? posFindCustomer(posCustomerId) : null;
+    if (!cust) { toast('Attach a customer first', 'warn'); return; }
+    const total = posCartTotal();
+    const { excl, vat } = posVatSplit(total);
+    const now = new Date().toISOString();
+    const PAY_NAMES = { card: 'Credit Card', eft: 'EFT', cash: 'Cash' };
+
+    const saleLines = posCart.map(l => {
+      const p = posFindProduct(l.productId);
+      const unit = liItemPrice(p);
+      return {
+        saleLineID: null, itemID: p.itemID || null, _localItemId: p._localId,
+        _description: liItemName(p), _sku: liItemSku(p),
+        unitQuantity: l.qty, unitPrice: unit, normalUnitPrice: unit,
+        discountAmount: 0, tax: !!p.tax, isSpecialOrder: liIsMTO(p), calcTotal: unit * l.qty
+      };
+    });
+
+    const sale = {
+      saleID: null, _localId: 'SALE-' + Date.now(), timeStamp: now,
+      completed: false, voided: false, isLayaway: true, fulfilled: false,
+      isTaxInclusive: true, shopID: activeBiz, employeeID: null,
+      _cashierEmail: (currentUser && currentUser.email) || 'unknown',
+      customerID: cust.id, _customerName: cust.name,
+      paymentMethod: method,
+      calcSubtotal: excl, taxTotal: vat, total: total,
+      depositPaid: deposit, balanceDue: Math.max(0, total - deposit), totalDue: Math.max(0, total - deposit),
+      SaleLines: { SaleLine: saleLines },
+      SalePayments: { SalePayment: [{ salePaymentID: null, amount: deposit, paymentTypeID: null, PaymentType: { name: PAY_NAMES[method] || method }, _cardRef: reference, _kind: 'deposit' }] },
+      _synced: { lightspeed: false, xero: false, shopify: false }
+    };
+
+    snapshotState();
+    posSalesArr().unshift(sale);
+    posAddAccountTxn(cust.id, 'deposit', deposit, 'Deposit — order ' + sale._localId, reference);
+    const jobCount = posCreateProductionJobs(sale, saleLines); // made-to-order lines → factory jobs
+    savePos();
+    if (jobCount > 0) saveData();
+
+    posCart = [];
+    posCustomerId = null;
+    renderPOS();
+    toast(`Deposit ${posMoney(deposit)} taken · ${posMoney(sale.balanceDue)} due on collection`, 'success', 4500);
+    if (jobCount > 0) toast(`${jobCount} production job(s) created`, 'info', 3000);
+    posPrintReceipt(sale);
+  }
+
+  // Collect the balance, close the layaway, decrement stock, and invoice to Xero.
+  function posFulfilLayaway(id) {
+    const sale = posSalesArr().find(s => s._localId === id);
+    if (!sale || !sale.isLayaway || sale.fulfilled || sale.voided) return;
+    const balance = Number(sale.balanceDue) || 0;
+    const method = balance > 0
+      ? (prompt(`Collect balance of ${posMoney(balance)} — paid by? Type: card, eft or cash`, 'card') || '').trim().toLowerCase()
+      : 'cash';
+    if (balance > 0 && !['card', 'eft', 'cash'].includes(method)) { toast('Cancelled (enter card, eft or cash)', 'warn'); return; }
+
+    // Final stock check for stocked (non-MTO) lines
+    for (const li of liSaleLines(sale)) {
+      if (li.isSpecialOrder) continue;
+      const p = posFindProduct(li._localItemId);
+      if (p && li.unitQuantity > liQoh(p)) { toast(`Not enough stock for "${li._description}" (${liQoh(p)} left)`, 'error'); return; }
+    }
+
+    snapshotState();
+    // Decrement stock for stocked lines now (goods handed over at fulfilment)
+    liSaleLines(sale).forEach(li => {
+      if (li.isSpecialOrder) return;
+      const p = posFindProduct(li._localItemId);
+      if (p) liAdjustQoh(p, -li.unitQuantity);
+    });
+    // Apply the deposit off the client's account
+    if (sale.customerID && sale.depositPaid > 0) {
+      posAddAccountTxn(sale.customerID, 'applied', sale.depositPaid, 'Applied to order ' + sale._localId, sale._localId);
+    }
+    // Record the balance payment
+    if (balance > 0) {
+      const PAY_NAMES = { card: 'Credit Card', eft: 'EFT', cash: 'Cash' };
+      sale.SalePayments.SalePayment.push({ salePaymentID: null, amount: balance, paymentTypeID: null, PaymentType: { name: PAY_NAMES[method] || method }, _cardRef: '', _kind: 'balance' });
+      sale.paymentMethod = method;
+    }
+    sale.fulfilled = true;
+    sale.completed = true;
+    sale.completeTime = new Date().toISOString();
+    sale.balanceDue = 0;
+    sale.totalDue = 0;
+    savePos();
+
+    renderPOS();
+    toast(`Order fulfilled — ${posMoney(sale.total)}`, 'success');
+    posPrintReceipt(sale);
+    posSyncSaleToXero(sale); // now post the full invoice to Xero
+    const soldItems = liSaleLines(sale).filter(li => !li.isSpecialOrder).map(li => posFindProduct(li._localItemId)).filter(Boolean);
     posPushInventory(soldItems);
   }
 
@@ -7527,12 +7822,27 @@ ${totalsSection}
     const el = document.getElementById('pos-sales');
     if (!el) return;
     const todayStr = new Date().toDateString();
-    const today = posSalesArr().filter(s => new Date(s.timeStamp).toDateString() === todayStr);
-    if (today.length === 0) { el.innerHTML = '<div class="empty">No sales yet today</div>'; return; }
+    const openLayaways = posSalesArr().filter(s => s.isLayaway && !s.fulfilled && !s.voided);
+    const today = posSalesArr().filter(s => !(s.isLayaway && !s.fulfilled) && new Date(s.completeTime || s.timeStamp).toDateString() === todayStr);
     const takings = today.filter(s => !s.voided).reduce((sum, s) => sum + s.total, 0);
     const pendingXero = today.filter(s => s.completed && !s.voided && !s.xeroSkip && !(s._synced && s._synced.xero));
     const PAY_LABELS = { card: '💳 Card', eft: '🏦 EFT', cash: '💵 Cash', online: '🌐 Online' };
+    const openOrdersHtml = openLayaways.length ? `
+      <div style="margin-bottom:0.85rem; padding:0.6rem 0.75rem; border:1px solid var(--info); border-radius:6px">
+        <div style="font-size:12px; font-weight:700; margin-bottom:0.4rem">🧾 Open orders / deposits (${openLayaways.length})</div>
+        ${openLayaways.map(s => `
+          <div style="display:flex; align-items:center; gap:0.5rem; padding:0.35rem 0; border-bottom:1px solid var(--border)">
+            <div style="flex:1">
+              <div style="font-weight:600; font-size:13px">${_escape(s._customerName || 'Customer')} — ${posMoney(s.total)}</div>
+              <div style="font-size:10px; color:var(--text-muted)">deposit ${posMoney(s.depositPaid)} · balance ${posMoney(s.balanceDue)} · ${new Date(s.timeStamp).toLocaleDateString('en-ZA')}</div>
+            </div>
+            <button class="btn btn-sm" onclick="posPrintReceipt(posSalesArr().find(x=>x._localId==='${s._localId}'))">🧾</button>
+            <button class="btn btn-sm btn-primary" onclick="posFulfilLayaway('${s._localId}')">Fulfil &amp; invoice</button>
+          </div>`).join('')}
+      </div>` : '';
+    if (today.length === 0 && openLayaways.length === 0) { el.innerHTML = '<div class="empty">No sales yet today</div>'; return; }
     el.innerHTML = `
+      ${openOrdersHtml}
       <div style="margin-bottom:0.75rem; font-size:14px">Today: <strong>${today.filter(s => !s.voided).length}</strong> sales · takings <strong style="color:var(--accent)">${posMoney(takings)}</strong></div>
       ${pendingXero.length ? `<div style="margin-bottom:0.75rem; padding:0.5rem 0.75rem; border:1px solid var(--warn); border-radius:6px; font-size:12px; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap"><span>⚠️ ${pendingXero.length} sale(s) not yet synced to Xero</span><button class="btn btn-sm" onclick="posRetryXeroSync()">Retry Xero sync</button></div>` : ''}
       ${today.map(s => {
@@ -8050,6 +8360,16 @@ ${totalsSection}
   window.posClosePay = posClosePay;
   window.posPickPayMethod = posPickPayMethod;
   window.posConfirmPay = posConfirmPay;
+  window.posStartDeposit = posStartDeposit;
+  window.posSetDepMethod = posSetDepMethod;
+  window.posConfirmDeposit = posConfirmDeposit;
+  window.posFulfilLayaway = posFulfilLayaway;
+  window.posOpenCust = posOpenCust;
+  window.posCloseCust = posCloseCust;
+  window.posClearCustomer = posClearCustomer;
+  window.renderCustModal = renderCustModal;
+  window.posAttachCustomer = posAttachCustomer;
+  window.posCreateCustomer = posCreateCustomer;
 
   function saveData() {
     localStorage.setItem('production-data', JSON.stringify(data));
@@ -8415,7 +8735,9 @@ ${totalsSection}
           const parsed = JSON.parse(payload);
           posStore[biz] = {
             catalog: Array.isArray(parsed.catalog) ? parsed.catalog : [],
-            sales: Array.isArray(parsed.sales) ? parsed.sales : []
+            sales: Array.isArray(parsed.sales) ? parsed.sales : [],
+            customers: Array.isArray(parsed.customers) ? parsed.customers : [],
+            accountTxns: Array.isArray(parsed.accountTxns) ? parsed.accountTxns : []
           };
         } catch (e) {
           console.error('Corrupt POS payload for ' + biz + ', ignoring:', e);
