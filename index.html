@@ -481,6 +481,7 @@
       </div>
       <div class="row">
         <button class="btn btn-primary" onclick="applyBulkEdit()">APPLY TO SELECTED</button>
+        <button class="btn" onclick="bulkPrintJobCards()">🖨️ PRINT JOB CARDS</button>
         <button class="btn btn-danger" onclick="bulkDelete()">DELETE SELECTED</button>
         <button class="btn" onclick="clearSelection()">CANCEL</button>
       </div>
@@ -1428,7 +1429,7 @@
           startDate: null,
           paymentStatus: p.paymentStatus || 'deposit',
           outstanding: 0,
-          sellingPrice: li.price || 0
+          sellingPrice: (parseFloat(li.price) || standardSellPrice(li.product))
         });
         added++;
       });
@@ -2211,7 +2212,7 @@
         orderDate: today, dueDate, status: 'pending', startDate: null,
         paymentStatus,
         outstanding: idx === 0 ? outstanding : 0,  // outstanding belongs to the invoice — put it on the first line only (avoids double-counting)
-        sellingPrice: parseFloat(l.price) || 0
+        sellingPrice: parseFloat(l.price) || standardSellPrice(product)   // fall back to the product's standard price
       });
       added++;
     });
@@ -2544,28 +2545,12 @@
   
   window.printProductionList = printProductionList;
   
-  function printJobCard(orderId) {
-    const order = currentData().orders.find(o => o.id === orderId);
-    if (!order) return;
-    
-    // Production stages per business
-    const stages = {
-      bellville: ['Cut Frame', 'Cut Fabric', 'Build Frame', 'Sew Material', 'Line Up Frame', 'Upholster Frame', 'Cushions & Dacron', 'Pillows', 'Couch Check', 'Pack'],
-      pinkfoot: ['Cut Wood', 'Assemble', 'Sand', 'Primer', 'Sand 2nd', 'Final Paint', 'Final Assemble', 'Spot Check', 'Pack'],
-      repticube: ['CNC Board', 'CNC Windows', 'Sand Board', 'Fit Window', 'Clean', 'Pack']
-    };
-    
-    const bizName = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
-    const stageList = stages[activeBiz] || [];
-    
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-<title>Job Card #${order.invoice}</title>
-<style>
+  // Shared job-card print styles (used for single + bulk printing)
+  const _jobCardStyles = `
   @page { size: A4; margin: 10mm; }
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Arial', sans-serif; color: #000 !important; }
   body { color: #000; background: #fff; font-size: 11px; }
+  .jobcard { position: relative; }
   .header { border-bottom: 2px solid #000; padding-bottom: 6px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
   .biz-name { font-size: 16px; font-weight: 900; letter-spacing: 0.05em; }
   .job-title { font-size: 13px; font-weight: bold; text-align: right; }
@@ -2595,25 +2580,26 @@
     .no-print { display: none; }
     body { font-size: 10px; }
     .invoice-box { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  }
-</style>
-</head>
-<body>
-  <div class="no-print">
-    <button onclick="window.print()" style="padding: 8px 16px; font-size: 13px; font-weight: bold; cursor: pointer; background: #000; color: #fff; border: none;">🖨️ PRINT</button>
-    <button onclick="window.close()" style="padding: 8px 16px; font-size: 13px; cursor: pointer; margin-left: 8px;">CLOSE</button>
-  </div>
-  
+    .jobcard { break-after: page; page-break-after: always; }
+    .jobcard:last-child { break-after: auto; page-break-after: auto; }
+  }`;
+
+  const _bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
+
+  // The body of a single job card (no <html>/<style> wrapper) — one A4 page.
+  function jobCardInnerHtml(order) {
+    return `
+  <div class="jobcard">
   <div class="header">
-    <div class="biz-name">${bizName[activeBiz] || ''}</div>
+    <div class="biz-name">${_bizNames[activeBiz] || ''}</div>
     <div class="job-title">JOB CARD</div>
   </div>
-  
+
   <div class="invoice-box">
     <div class="invoice-num">#${order.invoice}</div>
     <div class="invoice-label">ORDER NUMBER</div>
   </div>
-  
+
   <div class="grid">
     <div class="field half-width">
       <div class="field-label">Customer</div>
@@ -2656,7 +2642,7 @@
     <div class="field-label">Notes / Special Instructions</div>
     ${order.notes ? `<div style="margin-top:8px; font-size:13px; line-height:1.6; white-space:pre-wrap">${order.notes.replace(/</g, '&lt;')}</div>` : ''}
   </div>
-  
+
   <div class="signatures">
     <div class="sig-block">
       <div class="sig-line"></div>
@@ -2667,14 +2653,48 @@
       <div class="sig-label">Quality Check</div>
     </div>
   </div>
+  </div>`;
+  }
+
+  // Open a print window for one or more job cards
+  function openJobCardWindow(title, innerHtml, printLabel) {
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<title>${title}</title>
+<style>${_jobCardStyles}</style>
+</head>
+<body>
+  <div class="no-print">
+    <button onclick="window.print()" style="padding: 8px 16px; font-size: 13px; font-weight: bold; cursor: pointer; background: #000; color: #fff; border: none;">🖨️ ${printLabel || 'PRINT'}</button>
+    <button onclick="window.close()" style="padding: 8px 16px; font-size: 13px; cursor: pointer; margin-left: 8px;">CLOSE</button>
+  </div>
+  ${innerHtml}
 </body>
 </html>`;
-
     const win = window.open('', '_blank');
     if (!win) { alert('Pop-up blocked. Click the pop-up icon in the address bar and allow pop-ups for this site, then try Print again.'); return; }
     win.document.write(html);
     win.document.close();
   }
+
+  function printJobCard(orderId) {
+    const order = currentData().orders.find(o => o.id === orderId);
+    if (!order) return;
+    openJobCardWindow('Job Card #' + order.invoice, jobCardInnerHtml(order), 'PRINT');
+  }
+
+  // Print every selected order's job card in one document (one per page)
+  function bulkPrintJobCards() {
+    const ids = getSelectedIds();
+    if (!ids.length) { alert('Select one or more orders first (tick the checkboxes), then Print Job Cards.'); return; }
+    const orders = currentData().orders;
+    const cards = ids.map(id => orders.find(o => o.id === id)).filter(Boolean);
+    if (!cards.length) { alert('No matching orders found.'); return; }
+    const inner = cards.map(jobCardInnerHtml).join('\n');
+    openJobCardWindow(cards.length + ' Job Cards', inner, 'PRINT ALL (' + cards.length + ')');
+  }
+  window.bulkPrintJobCards = bulkPrintJobCards;
 
   function updateDueDate(orderId, newDate) {
     const order = currentData().orders.find(o => o.id === orderId);
@@ -4714,6 +4734,12 @@
     renderProductBomTable();
   }
   window.setProductSellPrice = setProductSellPrice;
+
+  // The standard (catalogue) selling price for a product, 0 if none set
+  function standardSellPrice(prodName) {
+    const p = currentData().productBoms && currentData().productBoms[prodName];
+    return (p && parseFloat(p.sellingPrice)) || 0;
+  }
 
   function _csvCell(v) { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
   function _parseCsvLine(line) {
