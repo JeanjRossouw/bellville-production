@@ -7280,11 +7280,13 @@ ${totalsSection}
       if (p) liAdjustQoh(p, -li.unitQuantity);
     });
     posSalesArr().unshift(sale);
+    const jobCount = posCreateProductionJobs(sale, saleLines);
     saveData();
 
     posCart = [];
     renderPOS();
     toast(`Sale completed — ${posMoney(total)}`, 'success');
+    if (jobCount > 0) toast(`${jobCount} production job(s) created in Active Orders`, 'info', 3500);
     posPrintReceipt(sale);
     posSyncSaleToXero(sale); // fire-and-forget; failures stay queued for retry
     // Push new stock levels for sold (stocked) items down to Shopify.
@@ -7303,6 +7305,17 @@ ${totalsSection}
       const p = posFindProduct(li._localItemId);
       if (p) liAdjustQoh(p, Number(li.unitQuantity) || 0);
     });
+    // Remove any still-pending production jobs this sale created.
+    if (Array.isArray(sale.productionJobIds) && sale.productionJobIds.length) {
+      const orders = currentData().orders || [];
+      sale.productionJobIds.forEach(jid => {
+        const idx = orders.findIndex(o => o.id === jid && o.status === 'pending');
+        if (idx >= 0) {
+          try { restoreMaterialsForOrder(activeBiz, orders[idx], 'POS sale voided'); } catch (e) { /* no BOM link */ }
+          orders.splice(idx, 1);
+        }
+      });
+    }
     sale.voided = true;
     sale.completed = false;
     saveData();
@@ -7328,12 +7341,15 @@ ${totalsSection}
           : xeroSynced
             ? `<span title="Xero invoice ${_escape(s.xeroInvoiceNumber || s.xeroInvoiceId || '')}" style="font-size:10px; color:var(--success)">✓ Xero</span>`
             : '<span style="font-size:10px; color:var(--warn)">⏳ Xero</span>';
+        const jobBadge = (!s.voided && s.productionJobIds && s.productionJobIds.length)
+          ? `<span title="Production jobs created in Active Orders" style="font-size:10px; color:var(--info)">🏭 ${s.productionJobIds.length}</span>` : '';
         return `
           <div style="display:flex; align-items:center; gap:0.5rem; padding:0.5rem 0; border-bottom:1px solid var(--border); ${s.voided ? 'opacity:0.5; text-decoration:line-through' : ''}">
             <div style="flex:1">
               <div style="font-weight:600">${posMoney(s.total)} <span style="font-size:11px; color:var(--text-muted); font-weight:normal">· ${liSaleItemCount(s)} items · ${time}</span></div>
               <div style="font-size:10px; color:var(--text-muted)">${_escape(s._cashierEmail || '')} · card ${_escape(liSalePaymentRef(s))}</div>
             </div>
+            ${jobBadge}
             ${xeroBadge}
             <button class="btn btn-sm" onclick="posPrintReceipt(posSalesArr().find(x=>x._localId==='${s._localId}'))">🧾</button>
             ${s.voided ? '<span style="font-size:10px; color:var(--accent)">VOIDED</span>' : `<button class="btn btn-sm" onclick="posVoidSale('${s._localId}')">Void</button>`}
@@ -7586,6 +7602,51 @@ ${totalsSection}
     for (const item of cat) { if (await posSyncProductToShopify(item)) ok++; }
     renderPOS();
     toast(`Shopify sync: ${ok}/${cat.length} succeeded`, ok === cat.length ? 'success' : 'warn');
+  }
+
+  // ---- Made-to-order → factory (Phase 4) --------------------------------
+  // Each made-to-order sale line becomes a production job in the existing
+  // factory orders flow (same shape as the New Order / intake tab), so it shows
+  // up in Active Orders, the Planner, BOM material deduction, etc. The sale
+  // keeps the job ids so a void can remove the still-pending jobs.
+  function posCreateProductionJobs(sale, saleLines) {
+    const mtoLines = saleLines.filter(li => li.isSpecialOrder);
+    if (mtoLines.length === 0) return 0;
+    const today = new Date().toISOString().split('T')[0];
+    const dueDate = new Date(Date.now() + 28 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const d = currentData();
+    if (!Array.isArray(d.orders)) d.orders = [];
+    const orders = d.orders;
+    const jobIds = [];
+    mtoLines.forEach((li, i) => {
+      const slug = String(li._description || 'ITEM').replace(/[^a-z0-9]/gi, '').toUpperCase().substring(0, 20);
+      let id = `POS-${sale._localId}-${slug}`;
+      if (orders.find(o => o.id === id)) id += '-' + i;
+      const job = {
+        id,
+        invoice: sale._localId,
+        customer: 'POS Sale',
+        phone: '',
+        product: li._description || li._sku || 'Item',
+        category: '',
+        fabric: '',
+        qty: Number(li.unitQuantity) || 1,
+        orderDate: today,
+        dueDate,
+        status: 'pending',
+        startDate: null,
+        paymentStatus: 'paid',     // settled at the till
+        outstanding: 0,
+        source: 'pos',             // marks POS-originated jobs
+        posSaleId: sale._localId
+      };
+      orders.push(job);
+      // Deducts raw materials if the product name links to a BOM; no-op otherwise.
+      try { deductMaterialsForOrder(activeBiz, job); } catch (e) { console.warn('POS job material deduction failed:', e); }
+      jobIds.push(id);
+    });
+    sale.productionJobIds = jobIds;
+    return jobIds.length;
   }
 
   // Expose POS handlers for inline onclick/onchange

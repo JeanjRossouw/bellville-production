@@ -269,7 +269,7 @@ just a write into the existing model.
 | **1. POS core (standalone)** ✅ *built* | `pos` tab + `cashier` role, product catalogue, cart, checkout, **manual card capture**, sale recorded in Firestore, master stock decrement, receipt. **Fully usable in-store.** | 0 |
 | **2. Xero sync** ✅ *built* | Each completed sale → Xero invoice + payment, with retry queue. Per-business Xero org via Netlify Functions + OAuth2. See `XERO-SETUP.md`. | 1 |
 | **3. Shopify sync** ✅ *built* | Push catalogue + stock to Shopify; inbound webhook for online orders → master stock. Per-business store via Netlify Functions. See `SHOPIFY-SETUP.md`. | 1 |
-| **4. Made-to-order → factory** | Made-to-order lines create production jobs in the factory app. | 1 |
+| **4. Made-to-order → factory** ✅ *built* | Made-to-order sale lines create production jobs (`source: 'pos'`) in the factory orders flow, linked to the sale; voiding removes still-pending jobs. All in `index.html`. | 1 |
 | **5. Integrated payments (optional)** | Direct card-terminal integration if hardware supports it. | 1, hardware |
 | **6. Reporting** | POS sales on the existing dashboard (daily takings per business, top products), reconciled against Xero. | 2 |
 

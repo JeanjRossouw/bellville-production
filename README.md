@@ -32,5 +32,6 @@ required env vars are in `XERO-SETUP.md` (Phase 2 — accounting) and
   New `cashier` role sees only Dashboard + POS. The POS data model is shaped on
   the **Lightspeed Retail (R-Series) API** (`Item` / `Sale` / `SaleLine` /
   `SalePayment`) so future Lightspeed sync is a clean field map; `_`-prefixed
-  fields are local-only. Xero/Shopify/factory integrations are later phases —
-  see `POS-BUILD-PLAN.md`.
+  fields are local-only. Made-to-order sale lines (`isSpecialOrder`) auto-create
+  production jobs (`source: 'pos'`) in the factory orders flow. See
+  `POS-BUILD-PLAN.md`, `XERO-SETUP.md`, `SHOPIFY-SETUP.md`.
