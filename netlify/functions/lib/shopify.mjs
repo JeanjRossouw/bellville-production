@@ -84,3 +84,36 @@ export async function setInventory(biz, inventoryItemId, qoh) {
     await shopFetch(biz, '/inventory_levels/set.json', { method: 'POST', body });
   }
 }
+
+// Pull every product (one entry per variant) for an initial catalogue import.
+// Paginates via the Link header. Returns normalised rows the POS can ingest.
+export async function listAllProducts(biz) {
+  const { domain, token } = shopConfig(biz);
+  if (!domain || !token) throw new Error(`Shopify not configured for "${biz}"`);
+  const out = [];
+  let url = `https://${domain}/admin/api/${API_VERSION}/products.json?limit=250`;
+  while (url) {
+    const res = await fetch(url, { headers: { 'X-Shopify-Access-Token': token, Accept: 'application/json' } });
+    if (!res.ok) throw new Error(`Shopify list failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+    const data = await res.json();
+    for (const p of data.products || []) {
+      const variants = p.variants || [];
+      for (const v of variants) {
+        const named = variants.length > 1 && v.title && v.title !== 'Default Title';
+        out.push({
+          shopifyProductId: String(p.id),
+          shopifyVariantId: String(v.id),
+          shopifyInventoryItemId: String(v.inventory_item_id || ''),
+          title: named ? `${p.title} — ${v.title}` : p.title,
+          sku: v.sku || '',
+          price: Number(v.price) || 0,
+          qoh: Number(v.inventory_quantity) || 0
+        });
+      }
+    }
+    const link = res.headers.get('link') || res.headers.get('Link') || '';
+    const m = link.match(/<([^>]+)>;\s*rel="next"/);
+    url = m ? m[1] : null;
+  }
+  return out;
+}

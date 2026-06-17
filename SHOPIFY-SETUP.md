@@ -11,6 +11,13 @@ directions:
 
 Each business (Bellville / PinkFoot / ReptiCube) uses **its own Shopify store**.
 
+**Seeding from an existing store:** the catalogue panel has an **Import products
+← Shopify** button. It pulls every product (one POS item per variant) from that
+business's store, pre-filling the Shopify ids so they're already linked. Run it
+once to bootstrap the catalogue; after that the POS is the master and pushes
+changes out. Re-running is safe — matched products (by variant id, then SKU) are
+updated in place, not duplicated. Needs the same `SHOPIFY_*` env vars below.
+
 ## 1. Create a custom app per store
 
 For each store: **Settings → Apps and sales channels → Develop apps → Create an

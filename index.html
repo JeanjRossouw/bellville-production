@@ -7417,6 +7417,7 @@ ${totalsSection}
       <div style="margin-bottom:1rem; font-size:12px; color:var(--text-muted); display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap">
         <span>${_escape(POS_BIZ_NAMES[activeBiz] || activeBiz)} integrations:</span>
         <button class="btn btn-sm" onclick="window.open('/.netlify/functions/xero-auth?action=connect&biz=${activeBiz}','_blank')">Connect to Xero</button>
+        <button class="btn btn-sm" onclick="posImportFromShopify()">Import products ← Shopify</button>
         <button class="btn btn-sm" onclick="posSyncAllToShopify()">Sync catalogue → Shopify</button>
         <span style="opacity:0.7">— Xero connect is one-time per business.</span>
       </div>
@@ -7601,6 +7602,69 @@ ${totalsSection}
     catch (e) { console.warn('Shopify inventory push failed', e); }
   }
 
+  // Seed the POS catalogue from an existing Shopify store (one entry per
+  // variant). Existing items (matched by Shopify variant id, then SKU) are
+  // updated in place; everything else is added. POS remains the master after.
+  async function posImportFromShopify() {
+    if (!confirm("Import all products from this business's Shopify store into the POS catalogue?\n\nMatched products are updated; new ones are added.")) return;
+    toast('Importing from Shopify…', 'info');
+    let products;
+    try {
+      let token = null;
+      try { if (currentUser && currentUser.getIdToken) token = await currentUser.getIdToken(); } catch (e) { /* unauth */ }
+      const res = await fetch(`${POS_FN_BASE}/shopify-import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+        body: JSON.stringify({ biz: activeBiz })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 200));
+      ({ products } = await res.json());
+    } catch (e) {
+      toast('Shopify import failed: ' + e.message, 'error', 6000);
+      return;
+    }
+    if (!products || products.length === 0) { toast('No products found in Shopify', 'warn'); return; }
+
+    snapshotState();
+    const cat = posCatalogArr();
+    let added = 0, updated = 0;
+    products.forEach(sp => {
+      let item = cat.find(p =>
+        (sp.shopifyVariantId && String(p.shopifyVariantId || '') === sp.shopifyVariantId) ||
+        (sp.sku && liItemSku(p) === sp.sku));
+      if (item) {
+        item.description = sp.title;
+        if (sp.sku) item.customSku = sp.sku;
+        liSetItemPrice(item, sp.price);
+        if (!liIsMTO(item)) liSetQoh(item, sp.qoh);
+        item.shopifyProductId = sp.shopifyProductId;
+        item.shopifyVariantId = sp.shopifyVariantId;
+        item.shopifyInventoryItemId = sp.shopifyInventoryItemId;
+        updated++;
+      } else {
+        cat.push({
+          itemID: null,
+          _localId: 'POS-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+          description: sp.title,
+          customSku: sp.sku || '',
+          systemSku: '',
+          defaultCost: 0,
+          tax: true, taxClassID: null, categoryID: null,
+          archived: false, itemType: 'default', isSpecialOrder: false,
+          Prices: { ItemPrice: [{ amount: sp.price, useType: 'Default', useTypeID: 1 }] },
+          ItemShops: { ItemShop: [{ shopID: activeBiz, qoh: sp.qoh, reorderPoint: 0 }] },
+          shopifyProductId: sp.shopifyProductId,
+          shopifyVariantId: sp.shopifyVariantId,
+          shopifyInventoryItemId: sp.shopifyInventoryItemId
+        });
+        added++;
+      }
+    });
+    saveData();
+    renderPOS();
+    toast(`Imported from Shopify: ${added} added, ${updated} updated`, 'success', 5000);
+  }
+
   async function posSyncAllToShopify() {
     const cat = posCatalogArr().filter(p => !p.archived);
     if (cat.length === 0) { toast('No products to sync', 'info'); return; }
@@ -7723,6 +7787,7 @@ ${totalsSection}
   window.posSyncSaleToXero = posSyncSaleToXero;
   window.posRetryXeroSync = posRetryXeroSync;
   window.posSyncAllToShopify = posSyncAllToShopify;
+  window.posImportFromShopify = posImportFromShopify;
   window.renderPOS = renderPOS;
   window.renderPOSGrid = renderPOSGrid;
   window.posAddToCart = posAddToCart;
