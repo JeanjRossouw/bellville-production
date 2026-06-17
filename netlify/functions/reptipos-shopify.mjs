@@ -177,6 +177,40 @@ async function createCustomer({ firstName, lastName, name, email, phone }) {
   const { json } = await shopify('/customers.json', { method: 'POST', body });
   return mapCustomer(json.customer);
 }
+// ---- Parked sales (Shopify draft orders) ----
+// The full cart state (incl. discounts) is stashed in the draft's note as JSON
+// under a marker, so retrieve restores it exactly.
+const PARK_MARKER = '@@reptipos-park@@';
+async function draftCreate({ lineItems, customerId, parkData }) {
+  const body = {
+    draft_order: {
+      line_items: lineItems.map(li => ({ variant_id: Number(li.variantId), quantity: Number(li.qty) || 1 })),
+      tags: 'pos,parked',
+      note: PARK_MARKER + (parkData ? JSON.stringify(parkData) : ''),
+      ...(customerId ? { customer: { id: Number(customerId) } } : {})
+    }
+  };
+  const { json } = await shopify('/draft_orders.json', { method: 'POST', body });
+  return { id: String(json.draft_order.id), name: json.draft_order.name };
+}
+async function draftList() {
+  const { json } = await shopify('/draft_orders.json?status=open&limit=50');
+  return (json.draft_orders || []).map(d => {
+    let parkData = null;
+    if (d.note && d.note.startsWith(PARK_MARKER)) { try { parkData = JSON.parse(d.note.slice(PARK_MARKER.length)); } catch (e) {} }
+    return {
+      id: String(d.id), name: d.name, createdAt: d.created_at,
+      totalCents: Math.round((Number(d.total_price) || 0) * 100),
+      customerName: d.customer ? [d.customer.first_name, d.customer.last_name].filter(Boolean).join(' ') : '',
+      parkData
+    };
+  });
+}
+async function draftDelete(id) {
+  await shopify(`/draft_orders/${Number(id)}.json`, { method: 'DELETE' });
+  return { ok: true };
+}
+
 async function customerOrders(customerId) {
   const { json } = await shopify(`/orders.json?customer_id=${Number(customerId)}&status=any&limit=20`);
   return (json.orders || []).map(o => ({
@@ -204,6 +238,9 @@ export const handler = async (event) => {
       const out = await createOrder(body);
       return json(200, out);
     }
+    if (body.action === 'parkSale') return json(200, await draftCreate(body));
+    if (body.action === 'listParked') return json(200, { parked: await draftList() });
+    if (body.action === 'deleteParked') return json(200, await draftDelete(body.id));
     if (body.action === 'searchCustomers') return json(200, { customers: await searchCustomers(body.q) });
     if (body.action === 'createCustomer') return json(200, { customer: await createCustomer(body) });
     if (body.action === 'customerOrders') return json(200, { orders: await customerOrders(body.customerId) });
