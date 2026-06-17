@@ -7287,6 +7287,10 @@ ${totalsSection}
     toast(`Sale completed — ${posMoney(total)}`, 'success');
     posPrintReceipt(sale);
     posSyncSaleToXero(sale); // fire-and-forget; failures stay queued for retry
+    // Push new stock levels for sold (stocked) items down to Shopify.
+    const soldItems = saleLines.filter(li => !li.isSpecialOrder)
+      .map(li => posFindProduct(li._localItemId)).filter(Boolean);
+    posPushInventory(soldItems);
   }
 
   function posVoidSale(id) {
@@ -7382,14 +7386,16 @@ ${totalsSection}
         <td style="padding:0.4rem; border:1px solid var(--border)"><input type="number" step="0.01" value="${liItemPrice(p)}" onchange="posUpdateProduct('${p._localId}','price',this.value)" style="width:90px"></td>
         <td style="padding:0.4rem; border:1px solid var(--border); text-align:center">${mto ? '—' : `<input type="number" value="${liQoh(p)}" onchange="posUpdateProduct('${p._localId}','qoh',this.value)" style="width:70px">`}</td>
         <td style="padding:0.4rem; border:1px solid var(--border); text-align:center"><input type="checkbox" ${mto ? 'checked' : ''} onchange="posUpdateProduct('${p._localId}','isSpecialOrder',this.checked)"></td>
+        <td style="padding:0.4rem; border:1px solid var(--border); text-align:center" title="${p.shopifyProductId ? 'On Shopify' : 'Not yet on Shopify'}">${p.shopifyProductId ? '<span style="color:var(--success)">✓</span>' : '<span style="color:var(--warn)">⏳</span>'}</td>
         <td style="padding:0.4rem; border:1px solid var(--border); text-align:center"><button class="btn btn-sm" onclick="posDeleteProduct('${p._localId}')">✕</button></td>
       </tr>`;
     }).join('');
     el.innerHTML = `
       <div style="margin-bottom:1rem; font-size:12px; color:var(--text-muted); display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap">
-        <span>Xero (${_escape(POS_BIZ_NAMES[activeBiz] || activeBiz)}):</span>
-        <button class="btn btn-sm" onclick="window.open('/.netlify/functions/xero-auth?action=connect&biz=${activeBiz}','_blank')">Connect this business to Xero</button>
-        <span style="opacity:0.7">— one-time per business; needed before sales sync.</span>
+        <span>${_escape(POS_BIZ_NAMES[activeBiz] || activeBiz)} integrations:</span>
+        <button class="btn btn-sm" onclick="window.open('/.netlify/functions/xero-auth?action=connect&biz=${activeBiz}','_blank')">Connect to Xero</button>
+        <button class="btn btn-sm" onclick="posSyncAllToShopify()">Sync catalogue → Shopify</button>
+        <span style="opacity:0.7">— Xero connect is one-time per business.</span>
       </div>
       <div class="row" style="align-items:flex-end; gap:0.5rem; margin-bottom:1rem; flex-wrap:wrap">
         <div><label>SKU</label><input id="pos-new-sku" placeholder="SKU/barcode" style="width:120px"></div>
@@ -7407,6 +7413,7 @@ ${totalsSection}
           <th style="padding:0.4rem; border:1px solid var(--border)">Price</th>
           <th style="padding:0.4rem; border:1px solid var(--border)">Stock</th>
           <th style="padding:0.4rem; border:1px solid var(--border)">MTO</th>
+          <th style="padding:0.4rem; border:1px solid var(--border)" title="On Shopify?">Shop</th>
           <th style="padding:0.4rem; border:1px solid var(--border)"></th>
         </tr></thead>
         <tbody>${rows}</tbody>
@@ -7435,12 +7442,14 @@ ${totalsSection}
       itemType: 'default',
       isSpecialOrder: mto,               // our made-to-order marker
       Prices: { ItemPrice: [{ amount: price, useType: 'Default', useTypeID: 1 }] },
-      ItemShops: { ItemShop: [{ shopID: activeBiz, qoh: openingStock, reorderPoint: 0 }] }
+      ItemShops: { ItemShop: [{ shopID: activeBiz, qoh: openingStock, reorderPoint: 0 }] },
+      shopifyProductId: null, shopifyVariantId: null, shopifyInventoryItemId: null
     };
     posCatalogArr().push(item);
     saveData();
     renderPOS();
     toast('Product added', 'success');
+    posSyncProductToShopify(item); // push to Shopify (POS is master)
   }
 
   function posUpdateProduct(id, field, value) {
@@ -7452,6 +7461,7 @@ ${totalsSection}
     else if (field === 'isSpecialOrder') { p.isSpecialOrder = !!value; if (p.isSpecialOrder) liSetQoh(p, 0); }
     saveData();
     renderPOS();
+    posSyncProductToShopify(p); // reflect price/stock change in Shopify
   }
 
   function posDeleteProduct(id) {
@@ -7519,9 +7529,69 @@ ${totalsSection}
     toast(`Xero sync: ${ok}/${pending.length} succeeded`, ok === pending.length ? 'success' : 'warn');
   }
 
+  // ---- Shopify sync (Phase 3) -------------------------------------------
+  // POS is the master of products & stock, so this pushes OUT to Shopify:
+  // products + price + inventory. (Inbound online orders are handled by the
+  // shopify-webhook function, which decrements master stock in Firestore.)
+  async function posShopifyPost(biz, payload) {
+    let token = null;
+    try { if (currentUser && currentUser.getIdToken) token = await currentUser.getIdToken(); } catch (e) { /* unauthenticated */ }
+    const res = await fetch(`${POS_FN_BASE}/shopify-sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+      body: JSON.stringify({ biz, ...payload })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 200));
+    return res.json();
+  }
+
+  async function posSyncProductToShopify(item) {
+    if (!item || item.archived) return false;
+    try {
+      const ids = await posShopifyPost(activeBiz, { action: 'product', product: {
+        _localId: item._localId,
+        description: liItemName(item),
+        customSku: liItemSku(item),
+        price: liItemPrice(item),
+        qoh: liQoh(item),
+        shopifyProductId: item.shopifyProductId || null,
+        shopifyVariantId: item.shopifyVariantId || null
+      } });
+      item.shopifyProductId = ids.shopifyProductId || item.shopifyProductId || null;
+      item.shopifyVariantId = ids.shopifyVariantId || item.shopifyVariantId || null;
+      item.shopifyInventoryItemId = ids.shopifyInventoryItemId || item.shopifyInventoryItemId || null;
+      saveData();
+      renderPOSCatalogAdmin();
+      return true;
+    } catch (e) {
+      console.warn('Shopify product sync failed', item._localId, e);
+      return false;
+    }
+  }
+
+  async function posPushInventory(items) {
+    const payloadItems = (items || [])
+      .filter(i => i && i.shopifyInventoryItemId && !liIsMTO(i))
+      .map(i => ({ shopifyInventoryItemId: i.shopifyInventoryItemId, qoh: liQoh(i) }));
+    if (payloadItems.length === 0) return;
+    try { await posShopifyPost(activeBiz, { action: 'inventory', items: payloadItems }); }
+    catch (e) { console.warn('Shopify inventory push failed', e); }
+  }
+
+  async function posSyncAllToShopify() {
+    const cat = posCatalogArr().filter(p => !p.archived);
+    if (cat.length === 0) { toast('No products to sync', 'info'); return; }
+    toast(`Syncing ${cat.length} product(s) to Shopify…`, 'info');
+    let ok = 0;
+    for (const item of cat) { if (await posSyncProductToShopify(item)) ok++; }
+    renderPOS();
+    toast(`Shopify sync: ${ok}/${cat.length} succeeded`, ok === cat.length ? 'success' : 'warn');
+  }
+
   // Expose POS handlers for inline onclick/onchange
   window.posSyncSaleToXero = posSyncSaleToXero;
   window.posRetryXeroSync = posRetryXeroSync;
+  window.posSyncAllToShopify = posSyncAllToShopify;
   window.renderPOS = renderPOS;
   window.renderPOSGrid = renderPOSGrid;
   window.posAddToCart = posAddToCart;

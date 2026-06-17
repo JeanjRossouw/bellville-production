@@ -14,9 +14,10 @@ default branch and Netlify deploys automatically.
 
 The POS **integrations** (Phase 2+) run as Netlify Functions in
 `netlify/functions/` with a small `package.json` (deps: `jose`,
-`@netlify/blobs`); Netlify installs and bundles these on deploy. Xero setup and
-required env vars are in `XERO-SETUP.md`. Run `netlify dev` to exercise the
-functions locally.
+`@netlify/blobs`); Netlify installs and bundles these on deploy. Setup and
+required env vars are in `XERO-SETUP.md` (Phase 2 — accounting) and
+`SHOPIFY-SETUP.md` (Phase 3 — catalogue/stock sync + online-order webhook). Run
+`netlify dev` to exercise the functions locally.
 
 ## Notes
 
