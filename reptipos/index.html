@@ -120,6 +120,7 @@
     <span id="cat-status">loading catalogue…</span>
     <button id="queue-badge" onclick="flushQueue(true)" title="Sales waiting to sync — click to sync now" style="display:none; width:auto;padding:0 0.6rem;height:30px;font-size:0.78rem;border-radius:8px;border:1px solid var(--warn);background:transparent;color:var(--warn);cursor:pointer"></button>
     <button class="qbtn" title="Parked sales" onclick="openParked()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">⏸ Parked</button>
+    <button class="qbtn" title="Sales history" onclick="openSales()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📊 Sales</button>
     <button class="qbtn" title="Refund / return" onclick="openRefund()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">↩ Refund</button>
     <button class="qbtn" title="Register / cash-up" onclick="openReg()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🧾 Register</button>
     <button class="qbtn" title="Refresh catalogue" onclick="refreshCatalogue(true)" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">↻</button>
@@ -173,6 +174,13 @@
   <div class="modal-card">
     <h2><span>Parked sales</span><button class="rm" onclick="closeParked()">✕</button></h2>
     <div id="park-body"></div>
+  </div>
+</div>
+
+<div class="modal" id="sales-modal">
+  <div class="modal-card" style="width:480px">
+    <h2><span>Sales</span><button class="rm" onclick="closeSales()">✕</button></h2>
+    <div id="sales-body"></div>
   </div>
 </div>
 
@@ -730,6 +738,34 @@
     try { await api('deleteParked', { id }); openParked(); } catch (e) { toast('Delete failed'); }
   }
 
+  // ---- Sales history (local log) + reprint ----
+  function loadSales() { try { return JSON.parse(localStorage.getItem('reptipos-sales') || '[]'); } catch (e) { return []; } }
+  function openSales() { document.getElementById('sales-modal').classList.add('show'); renderSales(); }
+  function closeSales() { document.getElementById('sales-modal').classList.remove('show'); }
+  function renderSales() {
+    const all = loadSales();
+    const today = new Date().toDateString();
+    const todays = all.filter(s => new Date(s.datetime).toDateString() === today);
+    const todayTotal = todays.reduce((t, s) => t + (s.totalCents || 0), 0);
+    const body = document.getElementById('sales-body');
+    if (!all.length) { body.innerHTML = '<div class="empty" style="padding:1.5rem">No sales yet</div>'; return; }
+    body.innerHTML = `
+      <div style="display:flex; justify-content:space-between; font-size:0.85rem; color:var(--muted); margin-bottom:0.5rem">
+        <span>Today: ${todays.length} sale${todays.length === 1 ? '' : 's'}</span><span style="font-weight:700; color:var(--accent2)">${money(todayTotal)}</span></div>
+      <div style="max-height:50vh; overflow:auto">${all.slice(0, 100).map(s => `
+        <div class="cust-result" style="cursor:default">
+          <div><div style="font-weight:600">${esc(s.saleNumber)}${s.synced ? '' : ' <span style="color:var(--warn)">⏳</span>'}</div>
+            <div style="font-size:0.72rem;color:var(--muted)">${new Date(s.datetime).toLocaleString('en-ZA')} · ${(s.items || []).reduce((n, i) => n + i.qty, 0)} item(s) · ${esc((s.payment && s.payment.method) || '')}${s.customer ? ' · ' + esc(s.customer.name) : ''}</div></div>
+          <div style="display:flex; align-items:center; gap:0.5rem">
+            <span style="font-weight:700">${money(s.totalCents)}</span>
+            <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick='reprintSale(${JSON.stringify(s.saleNumber)})'>🖨️</button>
+          </div></div>`).join('')}</div>`;
+  }
+  function reprintSale(saleNumber) {
+    const s = loadSales().find(x => x.saleNumber === saleNumber);
+    if (s) showReceipt(s); else toast('Sale not found');
+  }
+
   // ---- Camera barcode scan (best-effort; needs BarcodeDetector + HTTPS) ----
   let camStream = null, camDetector = null, camRAF = null, camBusy = false;
   async function openCamScan() {
@@ -1157,7 +1193,7 @@
     lineDiscount, setCartDiscount,
     parkSale, openParked, closeParked, retrieveParked, deleteParked,
     openRefund, closeRefund, lookupRefundOrder, setRefundQty, confirmRefund,
-    openCamScan, closeCamScan,
+    openCamScan, closeCamScan, openSales, closeSales, reprintSale,
     lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings,
     flushQueue,
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
