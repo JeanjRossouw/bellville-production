@@ -305,6 +305,7 @@
     <button class="tab" onclick="showSection('materials')">Materials</button>
     <button class="tab" onclick="showSection('schedule')">Schedule</button>
     <button class="tab" onclick="showSection('planner')">🗓️ Planner</button>
+    <button class="tab" onclick="showSection('pos')">🛒 POS</button>
   </div>
   
   <!-- DASHBOARD -->
@@ -893,6 +894,41 @@
       <div id="planner-grid"></div>
     </div>
   </div>
+
+  <!-- POINT OF SALE -->
+  <div id="section-pos" class="section">
+    <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>🛒 POINT OF SALE — <span id="pos-biz-name"></span></span>
+        <span style="font-size:11px; color:var(--text-muted); font-weight:normal">Stock here is the master · sales record to this business</span>
+      </div>
+      <div style="display:flex; gap:1.5rem; flex-wrap:wrap; align-items:flex-start">
+        <!-- Product picker -->
+        <div style="flex:2 1 320px; min-width:300px">
+          <input id="pos-search" oninput="renderPOSGrid()" placeholder="🔍 Search name or scan/type SKU…" style="width:100%; margin-bottom:0.75rem">
+          <div id="pos-grid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:0.5rem"></div>
+        </div>
+        <!-- Cart / checkout -->
+        <div style="flex:1 1 280px; min-width:280px">
+          <div class="card-title" style="margin-top:0">CART</div>
+          <div id="pos-cart"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🧾 TODAY'S SALES</div>
+      <div id="pos-sales"><div class="empty">No sales yet today</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>📦 PRODUCT CATALOGUE (master stock)</span>
+        <button class="btn btn-sm" onclick="document.getElementById('pos-catalog-admin').style.display = document.getElementById('pos-catalog-admin').style.display==='none' ? '' : 'none'">Show / hide</button>
+      </div>
+      <div id="pos-catalog-admin"></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -925,7 +961,7 @@
   // Tab name array — order MUST match the order of .tab buttons in the DOM.
   // Used by showSection and applyRolePermissions. Declared at top so it's
   // initialized regardless of where in the script execution lands.
-  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner'];
+  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'pos'];
   
   // Undo history (last 20 states)
   let history = [];
@@ -1084,6 +1120,7 @@
     if (sec === 'intake') populateProductDatalist();
     if (sec === 'done') renderDoneOrders();
     if (sec === 'planner') renderPlanner();
+    if (sec === 'pos') renderPOS();
   }
   
   // ============================================
@@ -6963,6 +7000,379 @@ ${totalsSection}
   }
   window.printWeeklyMaterialRequirements = printWeeklyMaterialRequirements;
 
+  // ============================================
+  // POINT OF SALE  (Phase 1 — standalone till)
+  // Master of products & stock for each business. Sales record locally and
+  // sync via the same Firestore doc. Xero / Shopify / factory integrations
+  // are later phases — see POS-BUILD-PLAN.md.
+  // ============================================
+  const POS_VAT_RATE = 0.15;            // South Africa — prices are VAT-INCLUSIVE
+  const POS_BIZ_NAMES = { bellville: 'Bellville Furniture', pinkfoot: 'PinkFoot Boutique', repticube: 'ReptiCube' };
+  let posCart = [];                     // [{ productId, qty }] — for the active sale only
+
+  // Lazy-ensure the POS arrays exist on the active business (data can arrive
+  // from cloud without them on pre-POS docs).
+  function posCatalogArr() {
+    const d = currentData();
+    if (!Array.isArray(d.posCatalog)) d.posCatalog = [];
+    return d.posCatalog;
+  }
+  function posSalesArr() {
+    const d = currentData();
+    if (!Array.isArray(d.posSales)) d.posSales = [];
+    return d.posSales;
+  }
+  function posFindProduct(id) { return posCatalogArr().find(p => p.id === id) || null; }
+  function posMoney(n) { return 'R' + (Number(n) || 0).toFixed(2); }
+
+  // VAT-inclusive split: given an inclusive total, return {excl, vat}.
+  function posVatSplit(inclusiveTotal) {
+    const vat = inclusiveTotal * (POS_VAT_RATE / (1 + POS_VAT_RATE));
+    return { excl: inclusiveTotal - vat, vat };
+  }
+
+  function renderPOS() {
+    const nameEl = document.getElementById('pos-biz-name');
+    if (nameEl) nameEl.textContent = POS_BIZ_NAMES[activeBiz] || activeBiz;
+    renderPOSGrid();
+    renderPOSCart();
+    renderPOSSales();
+    renderPOSCatalogAdmin();
+  }
+
+  function renderPOSGrid() {
+    const grid = document.getElementById('pos-grid');
+    if (!grid) return;
+    const q = (document.getElementById('pos-search')?.value || '').trim().toLowerCase();
+    let items = posCatalogArr();
+    if (q) items = items.filter(p =>
+      (p.name || '').toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q));
+    if (items.length === 0) {
+      grid.innerHTML = `<div class="empty" style="grid-column:1/-1">${posCatalogArr().length === 0 ? 'No products yet — add some in the catalogue below.' : 'No products match your search.'}</div>`;
+      return;
+    }
+    grid.innerHTML = items.map(p => {
+      const oos = !p.madeToOrder && (Number(p.stockOnHand) || 0) <= 0;
+      const stockLabel = p.madeToOrder
+        ? '<span style="color:var(--info)">made to order</span>'
+        : `stock: <strong style="color:${oos ? 'var(--accent)' : 'var(--success)'}">${Number(p.stockOnHand) || 0}</strong>`;
+      return `
+        <button onclick="posAddToCart('${p.id}')" ${oos ? 'disabled' : ''}
+          style="text-align:left; padding:0.6rem; border:1px solid var(--border); background:${oos ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.05)'}; border-radius:6px; cursor:${oos ? 'not-allowed' : 'pointer'}; opacity:${oos ? '0.5' : '1'}; color:var(--text)">
+          <div style="font-weight:600; font-size:13px; line-height:1.2">${_escape(p.name)}</div>
+          <div style="font-size:10px; color:var(--text-muted); margin:0.2rem 0">${_escape(p.sku || '')}</div>
+          <div style="font-size:14px; font-weight:700; color:var(--accent)">${posMoney(p.price)}</div>
+          <div style="font-size:10px; color:var(--text-muted)">${stockLabel}</div>
+        </button>`;
+    }).join('');
+  }
+
+  function posAddToCart(id) {
+    const p = posFindProduct(id);
+    if (!p) return;
+    const line = posCart.find(l => l.productId === id);
+    const inCart = line ? line.qty : 0;
+    if (!p.madeToOrder && inCart + 1 > (Number(p.stockOnHand) || 0)) {
+      toast(`Only ${Number(p.stockOnHand) || 0} of "${p.name}" in stock`, 'warn');
+      return;
+    }
+    if (line) line.qty++; else posCart.push({ productId: id, qty: 1 });
+    renderPOSCart();
+    renderPOSGrid();
+  }
+
+  function posChangeQty(id, delta) {
+    const line = posCart.find(l => l.productId === id);
+    if (!line) return;
+    const p = posFindProduct(id);
+    const next = line.qty + delta;
+    if (next <= 0) { posCart = posCart.filter(l => l.productId !== id); }
+    else {
+      if (p && !p.madeToOrder && next > (Number(p.stockOnHand) || 0)) {
+        toast(`Only ${Number(p.stockOnHand) || 0} in stock`, 'warn');
+        return;
+      }
+      line.qty = next;
+    }
+    renderPOSCart();
+    renderPOSGrid();
+  }
+
+  function posCartTotal() {
+    return posCart.reduce((sum, l) => {
+      const p = posFindProduct(l.productId);
+      return sum + (p ? (Number(p.price) || 0) * l.qty : 0);
+    }, 0);
+  }
+
+  function renderPOSCart() {
+    const el = document.getElementById('pos-cart');
+    if (!el) return;
+    if (posCart.length === 0) {
+      el.innerHTML = '<div class="empty">Cart is empty — tap a product to add it.</div>';
+      return;
+    }
+    const rows = posCart.map(l => {
+      const p = posFindProduct(l.productId);
+      if (!p) return '';
+      const lineTotal = (Number(p.price) || 0) * l.qty;
+      return `
+        <div style="display:flex; align-items:center; gap:0.4rem; padding:0.4rem 0; border-bottom:1px solid var(--border)">
+          <div style="flex:1; min-width:0">
+            <div style="font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${_escape(p.name)}</div>
+            <div style="font-size:10px; color:var(--text-muted)">${posMoney(p.price)} each</div>
+          </div>
+          <button class="btn btn-sm" onclick="posChangeQty('${p.id}',-1)" style="padding:0.1rem 0.5rem">−</button>
+          <span style="min-width:20px; text-align:center; font-weight:600">${l.qty}</span>
+          <button class="btn btn-sm" onclick="posChangeQty('${p.id}',1)" style="padding:0.1rem 0.5rem">+</button>
+          <span style="min-width:70px; text-align:right; font-weight:700">${posMoney(lineTotal)}</span>
+        </div>`;
+    }).join('');
+    const total = posCartTotal();
+    const { excl, vat } = posVatSplit(total);
+    el.innerHTML = `
+      ${rows}
+      <div style="margin-top:0.75rem; font-size:13px; color:var(--text-muted); display:flex; justify-content:space-between"><span>Subtotal (excl. VAT)</span><span>${posMoney(excl)}</span></div>
+      <div style="font-size:13px; color:var(--text-muted); display:flex; justify-content:space-between"><span>VAT (15%)</span><span>${posMoney(vat)}</span></div>
+      <div style="margin-top:0.3rem; font-size:18px; font-weight:800; display:flex; justify-content:space-between"><span>TOTAL</span><span style="color:var(--accent)">${posMoney(total)}</span></div>
+      <label style="margin-top:0.75rem; display:block">Card reference / auth code</label>
+      <input id="pos-card-ref" placeholder="e.g. terminal approval code" style="width:100%">
+      <div style="display:flex; gap:0.5rem; margin-top:0.75rem">
+        <button class="btn" onclick="posClearCart()" style="flex:1">Clear</button>
+        <button class="btn btn-primary" onclick="posCompleteSale()" style="flex:2">💳 COMPLETE SALE</button>
+      </div>`;
+  }
+
+  function posClearCart() {
+    if (posCart.length && !confirm('Clear the current cart?')) return;
+    posCart = [];
+    renderPOSCart();
+    renderPOSGrid();
+  }
+
+  function posCompleteSale() {
+    if (posCart.length === 0) { toast('Cart is empty', 'warn'); return; }
+    const cardRef = (document.getElementById('pos-card-ref')?.value || '').trim();
+    if (!cardRef) { toast('Enter the card reference / auth code from the terminal', 'warn'); return; }
+
+    // Final stock check (in case stock changed since adding)
+    for (const l of posCart) {
+      const p = posFindProduct(l.productId);
+      if (!p) { toast('A product in the cart no longer exists — please re-add it', 'error'); return; }
+      if (!p.madeToOrder && l.qty > (Number(p.stockOnHand) || 0)) {
+        toast(`Not enough stock for "${p.name}" (${Number(p.stockOnHand) || 0} left)`, 'error');
+        return;
+      }
+    }
+
+    const total = posCartTotal();
+    const { excl, vat } = posVatSplit(total);
+    const lineItems = posCart.map(l => {
+      const p = posFindProduct(l.productId);
+      return {
+        productId: p.id, sku: p.sku || '', name: p.name,
+        qty: l.qty, unitPrice: Number(p.price) || 0,
+        lineTotal: (Number(p.price) || 0) * l.qty,
+        madeToOrder: !!p.madeToOrder
+      };
+    });
+
+    const sale = {
+      id: 'SALE-' + Date.now(),
+      datetime: new Date().toISOString(),
+      cashier: (currentUser && currentUser.email) || 'unknown',
+      biz: activeBiz,
+      lineItems,
+      subtotal: excl, vat, total,
+      paymentMethod: 'card',
+      cardRef,
+      status: 'completed',
+      synced: { xero: false, shopify: false }   // set true by later-phase integrations
+    };
+
+    snapshotState();
+    // Decrement master stock for stocked (not made-to-order) lines
+    lineItems.forEach(li => {
+      if (li.madeToOrder) return;
+      const p = posFindProduct(li.productId);
+      if (p) p.stockOnHand = (Number(p.stockOnHand) || 0) - li.qty;
+    });
+    posSalesArr().unshift(sale);
+    saveData();
+
+    posCart = [];
+    renderPOS();
+    toast(`Sale completed — ${posMoney(total)}`, 'success');
+    posPrintReceipt(sale);
+  }
+
+  function posVoidSale(id) {
+    const sale = posSalesArr().find(s => s.id === id);
+    if (!sale || sale.status !== 'completed') return;
+    if (!confirm(`Void this sale of ${posMoney(sale.total)}? Stock will be returned.`)) return;
+    snapshotState();
+    sale.lineItems.forEach(li => {
+      if (li.madeToOrder) return;
+      const p = posFindProduct(li.productId);
+      if (p) p.stockOnHand = (Number(p.stockOnHand) || 0) + li.qty;
+    });
+    sale.status = 'voided';
+    saveData();
+    renderPOS();
+    toast('Sale voided, stock returned', 'success');
+  }
+
+  function renderPOSSales() {
+    const el = document.getElementById('pos-sales');
+    if (!el) return;
+    const todayStr = new Date().toDateString();
+    const today = posSalesArr().filter(s => new Date(s.datetime).toDateString() === todayStr);
+    if (today.length === 0) { el.innerHTML = '<div class="empty">No sales yet today</div>'; return; }
+    const takings = today.filter(s => s.status === 'completed').reduce((sum, s) => sum + s.total, 0);
+    el.innerHTML = `
+      <div style="margin-bottom:0.75rem; font-size:14px">Today: <strong>${today.filter(s => s.status === 'completed').length}</strong> sales · takings <strong style="color:var(--accent)">${posMoney(takings)}</strong></div>
+      ${today.map(s => {
+        const time = new Date(s.datetime).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' });
+        const voided = s.status === 'voided';
+        return `
+          <div style="display:flex; align-items:center; gap:0.5rem; padding:0.5rem 0; border-bottom:1px solid var(--border); ${voided ? 'opacity:0.5; text-decoration:line-through' : ''}">
+            <div style="flex:1">
+              <div style="font-weight:600">${posMoney(s.total)} <span style="font-size:11px; color:var(--text-muted); font-weight:normal">· ${s.lineItems.reduce((n, li) => n + li.qty, 0)} items · ${time}</span></div>
+              <div style="font-size:10px; color:var(--text-muted)">${_escape(s.cashier)} · card ${_escape(s.cardRef)}</div>
+            </div>
+            <button class="btn btn-sm" onclick="posPrintReceipt(posSalesArr().find(x=>x.id==='${s.id}'))">🧾</button>
+            ${voided ? '<span style="font-size:10px; color:var(--accent)">VOIDED</span>' : `<button class="btn btn-sm" onclick="posVoidSale('${s.id}')">Void</button>`}
+          </div>`;
+      }).join('')}`;
+  }
+
+  function posPrintReceipt(sale) {
+    if (!sale) return;
+    const w = window.open('', '_blank', 'width=380,height=600');
+    if (!w) { toast('Allow pop-ups to print receipts', 'warn'); return; }
+    const dt = new Date(sale.datetime).toLocaleString('en-ZA');
+    const rows = sale.lineItems.map(li =>
+      `<tr><td>${_escape(li.name)}${li.qty > 1 ? ` ×${li.qty}` : ''}</td><td style="text-align:right">R${li.lineTotal.toFixed(2)}</td></tr>`).join('');
+    w.document.write(`<!doctype html><html><head><title>Receipt ${sale.id}</title>
+      <style>
+        body{font-family:'Courier New',monospace; width:300px; margin:0 auto; padding:12px; color:#000}
+        h2{text-align:center; margin:0.2rem 0}
+        .muted{color:#555; font-size:11px; text-align:center}
+        table{width:100%; border-collapse:collapse; margin:0.6rem 0; font-size:13px}
+        td{padding:2px 0}
+        .tot td{border-top:1px dashed #000; padding-top:4px; font-weight:bold}
+        .grand td{font-size:16px}
+      </style></head><body>
+      <h2>${_escape(POS_BIZ_NAMES[sale.biz] || sale.biz)}</h2>
+      <div class="muted">${dt}</div>
+      <div class="muted">Receipt ${sale.id}</div>
+      <table>${rows}
+        <tr class="tot"><td>Subtotal (excl VAT)</td><td style="text-align:right">R${sale.subtotal.toFixed(2)}</td></tr>
+        <tr><td>VAT (15%)</td><td style="text-align:right">R${sale.vat.toFixed(2)}</td></tr>
+        <tr class="grand"><td>TOTAL</td><td style="text-align:right">R${sale.total.toFixed(2)}</td></tr>
+      </table>
+      <div class="muted">Paid by card · ref ${_escape(sale.cardRef)}</div>
+      <div class="muted" style="margin-top:0.8rem">Thank you!</div>
+      <script>window.onload=function(){window.print();}<\/script>
+      </body></html>`);
+    w.document.close();
+  }
+
+  function renderPOSCatalogAdmin() {
+    const el = document.getElementById('pos-catalog-admin');
+    if (!el) return;
+    const cat = posCatalogArr();
+    const rows = cat.map(p => `
+      <tr>
+        <td style="padding:0.4rem; border:1px solid var(--border)">${_escape(p.sku || '')}</td>
+        <td style="padding:0.4rem; border:1px solid var(--border)">${_escape(p.name)}</td>
+        <td style="padding:0.4rem; border:1px solid var(--border)"><input type="number" step="0.01" value="${Number(p.price) || 0}" onchange="posUpdateProduct('${p.id}','price',this.value)" style="width:90px"></td>
+        <td style="padding:0.4rem; border:1px solid var(--border); text-align:center">${p.madeToOrder ? '—' : `<input type="number" value="${Number(p.stockOnHand) || 0}" onchange="posUpdateProduct('${p.id}','stockOnHand',this.value)" style="width:70px">`}</td>
+        <td style="padding:0.4rem; border:1px solid var(--border); text-align:center"><input type="checkbox" ${p.madeToOrder ? 'checked' : ''} onchange="posUpdateProduct('${p.id}','madeToOrder',this.checked)"></td>
+        <td style="padding:0.4rem; border:1px solid var(--border); text-align:center"><button class="btn btn-sm" onclick="posDeleteProduct('${p.id}')">✕</button></td>
+      </tr>`).join('');
+    el.innerHTML = `
+      <div class="row" style="align-items:flex-end; gap:0.5rem; margin-bottom:1rem; flex-wrap:wrap">
+        <div><label>SKU</label><input id="pos-new-sku" placeholder="SKU/barcode" style="width:120px"></div>
+        <div class="f1"><label>Product name</label><input id="pos-new-name" placeholder="Name"></div>
+        <div><label>Price (incl VAT)</label><input id="pos-new-price" type="number" step="0.01" placeholder="0.00" style="width:110px"></div>
+        <div><label>Opening stock</label><input id="pos-new-stock" type="number" placeholder="0" style="width:90px"></div>
+        <div style="text-align:center"><label>Made to order</label><input id="pos-new-mto" type="checkbox" style="transform:scale(1.3); margin-top:0.5rem"></div>
+        <button class="btn btn-primary" onclick="posAddProduct()">+ Add product</button>
+      </div>
+      ${cat.length === 0 ? '<div class="empty">No products yet</div>' : `
+      <table style="width:100%; border-collapse:collapse; font-size:13px">
+        <thead><tr style="background:var(--bg)">
+          <th style="padding:0.4rem; border:1px solid var(--border); text-align:left">SKU</th>
+          <th style="padding:0.4rem; border:1px solid var(--border); text-align:left">Name</th>
+          <th style="padding:0.4rem; border:1px solid var(--border)">Price</th>
+          <th style="padding:0.4rem; border:1px solid var(--border)">Stock</th>
+          <th style="padding:0.4rem; border:1px solid var(--border)">MTO</th>
+          <th style="padding:0.4rem; border:1px solid var(--border)"></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`}`;
+  }
+
+  function posAddProduct() {
+    const name = (document.getElementById('pos-new-name')?.value || '').trim();
+    if (!name) { toast('Enter a product name', 'warn'); return; }
+    const price = parseFloat(document.getElementById('pos-new-price')?.value) || 0;
+    const mto = !!document.getElementById('pos-new-mto')?.checked;
+    snapshotState();
+    posCatalogArr().push({
+      id: 'POS-' + Date.now(),
+      sku: (document.getElementById('pos-new-sku')?.value || '').trim(),
+      name,
+      price,
+      stockOnHand: mto ? 0 : (parseInt(document.getElementById('pos-new-stock')?.value, 10) || 0),
+      madeToOrder: mto,
+      vatRate: POS_VAT_RATE
+    });
+    saveData();
+    renderPOS();
+    toast('Product added', 'success');
+  }
+
+  function posUpdateProduct(id, field, value) {
+    const p = posFindProduct(id);
+    if (!p) return;
+    snapshotState();
+    if (field === 'price') p.price = parseFloat(value) || 0;
+    else if (field === 'stockOnHand') p.stockOnHand = parseInt(value, 10) || 0;
+    else if (field === 'madeToOrder') { p.madeToOrder = !!value; if (p.madeToOrder) p.stockOnHand = 0; }
+    saveData();
+    renderPOS();
+  }
+
+  function posDeleteProduct(id) {
+    const p = posFindProduct(id);
+    if (!p) return;
+    if (!confirm(`Delete "${p.name}" from the catalogue?`)) return;
+    snapshotState();
+    const cat = posCatalogArr();
+    const i = cat.findIndex(x => x.id === id);
+    if (i >= 0) cat.splice(i, 1);
+    posCart = posCart.filter(l => l.productId !== id);
+    saveData();
+    renderPOS();
+    toast('Product deleted', 'success');
+  }
+
+  // Expose POS handlers for inline onclick/onchange
+  window.renderPOS = renderPOS;
+  window.renderPOSGrid = renderPOSGrid;
+  window.posAddToCart = posAddToCart;
+  window.posChangeQty = posChangeQty;
+  window.posClearCart = posClearCart;
+  window.posCompleteSale = posCompleteSale;
+  window.posVoidSale = posVoidSale;
+  window.posPrintReceipt = posPrintReceipt;
+  window.posSalesArr = posSalesArr;
+  window.posAddProduct = posAddProduct;
+  window.posUpdateProduct = posUpdateProduct;
+  window.posDeleteProduct = posDeleteProduct;
+
   function saveData() {
     localStorage.setItem('production-data', JSON.stringify(data));
     document.getElementById('save-status').textContent = '✓ saved';
@@ -7059,12 +7469,13 @@ ${totalsSection}
   // currentRole declared at top of script (TDZ safety)
   // Role permissions: which tabs each role can see
   const ROLE_PERMISSIONS = {
-    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner'],
-    sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished'],
+    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'pos'],
+    sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'pos'],
     factory: ['dashboard', 'orders', 'done', 'calendar', 'bom', 'schedule', 'planner'],
     dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'finished'],
     fabric: ['dashboard', 'calendar', 'fabric'],
-    manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner']
+    cashier: ['dashboard', 'pos'],
+    manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'pos']
   };
   
   // Roles that should NOT see fabric ordering info on dashboard or order cards

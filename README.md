@@ -19,3 +19,8 @@ the default branch and Netlify deploys automatically.
   synced via a single Firestore doc at `shared-data/production`.
 - Role-based tab visibility — see `ROLE_PERMISSIONS` near the bottom of the
   script block.
+- **POS** (Phase 1): a `🛒 POS` tab provides a standalone till per business.
+  Products & stock are the master here (`data.<biz>.posCatalog`); completed
+  sales record to `data.<biz>.posSales`, decrement stock, and print a receipt.
+  New `cashier` role sees only Dashboard + POS. Xero/Shopify/factory
+  integrations are later phases — see `POS-BUILD-PLAN.md`.

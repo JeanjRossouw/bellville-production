@@ -252,7 +252,7 @@ just a write into the existing model.
 | Phase | Deliverable | Depends on |
 |-------|-------------|------------|
 | **0. Setup & confirmation** | Confirm Shopify store layout, Xero orgs per business, card machines. Provision Netlify env vars + Firebase rules for new collections. | — |
-| **1. POS core (standalone)** | `pos` tab + `cashier` role, product catalogue, cart, checkout, **manual card capture**, sale recorded in Firestore, master stock decrement, receipt. **Fully usable in-store.** | 0 |
+| **1. POS core (standalone)** ✅ *built* | `pos` tab + `cashier` role, product catalogue, cart, checkout, **manual card capture**, sale recorded in Firestore, master stock decrement, receipt. **Fully usable in-store.** | 0 |
 | **2. Xero sync** | Each completed sale → Xero invoice + payment, with retry queue. | 1 |
 | **3. Shopify sync** | Push catalogue + stock to Shopify; inbound webhook for online orders → master stock. | 1 |
 | **4. Made-to-order → factory** | Made-to-order lines create production jobs in the factory app. | 1 |
