@@ -944,6 +944,16 @@
     pinkfoot: { orders: [], products: {}, inventory: {}, staff: [] }
   };
 
+  // POS catalogue + sales live in their OWN Firestore docs (shared-data/pos-<biz>),
+  // separate from the main `data` doc above, so a large variant-level catalogue
+  // can't bloat the shared doc past Firestore's 1 MB limit. One doc per business
+  // keeps each store's data isolated.
+  let posStore = {
+    bellville: { catalog: [], sales: [] },
+    repticube: { catalog: [], sales: [] },
+    pinkfoot: { catalog: [], sales: [] }
+  };
+
   // Auth & sync state — declared at top of script so they're guaranteed to be
   // initialized before any async callback fires. (Previously these lived next
   // to the Firebase code ~line 4700; if anything earlier in the script threw
@@ -955,6 +965,10 @@
   let unsubscribe = null;
   let saveTimeout = null;
   let lastSyncedPayload = '';
+  // Per-business POS doc sync state (shared-data/pos-<biz>).
+  let unsubscribePos = {};
+  let posSaveTimeouts = {};
+  let lastSyncedPosPayload = {};
 
   // Render-pipeline state — MUST be declared before switchBiz('bellville') runs
   // at the bottom of this section, because switchBiz calls render() which reads
@@ -973,23 +987,32 @@
   const MAX_HISTORY = 20;
   
   function snapshotState() {
-    // Save current state before making a change
-    history.push(JSON.stringify(data));
+    // Save current state before making a change. Captures BOTH the main data
+    // doc and the separate POS store so undo restores them together.
+    history.push(JSON.stringify({ data, pos: posStore }));
     if (history.length > MAX_HISTORY) history.shift();
     updateUndoButton();
   }
-  
+
   function undo() {
     if (history.length === 0) {
       toast('Nothing to undo', 'info');
       return;
     }
-    const previous = history.pop();
-    data = JSON.parse(previous);
+    const snap = JSON.parse(history.pop());
+    if (snap && snap.data) {
+      data = snap.data;
+      if (snap.pos) posStore = snap.pos;
+    } else {
+      data = snap; // legacy snapshot (data only)
+    }
     localStorage.setItem('production-data', JSON.stringify(data));
+    localStorage.setItem('pos-data', JSON.stringify(posStore));
     updateUndoButton();
     saveData();
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => cloudSavePosBiz(b));
     render();
+    if (typeof renderPOS === 'function') renderPOS();
     toast('Undone', 'success', 1500);
   }
   
@@ -7032,18 +7055,16 @@ ${totalsSection}
   const POS_BIZ_NAMES = { bellville: 'Bellville Furniture', pinkfoot: 'PinkFoot Boutique', repticube: 'ReptiCube' };
   let posCart = [];                     // [{ productId, qty }] — productId is the item's _localId
 
-  // Lazy-ensure the POS arrays exist on the active business (data can arrive
-  // from cloud without them on pre-POS docs).
-  function posCatalogArr() {
-    const d = currentData();
-    if (!Array.isArray(d.posCatalog)) d.posCatalog = [];
-    return d.posCatalog;
+  // POS data lives in posStore[biz] (its own Firestore doc), not in `data`.
+  function posBizStore(biz) {
+    const b = biz || activeBiz;
+    if (!posStore[b]) posStore[b] = { catalog: [], sales: [] };
+    if (!Array.isArray(posStore[b].catalog)) posStore[b].catalog = [];
+    if (!Array.isArray(posStore[b].sales)) posStore[b].sales = [];
+    return posStore[b];
   }
-  function posSalesArr() {
-    const d = currentData();
-    if (!Array.isArray(d.posSales)) d.posSales = [];
-    return d.posSales;
-  }
+  function posCatalogArr() { return posBizStore().catalog; }
+  function posSalesArr() { return posBizStore().sales; }
   function posFindProduct(id) { return posCatalogArr().find(p => p._localId === id) || null; }
   function posMoney(n) { return 'R' + (Number(n) || 0).toFixed(2); }
 
@@ -7288,7 +7309,8 @@ ${totalsSection}
     });
     posSalesArr().unshift(sale);
     const jobCount = posCreateProductionJobs(sale, saleLines);
-    saveData();
+    savePos();                       // sale + stock live in the POS doc
+    if (jobCount > 0) saveData();    // production jobs live in the main data doc
 
     posCart = [];
     renderPOS();
@@ -7325,7 +7347,8 @@ ${totalsSection}
     }
     sale.voided = true;
     sale.completed = false;
-    saveData();
+    savePos();                                                  // sale + stock
+    if (sale.productionJobIds && sale.productionJobIds.length) saveData(); // removed jobs
     renderPOS();
     toast('Sale voided, stock returned', 'success');
   }
@@ -7470,7 +7493,7 @@ ${totalsSection}
       shopifyProductId: null, shopifyVariantId: null, shopifyInventoryItemId: null
     };
     posCatalogArr().push(item);
-    saveData();
+    savePos();
     renderPOS();
     toast('Product added', 'success');
     posSyncProductToShopify(item); // push to Shopify (POS is master)
@@ -7483,7 +7506,7 @@ ${totalsSection}
     if (field === 'price') liSetItemPrice(p, parseFloat(value) || 0);
     else if (field === 'qoh') liSetQoh(p, parseInt(value, 10) || 0);
     else if (field === 'isSpecialOrder') { p.isSpecialOrder = !!value; if (p.isSpecialOrder) liSetQoh(p, 0); }
-    saveData();
+    savePos();
     renderPOS();
     posSyncProductToShopify(p); // reflect price/stock change in Shopify
   }
@@ -7496,7 +7519,7 @@ ${totalsSection}
     // Lightspeed-style soft delete (archived) so historic sales keep resolving.
     p.archived = true;
     posCart = posCart.filter(l => l.productId !== id);
-    saveData();
+    savePos();
     renderPOS();
     toast('Product archived', 'success');
   }
@@ -7529,7 +7552,7 @@ ${totalsSection}
       sale.xeroInvoiceNumber = out.invoiceNumber || null;
       if (!sale._synced) sale._synced = {};
       sale._synced.xero = true;
-      saveData();
+      savePos();
       renderPOSSales();
       return true;
     } catch (e) {
@@ -7584,7 +7607,7 @@ ${totalsSection}
       item.shopifyProductId = ids.shopifyProductId || item.shopifyProductId || null;
       item.shopifyVariantId = ids.shopifyVariantId || item.shopifyVariantId || null;
       item.shopifyInventoryItemId = ids.shopifyInventoryItemId || item.shopifyInventoryItemId || null;
-      saveData();
+      savePos();
       renderPOSCatalogAdmin();
       return true;
     } catch (e) {
@@ -7660,7 +7683,7 @@ ${totalsSection}
         added++;
       }
     });
-    saveData();
+    savePos();
     renderPOS();
     toast(`Imported from Shopify: ${added} added, ${updated} updated`, 'success', 5000);
   }
@@ -7735,7 +7758,7 @@ ${totalsSection}
 
     // Today's takings per business
     const allBizToday = ['bellville', 'pinkfoot', 'repticube'].map(b => {
-      const arr = liveSales(data[b] && data[b].posSales).filter(s => new Date(s.timeStamp) >= startToday);
+      const arr = liveSales(posStore[b] && posStore[b].sales).filter(s => new Date(s.timeStamp) >= startToday);
       return { b, name: POS_BIZ_NAMES[b], total: sum(arr), n: arr.length };
     });
 
@@ -7829,6 +7852,45 @@ ${totalsSection}
     }
   }
   
+  // ---- POS store persistence (separate per-business Firestore docs) ----
+  function savePos() { savePosBiz(activeBiz); }
+  function savePosBiz(biz) {
+    localStorage.setItem('pos-data', JSON.stringify(posStore));
+    cloudSavePosBiz(biz);
+  }
+  function loadPos() {
+    const stored = localStorage.getItem('pos-data');
+    if (stored) {
+      try {
+        const loaded = JSON.parse(stored);
+        ['bellville', 'repticube', 'pinkfoot'].forEach(b => {
+          posStore[b] = { catalog: [], sales: [], ...(loaded[b] || {}) };
+          posStore[b].catalog = posStore[b].catalog || [];
+          posStore[b].sales = posStore[b].sales || [];
+        });
+      } catch (e) { console.error('POS load failed', e); }
+    }
+    migratePosFromData();
+  }
+  // One-time migration: fold any POS data embedded in the main `data` doc
+  // (Phases 1–6 stored it there) into the separate posStore, then drop it from
+  // `data`. Prefers existing posStore so it never clobbers newer POS-doc data.
+  function migratePosFromData() {
+    let changed = false;
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      const d = data[b];
+      if (!d) return;
+      if (Array.isArray(d.posCatalog) && d.posCatalog.length && !(posStore[b].catalog && posStore[b].catalog.length)) {
+        posStore[b].catalog = d.posCatalog; changed = true;
+      }
+      if (Array.isArray(d.posSales) && d.posSales.length && !(posStore[b].sales && posStore[b].sales.length)) {
+        posStore[b].sales = d.posSales; changed = true;
+      }
+      if ('posCatalog' in d || 'posSales' in d) { delete d.posCatalog; delete d.posSales; changed = true; }
+    });
+    return changed;
+  }
+
   function clearAllData() {
     if (!confirm('Clear all data? This cannot be undone.')) return;
     // Second confirm because this is destructive AND the cloud doc would
@@ -7840,9 +7902,16 @@ ${totalsSection}
       repticube: { orders: [], products: {}, inventory: {} },
       pinkfoot: { orders: [], products: {}, inventory: {} }
     };
+    posStore = {
+      bellville: { catalog: [], sales: [] },
+      repticube: { catalog: [], sales: [] },
+      pinkfoot: { catalog: [], sales: [] }
+    };
     localStorage.removeItem('production-data');
+    localStorage.removeItem('pos-data');
     // Push the empty state to cloud immediately so the next snapshot doesn't restore old data.
     saveData();
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => cloudSavePosBiz(b));
     render();
     toast('All data cleared (Ctrl+Z to undo)', 'warn', 4000);
   }
@@ -7855,6 +7924,7 @@ ${totalsSection}
   }
   
   loadData();
+  loadPos();
   render();
   updateUndoButton();
   
@@ -7983,12 +8053,15 @@ ${totalsSection}
           applyRolePermissions();
         }
         startSync();
+        startSyncPos();
       } else {
         currentUser = null;
         currentRole = null;
         document.getElementById('login-overlay').style.display = 'flex';
         document.getElementById('main-app').style.display = 'none';
         if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+        Object.keys(unsubscribePos).forEach(b => { try { unsubscribePos[b](); } catch (e) {} });
+        unsubscribePos = {};
       }
     });
   }
@@ -8037,6 +8110,12 @@ ${totalsSection}
           data[biz].inventory = data[biz].inventory || {};
           data[biz].staff = data[biz].staff || [];
         });
+        // Move any POS data that was embedded in this doc into the POS store/docs.
+        if (migratePosFromData()) {
+          localStorage.setItem('pos-data', JSON.stringify(posStore));
+          ['bellville', 'pinkfoot', 'repticube'].forEach(b => cloudSavePosBiz(b));
+          saveData();
+        }
         localStorage.setItem('production-data', JSON.stringify(data));
         lastSyncedPayload = payload;
         render();
@@ -8072,6 +8151,52 @@ ${totalsSection}
         updateSyncStatus('⚠️ Offline — will retry', 'warn');
       }
     }, 500);
+  }
+
+  // POS docs (one per business) are saved/synced independently of the main doc.
+  function cloudSavePosBiz(biz) {
+    if (!currentUser || !firebaseReady) return;
+    clearTimeout(posSaveTimeouts[biz]);
+    posSaveTimeouts[biz] = setTimeout(async () => {
+      const serialized = JSON.stringify(posStore[biz] || { catalog: [], sales: [] });
+      try {
+        const ref = window.firebaseFns.doc(window.firebaseDb, 'shared-data', 'pos-' + biz);
+        await window.firebaseFns.setDoc(ref, {
+          data: serialized,
+          updatedAt: new Date().toISOString(),
+          updatedBy: currentUser.email
+        });
+        lastSyncedPosPayload[biz] = serialized;
+      } catch (err) {
+        console.error('POS cloud save failed (' + biz + '):', err);
+      }
+    }, 500);
+  }
+
+  function startSyncPos() {
+    ['bellville', 'pinkfoot', 'repticube'].forEach(biz => {
+      const ref = window.firebaseFns.doc(window.firebaseDb, 'shared-data', 'pos-' + biz);
+      if (unsubscribePos[biz]) { try { unsubscribePos[biz](); } catch (e) {} }
+      unsubscribePos[biz] = window.firebaseFns.onSnapshot(ref, (snapshot) => {
+        if (!snapshot.exists()) { cloudSavePosBiz(biz); return; }
+        const payload = snapshot.data().data || '';
+        if (!payload || payload === lastSyncedPosPayload[biz]) return; // our own echo
+        try {
+          const parsed = JSON.parse(payload);
+          posStore[biz] = {
+            catalog: Array.isArray(parsed.catalog) ? parsed.catalog : [],
+            sales: Array.isArray(parsed.sales) ? parsed.sales : []
+          };
+        } catch (e) {
+          console.error('Corrupt POS payload for ' + biz + ', ignoring:', e);
+          return;
+        }
+        localStorage.setItem('pos-data', JSON.stringify(posStore));
+        lastSyncedPosPayload[biz] = payload;
+        if (typeof renderPOS === 'function' && activeBiz === biz) renderPOS();
+        render(); // refresh dashboard POS card (all-business totals)
+      }, (err) => console.error('POS sync error (' + biz + '):', err));
+    });
   }
 
   function updateSyncStatus(msg, level) {

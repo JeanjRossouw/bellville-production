@@ -27,8 +27,12 @@ required env vars are in `XERO-SETUP.md` (Phase 2 — accounting) and
 - Role-based tab visibility — see `ROLE_PERMISSIONS` near the bottom of the
   script block.
 - **POS** (Phase 1): a `🛒 POS` tab provides a standalone till per business.
-  Products & stock are the master here (`data.<biz>.posCatalog`); completed
-  sales record to `data.<biz>.posSales`, decrement stock, and print a receipt.
+  Products & stock are the master here; completed sales decrement stock and
+  print a receipt. POS data lives in **its own per-business Firestore docs**
+  (`shared-data/pos-<biz>`, `{ catalog, sales }`) — separate from the main
+  `shared-data/production` doc so a large imported catalogue can't blow the
+  1 MB doc limit. (Legacy embedded `data.<biz>.posCatalog/posSales` is migrated
+  out automatically on load.)
   New `cashier` role sees only Dashboard + POS. The POS data model is shaped on
   the **Lightspeed Retail (R-Series) API** (`Item` / `Sale` / `SaleLine` /
   `SalePayment`) so future Lightspeed sync is a clean field map; `_`-prefixed
