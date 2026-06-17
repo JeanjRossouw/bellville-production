@@ -33,5 +33,7 @@ required env vars are in `XERO-SETUP.md` (Phase 2 — accounting) and
   the **Lightspeed Retail (R-Series) API** (`Item` / `Sale` / `SaleLine` /
   `SalePayment`) so future Lightspeed sync is a clean field map; `_`-prefixed
   fields are local-only. Made-to-order sale lines (`isSpecialOrder`) auto-create
-  production jobs (`source: 'pos'`) in the factory orders flow. See
-  `POS-BUILD-PLAN.md`, `XERO-SETUP.md`, `SHOPIFY-SETUP.md`.
+  production jobs (`source: 'pos'`) in the factory orders flow. The Dashboard
+  shows a POS sales card (per-business daily takings, week/month totals, top
+  products, Xero sync status). See `POS-BUILD-PLAN.md`, `XERO-SETUP.md`,
+  `SHOPIFY-SETUP.md`.

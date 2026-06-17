@@ -270,8 +270,8 @@ just a write into the existing model.
 | **2. Xero sync** ✅ *built* | Each completed sale → Xero invoice + payment, with retry queue. Per-business Xero org via Netlify Functions + OAuth2. See `XERO-SETUP.md`. | 1 |
 | **3. Shopify sync** ✅ *built* | Push catalogue + stock to Shopify; inbound webhook for online orders → master stock. Per-business store via Netlify Functions. See `SHOPIFY-SETUP.md`. | 1 |
 | **4. Made-to-order → factory** ✅ *built* | Made-to-order sale lines create production jobs (`source: 'pos'`) in the factory orders flow, linked to the sale; voiding removes still-pending jobs. All in `index.html`. | 1 |
-| **5. Integrated payments (optional)** | Direct card-terminal integration if hardware supports it. | 1, hardware |
-| **6. Reporting** | POS sales on the existing dashboard (daily takings per business, top products), reconciled against Xero. | 2 |
+| **5. Integrated payments (optional)** | Direct card-terminal integration if hardware supports it. *Being handled manually by the owner.* | 1, hardware |
+| **6. Reporting** ✅ *built* | POS sales on the dashboard: today's takings per business, current-biz week/month totals, top products this month, and Xero sync status. All in `index.html`. | 2 |
 
 Each phase is independently shippable. After Phase 1 you have a working till;
 everything else is additive automation.
