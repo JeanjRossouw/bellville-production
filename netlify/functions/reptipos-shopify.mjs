@@ -12,6 +12,7 @@
 //   SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET  (or *_REPTICUBE)
 //
 // Phase 1 action: "getProducts". (Phase 2 will add "createOrder".)
+import { getStore } from '@netlify/blobs';
 const API_VERSION = '2024-10';
 
 function env(...names) {
@@ -99,9 +100,21 @@ async function getProducts() {
 }
 
 // Create a paid + (best-effort) fulfilled Shopify order for a walk-in sale, so
-// inventory decrements. lineItems: [{ variantId, qty }]. Returns the order name.
-async function createOrder({ lineItems, note }) {
+// inventory decrements. lineItems: [{ variantId, qty }]. idemKey makes retries
+// return the SAME order instead of creating duplicates. Returns the order name.
+async function createOrder({ lineItems, note, idemKey }) {
   if (!Array.isArray(lineItems) || lineItems.length === 0) { const e = new Error('No line items'); e.status = 400; throw e; }
+
+  // Idempotency: if we've already created an order for this key, return it.
+  let store = null;
+  if (idemKey) {
+    try {
+      store = getStore('reptipos-orders');
+      const prior = await store.get(idemKey, { type: 'json' });
+      if (prior) return { ...prior, idempotent: true };
+    } catch (e) { store = null; /* Blobs unavailable — proceed without the guard */ }
+  }
+
   const payload = {
     order: {
       line_items: lineItems.map(li => ({ variant_id: Number(li.variantId), quantity: Number(li.qty) || 1 })),
@@ -128,7 +141,14 @@ async function createOrder({ lineItems, note }) {
     }
   } catch (e) { /* paid + decremented already; fulfillment is non-critical */ }
 
-  return { orderId: String(order.id), orderName: order.name, fulfilled };
+  const result = { orderId: String(order.id), orderName: order.name, fulfilled };
+  if (store && idemKey) { try { await store.setJSON(idemKey, result); } catch (e) { /* best-effort */ } }
+  return result;
+}
+
+async function shopInfo() {
+  try { const { json } = await shopify('/shop.json'); return json.shop ? json.shop.name : ''; }
+  catch (e) { return ''; }
 }
 
 export const handler = async (event) => {
@@ -139,11 +159,11 @@ export const handler = async (event) => {
   try {
     if (body.action === 'getProducts') {
       const products = await getProducts();
-      // Location is optional (needs read_locations) and not required to sell —
-      // never let it block the catalogue.
+      // Location + shop name are optional (extra scopes) — never block the catalogue.
       let locationId = null;
       try { locationId = await primaryLocationId(); } catch (e) { /* read_locations not granted */ }
-      return json(200, { products, locationId });
+      const shopName = await shopInfo();
+      return json(200, { products, locationId, shopName, domain: cfg().domain });
     }
     if (body.action === 'createOrder') {
       const out = await createOrder(body);
