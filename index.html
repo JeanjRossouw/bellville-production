@@ -918,7 +918,7 @@
         <!-- RIGHT: sell panel (customer → cart → pay) -->
         <div style="flex:1 1 340px; min-width:300px; max-width:420px; border-left:1px solid var(--border); display:flex; flex-direction:column; background:rgba(255,255,255,0.02)">
           <div id="pos-customer" style="padding:0.85rem; border-bottom:1px solid var(--border)"></div>
-          <div id="pos-cart" style="flex:1; overflow:auto; padding:0.85rem; display:flex; flex-direction:column"></div>
+          <div id="pos-cart" style="flex:1; overflow:auto; padding:0.85rem"></div>
         </div>
       </div>
     </div>
@@ -7471,8 +7471,8 @@ ${totalsSection}
     const { excl, vat } = posVatSplit(total);
     const count = posCart.reduce((n, l) => n + l.qty, 0);
     el.innerHTML = `
-      <div style="flex:1; overflow:auto">${rows}</div>
-      <div style="margin-top:0.6rem; padding-top:0.6rem; border-top:1px solid var(--border)">
+      ${rows}
+      <div style="position:sticky; bottom:0; background:var(--bg); margin-top:0.6rem; padding-top:0.6rem; border-top:1px solid var(--border)">
         <div style="font-size:12px; color:var(--text-muted); display:flex; justify-content:space-between"><span>Subtotal (excl. VAT)</span><span>${posMoney(excl)}</span></div>
         <div style="font-size:12px; color:var(--text-muted); display:flex; justify-content:space-between"><span>VAT (15%)</span><span>${posMoney(vat)}</span></div>
         <div style="margin:0.25rem 0 0.6rem; font-size:18px; font-weight:800; display:flex; justify-content:space-between"><span>TOTAL</span><span style="color:var(--accent)">${posMoney(total)}</span></div>
