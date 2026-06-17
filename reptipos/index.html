@@ -43,7 +43,7 @@
   }
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; }
-  body { background:var(--bg); color:var(--text); font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; -webkit-text-size-adjust:100%; }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; -webkit-text-size-adjust:100%; display:flex; flex-direction:column; }
   button { font-family:inherit; }
   input { font-family:inherit; }
 
@@ -54,9 +54,14 @@
   .dot { width:9px; height:9px; border-radius:50%; display:inline-block; background:var(--accent2); }
   .dot.off { background:var(--danger); }
 
-  .shell { display:flex; height:calc(100vh - 53px); }
-  .left { flex:2; min-width:0; display:flex; flex-direction:column; padding:0.85rem; }
-  .right { flex:1; min-width:320px; max-width:440px; background:var(--panel); border-left:1px solid var(--border); display:flex; flex-direction:column; }
+  .shell { display:flex; flex:1; min-height:0; }
+  .left { flex:2; min-width:0; min-height:0; display:flex; flex-direction:column; padding:0.85rem; }
+  .right { flex:1; min-width:320px; max-width:440px; min-height:0; background:var(--panel); border-left:1px solid var(--border); display:flex; flex-direction:column; }
+
+  /* Mobile bottom switcher (hidden on tablet/desktop) */
+  .mobile-bar { display:none; gap:0.5rem; padding:0.5rem; background:var(--panel); border-top:1px solid var(--border); }
+  .mobile-bar button { flex:1; padding:0.8rem; border-radius:10px; border:1px solid var(--border); background:var(--panel2); color:var(--text); font-weight:700; font-size:0.95rem; cursor:pointer; }
+  .mobile-bar button.active { background:var(--accent); color:#04210f; border-color:var(--accent); }
 
   #scan { width:100%; padding:1rem 1.1rem; font-size:1.1rem; border-radius:12px; border:2px solid var(--accent); background:var(--panel2); color:var(--text); outline:none; }
   #scan::placeholder { color:var(--muted); }
@@ -93,7 +98,7 @@
 
   .modal { position:fixed; inset:0; z-index:100; background:rgba(0,0,0,0.65); display:none; align-items:center; justify-content:center; }
   .modal.show { display:flex; }
-  .modal-card { width:420px; max-width:94vw; background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:1.1rem; }
+  .modal-card { width:420px; max-width:94vw; max-height:92vh; overflow:auto; background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:1.1rem; }
   .modal-card h2 { margin:0 0 0.2rem; font-size:1.05rem; display:flex; justify-content:space-between; align-items:center; }
   .pay-total { font-size:2rem; font-weight:800; text-align:center; color:var(--accent2); margin:0.2rem 0 0.9rem; }
   .pay-grid { display:grid; grid-template-columns:1fr 1fr; gap:0.5rem; }
@@ -109,6 +114,22 @@
   .custbar button { padding:0.4rem 0.7rem; border-radius:8px; border:1px solid var(--border); background:var(--panel2); color:var(--text); font-size:0.8rem; cursor:pointer; }
   .cust-result { display:flex; justify-content:space-between; align-items:center; gap:0.5rem; padding:0.55rem; border-bottom:1px solid var(--border); cursor:pointer; }
   .cust-result:hover { background:var(--panel2); }
+
+  /* ---- Phone layout: stack to one column + Shop/Cart switcher ---- */
+  @media (max-width: 760px) {
+    header { flex-wrap:wrap; padding:0.5rem 0.7rem; gap:0.4rem; }
+    header .brand { font-size:0.95rem; }
+    .status { width:100%; flex-wrap:wrap; gap:0.45rem; font-size:0.72rem; }
+    .shell { flex-direction:column; }
+    .left, .right { display:none; }            /* one panel at a time on phones */
+    body:not(.m-cart) .left { display:flex; flex:1; }
+    body.m-cart .right { display:flex; flex:1; }
+    .right { min-width:0; max-width:none; border-left:none; }
+    .mobile-bar { display:flex; }
+    #grid { grid-template-columns:repeat(auto-fill,minmax(116px,1fr)); gap:0.5rem; }
+    .tile .thumb { height:74px; }
+    #scan { padding:0.85rem 0.9rem; font-size:1rem; }
+  }
 </style>
 </head>
 <body>
@@ -153,6 +174,11 @@
       </div>
     </div>
   </div>
+</div>
+
+<div class="mobile-bar" id="mbar">
+  <button id="mbar-shop" class="active" onclick="mView('shop')">🔍 Shop</button>
+  <button id="mbar-cart" onclick="mView('cart')">🛒 Cart · R0.00</button>
 </div>
 
 <div class="modal" id="pay-modal">
@@ -310,6 +336,15 @@
     const live = /repticube/i.test(name || '') || /repticube/i.test(domain || '');
     el.style.color = live ? 'var(--muted)' : 'var(--warn)';
     el.title = 'Connected store: ' + (domain || label);
+  }
+
+  // Phone layout: one panel at a time, toggled by the bottom Shop/Cart bar.
+  const isMobile = () => window.matchMedia('(max-width:760px)').matches;
+  function mView(v) {
+    document.body.classList.toggle('m-cart', v === 'cart');
+    const sh = document.getElementById('mbar-shop'), ca = document.getElementById('mbar-cart');
+    if (sh) sh.classList.toggle('active', v !== 'cart');
+    if (ca) ca.classList.toggle('active', v === 'cart');
   }
 
   function setNet(online) {
@@ -510,6 +545,8 @@
     payBtn.textContent = `Pay · ${count} item${count === 1 ? '' : 's'}`;
     payBtn.disabled = count === 0;
     payBtn.style.opacity = count === 0 ? '0.5' : '1';
+    const mc = document.getElementById('mbar-cart');
+    if (mc) mc.textContent = '🛒 Cart' + (count ? ' (' + count + ')' : '') + ' · ' + money(c.total);
   }
 
   // ---- Customers ----
@@ -1615,9 +1652,10 @@
     cartDiscount = null;
     customer = null; renderCustomer();
     renderCart(); renderGrid();
+    if (isMobile()) mView('shop');
     showReceipt(sale);
     saleInFlight = false;
-    scan.focus();
+    if (!isMobile()) scan.focus();
   }
 
   function updateLocalSale(sale) {
@@ -1720,12 +1758,12 @@
   const scan = document.getElementById('scan');
   scan.addEventListener('input', onScanInput);
   scan.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); onScanEnter(); } });
-  function keepFocus() { if (document.activeElement !== scan && !/^(INPUT|TEXTAREA|BUTTON)$/.test(document.activeElement.tagName)) scan.focus(); }
+  function keepFocus() { if (isMobile()) return; if (document.activeElement !== scan && !/^(INPUT|TEXTAREA|BUTTON)$/.test(document.activeElement.tagName)) scan.focus(); }
   document.addEventListener('click', () => setTimeout(keepFocus, 0));
   setInterval(keepFocus, 1500);
 
   // Expose handlers
-  Object.assign(window, { refreshCatalogue, addToCart, changeQty, removeLine, clearCart,
+  Object.assign(window, { mView, refreshCatalogue, addToCart, changeQty, removeLine, clearCart,
     lineDiscount, setCartDiscount,
     parkSale, openParked, closeParked, retrieveParked, deleteParked,
     openRefund, closeRefund, lookupRefundOrder, setRefundQty, confirmRefund,
