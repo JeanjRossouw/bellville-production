@@ -138,6 +138,7 @@
     <div class="rhead"><span>Cart</span><div style="display:flex; gap:0.6rem"><button class="rm" onclick="parkSale()" title="Park this sale">⏸ Park</button><button class="rm" onclick="clearCart()" title="Clear cart">Clear</button></div></div>
     <div id="cart"></div>
     <div class="foot">
+      <div id="tax-line" style="display:none; justify-content:space-between; font-size:0.8rem; color:var(--muted); margin-bottom:0.3rem"></div>
       <div class="total"><span>TOTAL</span><span class="accent" id="grand">R0.00</span></div>
       <button class="btn btn-pay" id="pay-btn" onclick="payOpen()">Pay · 0 items</button>
     </div>
@@ -213,6 +214,20 @@
     return (arr || []).map(p => ({ ...p, priceCents: (p.priceCents != null ? p.priceCents : Math.round((Number(p.price) || 0) * 100)) }));
   }
   const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+
+  // ---- Settings (tax is OFF by default — ReptiCube is not VAT-registered).
+  // Plumbed so a rate can be switched on later without code changes. Prices are
+  // treated as tax-INCLUSIVE (the Shopify price is final), so a non-zero rate
+  // just surfaces the tax portion already inside the price — it never adds on top.
+  const DEFAULT_SETTINGS = { taxRatePct: 0, taxLabel: 'VAT' };
+  function settings() { try { return { ...DEFAULT_SETTINGS, ...(JSON.parse(localStorage.getItem('reptipos-settings') || '{}')) }; } catch (e) { return { ...DEFAULT_SETTINGS }; } }
+  function saveSettings(s) { localStorage.setItem('reptipos-settings', JSON.stringify({ ...settings(), ...s })); }
+  // Tax portion (cents) already contained in a tax-inclusive total.
+  function taxPortionCents(totalCents) {
+    const r = Number(settings().taxRatePct) || 0;
+    if (r <= 0) return 0;
+    return Math.round(totalCents - totalCents / (1 + r / 100));
+  }
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
   function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 1800); }
 
@@ -413,6 +428,13 @@
         </div>`;
     }
     const count = cart.reduce((n, l) => n + l.qty, 0);
+    // Tax line (only when a rate is configured — default is none).
+    const taxEl = document.getElementById('tax-line');
+    const tax = taxPortionCents(c.total);
+    if (taxEl) {
+      if (tax > 0) { taxEl.style.display = ''; taxEl.innerHTML = `<span>incl. ${esc(settings().taxLabel)} (${settings().taxRatePct}%)</span><span>${money(tax)}</span>`; }
+      else taxEl.style.display = 'none';
+    }
     document.getElementById('grand').textContent = money(c.total);
     const payBtn = document.getElementById('pay-btn');
     payBtn.textContent = `Pay · ${count} item${count === 1 ? '' : 's'}`;
@@ -573,7 +595,14 @@
     return `<div style="font-size:0.8rem; font-weight:700; margin-bottom:0.4rem">Staff</div>
       ${list.map(s => `<div style="display:flex; justify-content:space-between; padding:0.25rem 0; font-size:0.85rem"><span>${esc(s.name)} <span style="color:var(--muted)">(${s.role})</span></span>${s.id !== 'admin' ? `<button class="rm" onclick="removeStaff('${s.id}')">✕</button>` : ''}</div>`).join('')}
       <div style="display:flex; gap:0.4rem; margin-top:0.4rem"><input id="st-name" placeholder="Name" style="flex:1"><input id="st-pin" placeholder="PIN" style="width:80px"></div>
-      <button class="qbtn" style="width:auto; padding:0 0.7rem; margin-top:0.4rem" onclick="addStaff()">+ Add staff</button>`;
+      <button class="qbtn" style="width:auto; padding:0 0.7rem; margin-top:0.4rem" onclick="addStaff()">+ Add staff</button>
+      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">Tax (default off — not VAT-registered)</div>
+      <div style="display:flex; gap:0.4rem; align-items:center">
+        <input id="tax-label" value="${esc(settings().taxLabel)}" placeholder="Label" style="flex:1">
+        <input id="tax-rate" type="number" step="0.01" min="0" value="${settings().taxRatePct}" style="width:90px"><span style="color:var(--muted)">%</span>
+        <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveTaxSettings()">Save</button>
+      </div>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Prices stay tax-inclusive (Shopify price is final). 0% shows no tax anywhere.</div>`;
   }
   function addStaff() {
     const name = (document.getElementById('st-name').value || '').trim();
@@ -585,6 +614,13 @@
     saveStaff(list); renderReg(); toast('Staff added');
   }
   function removeStaff(id) { if (!confirm('Remove this staff member?')) return; saveStaff(staffList().filter(s => s.id !== id)); renderReg(); }
+  function saveTaxSettings() {
+    const rate = Math.max(0, parseFloat(document.getElementById('tax-rate').value) || 0);
+    const label = (document.getElementById('tax-label').value || 'VAT').trim() || 'VAT';
+    saveSettings({ taxRatePct: rate, taxLabel: label });
+    renderCart(); renderReg();
+    toast(rate > 0 ? `Tax set: ${label} ${rate}% (inclusive)` : 'Tax off');
+  }
   function doOpenRegister() {
     const f = toCents(document.getElementById('reg-float').value);
     saveShift({ id: 'SHIFT-' + Date.now(), openedAt: new Date().toISOString(), openedBy: currentStaff ? currentStaff.name : '', floatCents: f, cashSalesCents: 0, cardSalesCents: 0, eftSalesCents: 0, cashRefundsCents: 0, payInsCents: 0, payOutsCents: 0, salesCount: 0, byStaff: {} });
@@ -902,7 +938,7 @@
       saleNumber: nextSaleNumber(),
       idemKey: uuid(),                 // idempotency key — same sale never creates two Shopify orders
       datetime: new Date().toISOString(),
-      items, totalCents: total, discountCents: c.totalDisc, payment,
+      items, totalCents: total, discountCents: c.totalDisc, taxCents: taxPortionCents(total), taxLabel: settings().taxLabel, payment,
       customer: customer ? { id: customer.id, name: customer.name } : null,
       staff: currentStaff ? currentStaff.name : null,
       shopifyOrder: null, synced: false
@@ -1002,6 +1038,7 @@
     t += '--------------------------------\n';
     if (sale.discountCents) t += `Discount  -${money(sale.discountCents)}\n`;
     t += `TOTAL  ${money(sale.totalCents)}\n`;
+    if (sale.taxCents) t += `(incl. ${sale.taxLabel || 'VAT'} ${money(sale.taxCents)})\n`;
     t += `Paid: ${paymentSummary(sale.payment)}\n`;
     t += 'Thank you!';
     return t;
@@ -1029,7 +1066,7 @@
       <div class="c">Sale ${esc(sale.saleNumber)}</div>
       <div class="c">${esc(dt)}</div>
       ${sale.customer ? `<div class="c">Customer: ${esc(sale.customer.name)}</div>` : ''}
-      <table>${rows}${sale.discountCents ? `<tr><td>Discount</td><td style="text-align:right">−${money(sale.discountCents)}</td></tr>` : ''}<tr class="tot"><td>TOTAL</td><td style="text-align:right">${money(sale.totalCents)}</td></tr></table>
+      <table>${rows}${sale.discountCents ? `<tr><td>Discount</td><td style="text-align:right">−${money(sale.discountCents)}</td></tr>` : ''}<tr class="tot"><td>TOTAL</td><td style="text-align:right">${money(sale.totalCents)}</td></tr>${sale.taxCents ? `<tr><td>incl. ${esc(sale.taxLabel || 'VAT')}</td><td style="text-align:right">${money(sale.taxCents)}</td></tr>` : ''}</table>
       <div class="c">Paid: ${esc(paymentSummary(sale.payment))}</div>
       ${sale.shopifyOrder ? `<div class="c">Order ${esc(sale.shopifyOrder)}</div>` : ''}
       <div class="c" style="margin-top:8px">Thank you!</div>
@@ -1055,7 +1092,7 @@
     lineDiscount, setCartDiscount,
     parkSale, openParked, closeParked, retrieveParked, deleteParked,
     openRefund, closeRefund, lookupRefundOrder, setRefundQty, confirmRefund,
-    lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff,
+    lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings,
     flushQueue,
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
     custOpen, custClose, custClear, custSearch, custAttach, custCreate, custHistory, renderCustBody });
