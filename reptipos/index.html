@@ -96,7 +96,7 @@
   .modal-card { width:420px; max-width:94vw; background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:1.1rem; }
   .modal-card h2 { margin:0 0 0.2rem; font-size:1.05rem; display:flex; justify-content:space-between; align-items:center; }
   .pay-total { font-size:2rem; font-weight:800; text-align:center; color:var(--accent2); margin:0.2rem 0 0.9rem; }
-  .pay-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.5rem; }
+  .pay-grid { display:grid; grid-template-columns:1fr 1fr; gap:0.5rem; }
   .pay-grid button { padding:0.9rem 0.4rem; border-radius:10px; border:1px solid var(--border); background:var(--panel2); color:var(--text); font-size:0.95rem; font-weight:700; cursor:pointer; }
   .field { margin-top:0.85rem; }
   .field label { display:block; font-size:0.8rem; color:var(--muted); margin-bottom:0.25rem; }
@@ -136,6 +136,7 @@
     <div class="pay-grid">
       <button onclick="payPick('cash')">💵 Cash</button>
       <button onclick="payPick('card')">💳 Card — paid</button>
+      <button onclick="payPick('eft')">🏦 EFT — paid</button>
       <button onclick="payPick('split')">↔ Split</button>
     </div>
     <div id="pay-detail"></div>
@@ -303,9 +304,11 @@
   function payPick(method) {
     const total = cartTotal();
     const d = document.getElementById('pay-detail');
-    if (method === 'card') {
-      d.innerHTML = `<div class="field"><div style="font-size:0.85rem;color:var(--muted);margin-bottom:0.6rem">Charge ${money(total)} on the Capitec speedpoint, then confirm.</div>
-        <button class="btn btn-pay" onclick="completeSale({method:'card',cardAmount:${total}})">✓ Card — paid · ${money(total)}</button></div>`;
+    if (method === 'card' || method === 'eft') {
+      const label = method === 'card' ? 'Card' : 'EFT';
+      const note = method === 'card' ? `Charge ${money(total)} on the Capitec speedpoint, then confirm.` : `Confirm the ${money(total)} EFT has reflected, then complete.`;
+      d.innerHTML = `<div class="field"><div style="font-size:0.85rem;color:var(--muted);margin-bottom:0.6rem">${note}</div>
+        <button class="btn btn-pay" onclick="completeSale({method:'${method}',amount:${total}})">✓ ${label} — paid · ${money(total)}</button></div>`;
     } else if (method === 'cash') {
       d.innerHTML = `<div class="field"><label>Cash tendered</label>
         <input id="cash-in" type="number" inputmode="decimal" step="0.01" value="${total.toFixed(2)}" oninput="cashChange()">
@@ -361,6 +364,7 @@
   function paymentSummary(p) {
     if (p.method === 'cash') return `Cash (tendered ${money(p.cashTendered)}, change ${money(p.change)})`;
     if (p.method === 'card') return 'Card (Capitec — paid)';
+    if (p.method === 'eft') return 'EFT (paid)';
     return `Split: cash ${money(p.cashAmount)} + card ${money(p.cardAmount)}`;
   }
 
@@ -425,6 +429,7 @@
     const dt = new Date(sale.datetime).toLocaleString('en-ZA');
     const rows = sale.items.map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">${money(i.lineTotal)}</td></tr>`).join('');
     const waText = encodeURIComponent(receiptText(sale));
+    const emailSubject = encodeURIComponent('ReptiCube invoice ' + sale.saleNumber);
     const w = window.open('', '_blank', 'width=360,height=640');
     if (!w) { toast('Allow pop-ups to print the slip'); return; }
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(sale.saleNumber)}</title>
@@ -449,6 +454,7 @@
       <div class="btns noprint">
         <button onclick="window.print()">🖨️ Print</button>
         <a href="https://wa.me/?text=${waText}" target="_blank">WhatsApp</a>
+        <button onclick="var e=prompt('Email invoice to:','');if(e!==null){location.href='mailto:'+encodeURIComponent(e)+'?subject=${emailSubject}&body=${waText}';}">✉ Email</button>
       </div>
       </body></html>`);
     w.document.close();
