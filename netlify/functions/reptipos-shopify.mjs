@@ -211,6 +211,112 @@ async function draftDelete(id) {
   return { ok: true };
 }
 
+// ---- Refunds / returns ----
+// Look up an order by its name/number (e.g. "#1001", "1001", or "RC-…" if tagged)
+// so the till can refund against it. Returns line items with the quantity still
+// refundable (original qty minus what's already been refunded).
+async function lookupOrder(q) {
+  const term = String(q || '').trim();
+  if (!term) return null;
+  // Try by name first (Shopify matches with/without the leading #).
+  let order = null;
+  try {
+    const { json } = await shopify(`/orders.json?name=${encodeURIComponent(term)}&status=any&limit=5`);
+    order = (json.orders || [])[0] || null;
+  } catch (e) { /* fall through */ }
+  // Fall back to a numeric order id.
+  if (!order && /^\d+$/.test(term)) {
+    try { const { json } = await shopify(`/orders/${term}.json`); order = json.order || null; } catch (e) {}
+  }
+  if (!order) return null;
+
+  // Tally quantities already refunded per line item.
+  const refunded = {};
+  for (const r of order.refunds || []) {
+    for (const rli of r.refund_line_items || []) {
+      const id = String(rli.line_item_id);
+      refunded[id] = (refunded[id] || 0) + (Number(rli.quantity) || 0);
+    }
+  }
+  const lineItems = (order.line_items || []).map(li => {
+    const already = refunded[String(li.id)] || 0;
+    const refundable = Math.max(0, (Number(li.quantity) || 0) - already);
+    return {
+      lineItemId: String(li.id),
+      variantId: li.variant_id != null ? String(li.variant_id) : '',
+      name: li.title + (li.variant_title && li.variant_title !== 'Default Title' ? ' — ' + li.variant_title : ''),
+      sku: li.sku || '',
+      qty: Number(li.quantity) || 0,
+      refundedQty: already,
+      refundableQty: refundable,
+      unitPriceCents: Math.round((Number(li.price) || 0) * 100)
+    };
+  });
+  return {
+    orderId: String(order.id),
+    name: order.name,
+    createdAt: order.created_at,
+    totalCents: Math.round((Number(order.total_price) || 0) * 100),
+    customerName: order.customer ? [order.customer.first_name, order.customer.last_name].filter(Boolean).join(' ') : '',
+    financialStatus: order.financial_status,
+    lineItems
+  };
+}
+
+// Create a refund (optionally restocking) for selected line items. idemKey makes
+// a retry return the same refund instead of refunding twice.
+// refundLineItems: [{ lineItemId, qty }].
+async function refundCreate({ orderId, refundLineItems, restock, reason, idemKey }) {
+  if (!orderId) { const e = new Error('No order'); e.status = 400; throw e; }
+  const lines = (refundLineItems || []).filter(l => (Number(l.qty) || 0) > 0);
+  if (lines.length === 0) { const e = new Error('Nothing to refund'); e.status = 400; throw e; }
+
+  let store = null;
+  if (idemKey) {
+    try { store = getStore('reptipos-refunds'); const prior = await store.get(idemKey, { type: 'json' }); if (prior) return { ...prior, idempotent: true }; }
+    catch (e) { store = null; }
+  }
+
+  // Restock needs a location; if we can't read one, refund without restocking.
+  let locationId = null;
+  if (restock) { try { locationId = await primaryLocationId(); } catch (e) { locationId = null; } }
+  const restockType = (restock && locationId) ? 'return' : 'no_restock';
+  const refund_line_items = lines.map(l => ({
+    line_item_id: Number(l.lineItemId),
+    quantity: Number(l.qty),
+    restock_type: restockType,
+    ...(restockType === 'return' ? { location_id: Number(locationId) } : {})
+  }));
+
+  // Ask Shopify to calculate the refund (amounts + suggested transactions), then
+  // submit exactly that so the money figure always matches the order.
+  let transactions = [];
+  let calcAmountCents = 0;
+  try {
+    const { json } = await shopify(`/orders/${Number(orderId)}/refunds/calculate.json`, {
+      method: 'POST', body: { refund: { refund_line_items, currency: undefined } }
+    });
+    const calc = json.refund || {};
+    transactions = (calc.transactions || []).map(t => ({ parent_id: t.parent_id, amount: t.amount, kind: 'refund', gateway: t.gateway }));
+    calcAmountCents = (calc.transactions || []).reduce((s, t) => s + Math.round((Number(t.amount) || 0) * 100), 0);
+  } catch (e) { /* calculate may be unavailable; fall back to line-item only refund */ }
+
+  const body = {
+    refund: {
+      notify: false,
+      note: reason || 'ReptiCube POS refund',
+      refund_line_items,
+      ...(transactions.length ? { transactions } : {})
+    }
+  };
+  const { json } = await shopify(`/orders/${Number(orderId)}/refunds.json`, { method: 'POST', body });
+  const refund = json.refund || {};
+  const amountCents = calcAmountCents || (refund.transactions || []).reduce((s, t) => s + Math.round((Number(t.amount) || 0) * 100), 0);
+  const result = { refundId: String(refund.id || ''), orderId: String(orderId), amountCents, restocked: restockType === 'return' };
+  if (store && idemKey) { try { await store.setJSON(idemKey, result); } catch (e) {} }
+  return result;
+}
+
 async function customerOrders(customerId) {
   const { json } = await shopify(`/orders.json?customer_id=${Number(customerId)}&status=any&limit=20`);
   return (json.orders || []).map(o => ({
@@ -244,6 +350,8 @@ export const handler = async (event) => {
     if (body.action === 'searchCustomers') return json(200, { customers: await searchCustomers(body.q) });
     if (body.action === 'createCustomer') return json(200, { customer: await createCustomer(body) });
     if (body.action === 'customerOrders') return json(200, { orders: await customerOrders(body.customerId) });
+    if (body.action === 'lookupOrder') return json(200, { order: await lookupOrder(body.q) });
+    if (body.action === 'refundCreate') return json(200, await refundCreate(body));
     return json(400, { error: `Unknown action "${body.action}"` });
   } catch (e) {
     return json(e.status === 401 ? 401 : (e.status === 400 ? 400 : 502), { error: e.message });

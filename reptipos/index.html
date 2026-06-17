@@ -120,6 +120,7 @@
     <span id="cat-status">loading catalogue…</span>
     <button id="queue-badge" onclick="flushQueue(true)" title="Sales waiting to sync — click to sync now" style="display:none; width:auto;padding:0 0.6rem;height:30px;font-size:0.78rem;border-radius:8px;border:1px solid var(--warn);background:transparent;color:var(--warn);cursor:pointer"></button>
     <button class="qbtn" title="Parked sales" onclick="openParked()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">⏸ Parked</button>
+    <button class="qbtn" title="Refund / return" onclick="openRefund()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">↩ Refund</button>
     <button class="qbtn" title="Register / cash-up" onclick="openReg()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🧾 Register</button>
     <button class="qbtn" title="Refresh catalogue" onclick="refreshCatalogue(true)" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">↻</button>
     <span id="staff-badge" style="font-size:0.78rem; color:var(--muted)"></span>
@@ -168,6 +169,13 @@
   <div class="modal-card">
     <h2><span>Parked sales</span><button class="rm" onclick="closeParked()">✕</button></h2>
     <div id="park-body"></div>
+  </div>
+</div>
+
+<div class="modal" id="refund-modal">
+  <div class="modal-card" style="width:480px">
+    <h2><span>Refund / return</span><button class="rm" onclick="closeRefund()">✕</button></h2>
+    <div id="refund-body"></div>
   </div>
 </div>
 
@@ -605,6 +613,7 @@
         <tr><td>Cash refunds</td><td style="text-align:right">−${money(s.cashRefundsCents)}</td></tr>
         <tr class="tot"><td>Total sales</td><td style="text-align:right">${money(s.cashSalesCents + s.cardSalesCents + s.eftSalesCents)}</td></tr>
         <tr><td>Sales count</td><td style="text-align:right">${s.salesCount}</td></tr>
+        <tr><td>Refunds count</td><td style="text-align:right">${s.refundsCount || 0}</td></tr>
         <tr class="tot"><td>Expected cash</td><td style="text-align:right">${money(exp)}</td></tr>
         ${countedCents != null ? `<tr><td>Counted</td><td style="text-align:right">${money(countedCents)}</td></tr><tr class="tot"><td>Variance</td><td style="text-align:right">${money(variance)}</td></tr>` : ''}
       </table>
@@ -672,6 +681,138 @@
   async function deleteParked(id) {
     if (!confirm('Delete this parked sale?')) return;
     try { await api('deleteParked', { id }); openParked(); } catch (e) { toast('Delete failed'); }
+  }
+
+  // ---- Refunds / returns ----
+  let refundOrder = null;       // the looked-up order being refunded
+  let refundQty = {};           // { lineItemId: qty to refund }
+  let refundRestock = true;
+  function openRefund() {
+    refundOrder = null; refundQty = {}; refundRestock = true;
+    document.getElementById('refund-modal').classList.add('show');
+    renderRefundLookup('');
+  }
+  function closeRefund() { document.getElementById('refund-modal').classList.remove('show'); }
+  function renderRefundLookup(prefill) {
+    document.getElementById('refund-body').innerHTML = `
+      <div class="field"><label>Order number</label>
+        <input id="rf-q" autocomplete="off" placeholder="e.g. #1001 or 1001" value="${esc(prefill || '')}" onkeydown="if(event.key==='Enter')lookupRefundOrder()">
+      </div>
+      <button class="btn btn-pay" style="margin-top:0.7rem" onclick="lookupRefundOrder()">Find order</button>
+      <div id="rf-result" style="margin-top:0.8rem"></div>`;
+    const i = document.getElementById('rf-q'); if (i) i.focus();
+  }
+  async function lookupRefundOrder() {
+    const q = (document.getElementById('rf-q').value || '').trim();
+    if (!q) { toast('Enter an order number'); return; }
+    const box = document.getElementById('rf-result');
+    box.innerHTML = '<div class="empty" style="padding:1rem">Searching…</div>';
+    try {
+      const { order } = await api('lookupOrder', { q });
+      if (!order) { box.innerHTML = '<div class="empty" style="padding:1rem">No order found</div>'; return; }
+      refundOrder = order; refundQty = {};
+      renderRefundLines();
+    } catch (e) { box.innerHTML = `<div class="empty" style="padding:1rem; color:var(--warn)">${esc(String(e.message || e))}</div>`; }
+  }
+  function refundTotalCents() {
+    if (!refundOrder) return 0;
+    return refundOrder.lineItems.reduce((t, li) => t + (refundQty[li.lineItemId] || 0) * li.unitPriceCents, 0);
+  }
+  function setRefundQty(lineItemId, qty) {
+    const li = refundOrder.lineItems.find(x => x.lineItemId === lineItemId); if (!li) return;
+    refundQty[lineItemId] = Math.max(0, Math.min(li.refundableQty, qty));
+    renderRefundLines();
+  }
+  function renderRefundLines() {
+    const o = refundOrder;
+    const box = document.getElementById('rf-result');
+    const rows = o.lineItems.map(li => {
+      const q = refundQty[li.lineItemId] || 0;
+      const disabled = li.refundableQty <= 0;
+      return `<div class="line">
+        <div class="lnm"><div class="t">${esc(li.name)}</div>
+          <div class="s">${money(li.unitPriceCents)} each · ${li.refundableQty} refundable${li.refundedQty ? ' · ' + li.refundedQty + ' already refunded' : ''}</div></div>
+        <button class="qbtn" ${disabled ? 'disabled' : ''} onclick="setRefundQty('${li.lineItemId}',${q - 1})">−</button>
+        <span class="qty">${q}</span>
+        <button class="qbtn" ${disabled ? 'disabled' : ''} onclick="setRefundQty('${li.lineItemId}',${q + 1})">+</button>
+        <span class="ltot">${money(q * li.unitPriceCents)}</span>
+      </div>`;
+    }).join('');
+    box.innerHTML = `
+      <div style="font-weight:700; margin-bottom:0.3rem">${esc(o.name)}${o.customerName ? ' · ' + esc(o.customerName) : ''}</div>
+      <div style="font-size:0.75rem; color:var(--muted); margin-bottom:0.5rem">${new Date(o.createdAt).toLocaleString('en-ZA')} · ${money(o.totalCents)} · ${esc(o.financialStatus || '')}</div>
+      ${rows}
+      <label style="display:flex; align-items:center; gap:0.5rem; margin-top:0.7rem; font-size:0.9rem; cursor:pointer">
+        <input type="checkbox" id="rf-restock" ${refundRestock ? 'checked' : ''} onchange="refundRestock=this.checked" style="width:auto"> Restock returned items
+      </label>
+      <div class="field"><label>Refund via</label>
+        <select id="rf-method" style="width:100%; padding:0.7rem; font-size:1rem; border-radius:10px; border:1px solid var(--border); background:var(--panel2); color:var(--text)">
+          <option value="cash">💵 Cash (from drawer)</option>
+          <option value="card">💳 Card (reverse on speedpoint)</option>
+          <option value="eft">🏦 EFT (send back)</option>
+        </select></div>
+      <div class="field"><label>Reason (optional)</label><input id="rf-reason" placeholder="e.g. faulty, wrong item"></div>
+      <div class="total" style="font-size:1.3rem; margin-top:0.7rem"><span>REFUND</span><span class="accent" id="rf-total">${money(refundTotalCents())}</span></div>
+      <button class="btn btn-pay" style="background:var(--danger); color:#fff" id="rf-btn" onclick="confirmRefund()">↩ Refund ${money(refundTotalCents())}</button>`;
+    const total = refundTotalCents();
+    const btn = document.getElementById('rf-btn'); btn.disabled = total <= 0; btn.style.opacity = total <= 0 ? '0.5' : '1';
+  }
+  let refundInFlight = false;
+  async function confirmRefund() {
+    if (refundInFlight || !refundOrder) return;
+    const total = refundTotalCents();
+    if (total <= 0) { toast('Select quantities to refund'); return; }
+    const method = document.getElementById('rf-method').value;
+    const reason = (document.getElementById('rf-reason').value || '').trim();
+    const lines = refundOrder.lineItems.filter(li => (refundQty[li.lineItemId] || 0) > 0)
+      .map(li => ({ lineItemId: li.lineItemId, qty: refundQty[li.lineItemId], name: li.name, unitPriceCents: li.unitPriceCents }));
+    if (!confirm(`Refund ${money(total)} via ${method} for ${refundOrder.name}?`)) return;
+    refundInFlight = true;
+    const idemKey = uuid();
+    try {
+      const out = await api('refundCreate', { orderId: refundOrder.orderId, idemKey, restock: refundRestock, reason,
+        refundLineItems: lines.map(l => ({ lineItemId: l.lineItemId, qty: l.qty })) });
+      const refund = {
+        type: 'refund', refundNumber: 'RF-' + refundOrder.name.replace(/^#/, ''), idemKey,
+        datetime: new Date().toISOString(), orderName: refundOrder.name,
+        items: lines, totalCents: out.amountCents || total, method, reason,
+        restocked: out.restocked, staff: currentStaff ? currentStaff.name : null
+      };
+      try { const arr = JSON.parse(localStorage.getItem('reptipos-refunds-log') || '[]'); arr.unshift(refund); localStorage.setItem('reptipos-refunds-log', JSON.stringify(arr.slice(0, 300))); } catch (e) {}
+      try { if (window.fb) { const { db, fns } = window.fb; await fns.addDoc(fns.collection(db, 'refunds'), refund); } } catch (e) {}
+      shiftRecordRefund(refund);
+      // Reflect restock locally so the till's stock figure stays close to Shopify.
+      if (out.restocked) {
+        refundOrder.lineItems.forEach(li => {
+          const q = refundQty[li.lineItemId] || 0; if (q <= 0 || !li.variantId) return;
+          const p = findProduct(li.variantId); if (p) p.qty = (Number(p.qty) || 0) + q;
+        });
+        cacheCatalogue(); renderGrid();
+      }
+      closeRefund();
+      toast('Refunded ' + money(refund.totalCents));
+      showRefundReceipt(refund);
+    } catch (e) {
+      toast('Refund failed: ' + (e.message || e));
+    } finally { refundInFlight = false; }
+  }
+  function shiftRecordRefund(refund) {
+    const s = getShift(); if (!s) return;
+    if (refund.method === 'cash') s.cashRefundsCents += refund.totalCents;
+    s.refundsCount = (s.refundsCount || 0) + 1;
+    saveShift(s);
+  }
+  function showRefundReceipt(refund) {
+    const dt = new Date(refund.datetime).toLocaleString('en-ZA');
+    const rows = refund.items.map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">−${money(i.qty * i.unitPriceCents)}</td></tr>`).join('');
+    const html = `<h2 style="text-align:center;margin:.2rem 0">ReptiCube — REFUND</h2>
+      <div class="c">${esc(refund.refundNumber)}</div>
+      <div class="c">${esc(dt)}</div>
+      <div class="c">Order ${esc(refund.orderName)}</div>
+      <table>${rows}<tr class="tot"><td>REFUND</td><td style="text-align:right">−${money(refund.totalCents)}</td></tr></table>
+      <div class="c">Via: ${esc(refund.method)}${refund.restocked ? ' · restocked' : ''}</div>
+      ${refund.reason ? `<div class="c">${esc(refund.reason)}</div>` : ''}`;
+    printReport(html);
   }
 
   // ---- Payments (Phase 2) ----
@@ -913,6 +1054,7 @@
   Object.assign(window, { refreshCatalogue, addToCart, changeQty, removeLine, clearCart,
     lineDiscount, setCartDiscount,
     parkSale, openParked, closeParked, retrieveParked, deleteParked,
+    openRefund, closeRefund, lookupRefundOrder, setRefundQty, confirmRefund,
     lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff,
     flushQueue,
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
