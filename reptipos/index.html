@@ -380,7 +380,7 @@
     box.innerHTML = '<div class="empty" style="padding:1rem">Searching…</div>';
     custSearchTimer = setTimeout(async () => {
       try { const { customers } = await api('searchCustomers', { q: term }); box.innerHTML = renderCustResults(customers); }
-      catch (e) { box.innerHTML = '<div class="empty" style="padding:1rem">Search failed</div>'; }
+      catch (e) { box.innerHTML = `<div class="empty" style="padding:1rem; color:var(--warn)">${esc(String(e.message || e))}</div>`; }
     }, 350);
   }
   function custAttach(c) { customer = c; custClose(); renderCustomer(); }
