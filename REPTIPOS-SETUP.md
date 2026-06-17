@@ -69,6 +69,9 @@ Shopify error text so you can see exactly which one.
 - **Receipts**: 80mm thermal print + WhatsApp + email (no VAT line).
 - **Customers**: search / create / attach / purchase history (Shopify customers).
 - **Park / retrieve**: full cart state stashed in a Shopify draft order.
+- **Quotes**: save a priced quote (Shopify draft tagged `quote`); print/email it; load it back to the cart to convert to a sale.
+- **Sales orders** (back-order / special order): for an out-of-stock item, take any **deposit** now (cash/card/EFT) with the **balance recorded as owing**; when stock arrives, mark ready, collect the balance, and it becomes a **paid Shopify order** (stock decrements) + invoice. Deposit + balance = item total across the lifecycle (no double-count).
+- **Client profile**: details, purchase history, open quotes & sales orders, and an **account summary** (deposits held + balance owing) aggregated from the client's open sales orders.
 - **Staff PINs**: lock screen, per-staff PIN, admin can manage staff.
 - **Register / cash-up**: open float, pay in/out, X-report, close with counted-cash variance + Z-report (saved to Firestore `cashups`).
 - **Offline queue**: a failed Shopify write is recorded locally and auto-retried on reconnect / every 30s / on demand — same idemKey, never a duplicate.

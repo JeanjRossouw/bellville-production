@@ -120,6 +120,7 @@
     <span id="cat-status">loading catalogue…</span>
     <button id="queue-badge" onclick="flushQueue(true)" title="Sales waiting to sync — click to sync now" style="display:none; width:auto;padding:0 0.6rem;height:30px;font-size:0.78rem;border-radius:8px;border:1px solid var(--warn);background:transparent;color:var(--warn);cursor:pointer"></button>
     <button class="qbtn" title="Parked sales" onclick="openParked()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">⏸ Parked</button>
+    <button class="qbtn" title="Sales orders &amp; quotes" onclick="openDocs('salesorder')" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📋 Orders</button>
     <button class="qbtn" title="Sales history" onclick="openSales()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📊 Sales</button>
     <button class="qbtn" title="Refund / return" onclick="openRefund()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">↩ Refund</button>
     <button class="qbtn" title="Register / cash-up" onclick="openReg()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🧾 Register</button>
@@ -145,6 +146,10 @@
       <div id="tax-line" style="display:none; justify-content:space-between; font-size:0.8rem; color:var(--muted); margin-bottom:0.3rem"></div>
       <div class="total"><span>TOTAL</span><span class="accent" id="grand">R0.00</span></div>
       <button class="btn btn-pay" id="pay-btn" onclick="payOpen()">Pay · 0 items</button>
+      <div style="display:flex; gap:0.5rem; margin-top:0.5rem">
+        <button class="btn btn-ghost" style="padding:0.6rem" onclick="openSalesOrder()" title="Order an out-of-stock item; invoice when it arrives">📋 Sales order</button>
+        <button class="btn btn-ghost" style="padding:0.6rem" onclick="saveQuote()" title="Save a price quote for the customer">📝 Quote</button>
+      </div>
     </div>
   </div>
 </div>
@@ -174,6 +179,38 @@
   <div class="modal-card">
     <h2><span>Parked sales</span><button class="rm" onclick="closeParked()">✕</button></h2>
     <div id="park-body"></div>
+  </div>
+</div>
+
+<div class="modal" id="docs-modal">
+  <div class="modal-card" style="width:560px">
+    <h2><span>Sales orders &amp; quotes</span><button class="rm" onclick="closeDocs()">✕</button></h2>
+    <div style="display:flex; gap:0.4rem; margin-bottom:0.7rem">
+      <button class="qbtn" id="tab-so" style="width:auto; padding:0 0.8rem" onclick="docsTab('salesorder')">📋 Sales orders</button>
+      <button class="qbtn" id="tab-q" style="width:auto; padding:0 0.8rem" onclick="docsTab('quote')">📝 Quotes</button>
+    </div>
+    <div id="docs-body"></div>
+  </div>
+</div>
+
+<div class="modal" id="so-modal">
+  <div class="modal-card">
+    <h2><span>New sales order</span><button class="rm" onclick="closeSalesOrder()">✕</button></h2>
+    <div id="so-body"></div>
+  </div>
+</div>
+
+<div class="modal" id="tender-modal">
+  <div class="modal-card">
+    <h2><span id="tender-title">Take payment</span><button class="rm" onclick="closeTender()">✕</button></h2>
+    <div id="tender-body"></div>
+  </div>
+</div>
+
+<div class="modal" id="profile-modal">
+  <div class="modal-card" style="width:560px">
+    <h2><span>Client profile</span><button class="rm" onclick="closeProfile()">✕</button></h2>
+    <div id="profile-body"></div>
   </div>
 </div>
 
@@ -397,8 +434,9 @@
   // Compute the whole cart in integer cents, applying line then cart discounts.
   // Cart discount is distributed across lines proportionally so per-line unit
   // prices (sent to Shopify) sum exactly to the total.
-  function computeCart() {
-    const lines = cart.map(l => {
+  function computeCart() { return computeCartFor(cart, cartDiscount); }
+  function computeCartFor(cartArr, disc) {
+    const lines = (cartArr || []).map(l => {
       const p = findProduct(l.variantId);
       const base = p ? p.priceCents * l.qty : 0;
       let lineDisc = 0;
@@ -407,7 +445,7 @@
     });
     const subtotal = lines.reduce((t, x) => t + x.afterLine, 0);
     let cartDisc = 0;
-    if (cartDiscount && subtotal > 0) cartDisc = cartDiscount.type === 'pct' ? Math.round(subtotal * cartDiscount.value / 100) : Math.min(subtotal, cartDiscount.value);
+    if (disc && subtotal > 0) cartDisc = disc.type === 'pct' ? Math.round(subtotal * disc.value / 100) : Math.min(subtotal, disc.value);
     // Distribute cartDisc proportionally; fix rounding on the last line.
     let allocated = 0;
     lines.forEach((x, i) => {
@@ -472,7 +510,7 @@
     if (!el) return;
     if (customer) {
       el.innerHTML = `<div class="cinfo"><div class="cn">👤 ${esc(customer.name)}</div><div class="cm">${esc(customer.phone || customer.email || '')}</div></div>
-        <div style="display:flex; gap:0.35rem"><button onclick="custHistory()">History</button><button onclick="custClear()">✕</button></div>`;
+        <div style="display:flex; gap:0.35rem"><button onclick="openProfile()">Profile</button><button onclick="custClear()">✕</button></div>`;
     } else {
       el.innerHTML = `<div class="cinfo"><div class="cn" style="color:var(--muted)">Walk-in customer</div></div>
         <button onclick="custOpen()">+ Add customer</button>`;
@@ -597,6 +635,7 @@
         ${[['Opening float', s.floatCents], ['Cash sales', s.cashSalesCents], ['Card sales', s.cardSalesCents], ['EFT sales', s.eftSalesCents], ['Pay-ins', s.payInsCents], ['Pay-outs', -s.payOutsCents], ['Cash refunds', -s.cashRefundsCents]].map(([k, v]) => `<tr><td style="padding:2px 0; color:var(--muted)">${k}</td><td style="text-align:right">${money(v)}</td></tr>`).join('')}
         <tr><td style="padding-top:6px; font-weight:700; border-top:1px solid var(--border)">Expected cash in drawer</td><td style="text-align:right; font-weight:700; border-top:1px solid var(--border)">${money(exp)}</td></tr>
         <tr><td>Sales count</td><td style="text-align:right">${s.salesCount}</td></tr>
+        ${s.depositsCents ? `<tr><td style="color:var(--muted)">(incl. deposits taken)</td><td style="text-align:right;color:var(--muted)">${money(s.depositsCents)}</td></tr>` : ''}
       </table>
       <div style="display:flex; gap:0.4rem; flex-wrap:wrap; margin-bottom:0.7rem">
         <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="payInOut('in')">+ Pay-in</button>
@@ -642,7 +681,7 @@
   }
   function doOpenRegister() {
     const f = toCents(document.getElementById('reg-float').value);
-    saveShift({ id: 'SHIFT-' + Date.now(), openedAt: new Date().toISOString(), openedBy: currentStaff ? currentStaff.name : '', floatCents: f, cashSalesCents: 0, cardSalesCents: 0, eftSalesCents: 0, cashRefundsCents: 0, payInsCents: 0, payOutsCents: 0, salesCount: 0, byStaff: {} });
+    saveShift({ id: 'SHIFT-' + Date.now(), openedAt: new Date().toISOString(), openedBy: currentStaff ? currentStaff.name : '', floatCents: f, cashSalesCents: 0, cardSalesCents: 0, eftSalesCents: 0, cashRefundsCents: 0, payInsCents: 0, payOutsCents: 0, depositsCents: 0, salesCount: 0, refundsCount: 0, byStaff: {} });
     renderReg(); toast('Register opened');
   }
   function payInOut(dir) {
@@ -669,6 +708,7 @@
         <tr class="tot"><td>Total sales</td><td style="text-align:right">${money(s.cashSalesCents + s.cardSalesCents + s.eftSalesCents)}</td></tr>
         <tr><td>Sales count</td><td style="text-align:right">${s.salesCount}</td></tr>
         <tr><td>Refunds count</td><td style="text-align:right">${s.refundsCount || 0}</td></tr>
+        ${s.depositsCents ? `<tr><td>Deposits taken (incl. above)</td><td style="text-align:right">${money(s.depositsCents)}</td></tr>` : ''}
         <tr class="tot"><td>Expected cash</td><td style="text-align:right">${money(exp)}</td></tr>
         ${countedCents != null ? `<tr><td>Counted</td><td style="text-align:right">${money(countedCents)}</td></tr><tr class="tot"><td>Variance</td><td style="text-align:right">${money(variance)}</td></tr>` : ''}
       </table>
@@ -952,6 +992,292 @@
     printReport(html);
   }
 
+  // ---- Reusable tender picker (deposits + balances) ----
+  let tenderResolve = null;
+  function takeTender(opts) {
+    return new Promise(resolve => {
+      tenderResolve = resolve;
+      document.getElementById('tender-title').textContent = opts.title || 'Take payment';
+      const amt = opts.amountCents || 0;
+      document.getElementById('tender-body').innerHTML = `
+        <div class="field"><label>Amount (R)</label>
+          <input id="tender-amt" type="number" step="0.01" value="${(amt / 100).toFixed(2)}" ${opts.editable ? '' : 'readonly'}></div>
+        <div class="field"><label>Method</label>
+          <div class="pay-grid">
+            <button onclick="tenderMethod('cash')">💵 Cash</button>
+            <button onclick="tenderMethod('card')">💳 Card — paid</button>
+            <button onclick="tenderMethod('eft')">🏦 EFT — paid</button>
+          </div></div>
+        <div id="tender-extra"></div>`;
+      document.getElementById('tender-modal').classList.add('show');
+    });
+  }
+  function closeTender() { document.getElementById('tender-modal').classList.remove('show'); const r = tenderResolve; tenderResolve = null; if (r) r(null); }
+  function tenderMethod(method) {
+    const amt = toCents(document.getElementById('tender-amt').value);
+    if (amt <= 0) { toast('Enter an amount'); return; }
+    const ex = document.getElementById('tender-extra');
+    if (method === 'cash') {
+      ex.innerHTML = `<div class="field"><label>Cash tendered</label>
+        <input id="tender-cash" type="number" step="0.01" value="${(amt / 100).toFixed(2)}" oninput="document.getElementById('tender-chg').textContent='Change: '+money(Math.max(0,toCents(this.value)-${amt}))">
+        <div class="change" id="tender-chg">Change: R0.00</div>
+        <button class="btn btn-pay" style="margin-top:0.6rem" onclick="finishTender('cash',${amt})">✓ Confirm cash ${money(amt)}</button></div>`;
+    } else {
+      const label = method === 'card' ? 'Card' : 'EFT';
+      ex.innerHTML = `<div class="field"><button class="btn btn-pay" onclick="finishTender('${method}',${amt})">✓ ${label} — paid ${money(amt)}</button></div>`;
+    }
+  }
+  function finishTender(method, amt) {
+    const payment = { method, amountCents: amt };
+    if (method === 'cash') { const t = toCents(document.getElementById('tender-cash').value); if (t < amt) { toast('Cash tendered is less than the amount'); return; } payment.cashTenderedCents = t; payment.changeCents = t - amt; }
+    document.getElementById('tender-modal').classList.remove('show');
+    const r = tenderResolve; tenderResolve = null; if (r) r(payment);
+  }
+  function shiftAddTender(method, amount) {
+    const s = getShift(); if (!s || !amount) return;
+    if (method === 'cash') s.cashSalesCents += amount; else if (method === 'card') s.cardSalesCents += amount; else if (method === 'eft') s.eftSalesCents += amount;
+    saveShift(s);
+  }
+  function shiftRecordDeposit(method, amount) {
+    const s = getShift(); if (s) { s.depositsCents = (s.depositsCents || 0) + amount; saveShift(s); }
+    shiftAddTender(method, amount);
+  }
+
+  // ---- Quotes & Sales orders (Shopify draft orders) ----
+  let docsType = 'salesorder';
+  let docsCache = [];
+  function findDoc(id) { return docsCache.find(d => d.id === id); }
+
+  async function saveQuote() {
+    if (cart.length === 0) { toast('Cart is empty'); return; }
+    const c = computeCart();
+    const items = c.lines.map(x => ({ variantId: x.variantId, name: x.p ? x.p.name : x.variantId, sku: x.p ? x.p.sku : '', priceCents: x.finalUnit, qty: x.qty, lineTotalCents: x.finalLine }));
+    const doc = { type: 'quote', cart, cartDiscount, items, totalCents: c.total, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
+    toast('Saving quote…');
+    try {
+      const out = await api('docSave', { tags: 'pos,quote', customerId: customer ? customer.id : undefined, lineItems: cart.map(l => ({ variantId: l.variantId, qty: l.qty })), doc });
+      printDoc({ ...doc, name: out.name, customer: customer ? { name: customer.name } : null }, 'QUOTE');
+      toast('Quote ' + (out.name || '') + ' saved');
+      cart = []; cartDiscount = null; renderCart(); renderGrid();
+    } catch (e) { toast('Quote failed: ' + (e.message || e)); }
+  }
+
+  function openSalesOrder() {
+    if (cart.length === 0) { toast('Cart is empty'); return; }
+    if (!customer) { toast('Add a customer for the sales order'); custOpen(); return; }
+    const total = cartTotal();
+    document.getElementById('so-modal').classList.add('show');
+    document.getElementById('so-body').innerHTML = `
+      <div class="pay-total">${money(total)}</div>
+      <div style="font-size:0.85rem;color:var(--muted);text-align:center;margin-bottom:0.6rem">For ${esc(customer.name)} · balance invoiced when stock arrives</div>
+      <div class="field"><label>Deposit now (R) — can be 0</label>
+        <input id="so-deposit" type="number" step="0.01" value="0.00" oninput="soBalancePreview(${total})"></div>
+      <div class="change" id="so-balance">Balance owing: ${money(total)}</div>
+      <div class="field"><label>Expected stock date (optional)</label><input id="so-date" type="date"></div>
+      <div class="field"><label>Note (optional)</label><input id="so-note" placeholder="e.g. 60×45 terrarium, custom build"></div>
+      <button class="btn btn-pay" style="margin-top:0.6rem" onclick="confirmSalesOrder(${total})">Create sales order</button>`;
+  }
+  function closeSalesOrder() { document.getElementById('so-modal').classList.remove('show'); }
+  function soBalancePreview(total) { const d = toCents(document.getElementById('so-deposit').value); document.getElementById('so-balance').textContent = 'Balance owing: ' + money(Math.max(0, total - d)); }
+  async function confirmSalesOrder(total) {
+    const deposit = toCents(document.getElementById('so-deposit').value);
+    if (deposit > total) { toast('Deposit is more than the total'); return; }
+    const date = document.getElementById('so-date').value || '';
+    const note = (document.getElementById('so-note').value || '').trim();
+    const c = computeCart();
+    const items = c.lines.map(x => ({ variantId: x.variantId, name: x.p ? x.p.name : x.variantId, sku: x.p ? x.p.sku : '', priceCents: x.finalUnit, qty: x.qty, lineTotalCents: x.finalLine }));
+    const cust = customer;
+    let payment = null;
+    if (deposit > 0) {
+      closeSalesOrder();
+      payment = await takeTender({ title: 'Deposit', amountCents: deposit, editable: false });
+      if (!payment) { openSalesOrder(); return; }  // cancelled
+    }
+    const doc = { type: 'salesorder', status: 'awaiting_stock', cart, cartDiscount, items, totalCents: total,
+      depositCents: payment ? payment.amountCents : 0,
+      payments: payment ? [{ ...payment, kind: 'deposit', at: new Date().toISOString() }] : [],
+      expectedDate: date, note, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
+    try {
+      const out = await api('docSave', { tags: 'pos,sales-order', customerId: cust.id, lineItems: cart.map(l => ({ variantId: l.variantId, qty: l.qty })), doc });
+      if (payment) shiftRecordDeposit(payment.method, payment.amountCents);
+      try { if (window.fb) { const { db, fns } = window.fb; await fns.addDoc(fns.collection(db, 'salesorders'), { ...doc, name: out.name, draftId: out.id, customer: { id: cust.id, name: cust.name } }); } } catch (e) {}
+      closeSalesOrder();
+      printDoc({ ...doc, name: out.name, customer: { name: cust.name } }, 'SALES ORDER');
+      toast('Sales order ' + (out.name || '') + ' created');
+      cart = []; cartDiscount = null; customer = null; renderCart(); renderCustomer(); renderGrid();
+    } catch (e) { toast('Sales order failed: ' + (e.message || e)); }
+  }
+
+  function openDocs(type) { docsType = type || 'salesorder'; document.getElementById('docs-modal').classList.add('show'); docsTab(docsType); }
+  function closeDocs() { document.getElementById('docs-modal').classList.remove('show'); }
+  function docsTab(type) {
+    docsType = type;
+    document.getElementById('tab-so').style.background = type === 'salesorder' ? 'var(--accent)' : 'var(--panel2)';
+    document.getElementById('tab-q').style.background = type === 'quote' ? 'var(--accent)' : 'var(--panel2)';
+    renderDocs();
+  }
+  async function renderDocs() {
+    const body = document.getElementById('docs-body');
+    body.innerHTML = '<div class="empty" style="padding:1.5rem">Loading…</div>';
+    try {
+      const { docs } = await api('docList', { type: docsType });
+      docsCache = docs;
+      if (!docs.length) { body.innerHTML = '<div class="empty" style="padding:1.5rem">None</div>'; return; }
+      docs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      body.innerHTML = `<div style="max-height:55vh;overflow:auto">${docs.map(docRow).join('')}</div>`;
+    } catch (e) { body.innerHTML = `<div class="empty" style="padding:1.5rem;color:var(--warn)">${esc(String(e.message || e))}</div>`; }
+  }
+  function docRow(d) {
+    const m = d.doc || {};
+    const total = m.totalCents || 0;
+    const cust = d.customer ? d.customer.name : '(no customer)';
+    const when = new Date(d.createdAt).toLocaleString('en-ZA');
+    if (m.type === 'quote') {
+      return `<div class="cust-result" style="cursor:default">
+        <div><div style="font-weight:600">${esc(d.name)} · ${esc(cust)}</div>
+          <div style="font-size:0.72rem;color:var(--muted)">${when} · ${money(total)}</div></div>
+        <div style="display:flex;gap:0.4rem">
+          <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="loadQuote('${d.id}')">To cart</button>
+          <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="printDocById('${d.id}','QUOTE')">🖨️</button>
+          <button class="rm" onclick="soCancel('${d.id}')">✕</button>
+        </div></div>`;
+    }
+    const dep = m.depositCents || 0, bal = total - dep;
+    const statusLabel = { awaiting_stock: '⏳ awaiting stock', ready: '✅ ready' }[m.status] || (m.status || '');
+    return `<div class="cust-result" style="cursor:default; flex-direction:column; align-items:stretch; gap:0.35rem">
+      <div style="display:flex;justify-content:space-between"><div style="font-weight:600">${esc(d.name)} · ${esc(cust)}</div><div style="font-weight:700">${money(total)}</div></div>
+      <div style="font-size:0.72rem;color:var(--muted)">${when} · deposit ${money(dep)} · balance ${money(bal)} · ${esc(statusLabel)}${m.expectedDate ? ' · exp ' + esc(m.expectedDate) : ''}${m.note ? ' · ' + esc(m.note) : ''}</div>
+      <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
+        ${bal > 0 ? `<button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="soAddPayment('${d.id}')">+ Deposit</button>` : ''}
+        ${m.status !== 'ready' ? `<button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="soMarkReady('${d.id}')">Mark ready</button>` : ''}
+        <button class="qbtn" style="width:auto;padding:0 0.6rem;background:var(--accent);color:#04210f" onclick="soFulfil('${d.id}')">Fulfil &amp; invoice</button>
+        <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="printDocById('${d.id}','SALES ORDER')">🖨️</button>
+        <button class="rm" onclick="soCancel('${d.id}')">✕</button>
+      </div></div>`;
+  }
+  async function saveSO(d, doc) {
+    return api('docSave', { id: d.id, tags: d.doc.type === 'quote' ? 'pos,quote' : 'pos,sales-order',
+      customerId: d.customer ? d.customer.id : undefined, lineItems: (doc.cart || doc.items || []).map(l => ({ variantId: l.variantId, qty: l.qty })), doc });
+  }
+  async function loadQuote(id) {
+    const d = findDoc(id); if (!d) return;
+    if (cart.length && !confirm('Replace the current cart with this quote?')) return;
+    const m = d.doc;
+    cart = Array.isArray(m.cart) ? m.cart : (m.items || []).map(i => ({ variantId: i.variantId, qty: i.qty }));
+    cartDiscount = m.cartDiscount || null;
+    customer = d.customer ? { id: d.customer.id, name: d.customer.name } : customer;
+    closeDocs(); renderCart(); renderCustomer(); renderGrid();
+    try { await api('docDelete', { id: d.id }); } catch (e) {}
+    toast('Loaded ' + (d.name || 'quote') + ' — review and take payment');
+  }
+  async function soAddPayment(id) {
+    const d = findDoc(id); if (!d) return;
+    const m = d.doc; const bal = (m.totalCents || 0) - (m.depositCents || 0);
+    closeDocs();
+    const payment = await takeTender({ title: 'Add deposit (balance ' + money(bal) + ')', amountCents: bal, editable: true });
+    if (!payment) { openDocs('salesorder'); return; }
+    if (payment.amountCents > bal) { toast('More than the balance owing'); openDocs('salesorder'); return; }
+    const doc = { ...m, depositCents: (m.depositCents || 0) + payment.amountCents, payments: [...(m.payments || []), { ...payment, kind: 'deposit', at: new Date().toISOString() }] };
+    try { await saveSO(d, doc); shiftRecordDeposit(payment.method, payment.amountCents); toast('Deposit added'); } catch (e) { toast('Failed: ' + (e.message || e)); }
+    openDocs('salesorder');
+  }
+  async function soMarkReady(id) {
+    const d = findDoc(id); if (!d) return;
+    try { await saveSO(d, { ...d.doc, status: 'ready' }); toast('Marked ready — tell the customer'); renderDocs(); } catch (e) { toast('Failed'); }
+  }
+  async function soFulfil(id) {
+    const d = findDoc(id); if (!d) return;
+    const m = d.doc; const total = m.totalCents || 0; const dep = m.depositCents || 0; const bal = Math.max(0, total - dep);
+    closeDocs();
+    let balPayment = null;
+    if (bal > 0) { balPayment = await takeTender({ title: 'Collect balance ' + money(bal), amountCents: bal, editable: false }); if (!balPayment) { openDocs('salesorder'); return; } }
+    if (!confirm('Fulfil ' + d.name + ' and create the paid invoice (stock will decrement)?')) { openDocs('salesorder'); return; }
+    const idemKey = uuid();
+    const saleNumber = nextSaleNumber();
+    const items = (m.items || []).map(i => ({ ...i, lineTotalCents: i.lineTotalCents != null ? i.lineTotalCents : i.priceCents * i.qty }));
+    const note = saleNumber + ' · SO ' + d.name + ' · deposit ' + money(dep) + (balPayment ? ' · balance ' + paymentSummary(balPayment) : ' · paid in full on deposit');
+    try {
+      const res = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'createOrder', idemKey, customerId: d.customer ? d.customer.id : undefined, lineItems: items.map(i => ({ variantId: i.variantId, qty: i.qty, priceCents: i.priceCents })), note }) });
+      if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 120));
+      const out = await res.json();
+      try { await api('docDelete', { id: d.id }); } catch (e) {}
+      if (balPayment) shiftAddTender(balPayment.method, balPayment.amountCents);
+      const s = getShift(); if (s) { s.salesCount += 1; saveShift(s); }
+      const sale = { saleNumber, idemKey, datetime: new Date().toISOString(), items, totalCents: total, discountCents: 0,
+        payment: balPayment || { method: 'paid', amountCents: 0 }, customer: d.customer ? { id: d.customer.id, name: d.customer.name } : null,
+        staff: currentStaff ? currentStaff.name : null, shopifyOrder: out.orderName || null, synced: true, salesOrder: d.name, depositAppliedCents: dep };
+      try { const arr = JSON.parse(localStorage.getItem('reptipos-sales') || '[]'); arr.unshift(sale); localStorage.setItem('reptipos-sales', JSON.stringify(arr.slice(0, 300))); } catch (e) {}
+      try { if (window.fb) { const { db, fns } = window.fb; await fns.addDoc(fns.collection(db, 'sales'), sale); } } catch (e) {}
+      items.forEach(i => { const p = findProduct(i.variantId); if (p) p.qty = Math.max(0, (Number(p.qty) || 0) - i.qty); });
+      cacheCatalogue(); renderGrid();
+      toast('Fulfilled ' + d.name + ' · ' + (out.orderName || ''));
+      showReceipt(sale);
+      openDocs('salesorder');
+    } catch (e) { toast('Fulfil failed: ' + (e.message || e)); openDocs('salesorder'); }
+  }
+  async function soCancel(id) {
+    const d = findDoc(id); if (!d) return;
+    const dep = (d.doc && d.doc.depositCents) || 0;
+    const isQuote = d.doc && d.doc.type === 'quote';
+    if (!confirm((isQuote ? 'Delete this quote?' : 'Cancel ' + d.name + '?') + (dep > 0 ? ' Deposit ' + money(dep) + ' must be refunded to the customer manually.' : ''))) return;
+    try { await api('docDelete', { id }); toast(isQuote ? 'Quote deleted' : 'Sales order cancelled'); renderDocs(); } catch (e) { toast('Failed'); }
+  }
+
+  function printDocById(id, kind) { const d = findDoc(id); if (d) printDoc({ ...d.doc, name: d.name, customer: d.customer }, kind); }
+  function printDoc(doc, kind) {
+    const items = doc.items || [];
+    const rows = items.map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">${money(i.lineTotalCents != null ? i.lineTotalCents : i.priceCents * i.qty)}</td></tr>`).join('');
+    const dep = doc.depositCents || 0; const bal = (doc.totalCents || 0) - dep;
+    let html = `<h2 style="text-align:center;margin:.2rem 0">ReptiCube</h2>
+      <div class="c">${esc(kind)}${doc.name ? ' ' + esc(doc.name) : ''}</div>
+      <div class="c">${new Date(doc.createdAt || Date.now()).toLocaleString('en-ZA')}</div>
+      ${doc.customer ? `<div class="c">${esc(doc.customer.name)}</div>` : ''}
+      <table>${rows}<tr class="tot"><td>TOTAL</td><td style="text-align:right">${money(doc.totalCents || 0)}</td></tr>`;
+    if (kind === 'SALES ORDER') html += `<tr><td>Deposit paid</td><td style="text-align:right">${money(dep)}</td></tr><tr class="tot"><td>Balance owing</td><td style="text-align:right">${money(bal)}</td></tr>`;
+    html += `</table>`;
+    if (doc.expectedDate) html += `<div class="c">Expected stock: ${esc(doc.expectedDate)}</div>`;
+    if (doc.note) html += `<div class="c">${esc(doc.note)}</div>`;
+    html += `<div class="c" style="margin-top:6px">${kind === 'QUOTE' ? 'Quote — subject to availability' : 'Thank you!'}</div>`;
+    printReport(html);
+  }
+
+  // ---- Client profile ----
+  function closeProfile() { document.getElementById('profile-modal').classList.remove('show'); }
+  function sectionList(title, lines) {
+    return `<div style="font-size:0.8rem;font-weight:700;margin:0.7rem 0 0.3rem">${esc(title)}</div>` +
+      (lines.length ? lines.map(l => `<div style="font-size:0.82rem;padding:0.28rem 0;border-bottom:1px solid var(--border)">${l}</div>`).join('') : '<div class="empty" style="padding:0.4rem">None</div>');
+  }
+  async function openProfile() {
+    if (!customer) return;
+    document.getElementById('profile-modal').classList.add('show');
+    const body = document.getElementById('profile-body');
+    body.innerHTML = `<div style="font-weight:700;font-size:1.05rem">${esc(customer.name)}</div>
+      <div style="color:var(--muted);font-size:0.85rem;margin-bottom:0.4rem">${esc(customer.phone || '')}${customer.phone && customer.email ? ' · ' : ''}${esc(customer.email || '')}</div>
+      <div id="prof-acct" class="empty" style="padding:0.8rem">Loading account…</div>`;
+    try {
+      const { docs } = await api('docList', { customerId: customer.id });
+      const sos = docs.filter(d => d.doc && d.doc.type === 'salesorder');
+      const quotes = docs.filter(d => d.doc && d.doc.type === 'quote');
+      const depositsHeld = sos.reduce((t, d) => t + (d.doc.depositCents || 0), 0);
+      const balanceOwing = sos.reduce((t, d) => t + ((d.doc.totalCents || 0) - (d.doc.depositCents || 0)), 0);
+      let orders = []; try { const r = await api('customerOrders', { customerId: customer.id }); orders = r.orders || []; } catch (e) {}
+      const acct = document.getElementById('prof-acct');
+      acct.className = ''; acct.removeAttribute('style');
+      acct.innerHTML = `
+        <div style="display:flex;gap:0.6rem;margin-bottom:0.3rem">
+          <div style="flex:1;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.6rem;text-align:center"><div style="font-size:0.72rem;color:var(--muted)">Deposits held</div><div style="font-weight:800;color:var(--accent2)">${money(depositsHeld)}</div></div>
+          <div style="flex:1;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.6rem;text-align:center"><div style="font-size:0.72rem;color:var(--muted)">Balance owing</div><div style="font-weight:800;color:var(--warn)">${money(balanceOwing)}</div></div>
+        </div>
+        ${sectionList('Open sales orders', sos.map(d => `${esc(d.name)} · ${money(d.doc.totalCents || 0)} · bal ${money((d.doc.totalCents || 0) - (d.doc.depositCents || 0))} · ${esc(d.doc.status || '')}`))}
+        ${sectionList('Open quotes', quotes.map(d => `${esc(d.name)} · ${money(d.doc.totalCents || 0)}`))}
+        ${sectionList('Recent purchases', orders.map(o => `${esc(o.name)} · ${new Date(o.createdAt).toLocaleDateString('en-ZA')} · ${o.items} item(s) · ${money(o.totalCents)}`))}
+        <div style="display:flex;gap:0.5rem;margin-top:0.9rem">
+          <button class="btn btn-ghost" onclick="closeProfile();openDocs('salesorder')">Manage orders</button>
+        </div>`;
+    } catch (e) { const el = document.getElementById('prof-acct'); if (el) el.textContent = 'Could not load account: ' + (e.message || e); }
+  }
+
   // ---- Payments (Phase 2) ----
   function payOpen() {
     if (cart.length === 0) { toast('Cart is empty'); return; }
@@ -1025,6 +1351,7 @@
     if (p.method === 'cash') return `Cash (tendered ${money(p.cashTenderedCents)}, change ${money(p.changeCents)})`;
     if (p.method === 'card') return 'Card (Capitec — paid)';
     if (p.method === 'eft') return 'EFT (paid)';
+    if (p.method === 'paid' || p.method === 'deposit') return 'Paid by deposit';
     return `Split: cash ${money(p.cashAmountCents)} + card ${money(p.cardAmountCents)}`;
   }
 
@@ -1194,6 +1521,10 @@
     parkSale, openParked, closeParked, retrieveParked, deleteParked,
     openRefund, closeRefund, lookupRefundOrder, setRefundQty, confirmRefund,
     openCamScan, closeCamScan, openSales, closeSales, reprintSale,
+    takeTender, closeTender, tenderMethod, finishTender,
+    saveQuote, openSalesOrder, closeSalesOrder, soBalancePreview, confirmSalesOrder,
+    openDocs, closeDocs, docsTab, loadQuote, soAddPayment, soMarkReady, soFulfil, soCancel, printDocById,
+    openProfile, closeProfile,
     lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings,
     flushQueue,
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,

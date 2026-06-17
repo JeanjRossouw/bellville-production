@@ -195,9 +195,9 @@ async function draftCreate({ lineItems, customerId, parkData }) {
 }
 async function draftList() {
   const { json } = await shopify('/draft_orders.json?status=open&limit=50');
-  return (json.draft_orders || []).map(d => {
+  return (json.draft_orders || []).filter(d => d.note && d.note.startsWith(PARK_MARKER)).map(d => {
     let parkData = null;
-    if (d.note && d.note.startsWith(PARK_MARKER)) { try { parkData = JSON.parse(d.note.slice(PARK_MARKER.length)); } catch (e) {} }
+    try { parkData = JSON.parse(d.note.slice(PARK_MARKER.length)); } catch (e) {}
     return {
       id: String(d.id), name: d.name, createdAt: d.created_at,
       totalCents: Math.round((Number(d.total_price) || 0) * 100),
@@ -209,6 +209,45 @@ async function draftList() {
 async function draftDelete(id) {
   await shopify(`/draft_orders/${Number(id)}.json`, { method: 'DELETE' });
   return { ok: true };
+}
+
+// ---- Quotes & Sales orders (Shopify draft orders carrying a JSON doc) ----
+// Both are draft orders so they're visible in Shopify admin. Full state (cart,
+// discounts, deposit, balance, status) lives in the note under a marker. Tags:
+//   pos,quote          a price quote
+//   pos,sales-order    a sales order (deposit taken, balance owing, awaiting stock)
+const DOC_MARKER = '@@reptipos-doc@@';
+function buildDocNote(doc) { return DOC_MARKER + JSON.stringify(doc || {}); }
+function parseDocNote(note) {
+  if (!note) return null;
+  const i = note.indexOf(DOC_MARKER);
+  if (i < 0) return null;
+  try { return JSON.parse(note.slice(i + DOC_MARKER.length)); } catch (e) { return null; }
+}
+async function docSave({ id, lineItems, customerId, tags, doc }) {
+  const draft = {
+    line_items: (lineItems || []).map(li => ({ variant_id: Number(li.variantId), quantity: Number(li.qty) || 1 })),
+    tags: tags || 'pos',
+    note: buildDocNote(doc),
+    ...(customerId ? { customer: { id: Number(customerId) } } : {})
+  };
+  if (id) {
+    const { json } = await shopify(`/draft_orders/${Number(id)}.json`, { method: 'PUT', body: { draft_order: { id: Number(id), ...draft } } });
+    return { id: String(json.draft_order.id), name: json.draft_order.name };
+  }
+  const { json } = await shopify('/draft_orders.json', { method: 'POST', body: { draft_order: draft } });
+  return { id: String(json.draft_order.id), name: json.draft_order.name };
+}
+async function docList(type, customerId) {
+  const { json } = await shopify('/draft_orders.json?status=open&limit=100');
+  return (json.draft_orders || []).map(d => {
+    const doc = parseDocNote(d.note);
+    return {
+      id: String(d.id), name: d.name, createdAt: d.created_at,
+      customer: d.customer ? { id: String(d.customer.id), name: [d.customer.first_name, d.customer.last_name].filter(Boolean).join(' ') } : null,
+      doc
+    };
+  }).filter(d => d.doc && (!type || d.doc.type === type) && (!customerId || (d.customer && d.customer.id === String(customerId))));
 }
 
 // ---- Refunds / returns ----
@@ -350,6 +389,9 @@ export const handler = async (event) => {
     if (body.action === 'searchCustomers') return json(200, { customers: await searchCustomers(body.q) });
     if (body.action === 'createCustomer') return json(200, { customer: await createCustomer(body) });
     if (body.action === 'customerOrders') return json(200, { orders: await customerOrders(body.customerId) });
+    if (body.action === 'docSave') return json(200, await docSave(body));
+    if (body.action === 'docList') return json(200, { docs: await docList(body.type, body.customerId) });
+    if (body.action === 'docDelete') return json(200, await draftDelete(body.id));
     if (body.action === 'lookupOrder') return json(200, { order: await lookupOrder(body.q) });
     if (body.action === 'refundCreate') return json(200, await refundCreate(body));
     return json(400, { error: `Unknown action "${body.action}"` });
