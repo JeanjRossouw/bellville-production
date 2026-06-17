@@ -102,7 +102,7 @@ async function getProducts() {
 // Create a paid + (best-effort) fulfilled Shopify order for a walk-in sale, so
 // inventory decrements. lineItems: [{ variantId, qty }]. idemKey makes retries
 // return the SAME order instead of creating duplicates. Returns the order name.
-async function createOrder({ lineItems, note, idemKey }) {
+async function createOrder({ lineItems, note, idemKey, customerId }) {
   if (!Array.isArray(lineItems) || lineItems.length === 0) { const e = new Error('No line items'); e.status = 400; throw e; }
 
   // Idempotency: if we've already created an order for this key, return it.
@@ -117,14 +117,22 @@ async function createOrder({ lineItems, note, idemKey }) {
 
   const payload = {
     order: {
-      line_items: lineItems.map(li => ({ variant_id: Number(li.variantId), quantity: Number(li.qty) || 1 })),
+      line_items: lineItems.map(li => {
+        const li2 = { variant_id: Number(li.variantId), quantity: Number(li.qty) || 1 };
+        // Discounted unit price (cents) overrides the variant price so the order
+        // total matches what the customer actually paid. Inventory still
+        // decrements by variant.
+        if (li.priceCents != null) li2.price = (Number(li.priceCents) / 100).toFixed(2);
+        return li2;
+      }),
       financial_status: 'paid',
       inventory_behaviour: 'decrement_obeying_policy', // decrement stock
       tags: 'walk-in',
       source_name: 'reptipos',
       note: note || 'ReptiCube walk-in POS',
       send_receipt: false,
-      send_fulfillment_receipt: false
+      send_fulfillment_receipt: false,
+      ...(customerId ? { customer: { id: Number(customerId) } } : {})
     }
   };
   const { json } = await shopify('/orders.json', { method: 'POST', body: payload });
@@ -151,6 +159,33 @@ async function shopInfo() {
   catch (e) { return ''; }
 }
 
+// ---- Customers ----
+function mapCustomer(c) {
+  const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim() || c.email || c.phone || ('Customer ' + c.id);
+  return { id: String(c.id), name, email: c.email || '', phone: c.phone || '' };
+}
+async function searchCustomers(q) {
+  const query = encodeURIComponent(String(q || '').trim());
+  if (!query) return [];
+  const { json } = await shopify(`/customers/search.json?query=${query}&limit=20`);
+  return (json.customers || []).map(mapCustomer);
+}
+async function createCustomer({ firstName, lastName, name, email, phone }) {
+  let fn = firstName, ln = lastName;
+  if (!fn && name) { const parts = String(name).trim().split(/\s+/); fn = parts.shift(); ln = parts.join(' '); }
+  const body = { customer: { first_name: fn || '', last_name: ln || '', email: email || undefined, phone: phone || undefined } };
+  const { json } = await shopify('/customers.json', { method: 'POST', body });
+  return mapCustomer(json.customer);
+}
+async function customerOrders(customerId) {
+  const { json } = await shopify(`/orders.json?customer_id=${Number(customerId)}&status=any&limit=20`);
+  return (json.orders || []).map(o => ({
+    name: o.name, createdAt: o.created_at,
+    totalCents: Math.round((Number(o.total_price) || 0) * 100),
+    items: (o.line_items || []).reduce((n, li) => n + (Number(li.quantity) || 0), 0)
+  }));
+}
+
 export const handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'POST only' };
   let body;
@@ -169,6 +204,9 @@ export const handler = async (event) => {
       const out = await createOrder(body);
       return json(200, out);
     }
+    if (body.action === 'searchCustomers') return json(200, { customers: await searchCustomers(body.q) });
+    if (body.action === 'createCustomer') return json(200, { customer: await createCustomer(body) });
+    if (body.action === 'customerOrders') return json(200, { orders: await customerOrders(body.customerId) });
     return json(400, { error: `Unknown action "${body.action}"` });
   } catch (e) {
     return json(e.status === 401 ? 401 : (e.status === 400 ? 400 : 502), { error: e.message });

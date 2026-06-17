@@ -102,6 +102,13 @@
   .field label { display:block; font-size:0.8rem; color:var(--muted); margin-bottom:0.25rem; }
   .field input { width:100%; padding:0.7rem; font-size:1.1rem; border-radius:10px; border:1px solid var(--border); background:var(--panel2); color:var(--text); }
   .change { font-size:1.05rem; font-weight:700; margin-top:0.6rem; }
+  .custbar { padding:0.6rem 0.85rem; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:0.5rem; }
+  .custbar .cinfo { min-width:0; }
+  .custbar .cinfo .cn { font-weight:700; font-size:0.9rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .custbar .cinfo .cm { font-size:0.72rem; color:var(--muted); }
+  .custbar button { padding:0.4rem 0.7rem; border-radius:8px; border:1px solid var(--border); background:var(--panel2); color:var(--text); font-size:0.8rem; cursor:pointer; }
+  .cust-result { display:flex; justify-content:space-between; align-items:center; gap:0.5rem; padding:0.55rem; border-bottom:1px solid var(--border); cursor:pointer; }
+  .cust-result:hover { background:var(--panel2); }
 </style>
 </head>
 <body>
@@ -121,6 +128,7 @@
     <div id="grid"></div>
   </div>
   <div class="right">
+    <div id="customer" class="custbar"></div>
     <div class="rhead"><span>Cart</span><button class="rm" onclick="clearCart()" title="Clear cart">Clear</button></div>
     <div id="cart"></div>
     <div class="foot">
@@ -144,6 +152,13 @@
   </div>
 </div>
 
+<div class="modal" id="cust-modal">
+  <div class="modal-card">
+    <h2><span>Customer</span><button class="rm" onclick="custClose()">✕</button></h2>
+    <div id="cust-body"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -151,7 +166,9 @@
   let catalogue = [];      // products incl. priceCents (integer money — never floats)
   let locationId = null;
   let cart = [];           // [{ variantId, qty }]
+  let customer = null;     // { id, name, email, phone } attached to the sale
   let saleInFlight = false; // guard against double-submit creating duplicate orders
+  let custSearchTimer = null;
 
   // Money is integer CENTS everywhere internally. money() formats cents → "R…".
   const money = c => 'R' + ((Number(c) || 0) / 100).toFixed(2);
@@ -314,6 +331,79 @@
     payBtn.style.opacity = count === 0 ? '0.5' : '1';
   }
 
+  // ---- Customers ----
+  async function api(action, extra) {
+    const res = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...(extra || {}) }) });
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 120));
+    return res.json();
+  }
+  function renderCustomer() {
+    const el = document.getElementById('customer');
+    if (!el) return;
+    if (customer) {
+      el.innerHTML = `<div class="cinfo"><div class="cn">👤 ${esc(customer.name)}</div><div class="cm">${esc(customer.phone || customer.email || '')}</div></div>
+        <div style="display:flex; gap:0.35rem"><button onclick="custHistory()">History</button><button onclick="custClear()">✕</button></div>`;
+    } else {
+      el.innerHTML = `<div class="cinfo"><div class="cn" style="color:var(--muted)">Walk-in customer</div></div>
+        <button onclick="custOpen()">+ Add customer</button>`;
+    }
+  }
+  function custClear() { customer = null; renderCustomer(); }
+  function custOpen() { document.getElementById('cust-modal').classList.add('show'); renderCustBody(''); }
+  function custClose() { document.getElementById('cust-modal').classList.remove('show'); }
+  function renderCustBody(q, results) {
+    const body = document.getElementById('cust-body');
+    body.innerHTML = `
+      <input id="cust-q" autocomplete="off" placeholder="🔍 Search by name / email / phone" value="${esc(q || '')}" oninput="custSearch(this.value)">
+      <div id="cust-results" style="max-height:220px; overflow:auto; margin:0.6rem 0">${results === undefined ? '<div class="empty" style="padding:1rem">Type to search Shopify customers</div>' : renderCustResults(results)}</div>
+      <div style="border-top:1px solid var(--border); padding-top:0.7rem">
+        <div style="font-size:0.8rem; font-weight:700; margin-bottom:0.4rem">New customer</div>
+        <input id="nc-name" placeholder="Name *" style="width:100%; margin-bottom:0.4rem">
+        <div style="display:flex; gap:0.4rem">
+          <input id="nc-phone" placeholder="Phone" style="flex:1">
+          <input id="nc-email" placeholder="Email" style="flex:1">
+        </div>
+        <button class="btn btn-pay" style="margin-top:0.55rem" onclick="custCreate()">+ Create &amp; attach</button>
+      </div>`;
+    const i = document.getElementById('cust-q'); if (i) i.focus();
+  }
+  function renderCustResults(list) {
+    if (!list || !list.length) return '<div class="empty" style="padding:1rem">No matches</div>';
+    return list.map(c => `<div class="cust-result" onclick='custAttach(${JSON.stringify(c).replace(/'/g, "&#39;")})'>
+      <div><div style="font-weight:600">${esc(c.name)}</div><div style="font-size:0.72rem;color:var(--muted)">${esc(c.phone || c.email || '')}</div></div></div>`).join('');
+  }
+  function custSearch(q) {
+    clearTimeout(custSearchTimer);
+    const term = q.trim();
+    const box = document.getElementById('cust-results');
+    if (!term) { box.innerHTML = '<div class="empty" style="padding:1rem">Type to search Shopify customers</div>'; return; }
+    box.innerHTML = '<div class="empty" style="padding:1rem">Searching…</div>';
+    custSearchTimer = setTimeout(async () => {
+      try { const { customers } = await api('searchCustomers', { q: term }); box.innerHTML = renderCustResults(customers); }
+      catch (e) { box.innerHTML = '<div class="empty" style="padding:1rem">Search failed</div>'; }
+    }, 350);
+  }
+  function custAttach(c) { customer = c; custClose(); renderCustomer(); }
+  async function custCreate() {
+    const name = (document.getElementById('nc-name').value || '').trim();
+    if (!name) { toast('Enter a customer name'); return; }
+    try {
+      const { customer: c } = await api('createCustomer', { name, phone: (document.getElementById('nc-phone').value || '').trim(), email: (document.getElementById('nc-email').value || '').trim() });
+      custAttach(c); toast('Customer created');
+    } catch (e) { toast('Create failed: ' + (e.message || e)); }
+  }
+  async function custHistory() {
+    if (!customer) return;
+    custOpen();
+    const body = document.getElementById('cust-body');
+    body.innerHTML = `<div style="font-weight:700; margin-bottom:0.5rem">${esc(customer.name)} — purchase history</div><div id="cust-hist"><div class="empty" style="padding:1rem">Loading…</div></div><button class="btn btn-pay" style="margin-top:0.6rem" onclick="renderCustBody('')">← Back to search</button>`;
+    try {
+      const { orders } = await api('customerOrders', { customerId: customer.id });
+      const h = document.getElementById('cust-hist');
+      h.innerHTML = orders.length ? orders.map(o => `<div class="cust-result" style="cursor:default"><div><div style="font-weight:600">${esc(o.name)}</div><div style="font-size:0.72rem;color:var(--muted)">${new Date(o.createdAt).toLocaleDateString('en-ZA')} · ${o.items} item${o.items === 1 ? '' : 's'}</div></div><div style="font-weight:700">${money(o.totalCents)}</div></div>`).join('') : '<div class="empty" style="padding:1rem">No previous orders</div>';
+    } catch (e) { document.getElementById('cust-hist').innerHTML = '<div class="empty" style="padding:1rem">Could not load history</div>'; }
+  }
+
   // ---- Payments (Phase 2) ----
   function payOpen() {
     if (cart.length === 0) { toast('Cart is empty'); return; }
@@ -401,6 +491,7 @@
       idemKey: uuid(),                 // idempotency key — same sale never creates two Shopify orders
       datetime: new Date().toISOString(),
       items, totalCents: total, payment,
+      customer: customer ? { id: customer.id, name: customer.name } : null,
       shopifyOrder: null, synced: false
     };
     payClose();
@@ -416,7 +507,7 @@
     // retry return the SAME order instead of creating a duplicate.
     try {
       const res = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'createOrder', idemKey: sale.idemKey, lineItems: items.map(i => ({ variantId: i.variantId, qty: i.qty })), note: sale.saleNumber + ' · ' + paymentSummary(payment) }) });
+        body: JSON.stringify({ action: 'createOrder', idemKey: sale.idemKey, customerId: customer ? customer.id : undefined, lineItems: items.map(i => ({ variantId: i.variantId, qty: i.qty })), note: sale.saleNumber + ' · ' + paymentSummary(payment) }) });
       if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 120));
       const out = await res.json();
       sale.shopifyOrder = out.orderName || null; sale.synced = true;
@@ -431,6 +522,7 @@
     items.forEach(i => { const p = findProduct(i.variantId); if (p) p.qty = Math.max(0, (Number(p.qty) || 0) - i.qty); });
     cacheCatalogue();
     cart = [];
+    customer = null; renderCustomer();
     renderCart(); renderGrid();
     showReceipt(sale);
     saleInFlight = false;
@@ -475,6 +567,7 @@
       <h2>ReptiCube</h2>
       <div class="c">Sale ${esc(sale.saleNumber)}</div>
       <div class="c">${esc(dt)}</div>
+      ${sale.customer ? `<div class="c">Customer: ${esc(sale.customer.name)}</div>` : ''}
       <table>${rows}<tr class="tot"><td>TOTAL</td><td style="text-align:right">${money(sale.totalCents)}</td></tr></table>
       <div class="c">Paid: ${esc(paymentSummary(sale.payment))}</div>
       ${sale.shopifyOrder ? `<div class="c">Order ${esc(sale.shopifyOrder)}</div>` : ''}
@@ -498,11 +591,13 @@
 
   // Expose handlers
   Object.assign(window, { refreshCatalogue, addToCart, changeQty, removeLine, clearCart,
-    payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale });
+    payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
+    custOpen, custClose, custClear, custSearch, custAttach, custCreate, custHistory, renderCustBody });
 
   // ---- Boot ----
   if (loadCached()) { document.getElementById('cat-status').textContent = catalogue.length + ' products (cached)'; renderGrid(); }
   renderCart();
+  renderCustomer();
   scan.focus();
   refreshCatalogue(false);
 </script>
