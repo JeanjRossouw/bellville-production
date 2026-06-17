@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>ReptiCube POS</title>
+
+<!-- Firebase (used for sales log / offline queue / staff in later phases) -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+  import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+  import { getFirestore, doc, setDoc, getDoc, collection, addDoc, getDocs, query, where, orderBy, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+  // Reuses the existing Firebase project (separate Firestore collections for the till).
+  const firebaseConfig = {
+    apiKey: "AIzaSyB5QfSiuwjDGwZOZMHzN3BhziK_AKVeBNg",
+    authDomain: "bellville-production-ffb19.firebaseapp.com",
+    projectId: "bellville-production-ffb19",
+    storageBucket: "bellville-production-ffb19.firebasestorage.app",
+    messagingSenderId: "505275243511",
+    appId: "1:505275243511:web:8419f7ca02e9dc542f2cf2"
+  };
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  const auth = getAuth(app);
+  enableIndexedDbPersistence(db).catch(() => {});
+  // Kiosk auth so Firestore rules that require a signed-in user pass. Staff PINs
+  // (Phase 4) are an app-level layer on top of this.
+  signInAnonymously(auth).catch((e) => console.warn('Anon auth unavailable:', e.message));
+
+  window.fb = {
+    db, auth,
+    fns: { doc, setDoc, getDoc, collection, addDoc, getDocs, query, where, orderBy, onAuthStateChanged }
+  };
+  window.dispatchEvent(new Event('fb-ready'));
+</script>
+
+<style>
+  :root {
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --border:#2b3140;
+    --text:#eef1f6; --muted:#9aa4b6; --accent:#16a34a; --accent2:#22c55e;
+    --warn:#f59e0b; --danger:#ef4444;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; -webkit-text-size-adjust:100%; }
+  button { font-family:inherit; }
+  input { font-family:inherit; }
+
+  header { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:0.6rem 1rem; background:var(--panel); border-bottom:1px solid var(--border); }
+  header .brand { font-weight:800; font-size:1.05rem; letter-spacing:0.02em; }
+  header .brand span { color:var(--accent2); }
+  .status { font-size:0.75rem; color:var(--muted); display:flex; gap:0.75rem; align-items:center; }
+  .dot { width:9px; height:9px; border-radius:50%; display:inline-block; background:var(--accent2); }
+  .dot.off { background:var(--danger); }
+
+  .shell { display:flex; height:calc(100vh - 53px); }
+  .left { flex:2; min-width:0; display:flex; flex-direction:column; padding:0.85rem; }
+  .right { flex:1; min-width:320px; max-width:440px; background:var(--panel); border-left:1px solid var(--border); display:flex; flex-direction:column; }
+
+  #scan { width:100%; padding:1rem 1.1rem; font-size:1.1rem; border-radius:12px; border:2px solid var(--accent); background:var(--panel2); color:var(--text); outline:none; }
+  #scan::placeholder { color:var(--muted); }
+
+  #grid { flex:1; overflow:auto; margin-top:0.8rem; display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); grid-auto-rows:min-content; gap:0.6rem; align-content:start; }
+  .tile { text-align:left; padding:0.55rem; border:1px solid var(--border); background:var(--panel2); border-radius:12px; color:var(--text); cursor:pointer; transition:transform .05s; }
+  .tile:active { transform:scale(0.97); }
+  .tile:disabled { opacity:0.45; cursor:not-allowed; }
+  .tile .thumb { height:86px; border-radius:8px; background:#0b0d11 center/cover no-repeat; display:flex; align-items:center; justify-content:center; font-size:1.6rem; margin-bottom:0.45rem; }
+  .tile .nm { font-size:0.8rem; font-weight:600; line-height:1.15; height:2.3em; overflow:hidden; }
+  .tile .pr { font-size:1rem; font-weight:800; color:var(--accent2); margin-top:0.25rem; }
+  .tile .st { font-size:0.7rem; color:var(--muted); }
+
+  .right .rhead { padding:0.85rem; border-bottom:1px solid var(--border); font-weight:700; display:flex; justify-content:space-between; align-items:center; }
+  #cart { flex:1; overflow:auto; padding:0.5rem 0.85rem; }
+  .empty { color:var(--muted); text-align:center; padding:2.5rem 1rem; font-style:italic; }
+  .line { display:flex; align-items:center; gap:0.5rem; padding:0.55rem 0; border-bottom:1px solid var(--border); }
+  .line .lnm { flex:1; min-width:0; }
+  .line .lnm .t { font-size:0.9rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .line .lnm .s { font-size:0.72rem; color:var(--muted); }
+  .qbtn { width:34px; height:34px; border-radius:8px; border:1px solid var(--border); background:var(--panel2); color:var(--text); font-size:1.1rem; cursor:pointer; }
+  .qty { min-width:26px; text-align:center; font-weight:700; }
+  .ltot { min-width:78px; text-align:right; font-weight:700; }
+  .rm { background:none; border:none; color:var(--muted); font-size:1rem; cursor:pointer; }
+
+  .foot { border-top:1px solid var(--border); padding:0.85rem; background:var(--panel); }
+  .total { display:flex; justify-content:space-between; align-items:baseline; font-weight:800; font-size:1.6rem; margin-bottom:0.6rem; }
+  .total .accent { color:var(--accent2); }
+  .btn { width:100%; padding:0.95rem; border-radius:12px; border:none; font-size:1.05rem; font-weight:800; cursor:pointer; }
+  .btn-pay { background:var(--accent); color:#04210f; }
+  .btn-ghost { background:var(--panel2); color:var(--text); border:1px solid var(--border); font-weight:600; }
+  .toast { position:fixed; left:50%; bottom:1.2rem; transform:translateX(-50%); background:#000; color:#fff; padding:0.6rem 1rem; border-radius:10px; font-size:0.9rem; opacity:0; transition:opacity .2s; z-index:50; }
+  .toast.show { opacity:0.95; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">Repti<span>Cube</span> · POS</div>
+  <div class="status">
+    <span id="net"><span class="dot" id="net-dot"></span> <span id="net-txt">online</span></span>
+    <span id="cat-status">loading catalogue…</span>
+    <button class="qbtn" title="Refresh catalogue" onclick="refreshCatalogue(true)" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">↻</button>
+  </div>
+</header>
+
+<div class="shell">
+  <div class="left">
+    <input id="scan" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="🔍 Scan barcode or search by name / SKU…">
+    <div id="grid"></div>
+  </div>
+  <div class="right">
+    <div class="rhead"><span>Cart</span><button class="rm" onclick="clearCart()" title="Clear cart">Clear</button></div>
+    <div id="cart"></div>
+    <div class="foot">
+      <div class="total"><span>TOTAL</span><span class="accent" id="grand">R0.00</span></div>
+      <button class="btn btn-pay" id="pay-btn" onclick="payStub()">Pay · 0 items</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const FN = '/.netlify/functions/reptipos-shopify';
+  let catalogue = [];      // [{ productId, variantId, inventoryItemId, name, sku, barcode, price, qty, category, imageUrl }]
+  let locationId = null;
+  let cart = [];           // [{ variantId, qty }]
+
+  const money = n => 'R' + (Number(n) || 0).toFixed(2);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 1800); }
+
+  function setNet(online) {
+    document.getElementById('net-dot').classList.toggle('off', !online);
+    document.getElementById('net-txt').textContent = online ? 'online' : 'offline';
+  }
+  window.addEventListener('online', () => setNet(true));
+  window.addEventListener('offline', () => setNet(false));
+  setNet(navigator.onLine);
+
+  // ---- Catalogue: load cached instantly, then refresh from Shopify ----
+  function loadCached() {
+    try {
+      const c = JSON.parse(localStorage.getItem('reptipos-catalogue') || 'null');
+      if (c && Array.isArray(c.products)) { catalogue = c.products; locationId = c.locationId || null; return true; }
+    } catch (e) {}
+    return false;
+  }
+  function cacheCatalogue() {
+    try { localStorage.setItem('reptipos-catalogue', JSON.stringify({ products: catalogue, locationId, at: Date.now() })); } catch (e) {}
+  }
+
+  async function refreshCatalogue(manual) {
+    const st = document.getElementById('cat-status');
+    st.textContent = 'syncing…';
+    try {
+      const res = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'getProducts' }) });
+      if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 120));
+      const data = await res.json();
+      catalogue = data.products || [];
+      locationId = data.locationId || null;
+      cacheCatalogue();
+      st.textContent = catalogue.length + ' products';
+      renderGrid();
+      if (manual) toast('Catalogue updated');
+    } catch (e) {
+      console.warn('Catalogue refresh failed:', e);
+      st.textContent = catalogue.length ? (catalogue.length + ' products (cached)') : 'catalogue offline';
+      if (manual) toast('Could not reach Shopify — using cached');
+    }
+  }
+
+  // ---- Product grid + scan/search ----
+  function matchExact(code) {
+    const c = code.trim().toLowerCase();
+    if (!c) return null;
+    return catalogue.find(p => (p.barcode || '').toLowerCase() === c) ||
+           catalogue.find(p => (p.sku || '').toLowerCase() === c) || null;
+  }
+  function renderGrid() {
+    const grid = document.getElementById('grid');
+    const q = document.getElementById('scan').value.trim().toLowerCase();
+    let items = catalogue;
+    if (q) items = catalogue.filter(p =>
+      (p.name || '').toLowerCase().includes(q) ||
+      (p.sku || '').toLowerCase().includes(q) ||
+      (p.barcode || '').toLowerCase().includes(q));
+    if (items.length === 0) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1">${catalogue.length ? 'No matches' : 'Catalogue loading…'}</div>`; return; }
+    grid.innerHTML = items.slice(0, 300).map(p => {
+      const oos = (Number(p.qty) || 0) <= 0;
+      const thumb = p.imageUrl
+        ? `<div class="thumb" style="background-image:url('${esc(p.imageUrl)}')"></div>`
+        : `<div class="thumb">📦</div>`;
+      return `<button class="tile" ${oos ? 'disabled' : ''} onclick="addToCart('${p.variantId}')">
+        ${thumb}
+        <div class="nm">${esc(p.name)}</div>
+        <div class="pr">${money(p.price)}</div>
+        <div class="st">${oos ? '<span style="color:var(--danger)">out of stock</span>' : 'stock ' + (Number(p.qty) || 0)}</div>
+      </button>`;
+    }).join('');
+  }
+
+  function onScanInput() { renderGrid(); }
+  function onScanEnter() {
+    const field = document.getElementById('scan');
+    const code = field.value.trim();
+    if (!code) return;
+    const hit = matchExact(code);
+    if (hit) { addToCart(hit.variantId); field.value = ''; renderGrid(); }
+    else {
+      // No exact barcode/SKU — if the search yields exactly one product, add it.
+      const q = code.toLowerCase();
+      const matches = catalogue.filter(p => (p.name || '').toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q));
+      if (matches.length === 1) { addToCart(matches[0].variantId); field.value = ''; renderGrid(); }
+      else toast(matches.length ? matches.length + ' matches — tap one' : 'No product found');
+    }
+  }
+
+  // ---- Cart ----
+  function findProduct(variantId) { return catalogue.find(p => p.variantId === variantId) || null; }
+  function addToCart(variantId) {
+    const p = findProduct(variantId);
+    if (!p) return;
+    const line = cart.find(l => l.variantId === variantId);
+    const inCart = line ? line.qty : 0;
+    if (inCart + 1 > (Number(p.qty) || 0)) { toast(`Only ${Number(p.qty) || 0} of "${p.name}" in stock`); return; }
+    if (line) line.qty++; else cart.push({ variantId, qty: 1 });
+    renderCart();
+    toast(p.name);
+  }
+  function changeQty(variantId, d) {
+    const line = cart.find(l => l.variantId === variantId);
+    if (!line) return;
+    const p = findProduct(variantId);
+    const next = line.qty + d;
+    if (next <= 0) cart = cart.filter(l => l.variantId !== variantId);
+    else { if (p && next > (Number(p.qty) || 0)) { toast(`Only ${Number(p.qty) || 0} in stock`); return; } line.qty = next; }
+    renderCart();
+  }
+  function removeLine(variantId) { cart = cart.filter(l => l.variantId !== variantId); renderCart(); }
+  function clearCart() { if (cart.length && !confirm('Clear the cart?')) return; cart = []; renderCart(); }
+  function cartTotal() { return cart.reduce((t, l) => { const p = findProduct(l.variantId); return t + (p ? p.price * l.qty : 0); }, 0); }
+
+  function renderCart() {
+    const el = document.getElementById('cart');
+    if (cart.length === 0) { el.innerHTML = '<div class="empty">Scan or tap a product to start a sale.</div>'; }
+    else {
+      el.innerHTML = cart.map(l => {
+        const p = findProduct(l.variantId); if (!p) return '';
+        return `<div class="line">
+          <div class="lnm"><div class="t">${esc(p.name)}</div><div class="s">${money(p.price)} each</div></div>
+          <button class="qbtn" onclick="changeQty('${p.variantId}',-1)">−</button>
+          <span class="qty">${l.qty}</span>
+          <button class="qbtn" onclick="changeQty('${p.variantId}',1)">+</button>
+          <span class="ltot">${money(p.price * l.qty)}</span>
+          <button class="rm" onclick="removeLine('${p.variantId}')" title="Remove">✕</button>
+        </div>`;
+      }).join('');
+    }
+    const total = cartTotal();
+    const count = cart.reduce((n, l) => n + l.qty, 0);
+    document.getElementById('grand').textContent = money(total);
+    const payBtn = document.getElementById('pay-btn');
+    payBtn.textContent = `Pay · ${count} item${count === 1 ? '' : 's'}`;
+    payBtn.disabled = count === 0;
+    payBtn.style.opacity = count === 0 ? '0.5' : '1';
+  }
+
+  function payStub() { toast('Payments arrive in Phase 2'); }
+
+  // ---- Keep the scan field focused (USB scanners type into the focused input) ----
+  const scan = document.getElementById('scan');
+  scan.addEventListener('input', onScanInput);
+  scan.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); onScanEnter(); } });
+  function keepFocus() { if (document.activeElement !== scan && !/^(INPUT|TEXTAREA|BUTTON)$/.test(document.activeElement.tagName)) scan.focus(); }
+  document.addEventListener('click', () => setTimeout(keepFocus, 0));
+  setInterval(keepFocus, 1500);
+
+  // Expose handlers
+  Object.assign(window, { refreshCatalogue, addToCart, changeQty, removeLine, clearCart, payStub });
+
+  // ---- Boot ----
+  if (loadCached()) { document.getElementById('cat-status').textContent = catalogue.length + ' products (cached)'; renderGrid(); }
+  renderCart();
+  scan.focus();
+  refreshCatalogue(false);
+</script>
+</body>
+</html>
