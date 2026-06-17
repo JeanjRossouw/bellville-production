@@ -118,6 +118,7 @@
     <span id="store" title="Connected Shopify store">—</span>
     <span id="net"><span class="dot" id="net-dot"></span> <span id="net-txt">online</span></span>
     <span id="cat-status">loading catalogue…</span>
+    <button id="queue-badge" onclick="flushQueue(true)" title="Sales waiting to sync — click to sync now" style="display:none; width:auto;padding:0 0.6rem;height:30px;font-size:0.78rem;border-radius:8px;border:1px solid var(--warn);background:transparent;color:var(--warn);cursor:pointer"></button>
     <button class="qbtn" title="Parked sales" onclick="openParked()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">⏸ Parked</button>
     <button class="qbtn" title="Register / cash-up" onclick="openReg()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🧾 Register</button>
     <button class="qbtn" title="Refresh catalogue" onclick="refreshCatalogue(true)" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">↻</button>
@@ -785,8 +786,10 @@
       updateLocalSale(sale);
       toast('Sale ' + sale.saleNumber + ' · Shopify ' + (out.orderName || 'created'));
     } catch (e) {
-      console.warn('Shopify order failed:', e);
-      toast('Sale saved — Shopify order failed (will retry in Phase 3 offline queue)');
+      console.warn('Shopify order failed — queuing for sync:', e);
+      enqueueSale(sale, items, payment);
+      renderQueueBadge();
+      toast('Sale ' + sale.saleNumber + ' saved — queued to sync to Shopify');
     }
 
     // Record against the open register shift (cash-up).
@@ -806,6 +809,48 @@
   function updateLocalSale(sale) {
     try { const arr = JSON.parse(localStorage.getItem('reptipos-sales') || '[]'); const i = arr.findIndex(s => s.saleNumber === sale.saleNumber); if (i >= 0) { arr[i] = sale; localStorage.setItem('reptipos-sales', JSON.stringify(arr)); } } catch (e) {}
   }
+
+  // ---- Offline sync queue: never lose a sale; flush when back online ----
+  function loadQueue() { try { return JSON.parse(localStorage.getItem('reptipos-queue') || '[]'); } catch (e) { return []; } }
+  function saveQueue(q) { localStorage.setItem('reptipos-queue', JSON.stringify(q)); }
+  function enqueueSale(sale, items, payment) {
+    const q = loadQueue();
+    q.push({ idemKey: sale.idemKey, saleNumber: sale.saleNumber, customerId: sale.customer ? sale.customer.id : undefined,
+      lineItems: items.map(i => ({ variantId: i.variantId, qty: i.qty, priceCents: i.priceCents })),
+      note: sale.saleNumber + ' · ' + paymentSummary(payment) });
+    saveQueue(q);
+  }
+  function markSaleSynced(saleNumber, orderName) {
+    try { const arr = JSON.parse(localStorage.getItem('reptipos-sales') || '[]'); const i = arr.findIndex(s => s.saleNumber === saleNumber); if (i >= 0) { arr[i].synced = true; arr[i].shopifyOrder = orderName || arr[i].shopifyOrder; localStorage.setItem('reptipos-sales', JSON.stringify(arr)); } } catch (e) {}
+  }
+  function renderQueueBadge() {
+    const b = document.getElementById('queue-badge'); if (!b) return;
+    const n = loadQueue().length;
+    b.style.display = n ? '' : 'none';
+    b.textContent = '⏳ ' + n + ' to sync';
+  }
+  let flushing = false;
+  async function flushQueue(manual) {
+    let q = loadQueue();
+    if (!q.length) { if (manual) toast('Nothing to sync'); return; }
+    if (!navigator.onLine) { if (manual) toast('Still offline'); return; }
+    if (flushing) return; flushing = true;
+    const remaining = [];
+    for (const item of q) {
+      try {
+        const res = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'createOrder', idemKey: item.idemKey, customerId: item.customerId, lineItems: item.lineItems, note: item.note }) });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const out = await res.json();
+        markSaleSynced(item.saleNumber, out.orderName);
+      } catch (e) { remaining.push(item); }
+    }
+    saveQueue(remaining); renderQueueBadge(); flushing = false;
+    const done = q.length - remaining.length;
+    if (manual || done) toast(remaining.length ? `${done} synced · ${remaining.length} still pending` : `All ${done} synced to Shopify`);
+  }
+  window.addEventListener('online', () => { setNet(true); flushQueue(false); });
+  setInterval(() => { if (loadQueue().length && navigator.onLine) flushQueue(false); }, 30000);
 
   // ---- Receipt: clean slip, NO VAT. Print (80mm) + WhatsApp ----
   function receiptText(sale) {
@@ -869,6 +914,7 @@
     lineDiscount, setCartDiscount,
     parkSale, openParked, closeParked, retrieveParked, deleteParked,
     lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff,
+    flushQueue,
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
     custOpen, custClose, custClear, custSearch, custAttach, custCreate, custHistory, renderCustBody });
 
@@ -877,8 +923,10 @@
   if (loadCached()) { document.getElementById('cat-status').textContent = catalogue.length + ' products (cached)'; renderGrid(); }
   renderCart();
   renderCustomer();
+  renderQueueBadge();
   lockPOS();              // require a staff PIN before selling (default admin PIN 0000)
   refreshCatalogue(false);
+  flushQueue(false);      // sync anything queued from a previous offline session
 </script>
 </body>
 </html>
