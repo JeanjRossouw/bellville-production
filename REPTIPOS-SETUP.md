@@ -25,7 +25,16 @@ site:
 it uses the Dev Dashboard's client-credentials grant, which the function mints
 automatically from the Client ID/secret.)
 
-## Two ways to run it
+## Try it first — Demo mode (no Shopify)
+You don't need to link Shopify to evaluate the system. On the lock screen tap
+**"🧪 Try demo mode"** (or add `?demo=1` to the URL, or toggle it in
+Register → admin). Demo mode loads a sample reptile catalogue and **simulates
+all Shopify reads/writes locally** — sales, orders, stock, customers, quotes,
+sales orders and GRVs all work, but **nothing ever touches your Shopify store**.
+Turn it off the same way to switch back to the real store. (Default staff PIN is
+**0000**.)
+
+## Two ways to run it (live)
 
 **Quick (no new site):** since it lives in this repo, once merged it's served at
 `https://bellville-production.netlify.app/reptipos/` and uses the

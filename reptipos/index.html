@@ -287,6 +287,8 @@
   <div id="lock-name" style="color:var(--muted); font-size:0.9rem">Enter your PIN</div>
   <div id="lock-dots" style="font-size:1.8rem; letter-spacing:0.4rem; height:2rem">····</div>
   <div id="lock-pad" style="display:grid; grid-template-columns:repeat(3,72px); gap:0.6rem"></div>
+  <div style="color:var(--muted); font-size:0.75rem">Default PIN: 0000</div>
+  <button id="lock-demo" onclick="toggleDemo()" style="margin-top:0.6rem; background:none; border:none; color:var(--warn); font-size:0.85rem; cursor:pointer; text-decoration:underline"></button>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -329,6 +331,7 @@
   function setStore(name, domain) {
     const el = document.getElementById('store');
     if (!el) return;
+    if (isDemo()) { el.textContent = '🧪 DEMO — no Shopify'; el.style.color = 'var(--warn)'; el.title = 'Demo mode: sample data, nothing is written to your Shopify'; return; }
     const label = name || domain || '—';
     el.textContent = '🏪 ' + label;
     // Highlight if it doesn't look like the ReptiCube store (e.g. a dev store) so
@@ -346,6 +349,101 @@
     if (sh) sh.classList.toggle('active', v !== 'cart');
     if (ca) ca.classList.toggle('active', v === 'cart');
   }
+
+  // ---- Demo mode: try the whole system with NO Shopify (simulated locally) ----
+  function isDemo() { return localStorage.getItem('reptipos-demo') === '1' || /[?&]demo=1/.test(location.search); }
+  // Sample reptile catalogue (prices in rands; barcodes are type-able to test scanning).
+  const DEMO_CATALOGUE = [
+    { productId: 'd1', variantId: 'dv1', inventoryItemId: 'di1', name: 'Exo Terra Glass Terrarium 60×45', sku: 'TERR-6045', barcode: '6009800010011', price: 2499, qty: 4, category: 'Terrariums', imageUrl: '' },
+    { productId: 'd2', variantId: 'dv2', inventoryItemId: 'di2', name: 'Reptile Heat Mat 14W', sku: 'HEAT-14', barcode: '6009800010028', price: 349, qty: 18, category: 'Heating', imageUrl: '' },
+    { productId: 'd3', variantId: 'dv3', inventoryItemId: 'di3', name: 'UVB 10.0 Compact Bulb 26W', sku: 'UVB-26', barcode: '6009800010035', price: 419, qty: 11, category: 'Lighting', imageUrl: '' },
+    { productId: 'd4', variantId: 'dv4', inventoryItemId: 'di4', name: 'Digital Thermostat 600W', sku: 'THERM-600', barcode: '6009800010042', price: 899, qty: 6, category: 'Heating', imageUrl: '' },
+    { productId: 'd5', variantId: 'dv5', inventoryItemId: 'di5', name: 'Coco Husk Substrate 5L', sku: 'SUB-COCO', barcode: '6009800010059', price: 129, qty: 40, category: 'Substrate', imageUrl: '' },
+    { productId: 'd6', variantId: 'dv6', inventoryItemId: 'di6', name: 'Resin Hide Cave – Large', sku: 'HIDE-L', barcode: '6009800010066', price: 199, qty: 14, category: 'Decor', imageUrl: '' },
+    { productId: 'd7', variantId: 'dv7', inventoryItemId: 'di7', name: 'Feeding Tongs Stainless 30cm', sku: 'TONGS-30', barcode: '6009800010073', price: 89, qty: 25, category: 'Accessories', imageUrl: '' },
+    { productId: 'd8', variantId: 'dv8', inventoryItemId: 'di8', name: 'Calcium + D3 Supplement 100g', sku: 'CAL-D3', barcode: '6009800010080', price: 119, qty: 30, category: 'Food', imageUrl: '' },
+    { productId: 'd9', variantId: 'dv9', inventoryItemId: 'di9', name: 'Live Mealworms Tub (±50g)', sku: 'FEED-MEAL', barcode: '6009800010097', price: 65, qty: 22, category: 'Food', imageUrl: '' },
+    { productId: 'd10', variantId: 'dv10', inventoryItemId: 'di10', name: 'Water Dish – Medium', sku: 'DISH-M', barcode: '6009800010103', price: 79, qty: 19, category: 'Decor', imageUrl: '' },
+    { productId: 'd11', variantId: 'dv11', inventoryItemId: 'di11', name: 'Leopard Gecko (captive bred)', sku: 'LIVE-LEO', barcode: '6009800010110', price: 850, qty: 3, category: 'Livestock', imageUrl: '' },
+    { productId: 'd12', variantId: 'dv12', inventoryItemId: 'di12', name: 'Corn Snake (juvenile)', sku: 'LIVE-CORN', barcode: '6009800010127', price: 1200, qty: 0, category: 'Livestock', imageUrl: '' }
+  ];
+  // Single router for all backend calls: real fetch, or simulated when in demo.
+  async function callFn(payload) {
+    if (isDemo()) return demoHandle(payload);
+    const res = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 140));
+    return res.json();
+  }
+  const demoSeq = k => { const n = (parseInt(localStorage.getItem(k) || '0', 10) || 0) + 1; localStorage.setItem(k, String(n)); return n; };
+  const demoGet = k => { try { return JSON.parse(localStorage.getItem(k) || '[]'); } catch (e) { return []; } };
+  const demoPut = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+  async function demoHandle(p) {
+    await new Promise(r => setTimeout(r, 120)); // a touch of latency so it feels real
+    switch (p.action) {
+      case 'getProducts':
+        return { products: DEMO_CATALOGUE.map(x => ({ ...x })), locationId: 'demo', shopName: 'DEMO — not your Shopify', domain: 'demo' };
+      case 'createOrder':
+        return { orderId: 'DEMO' + demoSeq('reptipos-demo-oseq'), orderName: '#D' + String(demoSeq('reptipos-demo-oname')).padStart(4, '0'), fulfilled: true };
+      case 'receiveStock':
+        return { received: (p.lineItems || []).length, lineItems: (p.lineItems || []).map(l => ({ inventoryItemId: l.inventoryItemId, qty: l.qty })), locationId: 'demo' };
+      case 'searchCustomers': {
+        const q = String(p.q || '').toLowerCase();
+        return { customers: demoGet('reptipos-demo-customers').filter(c => (c.name + ' ' + (c.phone || '') + ' ' + (c.email || '')).toLowerCase().includes(q)) };
+      }
+      case 'createCustomer': {
+        const list = demoGet('reptipos-demo-customers');
+        const c = { id: 'dc-' + Date.now(), name: p.name || [p.firstName, p.lastName].filter(Boolean).join(' ') || 'Customer', phone: p.phone || '', email: p.email || '' };
+        list.push(c); demoPut('reptipos-demo-customers', list); return { customer: c };
+      }
+      case 'customerOrders': {
+        const sales = demoGet('reptipos-sales').filter(s => s.customer && String(s.customer.id) === String(p.customerId));
+        return { orders: sales.map(s => ({ name: s.shopifyOrder || s.saleNumber, createdAt: s.datetime, totalCents: s.totalCents, items: (s.items || []).reduce((n, i) => n + i.qty, 0) })) };
+      }
+      case 'docSave': {
+        const list = demoGet('reptipos-demo-docs');
+        const custName = id => (demoGet('reptipos-demo-customers').find(c => c.id === id) || {}).name || '';
+        let id = p.id;
+        if (id) { const i = list.findIndex(d => d.id === id); if (i >= 0) list[i].doc = p.doc; }
+        else {
+          id = 'dd-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+          const name = ((p.tags || '').includes('quote') ? '#DQ' : '#DS') + String(demoSeq('reptipos-demo-dseq')).padStart(4, '0');
+          const cust = p.customerId ? { id: p.customerId, name: custName(p.customerId) } : null;
+          list.push({ id, name, createdAt: new Date().toISOString(), customer: cust, doc: p.doc });
+        }
+        demoPut('reptipos-demo-docs', list);
+        const saved = list.find(d => d.id === id);
+        return { id, name: saved ? saved.name : id };
+      }
+      case 'docList': {
+        const list = demoGet('reptipos-demo-docs');
+        return { docs: list.filter(d => d.doc && (!p.type || d.doc.type === p.type) && (!p.customerId || (d.customer && String(d.customer.id) === String(p.customerId)))) };
+      }
+      case 'docDelete':
+        demoPut('reptipos-demo-docs', demoGet('reptipos-demo-docs').filter(d => d.id !== p.id)); return { ok: true };
+      case 'lookupOrder': {
+        const term = String(p.q || '').trim().toLowerCase().replace(/^#/, '');
+        const s = demoGet('reptipos-sales').find(x => String(x.shopifyOrder || '').toLowerCase().replace(/^#/, '') === term || String(x.saleNumber || '').toLowerCase() === term);
+        if (!s) return { order: null };
+        return { order: { orderId: s.idemKey || s.saleNumber, name: s.shopifyOrder || s.saleNumber, createdAt: s.datetime, totalCents: s.totalCents, customerName: s.customer ? s.customer.name : '', financialStatus: 'paid',
+          lineItems: (s.items || []).map((i, idx) => ({ lineItemId: 'dl-' + idx, variantId: i.variantId, name: i.name, sku: i.sku || '', qty: i.qty, refundedQty: 0, refundableQty: i.qty, unitPriceCents: i.priceCents })) } };
+      }
+      case 'refundCreate':
+        return { refundId: 'DR' + Date.now(), amountCents: 0, restocked: !!p.restock };
+      default:
+        return { error: 'demo: unknown action ' + p.action };
+    }
+  }
+  function setDemo(on) {
+    localStorage.setItem('reptipos-demo', on ? '1' : '0');
+    localStorage.removeItem('reptipos-catalogue');
+    catalogue = []; cart = []; cartDiscount = null; customer = null;
+    renderCart(); renderCustomer();
+    renderLockDemo();
+    toast(on ? 'Demo mode ON — nothing touches Shopify' : 'Demo mode OFF — using Shopify');
+    refreshCatalogue(false);
+  }
+  function toggleDemo() { setDemo(!isDemo()); }
+  function renderLockDemo() { const b = document.getElementById('lock-demo'); if (b) b.textContent = isDemo() ? '🧪 Demo mode is ON — tap to switch to real Shopify' : '🧪 Try demo mode (no Shopify needed)'; }
 
   function setNet(online) {
     document.getElementById('net-dot').classList.toggle('off', !online);
@@ -369,11 +467,9 @@
 
   async function refreshCatalogue(manual) {
     const st = document.getElementById('cat-status');
-    st.textContent = 'syncing…';
+    st.textContent = isDemo() ? 'loading demo…' : 'syncing…';
     try {
-      const res = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'getProducts' }) });
-      if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 120));
-      const data = await res.json();
+      const data = await callFn({ action: 'getProducts' });
       catalogue = normProducts(data.products || []);
       locationId = data.locationId || null;
       if (data.shopName || data.domain) setStore(data.shopName, data.domain);
@@ -551,9 +647,7 @@
 
   // ---- Customers ----
   async function api(action, extra) {
-    const res = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...(extra || {}) }) });
-    if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 120));
-    return res.json();
+    return callFn({ action, ...(extra || {}) });
   }
   function renderCustomer() {
     const el = document.getElementById('customer');
@@ -630,7 +724,7 @@
   function ensureStaffSeed() { if (staffList().length === 0) saveStaff([{ id: 'admin', name: 'Admin', pin: '0000', role: 'admin' }]); }
   function renderStaffBadge() { const b = document.getElementById('staff-badge'); if (b) b.textContent = currentStaff ? '👤 ' + currentStaff.name : ''; }
 
-  function lockPOS() { currentStaff = null; pinBuffer = ''; renderStaffBadge(); renderLockPad(); document.getElementById('lock').style.display = 'flex'; }
+  function lockPOS() { currentStaff = null; pinBuffer = ''; renderStaffBadge(); renderLockPad(); renderLockDemo(); document.getElementById('lock').style.display = 'flex'; }
   function renderLockPad() {
     document.getElementById('lock-dots').textContent = '••••'.slice(0, pinBuffer.length).padEnd(4, '·');
     const pad = document.getElementById('lock-pad');
@@ -710,7 +804,10 @@
         <input id="tax-rate" type="number" step="0.01" min="0" value="${settings().taxRatePct}" style="width:90px"><span style="color:var(--muted)">%</span>
         <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveTaxSettings()">Save</button>
       </div>
-      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Prices stay tax-inclusive (Shopify price is final). 0% shows no tax anywhere.</div>`;
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Prices stay tax-inclusive (Shopify price is final). 0% shows no tax anywhere.</div>
+      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.3rem">Demo mode</div>
+      <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="toggleDemo()">${isDemo() ? 'Turn demo OFF (use real Shopify)' : 'Turn demo ON (no Shopify)'}</button>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Demo uses a sample catalogue; sales/orders/stock are simulated locally and never touch Shopify.</div>`;
   }
   function addStaff() {
     const name = (document.getElementById('st-name').value || '').trim();
@@ -1247,10 +1344,7 @@
     const items = (m.items || []).map(i => ({ ...i, lineTotalCents: i.lineTotalCents != null ? i.lineTotalCents : i.priceCents * i.qty }));
     const note = saleNumber + ' · SO ' + d.name + ' · deposit ' + money(dep) + (balPayment ? ' · balance ' + paymentSummary(balPayment) : ' · paid in full on deposit');
     try {
-      const res = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'createOrder', idemKey, customerId: d.customer ? d.customer.id : undefined, lineItems: items.map(i => ({ variantId: i.variantId, qty: i.qty, priceCents: i.priceCents })), note }) });
-      if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 120));
-      const out = await res.json();
+      const out = await callFn({ action: 'createOrder', idemKey, customerId: d.customer ? d.customer.id : undefined, lineItems: items.map(i => ({ variantId: i.variantId, qty: i.qty, priceCents: i.priceCents })), note });
       try { await api('docDelete', { id: d.id }); } catch (e) {}
       if (balPayment) shiftAddTender(balPayment.method, balPayment.amountCents);
       const s = getShift(); if (s) { s.salesCount += 1; saveShift(s); }
@@ -1331,10 +1425,21 @@
   // ---- Purchasing: GRV (goods received) + suppliers + supplier accounts ----
   // Stock increments go to Shopify (source of truth); suppliers, GRVs and
   // supplier-account payments live in Firestore (Shopify has no payables).
-  function fbReady() { return !!(window.fb && window.fb.db); }
-  async function fbAdd(coll, data) { const { db, fns } = window.fb; const ref = await fns.addDoc(fns.collection(db, coll), data); return ref.id; }
-  async function fbSet(coll, id, data) { const { db, fns } = window.fb; await fns.setDoc(fns.doc(db, coll, id), data, { merge: true }); }
+  function fbReady() { return isDemo() || !!(window.fb && window.fb.db); }
+  async function fbAdd(coll, data) {
+    if (isDemo()) { const k = 'reptipos-demo-' + coll; const list = demoGet(k); const id = 'd-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6); list.push({ id, ...data }); demoPut(k, list); return id; }
+    const { db, fns } = window.fb; const ref = await fns.addDoc(fns.collection(db, coll), data); return ref.id;
+  }
+  async function fbSet(coll, id, data) {
+    if (isDemo()) { const k = 'reptipos-demo-' + coll; const list = demoGet(k); const i = list.findIndex(x => x.id === id); if (i >= 0) { list[i] = { ...list[i], ...data }; demoPut(k, list); } return; }
+    const { db, fns } = window.fb; await fns.setDoc(fns.doc(db, coll, id), data, { merge: true });
+  }
   async function fbList(coll, orderField, dir) {
+    if (isDemo()) {
+      const list = demoGet('reptipos-demo-' + coll);
+      if (orderField) list.sort((a, b) => { const x = a[orderField], y = b[orderField]; return (dir === 'desc' ? -1 : 1) * (x < y ? -1 : x > y ? 1 : 0); });
+      return list;
+    }
     const { db, fns } = window.fb;
     const q = orderField ? fns.query(fns.collection(db, coll), fns.orderBy(orderField, dir || 'asc')) : fns.collection(db, coll);
     const snap = await fns.getDocs(q); const out = []; snap.forEach(d => out.push({ id: d.id, ...d.data() })); return out;
@@ -1426,10 +1531,7 @@
     const btn = document.getElementById('grv-confirm'); if (btn) { btn.disabled = true; btn.textContent = 'Receiving…'; }
     const idemKey = uuid();
     try {
-      const res = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'receiveStock', idemKey, updateCost, lineItems: lines.map(l => ({ inventoryItemId: l.inventoryItemId, qty: l.qty, costCents: l.costCents })) }) });
-      if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 140));
-      await res.json();
+      await callFn({ action: 'receiveStock', idemKey, updateCost, lineItems: lines.map(l => ({ inventoryItemId: l.inventoryItemId, qty: l.qty, costCents: l.costCents })) });
       lines.forEach(l => { const p = findProduct(l.variantId); if (p) p.qty = (Number(p.qty) || 0) + l.qty; }); cacheCatalogue(); renderGrid();
       const seq = (parseInt(localStorage.getItem('reptipos-grv-seq') || '0', 10) || 0) + 1; localStorage.setItem('reptipos-grv-seq', String(seq));
       const sup = suppliersCache.find(s => s.id === supId);
@@ -1629,10 +1731,7 @@
     // Write the sale back to Shopify (paid → stock decrements). idemKey makes a
     // retry return the SAME order instead of creating a duplicate.
     try {
-      const res = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'createOrder', idemKey: sale.idemKey, customerId: customer ? customer.id : undefined, lineItems: items.map(i => ({ variantId: i.variantId, qty: i.qty, priceCents: i.priceCents })), note: sale.saleNumber + ' · ' + paymentSummary(payment) }) });
-      if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 120));
-      const out = await res.json();
+      const out = await callFn({ action: 'createOrder', idemKey: sale.idemKey, customerId: customer ? customer.id : undefined, lineItems: items.map(i => ({ variantId: i.variantId, qty: i.qty, priceCents: i.priceCents })), note: sale.saleNumber + ' · ' + paymentSummary(payment) });
       sale.shopifyOrder = out.orderName || null; sale.synced = true;
       updateLocalSale(sale);
       toast('Sale ' + sale.saleNumber + ' · Shopify ' + (out.orderName || 'created'));
@@ -1690,10 +1789,7 @@
     const remaining = [];
     for (const item of q) {
       try {
-        const res = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'createOrder', idemKey: item.idemKey, customerId: item.customerId, lineItems: item.lineItems, note: item.note }) });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        const out = await res.json();
+        const out = await callFn({ action: 'createOrder', idemKey: item.idemKey, customerId: item.customerId, lineItems: item.lineItems, note: item.note });
         markSaleSynced(item.saleNumber, out.orderName);
       } catch (e) { remaining.push(item); }
     }
@@ -1763,7 +1859,7 @@
   setInterval(keepFocus, 1500);
 
   // Expose handlers
-  Object.assign(window, { mView, refreshCatalogue, addToCart, changeQty, removeLine, clearCart,
+  Object.assign(window, { mView, toggleDemo, setDemo, refreshCatalogue, addToCart, changeQty, removeLine, clearCart,
     lineDiscount, setCartDiscount,
     parkSale, openParked, closeParked, retrieveParked, deleteParked,
     openRefund, closeRefund, lookupRefundOrder, setRefundQty, confirmRefund,
