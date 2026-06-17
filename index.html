@@ -7118,6 +7118,7 @@ ${totalsSection}
   const POS_BIZ_NAMES = { bellville: 'Bellville Furniture', pinkfoot: 'PinkFoot Boutique', repticube: 'ReptiCube' };
   let posCart = [];                     // [{ productId, qty }] — productId is the item's _localId
   let posCategory = '';                 // active category filter ('' = all)
+  let posDashRange = 'today';            // dashboard period: 'today' | 'week' | 'month'
 
   // POS data lives in posStore[biz] (its own Firestore doc), not in `data`.
   function posBizStore(biz) {
@@ -7924,62 +7925,105 @@ ${totalsSection}
   // ---- POS reporting (Phase 6) ------------------------------------------
   // Renders the dashboard POS card: today's takings per business, current-biz
   // week/month totals, top products this month, and Xero sync status.
+  function posSetDashRange(r) { posDashRange = r; renderPOSDashboard(); }
+  window.posSetDashRange = posSetDashRange;
+
+  // Lightspeed Home–style sales overview: period toggle, takings vs last period,
+  // average sale value, average items/sale, and a sales bar chart.
   function renderPOSDashboard() {
     const el = document.getElementById('pos-dash-content');
     if (!el) return;
     const now = new Date();
-    const startToday = new Date(now); startToday.setHours(0, 0, 0, 0);
-    const startWeek = new Date(startToday); startWeek.setDate(startToday.getDate() - ((startToday.getDay() + 6) % 7)); // Monday
-    const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const sum = (arr) => arr.reduce((t, s) => t + (Number(s.total) || 0), 0);
-    const liveSales = (arr) => (arr || []).filter(s => s.completed && !s.voided);
+    const itemCount = (arr) => arr.reduce((t, s) => t + liSaleItemCount(s), 0);
+    const live = (arr) => (arr || []).filter(s => s.completed && !s.voided);
+    const startToday = new Date(now); startToday.setHours(0, 0, 0, 0);
 
-    // Today's takings per business
+    // Range boundaries + chart bucketing
+    let start, prevStart, buckets, bucketOf, bucketLabels, prevLabel;
+    if (posDashRange === 'week') {
+      start = new Date(startToday); start.setDate(startToday.getDate() - ((startToday.getDay() + 6) % 7));
+      prevStart = new Date(start); prevStart.setDate(start.getDate() - 7);
+      prevLabel = 'last week';
+      buckets = 7; bucketOf = d => (d.getDay() + 6) % 7;
+      bucketLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    } else if (posDashRange === 'month') {
+      start = new Date(now.getFullYear(), now.getMonth(), 1);
+      prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      prevLabel = 'last month';
+      const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      buckets = dim; bucketOf = d => d.getDate() - 1;
+      bucketLabels = Array.from({ length: dim }, (_, i) => ((i + 1) % 5 === 0) ? String(i + 1) : '');
+    } else {
+      start = startToday;
+      prevStart = new Date(start); prevStart.setDate(start.getDate() - 7);
+      prevLabel = 'last ' + now.toLocaleDateString('en-ZA', { weekday: 'long' });
+      buckets = 24; bucketOf = d => d.getHours();
+      bucketLabels = Array.from({ length: 24 }, (_, h) => (h % 6 === 0) ? (h + ':00') : '');
+    }
+    const elapsed = now - start;
+    const prevEnd = new Date(prevStart.getTime() + elapsed);
+
+    const sales = live(posSalesArr());
+    const cur = sales.filter(s => new Date(s.timeStamp) >= start);
+    const prev = sales.filter(s => { const t = new Date(s.timeStamp); return t >= prevStart && t < prevEnd; });
+
+    const takings = sum(cur), n = cur.length;
+    const avgSale = n ? takings / n : 0;
+    const avgItems = n ? itemCount(cur) / n : 0;
+    const delta = takings - sum(prev);
+    const hasPrev = prev.length > 0;
+
+    // Bar chart
+    const data = new Array(buckets).fill(0);
+    cur.forEach(s => { const i = bucketOf(new Date(s.timeStamp)); if (i >= 0 && i < buckets) data[i] += Number(s.total) || 0; });
+    const maxV = Math.max(1, ...data);
+    const chart = `
+      <div style="display:flex; align-items:flex-end; gap:2px; height:90px; margin-top:0.5rem">
+        ${data.map((v, i) => `<div title="${bucketLabels[i] || i}: ${posMoney(v)}" style="flex:1; display:flex; align-items:flex-end; height:100%">
+          <div style="width:100%; height:${Math.round(v / maxV * 100)}%; min-height:${v ? 3 : 0}px; background:${v ? 'var(--accent)' : 'rgba(255,255,255,0.06)'}; border-radius:2px 2px 0 0"></div>
+        </div>`).join('')}
+      </div>
+      <div style="display:flex; gap:2px; font-size:8px; color:var(--text-muted); margin-bottom:0.25rem">${data.map((v, i) => `<div style="flex:1; text-align:center">${bucketLabels[i] || ''}</div>`).join('')}</div>`;
+
+    const toggle = [['today', 'Today'], ['week', 'This week'], ['month', 'This month']].map(([r, lbl]) => {
+      const active = posDashRange === r;
+      return `<button onclick="posSetDashRange('${r}')" style="padding:0.3rem 0.8rem; border-radius:6px; font-size:12px; cursor:pointer; border:1px solid var(--border); background:${active ? 'var(--accent)' : 'transparent'}; color:${active ? '#0f0f0f' : 'var(--text)'}; font-weight:${active ? '700' : '500'}">${lbl}</button>`;
+    }).join('');
+
+    const metric = (label, val) => `<div class="metric"><div class="metric-label">${label}</div><div class="metric-value">${val}</div></div>`;
+    const deltaStr = hasPrev ? `${delta >= 0 ? '▲' : '▼'} ${posMoney(Math.abs(delta))} vs ${prevLabel}` : '';
+    const deltaColor = delta >= 0 ? 'var(--success)' : 'var(--accent)';
+
+    // All-business takings for today (kept from before)
     const allBizToday = ['bellville', 'pinkfoot', 'repticube'].map(b => {
-      const arr = liveSales(posStore[b] && posStore[b].sales).filter(s => new Date(s.timeStamp) >= startToday);
+      const arr = live(posStore[b] && posStore[b].sales).filter(s => new Date(s.timeStamp) >= startToday);
       return { b, name: POS_BIZ_NAMES[b], total: sum(arr), n: arr.length };
     });
-
-    // Current-business roll-ups
-    const sales = liveSales(posSalesArr());
-    const inRange = (from) => sales.filter(s => new Date(s.timeStamp) >= from);
-    const todayS = inRange(startToday), weekS = inRange(startWeek), monthS = inRange(startMonth);
-    const pendingXero = sales.filter(s => !(s._synced && s._synced.xero)).length;
-
-    // Top products this month (current biz) by revenue
-    const prodMap = {};
-    monthS.forEach(s => liSaleLines(s).forEach(li => {
-      const key = li._description || li._sku || 'Item';
-      if (!prodMap[key]) prodMap[key] = { qty: 0, rev: 0 };
-      prodMap[key].qty += Number(li.unitQuantity) || 0;
-      prodMap[key].rev += Number(li.calcTotal) || 0;
-    }));
-    const top = Object.entries(prodMap).sort((a, b) => b[1].rev - a[1].rev).slice(0, 5);
-
-    const metric = (label, val, sub) => `<div class="metric"><div class="metric-label">${label}</div><div class="metric-value">${val}</div>${sub ? `<div style="font-size:10px; color:var(--text-muted)">${sub}</div>` : ''}</div>`;
+    const pendingXero = sales.filter(s => !s.xeroSkip && !(s._synced && s._synced.xero)).length;
 
     el.innerHTML = `
-      <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.4rem">Today — all businesses</div>
-      <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1rem">
-        ${allBizToday.map(x => `<div style="flex:1; min-width:120px; padding:0.5rem 0.75rem; border:1px solid var(--border); border-radius:6px">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.5rem">
+        <strong style="font-size:13px">${_escape(POS_BIZ_NAMES[activeBiz] || activeBiz)}</strong>
+        <div style="display:flex; gap:0.4rem">${toggle}</div>
+      </div>
+      <div style="font-size:30px; font-weight:800; color:var(--accent); line-height:1.1">${posMoney(takings)}</div>
+      <div style="font-size:12px; color:${deltaColor}; min-height:1.1em; margin-bottom:0.25rem">${deltaStr}</div>
+      ${chart}
+      <div class="grid3" style="margin-top:0.5rem">
+        ${metric('Sales', n)}
+        ${metric('Avg sale', posMoney(avgSale))}
+        ${metric('Avg items/sale', avgItems.toFixed(1))}
+      </div>
+      ${pendingXero ? `<div style="margin-top:0.75rem; font-size:12px; color:var(--warn)">⚠️ ${pendingXero} sale(s) not yet synced to Xero — open the POS tab to retry.</div>` : ''}
+      <div style="margin-top:1rem; font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.4rem">Today — all businesses</div>
+      <div style="display:flex; gap:0.5rem; flex-wrap:wrap">
+        ${allBizToday.map(x => `<div style="flex:1; min-width:110px; padding:0.5rem 0.75rem; border:1px solid var(--border); border-radius:6px">
           <div style="font-size:11px; color:var(--text-muted)">${_escape(x.name)}</div>
           <div style="font-size:16px; font-weight:700; color:var(--accent)">${posMoney(x.total)}</div>
           <div style="font-size:10px; color:var(--text-muted)">${x.n} sale${x.n === 1 ? '' : 's'}</div>
         </div>`).join('')}
       </div>
-      <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.4rem">${_escape(POS_BIZ_NAMES[activeBiz] || activeBiz)} — totals</div>
-      <div class="grid3">
-        ${metric('Today', posMoney(sum(todayS)), todayS.length + ' sales')}
-        ${metric('This week', posMoney(sum(weekS)), weekS.length + ' sales')}
-        ${metric('This month', posMoney(sum(monthS)), monthS.length + ' sales')}
-      </div>
-      ${pendingXero ? `<div style="margin-top:0.75rem; font-size:12px; color:var(--warn)">⚠️ ${pendingXero} sale(s) not yet synced to Xero — open the POS tab to retry.</div>` : ''}
-      <div style="margin-top:1rem; font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em">Top products (this month)</div>
-      ${top.length ? top.map(([name, v]) => `
-        <div style="display:flex; justify-content:space-between; padding:0.4rem 0; border-bottom:1px solid var(--border)">
-          <div style="flex:1">${_escape(name)} <span style="font-size:11px; color:var(--text-muted)">×${v.qty}</span></div>
-          <div style="font-weight:700">${posMoney(v.rev)}</div>
-        </div>`).join('') : '<div class="empty">No POS sales this month</div>'}
     `;
   }
   window.renderPOSDashboard = renderPOSDashboard;
