@@ -130,7 +130,10 @@
 
 <div class="shell">
   <div class="left">
-    <input id="scan" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="🔍 Scan barcode or search by name / SKU…">
+    <div style="display:flex; gap:0.5rem">
+      <input id="scan" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="🔍 Scan barcode or search by name / SKU…" style="flex:1">
+      <button class="qbtn" title="Scan with camera" onclick="openCamScan()" style="width:56px; border-radius:12px; font-size:1.3rem">📷</button>
+    </div>
     <div id="grid"></div>
   </div>
   <div class="right">
@@ -170,6 +173,14 @@
   <div class="modal-card">
     <h2><span>Parked sales</span><button class="rm" onclick="closeParked()">✕</button></h2>
     <div id="park-body"></div>
+  </div>
+</div>
+
+<div class="modal" id="cam-modal">
+  <div class="modal-card" style="width:420px">
+    <h2><span>Scan barcode</span><button class="rm" onclick="closeCamScan()">✕</button></h2>
+    <video id="cam-video" playsinline style="width:100%; border-radius:10px; background:#000; aspect-ratio:4/3; object-fit:cover"></video>
+    <div id="cam-msg" style="font-size:0.82rem; color:var(--muted); text-align:center; margin-top:0.5rem">Point the camera at a barcode…</div>
   </div>
 </div>
 
@@ -719,6 +730,60 @@
     try { await api('deleteParked', { id }); openParked(); } catch (e) { toast('Delete failed'); }
   }
 
+  // ---- Camera barcode scan (best-effort; needs BarcodeDetector + HTTPS) ----
+  let camStream = null, camDetector = null, camRAF = null, camBusy = false;
+  async function openCamScan() {
+    const msg = document.getElementById('cam-msg');
+    if (!('BarcodeDetector' in window)) { toast('Camera scan not supported on this device — use the USB scanner'); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast('Camera unavailable'); return; }
+    document.getElementById('cam-modal').classList.add('show');
+    msg.textContent = 'Starting camera…';
+    try {
+      const formats = await window.BarcodeDetector.getSupportedFormats().catch(() => []);
+      camDetector = new window.BarcodeDetector(formats && formats.length ? { formats } : undefined);
+      camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+      const v = document.getElementById('cam-video');
+      v.srcObject = camStream; await v.play();
+      msg.textContent = 'Point the camera at a barcode…';
+      scanCamLoop();
+    } catch (e) { msg.textContent = 'Camera error: ' + (e.message || e); }
+  }
+  async function scanCamLoop() {
+    const v = document.getElementById('cam-video');
+    if (!camStream || !camDetector) return;
+    if (!camBusy && v.readyState >= 2) {
+      camBusy = true;
+      try {
+        const codes = await camDetector.detect(v);
+        if (codes && codes.length) {
+          const raw = String(codes[0].rawValue || '').trim();
+          if (raw) { onCamHit(raw); return; }
+        }
+      } catch (e) { /* transient */ }
+      camBusy = false;
+    }
+    camRAF = requestAnimationFrame(scanCamLoop);
+  }
+  function onCamHit(code) {
+    const hit = matchExact(code);
+    if (hit) {
+      addToCart(hit.variantId);
+      // brief feedback, keep scanning for multi-item carts
+      const msg = document.getElementById('cam-msg'); if (msg) msg.textContent = '✓ ' + hit.name;
+      if (navigator.vibrate) navigator.vibrate(60);
+      camBusy = false; setTimeout(() => { camRAF = requestAnimationFrame(scanCamLoop); }, 700);
+    } else {
+      const msg = document.getElementById('cam-msg'); if (msg) msg.textContent = 'No match for ' + code;
+      camBusy = false; setTimeout(() => { camRAF = requestAnimationFrame(scanCamLoop); }, 700);
+    }
+  }
+  function closeCamScan() {
+    document.getElementById('cam-modal').classList.remove('show');
+    if (camRAF) cancelAnimationFrame(camRAF); camRAF = null;
+    if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+    camDetector = null; camBusy = false;
+  }
+
   // ---- Refunds / returns ----
   let refundOrder = null;       // the looked-up order being refunded
   let refundQty = {};           // { lineItemId: qty to refund }
@@ -1092,6 +1157,7 @@
     lineDiscount, setCartDiscount,
     parkSale, openParked, closeParked, retrieveParked, deleteParked,
     openRefund, closeRefund, lookupRefundOrder, setRefundQty, confirmRefund,
+    openCamScan, closeCamScan,
     lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings,
     flushQueue,
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
