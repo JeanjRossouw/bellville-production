@@ -98,17 +98,55 @@ async function getProducts() {
   return out;
 }
 
+// Create a paid + (best-effort) fulfilled Shopify order for a walk-in sale, so
+// inventory decrements. lineItems: [{ variantId, qty }]. Returns the order name.
+async function createOrder({ lineItems, note }) {
+  if (!Array.isArray(lineItems) || lineItems.length === 0) { const e = new Error('No line items'); e.status = 400; throw e; }
+  const payload = {
+    order: {
+      line_items: lineItems.map(li => ({ variant_id: Number(li.variantId), quantity: Number(li.qty) || 1 })),
+      financial_status: 'paid',
+      inventory_behaviour: 'decrement_obeying_policy', // decrement stock
+      tags: 'walk-in',
+      source_name: 'reptipos',
+      note: note || 'ReptiCube walk-in POS',
+      send_receipt: false,
+      send_fulfillment_receipt: false
+    }
+  };
+  const { json } = await shopify('/orders.json', { method: 'POST', body: payload });
+  const order = json.order;
+
+  // Best-effort: mark fulfilled (stock already decremented via inventory_behaviour).
+  let fulfilled = false;
+  try {
+    const fo = await shopify(`/orders/${order.id}/fulfillment_orders.json`);
+    const ids = (fo.json.fulfillment_orders || []).filter(f => f.status !== 'closed').map(f => ({ fulfillment_order_id: f.id }));
+    if (ids.length) {
+      await shopify('/fulfillments.json', { method: 'POST', body: { fulfillment: { line_items_by_fulfillment_order: ids, notify_customer: false } } });
+      fulfilled = true;
+    }
+  } catch (e) { /* paid + decremented already; fulfillment is non-critical */ }
+
+  return { orderId: String(order.id), orderName: order.name, fulfilled };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'POST only' };
-  let action;
-  try { ({ action } = JSON.parse(event.body || '{}')); } catch { return { statusCode: 400, body: 'Invalid JSON' }; }
+  let body;
+  try { body = JSON.parse(event.body || '{}'); } catch { return { statusCode: 400, body: 'Invalid JSON' }; }
+  const json = (status, obj) => ({ statusCode: status, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) });
   try {
-    if (action === 'getProducts') {
+    if (body.action === 'getProducts') {
       const [products, locationId] = await Promise.all([getProducts(), primaryLocationId()]);
-      return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ products, locationId }) };
+      return json(200, { products, locationId });
     }
-    return { statusCode: 400, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: `Unknown action "${action}"` }) };
+    if (body.action === 'createOrder') {
+      const out = await createOrder(body);
+      return json(200, out);
+    }
+    return json(400, { error: `Unknown action "${body.action}"` });
   } catch (e) {
-    return { statusCode: e.status === 401 ? 401 : 502, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: e.message }) };
+    return json(e.status === 401 ? 401 : (e.status === 400 ? 400 : 502), { error: e.message });
   }
 };

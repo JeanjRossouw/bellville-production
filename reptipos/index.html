@@ -90,6 +90,18 @@
   .btn-ghost { background:var(--panel2); color:var(--text); border:1px solid var(--border); font-weight:600; }
   .toast { position:fixed; left:50%; bottom:1.2rem; transform:translateX(-50%); background:#000; color:#fff; padding:0.6rem 1rem; border-radius:10px; font-size:0.9rem; opacity:0; transition:opacity .2s; z-index:50; }
   .toast.show { opacity:0.95; }
+
+  .modal { position:fixed; inset:0; z-index:100; background:rgba(0,0,0,0.65); display:none; align-items:center; justify-content:center; }
+  .modal.show { display:flex; }
+  .modal-card { width:420px; max-width:94vw; background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:1.1rem; }
+  .modal-card h2 { margin:0 0 0.2rem; font-size:1.05rem; display:flex; justify-content:space-between; align-items:center; }
+  .pay-total { font-size:2rem; font-weight:800; text-align:center; color:var(--accent2); margin:0.2rem 0 0.9rem; }
+  .pay-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.5rem; }
+  .pay-grid button { padding:0.9rem 0.4rem; border-radius:10px; border:1px solid var(--border); background:var(--panel2); color:var(--text); font-size:0.95rem; font-weight:700; cursor:pointer; }
+  .field { margin-top:0.85rem; }
+  .field label { display:block; font-size:0.8rem; color:var(--muted); margin-bottom:0.25rem; }
+  .field input { width:100%; padding:0.7rem; font-size:1.1rem; border-radius:10px; border:1px solid var(--border); background:var(--panel2); color:var(--text); }
+  .change { font-size:1.05rem; font-weight:700; margin-top:0.6rem; }
 </style>
 </head>
 <body>
@@ -112,8 +124,21 @@
     <div id="cart"></div>
     <div class="foot">
       <div class="total"><span>TOTAL</span><span class="accent" id="grand">R0.00</span></div>
-      <button class="btn btn-pay" id="pay-btn" onclick="payStub()">Pay · 0 items</button>
+      <button class="btn btn-pay" id="pay-btn" onclick="payOpen()">Pay · 0 items</button>
     </div>
+  </div>
+</div>
+
+<div class="modal" id="pay-modal">
+  <div class="modal-card">
+    <h2><span>Take payment</span><button class="rm" onclick="payClose()">✕</button></h2>
+    <div class="pay-total" id="pay-total">R0.00</div>
+    <div class="pay-grid">
+      <button onclick="payPick('cash')">💵 Cash</button>
+      <button onclick="payPick('card')">💳 Card — paid</button>
+      <button onclick="payPick('split')">↔ Split</button>
+    </div>
+    <div id="pay-detail"></div>
   </div>
 </div>
 
@@ -265,7 +290,168 @@
     payBtn.style.opacity = count === 0 ? '0.5' : '1';
   }
 
-  function payStub() { toast('Payments arrive in Phase 2'); }
+  // ---- Payments (Phase 2) ----
+  function payOpen() {
+    if (cart.length === 0) { toast('Cart is empty'); return; }
+    document.getElementById('pay-total').textContent = money(cartTotal());
+    document.getElementById('pay-detail').innerHTML = '';
+    document.getElementById('pay-modal').classList.add('show');
+  }
+  function payClose() { document.getElementById('pay-modal').classList.remove('show'); }
+
+  function payPick(method) {
+    const total = cartTotal();
+    const d = document.getElementById('pay-detail');
+    if (method === 'card') {
+      d.innerHTML = `<div class="field"><div style="font-size:0.85rem;color:var(--muted);margin-bottom:0.6rem">Charge ${money(total)} on the Capitec speedpoint, then confirm.</div>
+        <button class="btn btn-pay" onclick="completeSale({method:'card',cardAmount:${total}})">✓ Card — paid · ${money(total)}</button></div>`;
+    } else if (method === 'cash') {
+      d.innerHTML = `<div class="field"><label>Cash tendered</label>
+        <input id="cash-in" type="number" inputmode="decimal" step="0.01" value="${total.toFixed(2)}" oninput="cashChange()">
+        <div class="change" id="cash-change">Change: R0.00</div>
+        <button class="btn btn-pay" style="margin-top:0.7rem" onclick="confirmCash()">✓ Complete cash sale</button></div>`;
+      const inp = document.getElementById('cash-in'); inp.focus(); inp.select(); cashChange();
+    } else {
+      d.innerHTML = `<div class="field"><label>Cash portion</label>
+        <input id="split-cash" type="number" inputmode="decimal" step="0.01" value="0.00" oninput="splitCalc()">
+        <label style="margin-top:0.6rem">Card portion</label>
+        <input id="split-card" type="number" inputmode="decimal" step="0.01" value="${total.toFixed(2)}" oninput="splitCalc()">
+        <div class="change" id="split-msg"></div>
+        <button class="btn btn-pay" style="margin-top:0.7rem" id="split-btn" onclick="confirmSplit()">✓ Complete split sale</button></div>`;
+      splitCalc();
+    }
+  }
+  function cashChange() {
+    const total = cartTotal();
+    const t = parseFloat(document.getElementById('cash-in').value) || 0;
+    document.getElementById('cash-change').textContent = 'Change: ' + money(Math.max(0, t - total));
+  }
+  function confirmCash() {
+    const total = cartTotal();
+    const t = parseFloat(document.getElementById('cash-in').value) || 0;
+    if (t < total) { toast('Cash tendered is less than the total'); return; }
+    completeSale({ method: 'cash', cashAmount: total, cashTendered: t, change: t - total });
+  }
+  function splitCalc() {
+    const total = cartTotal();
+    const cash = parseFloat(document.getElementById('split-cash').value) || 0;
+    const card = parseFloat(document.getElementById('split-card').value) || 0;
+    const sum = cash + card;
+    const ok = Math.abs(sum - total) < 0.005;
+    document.getElementById('split-msg').textContent = ok ? '✓ Balances' : `Must total ${money(total)} (currently ${money(sum)})`;
+    document.getElementById('split-msg').style.color = ok ? 'var(--accent2)' : 'var(--warn)';
+    const btn = document.getElementById('split-btn'); btn.disabled = !ok; btn.style.opacity = ok ? '1' : '0.5';
+  }
+  function confirmSplit() {
+    const total = cartTotal();
+    const cash = parseFloat(document.getElementById('split-cash').value) || 0;
+    const card = parseFloat(document.getElementById('split-card').value) || 0;
+    if (Math.abs(cash + card - total) >= 0.005) { toast('Split must total the sale'); return; }
+    completeSale({ method: 'split', cashAmount: cash, cardAmount: card });
+  }
+
+  function nextSaleNumber() {
+    const seq = (parseInt(localStorage.getItem('reptipos-seq') || '0', 10) || 0) + 1;
+    localStorage.setItem('reptipos-seq', String(seq));
+    const d = new Date();
+    const ymd = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+    return 'RC-' + ymd + '-' + String(seq).padStart(4, '0');
+  }
+  function paymentSummary(p) {
+    if (p.method === 'cash') return `Cash (tendered ${money(p.cashTendered)}, change ${money(p.change)})`;
+    if (p.method === 'card') return 'Card (Capitec — paid)';
+    return `Split: cash ${money(p.cashAmount)} + card ${money(p.cardAmount)}`;
+  }
+
+  async function completeSale(payment) {
+    const total = cartTotal();
+    const items = cart.map(l => { const p = findProduct(l.variantId); return { variantId: l.variantId, name: p.name, sku: p.sku, price: p.price, qty: l.qty, lineTotal: p.price * l.qty }; });
+    const sale = {
+      saleNumber: nextSaleNumber(),
+      datetime: new Date().toISOString(),
+      items, total, payment,
+      shopifyOrder: null, synced: false
+    };
+    payClose();
+
+    // Record locally first (always survives).
+    try { const arr = JSON.parse(localStorage.getItem('reptipos-sales') || '[]'); arr.unshift(sale); localStorage.setItem('reptipos-sales', JSON.stringify(arr.slice(0, 300))); } catch (e) {}
+    // Best-effort Firestore log.
+    try {
+      if (window.fb) { const { db, fns } = window.fb; await fns.addDoc(fns.collection(db, 'sales'), sale); }
+    } catch (e) { console.warn('Firestore sale log failed:', e); }
+
+    // Write the sale back to Shopify (paid + fulfilled → stock decrements).
+    try {
+      const res = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'createOrder', lineItems: items.map(i => ({ variantId: i.variantId, qty: i.qty })), note: sale.saleNumber + ' · ' + paymentSummary(payment) }) });
+      if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 120));
+      const out = await res.json();
+      sale.shopifyOrder = out.orderName || null; sale.synced = true;
+      updateLocalSale(sale);
+      toast('Sale ' + sale.saleNumber + ' · Shopify ' + (out.orderName || 'created'));
+    } catch (e) {
+      console.warn('Shopify order failed:', e);
+      toast('Sale saved — Shopify order failed (will retry in Phase 3 offline queue)');
+    }
+
+    // Reflect stock locally + reset.
+    items.forEach(i => { const p = findProduct(i.variantId); if (p) p.qty = Math.max(0, (Number(p.qty) || 0) - i.qty); });
+    cacheCatalogue();
+    cart = [];
+    renderCart(); renderGrid();
+    showReceipt(sale);
+    scan.focus();
+  }
+
+  function updateLocalSale(sale) {
+    try { const arr = JSON.parse(localStorage.getItem('reptipos-sales') || '[]'); const i = arr.findIndex(s => s.saleNumber === sale.saleNumber); if (i >= 0) { arr[i] = sale; localStorage.setItem('reptipos-sales', JSON.stringify(arr)); } } catch (e) {}
+  }
+
+  // ---- Receipt: clean slip, NO VAT. Print (80mm) + WhatsApp ----
+  function receiptText(sale) {
+    const dt = new Date(sale.datetime).toLocaleString('en-ZA');
+    let t = `ReptiCube\nSale ${sale.saleNumber}\n${dt}\n`;
+    t += '--------------------------------\n';
+    sale.items.forEach(i => { t += `${i.qty} x ${i.name}\n   ${money(i.lineTotal)}\n`; });
+    t += '--------------------------------\n';
+    t += `TOTAL  ${money(sale.total)}\n`;
+    t += `Paid: ${paymentSummary(sale.payment)}\n`;
+    t += 'Thank you!';
+    return t;
+  }
+  function showReceipt(sale) {
+    const dt = new Date(sale.datetime).toLocaleString('en-ZA');
+    const rows = sale.items.map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">${money(i.lineTotal)}</td></tr>`).join('');
+    const waText = encodeURIComponent(receiptText(sale));
+    const w = window.open('', '_blank', 'width=360,height=640');
+    if (!w) { toast('Allow pop-ups to print the slip'); return; }
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(sale.saleNumber)}</title>
+      <style>
+        @media print { @page { size:80mm auto; margin:4mm; } .noprint{display:none} }
+        body{font-family:'Courier New',monospace; width:80mm; margin:0 auto; padding:8px; color:#000}
+        h2{text-align:center; margin:0.2rem 0}
+        .c{text-align:center; font-size:12px}
+        table{width:100%; border-collapse:collapse; margin:0.5rem 0; font-size:13px}
+        td{padding:2px 0; vertical-align:top}
+        .tot{border-top:1px dashed #000; font-weight:bold; font-size:16px}
+        .btns{margin-top:12px; display:flex; gap:8px}
+        .btns a,.btns button{flex:1; text-align:center; padding:10px; border:1px solid #000; border-radius:8px; background:#fff; font-size:13px; text-decoration:none; color:#000; cursor:pointer}
+      </style></head><body>
+      <h2>ReptiCube</h2>
+      <div class="c">Sale ${esc(sale.saleNumber)}</div>
+      <div class="c">${esc(dt)}</div>
+      <table>${rows}<tr class="tot"><td>TOTAL</td><td style="text-align:right">${money(sale.total)}</td></tr></table>
+      <div class="c">Paid: ${esc(paymentSummary(sale.payment))}</div>
+      ${sale.shopifyOrder ? `<div class="c">Order ${esc(sale.shopifyOrder)}</div>` : ''}
+      <div class="c" style="margin-top:8px">Thank you!</div>
+      <div class="btns noprint">
+        <button onclick="window.print()">🖨️ Print</button>
+        <a href="https://wa.me/?text=${waText}" target="_blank">WhatsApp</a>
+      </div>
+      </body></html>`);
+    w.document.close();
+  }
 
   // ---- Keep the scan field focused (USB scanners type into the focused input) ----
   const scan = document.getElementById('scan');
@@ -276,7 +462,8 @@
   setInterval(keepFocus, 1500);
 
   // Expose handlers
-  Object.assign(window, { refreshCatalogue, addToCart, changeQty, removeLine, clearCart, payStub });
+  Object.assign(window, { refreshCatalogue, addToCart, changeQty, removeLine, clearCart,
+    payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale });
 
   // ---- Boot ----
   if (loadCached()) { document.getElementById('cat-status').textContent = catalogue.length + ' products (cached)'; renderGrid(); }
