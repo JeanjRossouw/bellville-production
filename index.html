@@ -4274,9 +4274,9 @@
       <div style="margin-top:1rem; display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center">
         <button class="btn" onclick="addNewProductBom()">+ Add Product</button>
         ${showCost ? `
-        <button class="btn" onclick="exportSellPriceSheet()" title="Download a CSV of every product with a Selling Price column to fill in">⬇️ Export price sheet</button>
-        <button class="btn" onclick="document.getElementById('sellprice-file').click()" title="Upload the filled-in CSV to set selling prices">⬆️ Import prices</button>
-        <input type="file" id="sellprice-file" accept=".csv,text/csv" style="display:none" onchange="handleSellPriceFile(this)">
+        <button class="btn" onclick="exportSellPriceSheet()" title="Download an Excel sheet of every product with a Selling Price column to fill in">⬇️ Export price sheet (Excel)</button>
+        <button class="btn" onclick="document.getElementById('sellprice-file').click()" title="Upload the filled-in Excel (.xlsx) or CSV to set selling prices">⬆️ Import prices</button>
+        <input type="file" id="sellprice-file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none" onchange="handleSellPriceFile(this)">
         ` : ''}
         <span style="font-size:12px; color:var(--text-muted); align-self:center">${productList.length} product${productList.length !== 1 ? 's' : ''} shown</span>
       </div>
@@ -4754,22 +4754,161 @@
     return cells;
   }
 
-  // Download a fill-in sheet of every product for the active business
+  // --- Minimal dependency-free XLSX read/write -----------------------------
+  const _CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[n] = c >>> 0; }
+    return t;
+  })();
+  function _crc32(b) { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = _CRC_TABLE[(c ^ b[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+  function _utf8(s) { return new TextEncoder().encode(s); }
+  function _xmlEsc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function _xmlUnesc(s) { return String(s).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'").replace(/&amp;/g, '&'); }
+  function _colLetter(n) { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
+  function _lettersToIdx(L) { let n = 0; for (let i = 0; i < L.length; i++) n = n * 26 + (L.charCodeAt(i) - 64); return n - 1; }
+
+  // Build a ZIP from stored (uncompressed) entries -> Uint8Array
+  function _zipStore(files) {
+    const enc = files.map(f => ({ name: _utf8(f.name), data: f.data, crc: _crc32(f.data) }));
+    const chunks = []; const central = []; let offset = 0;
+    enc.forEach(f => {
+      const lh = new DataView(new ArrayBuffer(30));
+      lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true);
+      lh.setUint32(14, f.crc, true); lh.setUint32(18, f.data.length, true); lh.setUint32(22, f.data.length, true);
+      lh.setUint16(26, f.name.length, true);
+      chunks.push(new Uint8Array(lh.buffer), f.name, f.data);
+      const cd = new DataView(new ArrayBuffer(46));
+      cd.setUint32(0, 0x02014b50, true); cd.setUint16(4, 20, true); cd.setUint16(6, 20, true);
+      cd.setUint32(16, f.crc, true); cd.setUint32(20, f.data.length, true); cd.setUint32(24, f.data.length, true);
+      cd.setUint16(28, f.name.length, true); cd.setUint32(42, offset, true);
+      central.push({ header: new Uint8Array(cd.buffer), name: f.name });
+      offset += 30 + f.name.length + f.data.length;
+    });
+    const cdStart = offset; let cdSize = 0;
+    central.forEach(c => { chunks.push(c.header, c.name); cdSize += c.header.length + c.name.length; });
+    const eo = new DataView(new ArrayBuffer(22));
+    eo.setUint32(0, 0x06054b50, true); eo.setUint16(8, enc.length, true); eo.setUint16(10, enc.length, true);
+    eo.setUint32(12, cdSize, true); eo.setUint32(16, cdStart, true);
+    chunks.push(new Uint8Array(eo.buffer));
+    let total = 0; chunks.forEach(c => total += c.length);
+    const out = new Uint8Array(total); let p = 0; chunks.forEach(c => { out.set(c, p); p += c.length; });
+    return out;
+  }
+
+  // rows: array of arrays; cell = { v, n:true } for number, else treated as text
+  function _sheetXml(rows) {
+    let body = '';
+    rows.forEach((row, ri) => {
+      const r = ri + 1; let cells = '';
+      row.forEach((cell, ci) => {
+        if (cell == null || cell.v == null || cell.v === '') return;
+        const ref = _colLetter(ci + 1) + r;
+        if (cell.n) cells += '<c r="' + ref + '"><v>' + cell.v + '</v></c>';
+        else cells += '<c r="' + ref + '" t="inlineStr"><is><t xml:space="preserve">' + _xmlEsc(cell.v) + '</t></is></c>';
+      });
+      body += '<row r="' + r + '">' + cells + '</row>';
+    });
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' + body + '</sheetData></worksheet>';
+  }
+
+  function _buildXlsx(sheetName, rows) {
+    const nm = (_xmlEsc(sheetName) || 'Sheet1').substring(0, 31);
+    return _zipStore([
+      { name: '[Content_Types].xml', data: _utf8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>') },
+      { name: '_rels/.rels', data: _utf8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>') },
+      { name: 'xl/workbook.xml', data: _utf8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="' + nm + '" sheetId="1" r:id="rId1"/></sheets></workbook>') },
+      { name: 'xl/_rels/workbook.xml.rels', data: _utf8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>') },
+      { name: 'xl/worksheets/sheet1.xml', data: _utf8(_sheetXml(rows)) }
+    ]);
+  }
+
+  async function _inflateRaw(bytes) {
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+
+  // Parse a ZIP into { entryName: { method, comp(Uint8Array) } }
+  function _unzip(buf) {
+    const dv = new DataView(buf); const bytes = new Uint8Array(buf);
+    let eo = -1;
+    for (let i = bytes.length - 22; i >= 0; i--) { if (dv.getUint32(i, true) === 0x06054b50) { eo = i; break; } }
+    if (eo < 0) throw new Error('not a valid .xlsx file');
+    const count = dv.getUint16(eo + 10, true); let cd = dv.getUint32(eo + 16, true);
+    const out = {};
+    for (let n = 0; n < count; n++) {
+      if (dv.getUint32(cd, true) !== 0x02014b50) break;
+      const method = dv.getUint16(cd + 10, true);
+      const compSize = dv.getUint32(cd + 20, true);
+      const nameLen = dv.getUint16(cd + 28, true);
+      const extraLen = dv.getUint16(cd + 30, true);
+      const commentLen = dv.getUint16(cd + 32, true);
+      const lho = dv.getUint32(cd + 42, true);
+      const name = new TextDecoder().decode(bytes.subarray(cd + 46, cd + 46 + nameLen));
+      const lhNameLen = dv.getUint16(lho + 26, true);
+      const lhExtraLen = dv.getUint16(lho + 28, true);
+      const dataStart = lho + 30 + lhNameLen + lhExtraLen;
+      out[name] = { method, comp: bytes.subarray(dataStart, dataStart + compSize) };
+      cd += 46 + nameLen + extraLen + commentLen;
+    }
+    return out;
+  }
+
+  async function _entryText(entry) {
+    if (!entry) return '';
+    const data = entry.method === 0 ? entry.comp : await _inflateRaw(entry.comp);
+    return new TextDecoder().decode(data);
+  }
+
+  // Read the first worksheet of an .xlsx into a 2D array of strings
+  async function _readXlsxRows(buf) {
+    const zip = _unzip(buf);
+    const shared = [];
+    const ss = await _entryText(zip['xl/sharedStrings.xml']);
+    if (ss) {
+      const siRe = /<si>([\s\S]*?)<\/si>/g; let m;
+      while ((m = siRe.exec(ss))) { const tRe = /<t[^>]*>([\s\S]*?)<\/t>/g; let tm, s = ''; while ((tm = tRe.exec(m[1]))) s += tm[1]; shared.push(_xmlUnesc(s)); }
+    }
+    let sheetKey = zip['xl/worksheets/sheet1.xml'] ? 'xl/worksheets/sheet1.xml' : Object.keys(zip).find(k => /^xl\/worksheets\/.*\.xml$/.test(k));
+    const xml = await _entryText(zip[sheetKey]);
+    const rows = [];
+    const rowRe = /<row[^>]*r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g; let rm;
+    while ((rm = rowRe.exec(xml))) {
+      const rowIdx = parseInt(rm[1], 10) - 1; const row = [];
+      const cRe = /<c\b([^>]*)(?:\/>|>([\s\S]*?)<\/c>)/g; let cm;
+      while ((cm = cRe.exec(rm[2]))) {
+        const attrs = cm[1], inner = cm[2] || '';
+        const refM = attrs.match(/r="([A-Z]+)\d+"/); if (!refM) continue;
+        const t = (attrs.match(/t="([^"]+)"/) || [])[1];
+        let val = '';
+        if (t === 'inlineStr') { const im = inner.match(/<t[^>]*>([\s\S]*?)<\/t>/); val = im ? _xmlUnesc(im[1]) : ''; }
+        else if (t === 's') { const vm = inner.match(/<v>([\s\S]*?)<\/v>/); val = vm ? (shared[parseInt(vm[1], 10)] || '') : ''; }
+        else { const vm = inner.match(/<v>([\s\S]*?)<\/v>/); val = vm ? _xmlUnesc(vm[1]) : ''; }
+        row[_lettersToIdx(refM[1])] = val;
+      }
+      rows[rowIdx] = row;
+    }
+    return rows.filter(r => r && r.length);
+  }
+
+  // Download a fill-in sheet of every product for the active business (.xlsx)
   function exportSellPriceSheet() {
     const biz = currentData(); const prods = (biz && biz.productBoms) || {};
     const names = Object.keys(prods).sort((a, b) =>
       (prods[a].category || '').localeCompare(prods[b].category || '') || a.localeCompare(b));
-    const rows = [['Business', 'Category', 'Product', 'MaterialCost', 'TrueCost', 'BreakEven_inclVAT', 'SellingPrice_inclVAT']];
+    const S = v => ({ v: v }); const N = v => ({ v: v, n: true });
+    const r2 = x => Math.round((Number(x) || 0) * 100) / 100;
+    const rows = [['Business', 'Category', 'Product', 'MaterialCost', 'TrueCost', 'BreakEven_inclVAT', 'SellingPrice_inclVAT'].map(S)];
     names.forEach(name => {
       const tc = computeTrueCost(activeBiz, name);
       const be = breakEvenPrice(activeBiz, tc.trueCost);
-      rows.push([activeBiz, prods[name].category || '', name, tc.materialCost.toFixed(2), tc.trueCost.toFixed(2), be.toFixed(2), prods[name].sellingPrice || '']);
+      const sp = parseFloat(prods[name].sellingPrice);
+      rows.push([S(activeBiz), S(prods[name].category || ''), S(name), N(r2(tc.materialCost)), N(r2(tc.trueCost)), N(r2(be)), (sp > 0 ? N(r2(sp)) : S(''))]);
     });
-    const csv = rows.map(r => r.map(_csvCell).join(',')).join('\r\n');
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const bytes = _buildXlsx(activeBiz + ' prices', rows);
+    const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = activeBiz + '-selling-prices.csv';
+    a.href = url; a.download = activeBiz + '-selling-prices.xlsx';
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
@@ -4778,19 +4917,63 @@
   function handleSellPriceFile(input) {
     const f = input.files && input.files[0];
     if (!f) return;
+    const isXlsx = /\.xlsx$/i.test(f.name || '');
     const r = new FileReader();
-    r.onload = e => { try { applySellPriceCsv(e.target.result); } catch (err) { alert('Could not read sheet: ' + err.message); } input.value = ''; };
-    r.readAsText(f);
+    r.onload = e => {
+      if (isXlsx) {
+        _readXlsxRows(e.target.result)
+          .then(rows => _applySellPriceRows(rows))
+          .catch(err => alert('Could not read Excel file: ' + (err && err.message ? err.message : err) + '\n\nTip: you can also re-save it as CSV and import that.'))
+          .then(() => { input.value = ''; });
+      } else {
+        try { applySellPriceCsv(e.target.result); } catch (err) { alert('Could not read sheet: ' + err.message); }
+        input.value = '';
+      }
+    };
+    if (isXlsx) r.readAsArrayBuffer(f); else r.readAsText(f);
   }
   window.handleSellPriceFile = handleSellPriceFile;
 
-  // Apply a filled-in sheet. Accepts our export format, or any CSV/lines with
-  // a product name and a price (e.g. "Lisa Sofa, 4500" or "Lisa Sofa = 4500").
-  function applySellPriceCsv(text) {
+  // Apply [name, price] pairs to product selling prices, with a summary
+  function _applySellPrices(pairs) {
     const biz = currentData(); const prods = (biz && biz.productBoms) || {};
     const byName = {}; Object.keys(prods).forEach(n => byName[n.trim().toLowerCase()] = n);
-    const lines = String(text).split(/\r?\n/).filter(l => l.trim());
     let matched = 0; const missed = [];
+    pairs.forEach(pair => {
+      const name = pair[0]; const price = pair[1];
+      const key = (name || '').trim().toLowerCase(); if (!key) return;
+      const p = parseFloat(String(price == null ? '' : price).replace(/[^\d.]/g, ''));
+      if (byName[key]) { if (!isNaN(p) && p > 0) { prods[byName[key]].sellingPrice = p; matched++; } }
+      else missed.push(name);
+    });
+    saveData(); renderProductBomTable();
+    alert('Updated ' + matched + ' selling price' + (matched !== 1 ? 's' : '') + '.' +
+      (missed.length ? '\n\nNot matched (' + missed.length + '): ' + missed.slice(0, 12).join(', ') + (missed.length > 12 ? '…' : '') : ''));
+  }
+
+  // From a parsed 2D sheet (Excel), find the Product + price columns and apply
+  function _applySellPriceRows(rows) {
+    if (!rows || !rows.length) { alert('No rows found in that sheet.'); return; }
+    let hIdx = rows.findIndex(r => r && r.some(c => /product/i.test(c || '')) && r.some(c => /price|selling/i.test(c || '')));
+    let prodCol = -1, priceCol = -1, start = 0;
+    if (hIdx >= 0) {
+      rows[hIdx].forEach((c, i) => {
+        if (prodCol < 0 && /product/i.test(c || '')) prodCol = i;
+        if (priceCol < 0 && /sell|price/i.test(c || '')) priceCol = i;
+      });
+      start = hIdx + 1;
+    }
+    if (prodCol < 0) prodCol = 2;      // our export layout: column C
+    if (priceCol < 0) priceCol = 6;    // our export layout: column G
+    const pairs = [];
+    for (let i = start; i < rows.length; i++) { const r = rows[i] || []; pairs.push([r[prodCol], r[priceCol]]); }
+    _applySellPrices(pairs);
+  }
+
+  // Apply a filled-in CSV (our export format, or any "Name, Price" / "Name = Price" list)
+  function applySellPriceCsv(text) {
+    const lines = String(text).split(/\r?\n/).filter(l => l.trim());
+    const pairs = [];
     lines.forEach((line, idx) => {
       const cols = _parseCsvLine(line.replace(/=/g, ','));
       if (idx === 0 && /product/i.test(line) && /price/i.test(line)) return; // header row
@@ -4798,15 +4981,9 @@
       if (cols.length >= 7) { name = cols[2]; price = cols[6]; }            // full export sheet
       else if (cols.length >= 2) { name = cols[0]; price = cols[cols.length - 1]; }
       else return;
-      const key = (name || '').trim().toLowerCase();
-      const p = parseFloat(String(price).replace(/[^\d.]/g, ''));
-      if (!key) return;
-      if (byName[key]) { if (!isNaN(p) && p > 0) { prods[byName[key]].sellingPrice = p; matched++; } }
-      else missed.push(name);
+      pairs.push([name, price]);
     });
-    saveData(); renderProductBomTable();
-    alert('Updated ' + matched + ' selling price' + (matched !== 1 ? 's' : '') + '.' +
-      (missed.length ? '\n\nNot matched (' + missed.length + '): ' + missed.slice(0, 12).join(', ') + (missed.length > 12 ? '…' : '') : ''));
+    _applySellPrices(pairs);
   }
   window.applySellPriceCsv = applySellPriceCsv;
 
