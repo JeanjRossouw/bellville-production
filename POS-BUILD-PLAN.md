@@ -105,43 +105,57 @@ the app is deployed.
 
 ---
 
-## 5. Data model (Firestore)
+## 5. Data model (Firestore) — shaped on Lightspeed Retail (R-Series)
 
-Extend the existing `data.<business>` documents with:
+The POS data model **mirrors the Lightspeed Retail (R-Series) API objects**
+(`Item`, `Sale`, `SaleLine`, `SalePayment`) so a future sync to/from Lightspeed
+— or any system that already speaks Lightspeed — is a clean field map rather
+than a redesign. Fields prefixed `_` are local-only (no Lightspeed equivalent).
+
+Extend the existing `data.<business>` documents with two arrays:
 
 ```js
 data.bellville = {
   ...existing...,
-  products: [
+  posCatalog: [                 // Lightspeed "Item"
     {
-      id, sku, name, price, vatRate,
-      stockOnHand,            // POS is master
-      madeToOrder: false,     // if true, sale creates a production job
-      shopifyProductId,       // link for downstream sync
-      shopifyVariantId,
-      xeroAccountCode,        // revenue account mapping
-      lastSyncedToShopify
+      itemID: null,             // Lightspeed id — null until synced
+      _localId: 'POS-…',        // our stable local id
+      description: 'Couch',     // Lightspeed calls the product name "description"
+      customSku, systemSku,
+      defaultCost, tax: true, taxClassID, categoryID,
+      archived: false,          // soft-delete (keeps historic sales resolving)
+      itemType: 'default',
+      isSpecialOrder: false,    // our made-to-order marker (mirrors the LS SaleLine flag)
+      Prices:    { ItemPrice: [{ amount, useType: 'Default' }] },
+      ItemShops: { ItemShop:  [{ shopID, qoh, reorderPoint }] }   // qoh = master stock
     }
   ],
-  sales: [
+  posSales: [                   // Lightspeed "Sale"
     {
-      id, datetime, cashier, lineItems[],
-      subtotal, vat, total,
-      paymentMethod: 'card',
-      cardRef,                // reference/auth code from the terminal
-      status: 'completed' | 'voided' | 'refunded',
-      xeroInvoiceId,          // set once pushed
-      productionJobIds[],     // set if made-to-order lines created jobs
-      synced: { shopify, xero }
+      saleID: null,             // Lightspeed id — null until synced
+      _localId: 'SALE-…',
+      timeStamp, completeTime, completed, voided,
+      isTaxInclusive: true,
+      shopID, employeeID, customerID, _cashierEmail,
+      calcSubtotal, taxTotal, total, totalDue,
+      SaleLines:    { SaleLine:    [{ itemID, _localItemId, _description, _sku,
+                                      unitQuantity, unitPrice, normalUnitPrice,
+                                      discountAmount, tax, isSpecialOrder, calcTotal }] },
+      SalePayments: { SalePayment: [{ amount, paymentTypeID,
+                                      PaymentType: { name: 'Credit Card' }, _cardRef }] },
+      _synced: { lightspeed, xero, shopify }   // set by later-phase integrations
     }
   ]
 }
 ```
 
-Keeping `products` and `sales` *inside* the existing per-business document
+Keeping `posCatalog` and `posSales` *inside* the existing per-business document
 means the POS inherits real-time sync, offline support, and the business
-selector for free. (If `sales` volume grows large, split it into a
-sub-collection later — not needed for launch.)
+selector for free. (If `posSales` volume grows large, split it into a
+sub-collection later — not needed for launch.) The later Xero/Shopify/factory
+phases add their linking ids (e.g. `xeroInvoiceId`, `shopifyVariantId`,
+`productionJobIds`) onto these same objects.
 
 ---
 

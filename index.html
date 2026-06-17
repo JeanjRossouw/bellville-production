@@ -7005,10 +7005,25 @@ ${totalsSection}
   // Master of products & stock for each business. Sales record locally and
   // sync via the same Firestore doc. Xero / Shopify / factory integrations
   // are later phases — see POS-BUILD-PLAN.md.
+  //
+  // DATA MODEL: shaped to mirror the Lightspeed Retail (R-Series) API so a
+  // future Lightspeed sync is a clean field map, not a redesign.
+  //   Catalog product = Lightspeed "Item":
+  //     itemID (LS id, null until synced), description (name), customSku,
+  //     systemSku, defaultCost, tax (bool), taxClassID, categoryID, archived,
+  //     itemType, isSpecialOrder (our made-to-order marker — mirrors the LS
+  //     SaleLine flag), Prices.ItemPrice[{amount,useType}],
+  //     ItemShops.ItemShop[{shopID,qoh,reorderPoint}].
+  //   Sale = Lightspeed "Sale":
+  //     saleID (null until synced), timeStamp, completed, completeTime, voided,
+  //     isTaxInclusive, total, taxTotal, calcSubtotal, shopID, employeeID,
+  //     customerID, SaleLines.SaleLine[], SalePayments.SalePayment[].
+  //   Fields prefixed "_" are local-only (no Lightspeed equivalent): _localId,
+  //     _cashierEmail, _description/_sku/_localItemId on lines, _cardRef.
   // ============================================
   const POS_VAT_RATE = 0.15;            // South Africa — prices are VAT-INCLUSIVE
   const POS_BIZ_NAMES = { bellville: 'Bellville Furniture', pinkfoot: 'PinkFoot Boutique', repticube: 'ReptiCube' };
-  let posCart = [];                     // [{ productId, qty }] — for the active sale only
+  let posCart = [];                     // [{ productId, qty }] — productId is the item's _localId
 
   // Lazy-ensure the POS arrays exist on the active business (data can arrive
   // from cloud without them on pre-POS docs).
@@ -7022,8 +7037,46 @@ ${totalsSection}
     if (!Array.isArray(d.posSales)) d.posSales = [];
     return d.posSales;
   }
-  function posFindProduct(id) { return posCatalogArr().find(p => p.id === id) || null; }
+  function posFindProduct(id) { return posCatalogArr().find(p => p._localId === id) || null; }
   function posMoney(n) { return 'R' + (Number(n) || 0).toFixed(2); }
+
+  // ---- Lightspeed Item accessors (keep UI code clean over the nested shape) ----
+  function liItemName(item) { return item.description || ''; }
+  function liItemSku(item) { return item.customSku || item.systemSku || ''; }
+  function liIsMTO(item) { return !!item.isSpecialOrder; }
+  function liItemPrice(item) {
+    const ip = item && item.Prices && item.Prices.ItemPrice;
+    if (Array.isArray(ip) && ip.length) {
+      const def = ip.find(p => p.useType === 'Default') || ip[0];
+      return Number(def.amount) || 0;
+    }
+    return 0;
+  }
+  function liSetItemPrice(item, amount) {
+    item.Prices = { ItemPrice: [{ amount: Number(amount) || 0, useType: 'Default', useTypeID: 1 }] };
+  }
+  function liItemShop(item) {
+    let arr = item && item.ItemShops && item.ItemShops.ItemShop;
+    if (!Array.isArray(arr) || !arr.length) {
+      arr = [{ shopID: activeBiz, qoh: 0, reorderPoint: 0 }];
+      item.ItemShops = { ItemShop: arr };
+    }
+    return arr[0];
+  }
+  function liQoh(item) { return liIsMTO(item) ? 0 : (Number(liItemShop(item).qoh) || 0); }
+  function liSetQoh(item, n) { liItemShop(item).qoh = Number(n) || 0; }
+  function liAdjustQoh(item, delta) { const s = liItemShop(item); s.qoh = (Number(s.qoh) || 0) + delta; }
+
+  // ---- Lightspeed Sale accessors ----
+  function liSaleLines(sale) {
+    const a = sale && sale.SaleLines && sale.SaleLines.SaleLine;
+    return Array.isArray(a) ? a : [];
+  }
+  function liSalePaymentRef(sale) {
+    const p = sale && sale.SalePayments && sale.SalePayments.SalePayment;
+    return (Array.isArray(p) && p.length && p[0]._cardRef) || '';
+  }
+  function liSaleItemCount(sale) { return liSaleLines(sale).reduce((n, li) => n + (Number(li.unitQuantity) || 0), 0); }
 
   // VAT-inclusive split: given an inclusive total, return {excl, vat}.
   function posVatSplit(inclusiveTotal) {
@@ -7044,24 +7097,26 @@ ${totalsSection}
     const grid = document.getElementById('pos-grid');
     if (!grid) return;
     const q = (document.getElementById('pos-search')?.value || '').trim().toLowerCase();
-    let items = posCatalogArr();
+    let items = posCatalogArr().filter(p => !p.archived);
     if (q) items = items.filter(p =>
-      (p.name || '').toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q));
+      liItemName(p).toLowerCase().includes(q) || liItemSku(p).toLowerCase().includes(q));
     if (items.length === 0) {
       grid.innerHTML = `<div class="empty" style="grid-column:1/-1">${posCatalogArr().length === 0 ? 'No products yet — add some in the catalogue below.' : 'No products match your search.'}</div>`;
       return;
     }
     grid.innerHTML = items.map(p => {
-      const oos = !p.madeToOrder && (Number(p.stockOnHand) || 0) <= 0;
-      const stockLabel = p.madeToOrder
+      const mto = liIsMTO(p);
+      const qoh = liQoh(p);
+      const oos = !mto && qoh <= 0;
+      const stockLabel = mto
         ? '<span style="color:var(--info)">made to order</span>'
-        : `stock: <strong style="color:${oos ? 'var(--accent)' : 'var(--success)'}">${Number(p.stockOnHand) || 0}</strong>`;
+        : `stock: <strong style="color:${oos ? 'var(--accent)' : 'var(--success)'}">${qoh}</strong>`;
       return `
-        <button onclick="posAddToCart('${p.id}')" ${oos ? 'disabled' : ''}
+        <button onclick="posAddToCart('${p._localId}')" ${oos ? 'disabled' : ''}
           style="text-align:left; padding:0.6rem; border:1px solid var(--border); background:${oos ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.05)'}; border-radius:6px; cursor:${oos ? 'not-allowed' : 'pointer'}; opacity:${oos ? '0.5' : '1'}; color:var(--text)">
-          <div style="font-weight:600; font-size:13px; line-height:1.2">${_escape(p.name)}</div>
-          <div style="font-size:10px; color:var(--text-muted); margin:0.2rem 0">${_escape(p.sku || '')}</div>
-          <div style="font-size:14px; font-weight:700; color:var(--accent)">${posMoney(p.price)}</div>
+          <div style="font-weight:600; font-size:13px; line-height:1.2">${_escape(liItemName(p))}</div>
+          <div style="font-size:10px; color:var(--text-muted); margin:0.2rem 0">${_escape(liItemSku(p))}</div>
+          <div style="font-size:14px; font-weight:700; color:var(--accent)">${posMoney(liItemPrice(p))}</div>
           <div style="font-size:10px; color:var(--text-muted)">${stockLabel}</div>
         </button>`;
     }).join('');
@@ -7072,8 +7127,8 @@ ${totalsSection}
     if (!p) return;
     const line = posCart.find(l => l.productId === id);
     const inCart = line ? line.qty : 0;
-    if (!p.madeToOrder && inCart + 1 > (Number(p.stockOnHand) || 0)) {
-      toast(`Only ${Number(p.stockOnHand) || 0} of "${p.name}" in stock`, 'warn');
+    if (!liIsMTO(p) && inCart + 1 > liQoh(p)) {
+      toast(`Only ${liQoh(p)} of "${liItemName(p)}" in stock`, 'warn');
       return;
     }
     if (line) line.qty++; else posCart.push({ productId: id, qty: 1 });
@@ -7088,8 +7143,8 @@ ${totalsSection}
     const next = line.qty + delta;
     if (next <= 0) { posCart = posCart.filter(l => l.productId !== id); }
     else {
-      if (p && !p.madeToOrder && next > (Number(p.stockOnHand) || 0)) {
-        toast(`Only ${Number(p.stockOnHand) || 0} in stock`, 'warn');
+      if (p && !liIsMTO(p) && next > liQoh(p)) {
+        toast(`Only ${liQoh(p)} in stock`, 'warn');
         return;
       }
       line.qty = next;
@@ -7101,7 +7156,7 @@ ${totalsSection}
   function posCartTotal() {
     return posCart.reduce((sum, l) => {
       const p = posFindProduct(l.productId);
-      return sum + (p ? (Number(p.price) || 0) * l.qty : 0);
+      return sum + (p ? liItemPrice(p) * l.qty : 0);
     }, 0);
   }
 
@@ -7115,16 +7170,17 @@ ${totalsSection}
     const rows = posCart.map(l => {
       const p = posFindProduct(l.productId);
       if (!p) return '';
-      const lineTotal = (Number(p.price) || 0) * l.qty;
+      const unit = liItemPrice(p);
+      const lineTotal = unit * l.qty;
       return `
         <div style="display:flex; align-items:center; gap:0.4rem; padding:0.4rem 0; border-bottom:1px solid var(--border)">
           <div style="flex:1; min-width:0">
-            <div style="font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${_escape(p.name)}</div>
-            <div style="font-size:10px; color:var(--text-muted)">${posMoney(p.price)} each</div>
+            <div style="font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${_escape(liItemName(p))}</div>
+            <div style="font-size:10px; color:var(--text-muted)">${posMoney(unit)} each</div>
           </div>
-          <button class="btn btn-sm" onclick="posChangeQty('${p.id}',-1)" style="padding:0.1rem 0.5rem">−</button>
+          <button class="btn btn-sm" onclick="posChangeQty('${p._localId}',-1)" style="padding:0.1rem 0.5rem">−</button>
           <span style="min-width:20px; text-align:center; font-weight:600">${l.qty}</span>
-          <button class="btn btn-sm" onclick="posChangeQty('${p.id}',1)" style="padding:0.1rem 0.5rem">+</button>
+          <button class="btn btn-sm" onclick="posChangeQty('${p._localId}',1)" style="padding:0.1rem 0.5rem">+</button>
           <span style="min-width:70px; text-align:right; font-weight:700">${posMoney(lineTotal)}</span>
         </div>`;
     }).join('');
@@ -7159,43 +7215,69 @@ ${totalsSection}
     for (const l of posCart) {
       const p = posFindProduct(l.productId);
       if (!p) { toast('A product in the cart no longer exists — please re-add it', 'error'); return; }
-      if (!p.madeToOrder && l.qty > (Number(p.stockOnHand) || 0)) {
-        toast(`Not enough stock for "${p.name}" (${Number(p.stockOnHand) || 0} left)`, 'error');
+      if (!liIsMTO(p) && l.qty > liQoh(p)) {
+        toast(`Not enough stock for "${liItemName(p)}" (${liQoh(p)} left)`, 'error');
         return;
       }
     }
 
     const total = posCartTotal();
     const { excl, vat } = posVatSplit(total);
-    const lineItems = posCart.map(l => {
+    const now = new Date().toISOString();
+
+    // Build Lightspeed-shaped SaleLines
+    const saleLines = posCart.map(l => {
       const p = posFindProduct(l.productId);
+      const unit = liItemPrice(p);
       return {
-        productId: p.id, sku: p.sku || '', name: p.name,
-        qty: l.qty, unitPrice: Number(p.price) || 0,
-        lineTotal: (Number(p.price) || 0) * l.qty,
-        madeToOrder: !!p.madeToOrder
+        saleLineID: null,
+        itemID: p.itemID || null,        // Lightspeed item id once synced
+        _localItemId: p._localId,
+        _description: liItemName(p),
+        _sku: liItemSku(p),
+        unitQuantity: l.qty,
+        unitPrice: unit,                 // VAT-inclusive
+        normalUnitPrice: unit,
+        discountAmount: 0,
+        tax: !!p.tax,
+        isSpecialOrder: liIsMTO(p),
+        calcTotal: unit * l.qty
       };
     });
 
     const sale = {
-      id: 'SALE-' + Date.now(),
-      datetime: new Date().toISOString(),
-      cashier: (currentUser && currentUser.email) || 'unknown',
-      biz: activeBiz,
-      lineItems,
-      subtotal: excl, vat, total,
-      paymentMethod: 'card',
-      cardRef,
-      status: 'completed',
-      synced: { xero: false, shopify: false }   // set true by later-phase integrations
+      saleID: null,                      // assigned by Lightspeed once synced
+      _localId: 'SALE-' + Date.now(),
+      timeStamp: now,
+      completeTime: now,
+      completed: true,
+      voided: false,
+      isTaxInclusive: true,
+      shopID: activeBiz,                 // maps to Lightspeed numeric shopID later
+      employeeID: null,
+      _cashierEmail: (currentUser && currentUser.email) || 'unknown',
+      customerID: null,
+      calcSubtotal: excl,
+      taxTotal: vat,
+      total: total,
+      totalDue: 0,
+      SaleLines: { SaleLine: saleLines },
+      SalePayments: { SalePayment: [{
+        salePaymentID: null,
+        amount: total,
+        paymentTypeID: null,
+        PaymentType: { name: 'Credit Card' },
+        _cardRef: cardRef
+      }] },
+      _synced: { lightspeed: false, xero: false, shopify: false }
     };
 
     snapshotState();
     // Decrement master stock for stocked (not made-to-order) lines
-    lineItems.forEach(li => {
-      if (li.madeToOrder) return;
-      const p = posFindProduct(li.productId);
-      if (p) p.stockOnHand = (Number(p.stockOnHand) || 0) - li.qty;
+    saleLines.forEach(li => {
+      if (li.isSpecialOrder) return;
+      const p = posFindProduct(li._localItemId);
+      if (p) liAdjustQoh(p, -li.unitQuantity);
     });
     posSalesArr().unshift(sale);
     saveData();
@@ -7207,16 +7289,17 @@ ${totalsSection}
   }
 
   function posVoidSale(id) {
-    const sale = posSalesArr().find(s => s.id === id);
-    if (!sale || sale.status !== 'completed') return;
+    const sale = posSalesArr().find(s => s._localId === id);
+    if (!sale || sale.voided || !sale.completed) return;
     if (!confirm(`Void this sale of ${posMoney(sale.total)}? Stock will be returned.`)) return;
     snapshotState();
-    sale.lineItems.forEach(li => {
-      if (li.madeToOrder) return;
-      const p = posFindProduct(li.productId);
-      if (p) p.stockOnHand = (Number(p.stockOnHand) || 0) + li.qty;
+    liSaleLines(sale).forEach(li => {
+      if (li.isSpecialOrder) return;
+      const p = posFindProduct(li._localItemId);
+      if (p) liAdjustQoh(p, Number(li.unitQuantity) || 0);
     });
-    sale.status = 'voided';
+    sale.voided = true;
+    sale.completed = false;
     saveData();
     renderPOS();
     toast('Sale voided, stock returned', 'success');
@@ -7226,22 +7309,21 @@ ${totalsSection}
     const el = document.getElementById('pos-sales');
     if (!el) return;
     const todayStr = new Date().toDateString();
-    const today = posSalesArr().filter(s => new Date(s.datetime).toDateString() === todayStr);
+    const today = posSalesArr().filter(s => new Date(s.timeStamp).toDateString() === todayStr);
     if (today.length === 0) { el.innerHTML = '<div class="empty">No sales yet today</div>'; return; }
-    const takings = today.filter(s => s.status === 'completed').reduce((sum, s) => sum + s.total, 0);
+    const takings = today.filter(s => !s.voided).reduce((sum, s) => sum + s.total, 0);
     el.innerHTML = `
-      <div style="margin-bottom:0.75rem; font-size:14px">Today: <strong>${today.filter(s => s.status === 'completed').length}</strong> sales · takings <strong style="color:var(--accent)">${posMoney(takings)}</strong></div>
+      <div style="margin-bottom:0.75rem; font-size:14px">Today: <strong>${today.filter(s => !s.voided).length}</strong> sales · takings <strong style="color:var(--accent)">${posMoney(takings)}</strong></div>
       ${today.map(s => {
-        const time = new Date(s.datetime).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' });
-        const voided = s.status === 'voided';
+        const time = new Date(s.timeStamp).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' });
         return `
-          <div style="display:flex; align-items:center; gap:0.5rem; padding:0.5rem 0; border-bottom:1px solid var(--border); ${voided ? 'opacity:0.5; text-decoration:line-through' : ''}">
+          <div style="display:flex; align-items:center; gap:0.5rem; padding:0.5rem 0; border-bottom:1px solid var(--border); ${s.voided ? 'opacity:0.5; text-decoration:line-through' : ''}">
             <div style="flex:1">
-              <div style="font-weight:600">${posMoney(s.total)} <span style="font-size:11px; color:var(--text-muted); font-weight:normal">· ${s.lineItems.reduce((n, li) => n + li.qty, 0)} items · ${time}</span></div>
-              <div style="font-size:10px; color:var(--text-muted)">${_escape(s.cashier)} · card ${_escape(s.cardRef)}</div>
+              <div style="font-weight:600">${posMoney(s.total)} <span style="font-size:11px; color:var(--text-muted); font-weight:normal">· ${liSaleItemCount(s)} items · ${time}</span></div>
+              <div style="font-size:10px; color:var(--text-muted)">${_escape(s._cashierEmail || '')} · card ${_escape(liSalePaymentRef(s))}</div>
             </div>
-            <button class="btn btn-sm" onclick="posPrintReceipt(posSalesArr().find(x=>x.id==='${s.id}'))">🧾</button>
-            ${voided ? '<span style="font-size:10px; color:var(--accent)">VOIDED</span>' : `<button class="btn btn-sm" onclick="posVoidSale('${s.id}')">Void</button>`}
+            <button class="btn btn-sm" onclick="posPrintReceipt(posSalesArr().find(x=>x._localId==='${s._localId}'))">🧾</button>
+            ${s.voided ? '<span style="font-size:10px; color:var(--accent)">VOIDED</span>' : `<button class="btn btn-sm" onclick="posVoidSale('${s._localId}')">Void</button>`}
           </div>`;
       }).join('')}`;
   }
@@ -7250,10 +7332,10 @@ ${totalsSection}
     if (!sale) return;
     const w = window.open('', '_blank', 'width=380,height=600');
     if (!w) { toast('Allow pop-ups to print receipts', 'warn'); return; }
-    const dt = new Date(sale.datetime).toLocaleString('en-ZA');
-    const rows = sale.lineItems.map(li =>
-      `<tr><td>${_escape(li.name)}${li.qty > 1 ? ` ×${li.qty}` : ''}</td><td style="text-align:right">R${li.lineTotal.toFixed(2)}</td></tr>`).join('');
-    w.document.write(`<!doctype html><html><head><title>Receipt ${sale.id}</title>
+    const dt = new Date(sale.timeStamp).toLocaleString('en-ZA');
+    const rows = liSaleLines(sale).map(li =>
+      `<tr><td>${_escape(li._description)}${li.unitQuantity > 1 ? ` ×${li.unitQuantity}` : ''}</td><td style="text-align:right">R${(Number(li.calcTotal) || 0).toFixed(2)}</td></tr>`).join('');
+    w.document.write(`<!doctype html><html><head><title>Receipt ${sale._localId}</title>
       <style>
         body{font-family:'Courier New',monospace; width:300px; margin:0 auto; padding:12px; color:#000}
         h2{text-align:center; margin:0.2rem 0}
@@ -7263,15 +7345,15 @@ ${totalsSection}
         .tot td{border-top:1px dashed #000; padding-top:4px; font-weight:bold}
         .grand td{font-size:16px}
       </style></head><body>
-      <h2>${_escape(POS_BIZ_NAMES[sale.biz] || sale.biz)}</h2>
+      <h2>${_escape(POS_BIZ_NAMES[sale.shopID] || sale.shopID)}</h2>
       <div class="muted">${dt}</div>
-      <div class="muted">Receipt ${sale.id}</div>
+      <div class="muted">Receipt ${sale._localId}</div>
       <table>${rows}
-        <tr class="tot"><td>Subtotal (excl VAT)</td><td style="text-align:right">R${sale.subtotal.toFixed(2)}</td></tr>
-        <tr><td>VAT (15%)</td><td style="text-align:right">R${sale.vat.toFixed(2)}</td></tr>
-        <tr class="grand"><td>TOTAL</td><td style="text-align:right">R${sale.total.toFixed(2)}</td></tr>
+        <tr class="tot"><td>Subtotal (excl VAT)</td><td style="text-align:right">R${(Number(sale.calcSubtotal) || 0).toFixed(2)}</td></tr>
+        <tr><td>VAT (15%)</td><td style="text-align:right">R${(Number(sale.taxTotal) || 0).toFixed(2)}</td></tr>
+        <tr class="grand"><td>TOTAL</td><td style="text-align:right">R${(Number(sale.total) || 0).toFixed(2)}</td></tr>
       </table>
-      <div class="muted">Paid by card · ref ${_escape(sale.cardRef)}</div>
+      <div class="muted">Paid by card · ref ${_escape(liSalePaymentRef(sale))}</div>
       <div class="muted" style="margin-top:0.8rem">Thank you!</div>
       <script>window.onload=function(){window.print();}<\/script>
       </body></html>`);
@@ -7281,16 +7363,19 @@ ${totalsSection}
   function renderPOSCatalogAdmin() {
     const el = document.getElementById('pos-catalog-admin');
     if (!el) return;
-    const cat = posCatalogArr();
-    const rows = cat.map(p => `
+    const cat = posCatalogArr().filter(p => !p.archived);
+    const rows = cat.map(p => {
+      const mto = liIsMTO(p);
+      return `
       <tr>
-        <td style="padding:0.4rem; border:1px solid var(--border)">${_escape(p.sku || '')}</td>
-        <td style="padding:0.4rem; border:1px solid var(--border)">${_escape(p.name)}</td>
-        <td style="padding:0.4rem; border:1px solid var(--border)"><input type="number" step="0.01" value="${Number(p.price) || 0}" onchange="posUpdateProduct('${p.id}','price',this.value)" style="width:90px"></td>
-        <td style="padding:0.4rem; border:1px solid var(--border); text-align:center">${p.madeToOrder ? '—' : `<input type="number" value="${Number(p.stockOnHand) || 0}" onchange="posUpdateProduct('${p.id}','stockOnHand',this.value)" style="width:70px">`}</td>
-        <td style="padding:0.4rem; border:1px solid var(--border); text-align:center"><input type="checkbox" ${p.madeToOrder ? 'checked' : ''} onchange="posUpdateProduct('${p.id}','madeToOrder',this.checked)"></td>
-        <td style="padding:0.4rem; border:1px solid var(--border); text-align:center"><button class="btn btn-sm" onclick="posDeleteProduct('${p.id}')">✕</button></td>
-      </tr>`).join('');
+        <td style="padding:0.4rem; border:1px solid var(--border)">${_escape(liItemSku(p))}</td>
+        <td style="padding:0.4rem; border:1px solid var(--border)">${_escape(liItemName(p))}</td>
+        <td style="padding:0.4rem; border:1px solid var(--border)"><input type="number" step="0.01" value="${liItemPrice(p)}" onchange="posUpdateProduct('${p._localId}','price',this.value)" style="width:90px"></td>
+        <td style="padding:0.4rem; border:1px solid var(--border); text-align:center">${mto ? '—' : `<input type="number" value="${liQoh(p)}" onchange="posUpdateProduct('${p._localId}','qoh',this.value)" style="width:70px">`}</td>
+        <td style="padding:0.4rem; border:1px solid var(--border); text-align:center"><input type="checkbox" ${mto ? 'checked' : ''} onchange="posUpdateProduct('${p._localId}','isSpecialOrder',this.checked)"></td>
+        <td style="padding:0.4rem; border:1px solid var(--border); text-align:center"><button class="btn btn-sm" onclick="posDeleteProduct('${p._localId}')">✕</button></td>
+      </tr>`;
+    }).join('');
     el.innerHTML = `
       <div class="row" style="align-items:flex-end; gap:0.5rem; margin-bottom:1rem; flex-wrap:wrap">
         <div><label>SKU</label><input id="pos-new-sku" placeholder="SKU/barcode" style="width:120px"></div>
@@ -7319,16 +7404,26 @@ ${totalsSection}
     if (!name) { toast('Enter a product name', 'warn'); return; }
     const price = parseFloat(document.getElementById('pos-new-price')?.value) || 0;
     const mto = !!document.getElementById('pos-new-mto')?.checked;
+    const openingStock = mto ? 0 : (parseInt(document.getElementById('pos-new-stock')?.value, 10) || 0);
     snapshotState();
-    posCatalogArr().push({
-      id: 'POS-' + Date.now(),
-      sku: (document.getElementById('pos-new-sku')?.value || '').trim(),
-      name,
-      price,
-      stockOnHand: mto ? 0 : (parseInt(document.getElementById('pos-new-stock')?.value, 10) || 0),
-      madeToOrder: mto,
-      vatRate: POS_VAT_RATE
-    });
+    // Lightspeed "Item"-shaped product
+    const item = {
+      itemID: null,                      // assigned by Lightspeed once synced
+      _localId: 'POS-' + Date.now(),
+      description: name,
+      customSku: (document.getElementById('pos-new-sku')?.value || '').trim(),
+      systemSku: '',
+      defaultCost: 0,
+      tax: true,
+      taxClassID: null,
+      categoryID: null,
+      archived: false,
+      itemType: 'default',
+      isSpecialOrder: mto,               // our made-to-order marker
+      Prices: { ItemPrice: [{ amount: price, useType: 'Default', useTypeID: 1 }] },
+      ItemShops: { ItemShop: [{ shopID: activeBiz, qoh: openingStock, reorderPoint: 0 }] }
+    };
+    posCatalogArr().push(item);
     saveData();
     renderPOS();
     toast('Product added', 'success');
@@ -7338,9 +7433,9 @@ ${totalsSection}
     const p = posFindProduct(id);
     if (!p) return;
     snapshotState();
-    if (field === 'price') p.price = parseFloat(value) || 0;
-    else if (field === 'stockOnHand') p.stockOnHand = parseInt(value, 10) || 0;
-    else if (field === 'madeToOrder') { p.madeToOrder = !!value; if (p.madeToOrder) p.stockOnHand = 0; }
+    if (field === 'price') liSetItemPrice(p, parseFloat(value) || 0);
+    else if (field === 'qoh') liSetQoh(p, parseInt(value, 10) || 0);
+    else if (field === 'isSpecialOrder') { p.isSpecialOrder = !!value; if (p.isSpecialOrder) liSetQoh(p, 0); }
     saveData();
     renderPOS();
   }
@@ -7348,15 +7443,14 @@ ${totalsSection}
   function posDeleteProduct(id) {
     const p = posFindProduct(id);
     if (!p) return;
-    if (!confirm(`Delete "${p.name}" from the catalogue?`)) return;
+    if (!confirm(`Delete "${liItemName(p)}" from the catalogue?`)) return;
     snapshotState();
-    const cat = posCatalogArr();
-    const i = cat.findIndex(x => x.id === id);
-    if (i >= 0) cat.splice(i, 1);
+    // Lightspeed-style soft delete (archived) so historic sales keep resolving.
+    p.archived = true;
     posCart = posCart.filter(l => l.productId !== id);
     saveData();
     renderPOS();
-    toast('Product deleted', 'success');
+    toast('Product archived', 'success');
   }
 
   // Expose POS handlers for inline onclick/onchange

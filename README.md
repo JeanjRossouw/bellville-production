@@ -22,5 +22,8 @@ the default branch and Netlify deploys automatically.
 - **POS** (Phase 1): a `🛒 POS` tab provides a standalone till per business.
   Products & stock are the master here (`data.<biz>.posCatalog`); completed
   sales record to `data.<biz>.posSales`, decrement stock, and print a receipt.
-  New `cashier` role sees only Dashboard + POS. Xero/Shopify/factory
-  integrations are later phases — see `POS-BUILD-PLAN.md`.
+  New `cashier` role sees only Dashboard + POS. The POS data model is shaped on
+  the **Lightspeed Retail (R-Series) API** (`Item` / `Sale` / `SaleLine` /
+  `SalePayment`) so future Lightspeed sync is a clean field map; `_`-prefixed
+  fields are local-only. Xero/Shopify/factory integrations are later phases —
+  see `POS-BUILD-PLAN.md`.
