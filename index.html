@@ -4936,19 +4936,42 @@
 
   // Apply [name, price] pairs to product selling prices, with a summary
   function _applySellPrices(pairs) {
-    const biz = currentData(); const prods = (biz && biz.productBoms) || {};
-    const byName = {}; Object.keys(prods).forEach(n => byName[n.trim().toLowerCase()] = n);
-    let matched = 0; const missed = [];
+    const biz = currentData();
+    if (biz && !biz.productBoms) biz.productBoms = {};
+    const prods = (biz && biz.productBoms) || {};
+    const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+    const byName = {}; Object.keys(prods).forEach(n => byName[norm(n)] = n);
+    let matched = 0; const missed = []; const missedWithPrice = [];
     pairs.forEach(pair => {
-      const name = pair[0]; const price = pair[1];
-      const key = (name || '').trim().toLowerCase(); if (!key) return;
-      const p = parseFloat(String(price == null ? '' : price).replace(/[^\d.]/g, ''));
+      const name = (pair[0] == null ? '' : String(pair[0])).trim();
+      const key = norm(name); if (!key) return;
+      const p = parseFloat(String(pair[1] == null ? '' : pair[1]).replace(/[^\d.]/g, ''));
       if (byName[key]) { if (!isNaN(p) && p > 0) { prods[byName[key]].sellingPrice = p; matched++; } }
-      else missed.push(name);
+      else { missed.push(name); if (!isNaN(p) && p > 0) missedWithPrice.push([name, p]); }
     });
     saveData(); renderProductBomTable();
-    alert('Updated ' + matched + ' selling price' + (matched !== 1 ? 's' : '') + '.' +
-      (missed.length ? '\n\nNot matched (' + missed.length + '): ' + missed.slice(0, 12).join(', ') + (missed.length > 12 ? '…' : '') : ''));
+    let msg = 'Updated ' + matched + ' selling price' + (matched !== 1 ? 's' : '') + '.';
+    if (missed.length) msg += '\n\nNot matched (' + missed.length + '): ' + missed.slice(0, 12).join(', ') + (missed.length > 12 ? '…' : '');
+    alert(msg);
+
+    // Offer to add the unmatched (but priced) products as new catalogue items
+    if (missedWithPrice.length) {
+      const label = (_bizNames && _bizNames[activeBiz]) ? _bizNames[activeBiz] : activeBiz;
+      const ok = confirm(missedWithPrice.length + ' priced product' + (missedWithPrice.length !== 1 ? 's are' : ' is') +
+        ' not in the catalogue yet.\n\nAdd ' + (missedWithPrice.length !== 1 ? 'them' : 'it') + ' as new product' + (missedWithPrice.length !== 1 ? 's' : '') +
+        ' (with the selling price) to ' + label + '?\n\nYou can add their materials/BOM later. Choose Cancel if these should match existing products instead — their names just differ; export the price sheet to see the exact names.');
+      if (ok) {
+        let created = 0;
+        missedWithPrice.forEach(pair => {
+          const name = pair[0];
+          if (!prods[name]) { prods[name] = { category: '', materials: {}, sellingPrice: pair[1] }; created++; }
+          else { prods[name].sellingPrice = pair[1]; }
+        });
+        saveData(); renderProductBomTable();
+        try { populateProductDatalist(); } catch (e) {}
+        alert('Added ' + created + ' new product' + (created !== 1 ? 's' : '') + ' with prices. They\'re now in the catalogue — set their category and BOM when you get a chance.');
+      }
+    }
   }
 
   // From a parsed 2D sheet (Excel), find the Product + price columns and apply
