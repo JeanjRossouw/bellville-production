@@ -87,6 +87,7 @@ async function getProducts() {
           price: Number(v.price) || 0,
           qty: Number(v.inventory_quantity) || 0,
           category: p.product_type || '',
+          vendor: p.vendor || '',
           imageUrl: image
         });
       }

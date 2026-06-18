@@ -143,6 +143,7 @@
     <button class="qbtn" title="Sales orders &amp; quotes" onclick="openDocs('salesorder')" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📋 Orders</button>
     <button class="qbtn" title="Receive stock (GRV) &amp; suppliers" onclick="openGrv()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📥 Receive</button>
     <button class="qbtn" title="Stock take / count" onclick="openStocktake()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📦 Count</button>
+    <button class="qbtn" title="Low stock &amp; reorder recommendations" onclick="openReorder()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🔻 Reorder</button>
     <button class="qbtn" title="Sales history" onclick="openSales()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📊 Sales</button>
     <button class="qbtn" title="Refund / return" onclick="openRefund()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">↩ Refund</button>
     <button class="qbtn" title="Register / cash-up" onclick="openReg()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🧾 Register</button>
@@ -199,6 +200,13 @@
   <div class="modal-card">
     <h2><span>Customer</span><button class="rm" onclick="custClose()">✕</button></h2>
     <div id="cust-body"></div>
+  </div>
+</div>
+
+<div class="modal" id="reorder-modal">
+  <div class="modal-card" style="width:720px">
+    <h2><span>Reorder &amp; purchase orders</span><button class="rm" onclick="closeReorder()">✕</button></h2>
+    <div id="reorder-body"></div>
   </div>
 </div>
 
@@ -354,18 +362,18 @@
   function isDemo() { return localStorage.getItem('reptipos-demo') === '1' || /[?&]demo=1/.test(location.search); }
   // Sample reptile catalogue (prices in rands; barcodes are type-able to test scanning).
   const DEMO_CATALOGUE = [
-    { productId: 'd1', variantId: 'dv1', inventoryItemId: 'di1', name: 'Exo Terra Glass Terrarium 60×45', sku: 'TERR-6045', barcode: '6009800010011', price: 2499, qty: 4, category: 'Terrariums', imageUrl: '' },
-    { productId: 'd2', variantId: 'dv2', inventoryItemId: 'di2', name: 'Reptile Heat Mat 14W', sku: 'HEAT-14', barcode: '6009800010028', price: 349, qty: 18, category: 'Heating', imageUrl: '' },
-    { productId: 'd3', variantId: 'dv3', inventoryItemId: 'di3', name: 'UVB 10.0 Compact Bulb 26W', sku: 'UVB-26', barcode: '6009800010035', price: 419, qty: 11, category: 'Lighting', imageUrl: '' },
-    { productId: 'd4', variantId: 'dv4', inventoryItemId: 'di4', name: 'Digital Thermostat 600W', sku: 'THERM-600', barcode: '6009800010042', price: 899, qty: 6, category: 'Heating', imageUrl: '' },
-    { productId: 'd5', variantId: 'dv5', inventoryItemId: 'di5', name: 'Coco Husk Substrate 5L', sku: 'SUB-COCO', barcode: '6009800010059', price: 129, qty: 40, category: 'Substrate', imageUrl: '' },
-    { productId: 'd6', variantId: 'dv6', inventoryItemId: 'di6', name: 'Resin Hide Cave – Large', sku: 'HIDE-L', barcode: '6009800010066', price: 199, qty: 14, category: 'Decor', imageUrl: '' },
-    { productId: 'd7', variantId: 'dv7', inventoryItemId: 'di7', name: 'Feeding Tongs Stainless 30cm', sku: 'TONGS-30', barcode: '6009800010073', price: 89, qty: 25, category: 'Accessories', imageUrl: '' },
-    { productId: 'd8', variantId: 'dv8', inventoryItemId: 'di8', name: 'Calcium + D3 Supplement 100g', sku: 'CAL-D3', barcode: '6009800010080', price: 119, qty: 30, category: 'Food', imageUrl: '' },
-    { productId: 'd9', variantId: 'dv9', inventoryItemId: 'di9', name: 'Live Mealworms Tub (±50g)', sku: 'FEED-MEAL', barcode: '6009800010097', price: 65, qty: 22, category: 'Food', imageUrl: '' },
-    { productId: 'd10', variantId: 'dv10', inventoryItemId: 'di10', name: 'Water Dish – Medium', sku: 'DISH-M', barcode: '6009800010103', price: 79, qty: 19, category: 'Decor', imageUrl: '' },
-    { productId: 'd11', variantId: 'dv11', inventoryItemId: 'di11', name: 'Leopard Gecko (captive bred)', sku: 'LIVE-LEO', barcode: '6009800010110', price: 850, qty: 3, category: 'Livestock', imageUrl: '' },
-    { productId: 'd12', variantId: 'dv12', inventoryItemId: 'di12', name: 'Corn Snake (juvenile)', sku: 'LIVE-CORN', barcode: '6009800010127', price: 1200, qty: 0, category: 'Livestock', imageUrl: '' }
+    { productId: 'd1', variantId: 'dv1', inventoryItemId: 'di1', name: 'Exo Terra Glass Terrarium 60×45', sku: 'TERR-6045', barcode: '6009800010011', price: 2499, qty: 4, category: 'Terrariums', vendor: 'Exo Terra SA', imageUrl: '' },
+    { productId: 'd2', variantId: 'dv2', inventoryItemId: 'di2', name: 'Reptile Heat Mat 14W', sku: 'HEAT-14', barcode: '6009800010028', price: 349, qty: 18, category: 'Heating', vendor: 'ReptiHeat Wholesale', imageUrl: '' },
+    { productId: 'd3', variantId: 'dv3', inventoryItemId: 'di3', name: 'UVB 10.0 Compact Bulb 26W', sku: 'UVB-26', barcode: '6009800010035', price: 419, qty: 11, category: 'Lighting', vendor: 'ReptiHeat Wholesale', imageUrl: '' },
+    { productId: 'd4', variantId: 'dv4', inventoryItemId: 'di4', name: 'Digital Thermostat 600W', sku: 'THERM-600', barcode: '6009800010042', price: 899, qty: 6, category: 'Heating', vendor: 'ReptiHeat Wholesale', imageUrl: '' },
+    { productId: 'd5', variantId: 'dv5', inventoryItemId: 'di5', name: 'Coco Husk Substrate 5L', sku: 'SUB-COCO', barcode: '6009800010059', price: 129, qty: 40, category: 'Substrate', vendor: 'Exo Terra SA', imageUrl: '' },
+    { productId: 'd6', variantId: 'dv6', inventoryItemId: 'di6', name: 'Resin Hide Cave – Large', sku: 'HIDE-L', barcode: '6009800010066', price: 199, qty: 14, category: 'Decor', vendor: 'Exo Terra SA', imageUrl: '' },
+    { productId: 'd7', variantId: 'dv7', inventoryItemId: 'di7', name: 'Feeding Tongs Stainless 30cm', sku: 'TONGS-30', barcode: '6009800010073', price: 89, qty: 25, category: 'Accessories', vendor: 'ReptiHeat Wholesale', imageUrl: '' },
+    { productId: 'd8', variantId: 'dv8', inventoryItemId: 'di8', name: 'Calcium + D3 Supplement 100g', sku: 'CAL-D3', barcode: '6009800010080', price: 119, qty: 30, category: 'Food', vendor: 'Dragon Foods', imageUrl: '' },
+    { productId: 'd9', variantId: 'dv9', inventoryItemId: 'di9', name: 'Live Mealworms Tub (±50g)', sku: 'FEED-MEAL', barcode: '6009800010097', price: 65, qty: 22, category: 'Food', vendor: 'Dragon Foods', imageUrl: '' },
+    { productId: 'd10', variantId: 'dv10', inventoryItemId: 'di10', name: 'Water Dish – Medium', sku: 'DISH-M', barcode: '6009800010103', price: 79, qty: 19, category: 'Decor', vendor: 'Exo Terra SA', imageUrl: '' },
+    { productId: 'd11', variantId: 'dv11', inventoryItemId: 'di11', name: 'Leopard Gecko (captive bred)', sku: 'LIVE-LEO', barcode: '6009800010110', price: 850, qty: 3, category: 'Livestock', vendor: 'Local Breeder', imageUrl: '' },
+    { productId: 'd12', variantId: 'dv12', inventoryItemId: 'di12', name: 'Corn Snake (juvenile)', sku: 'LIVE-CORN', barcode: '6009800010127', price: 1200, qty: 0, category: 'Livestock', vendor: 'Local Breeder', imageUrl: '' }
   ];
   // Single router for all backend calls: real fetch, or simulated when in demo.
   async function callFn(payload) {
@@ -1520,7 +1528,7 @@
     const { db, fns } = window.fb; const ref = await fns.addDoc(fns.collection(db, coll), data); return ref.id;
   }
   async function fbSet(coll, id, data) {
-    if (isDemo()) { const k = 'reptipos-demo-' + coll; const list = demoGet(k); const i = list.findIndex(x => x.id === id); if (i >= 0) { list[i] = { ...list[i], ...data }; demoPut(k, list); } return; }
+    if (isDemo()) { const k = 'reptipos-demo-' + coll; const list = demoGet(k); const i = list.findIndex(x => x.id === id); if (i >= 0) list[i] = { ...list[i], ...data }; else list.push({ id, ...data }); demoPut(k, list); return; }
     const { db, fns } = window.fb; await fns.setDoc(fns.doc(db, coll, id), data, { merge: true });
   }
   async function fbList(coll, orderField, dir) {
@@ -1687,7 +1695,10 @@
           <div style="font-weight:700;font-size:0.85rem;margin-bottom:0.4rem">Add supplier</div>
           <input id="sup-name" placeholder="Supplier name *" style="width:100%;margin-bottom:0.4rem">
           <div style="display:flex;gap:0.4rem"><input id="sup-phone" placeholder="Phone" style="flex:1"><input id="sup-email" placeholder="Email" style="flex:1"></div>
-          <button class="btn btn-pay" style="margin-top:0.5rem" onclick="addSupplier()">+ Add supplier</button>
+          <div style="display:flex;gap:0.4rem;margin-top:0.5rem">
+            <button class="btn btn-pay" style="flex:1" onclick="addSupplier()">+ Add supplier</button>
+            <button class="btn btn-ghost" style="flex:1" onclick="loadVendorSuppliers()" title="Create suppliers from your Shopify product vendors">↻ Load from Shopify</button>
+          </div>
         </div>
         ${suppliersCache.length ? suppliersCache.map(s => { const b = balBySup[s.id] || 0; return `<div class="cust-result" style="cursor:default"><div><div style="font-weight:600">${esc(s.name)}</div><div style="font-size:0.72rem;color:var(--muted)">${esc(s.phone || '')}${s.phone && s.email ? ' · ' : ''}${esc(s.email || '')}</div></div><div style="text-align:right"><div style="font-size:0.7rem;color:var(--muted)">owing</div><div style="font-weight:700;color:${b > 0 ? 'var(--warn)' : 'var(--accent2)'}">${money(b)}</div></div></div>`; }).join('') : '<div class="empty" style="padding:1rem">No suppliers yet</div>'}`;
     } catch (e) { body.innerHTML = `<div class="empty" style="padding:1.5rem;color:var(--warn)">${esc(String(e.message || e))}</div>`; }
@@ -1699,6 +1710,20 @@
       await fbAdd('suppliers', { name, phone: (document.getElementById('sup-phone').value || '').trim(), email: (document.getElementById('sup-email').value || '').trim(), createdAt: new Date().toISOString() });
       toast('Supplier added'); suppliersCache = await fbList('suppliers', 'name', 'asc'); renderSuppliers();
     } catch (e) { toast('Failed: ' + (e.message || e)); }
+  }
+  async function loadVendorSuppliers() {
+    const vendors = [...new Set(catalogue.map(p => p.vendor).filter(Boolean))];
+    if (!vendors.length) { toast('No vendors found on your products (check Shopify product "Vendor" field)'); return; }
+    if (!fbReady()) { toast('Need a connection to add suppliers'); return; }
+    suppliersCache = await fbList('suppliers', 'name', 'asc');
+    const existing = new Set(suppliersCache.map(s => (s.name || '').toLowerCase()));
+    const toAdd = vendors.filter(v => !existing.has(v.toLowerCase()));
+    if (!toAdd.length) { toast('All ' + vendors.length + ' vendors are already suppliers'); return; }
+    if (!confirm('Add ' + toAdd.length + ' supplier(s) from your Shopify product vendors?\n\n' + toAdd.slice(0, 12).join(', ') + (toAdd.length > 12 ? '…' : ''))) return;
+    for (const v of toAdd) { await fbAdd('suppliers', { name: v, phone: '', email: '', fromVendor: true, createdAt: new Date().toISOString() }); }
+    suppliersCache = await fbList('suppliers', 'name', 'asc');
+    toast('Added ' + toAdd.length + ' supplier(s) — add their phone/email to send POs');
+    renderSuppliers();
   }
   function printGrvById(id) { const g = grvsCache.find(x => x.id === id); if (g) printGrv(g); }
   function printGrv(g) {
@@ -1713,6 +1738,134 @@
         <tr><td>Paid</td><td style="text-align:right">${money(paid)}</td></tr>
         <tr class="tot"><td>Balance owing</td><td style="text-align:right">${money(bal)}</td></tr></table>`;
     printReport(html);
+  }
+
+  // ---- Reorder recommendations + purchase orders ----
+  // Reorder level is auto-suggested from recent sales velocity (units/day over the
+  // last 30 days × ~2 weeks cover), overridable per item (Firestore reorder_settings).
+  // "What to order" = max(0, level + open-sales-order demand − on hand), grouped by
+  // supplier (the Shopify product vendor). A PO is sent to the supplier by email/WhatsApp.
+  let reorderOverrides = {}, reorderRows = [], poDraft = null;
+  function salesVelocity(variantId, days) {
+    const since = Date.now() - days * 86400000; let units = 0;
+    loadSales().forEach(s => { if (new Date(s.datetime).getTime() >= since) (s.items || []).forEach(i => { if (i.variantId === variantId) units += (Number(i.qty) || 0); }); });
+    return units / days;
+  }
+  function suggestLevel(variantId) { return Math.ceil(salesVelocity(variantId, 30) * 14); } // ~2 weeks cover
+  function lastCostCents(variantId) {
+    for (const g of grvsCache) { const li = (g.lineItems || []).find(l => l.variantId === variantId); if (li && li.costCents != null) return li.costCents; }
+    return 0;
+  }
+  function openReorder() { document.getElementById('reorder-modal').classList.add('show'); poDraft = null; renderReorder(); }
+  function closeReorder() { document.getElementById('reorder-modal').classList.remove('show'); }
+  async function renderReorder() {
+    const body = document.getElementById('reorder-body');
+    body.innerHTML = '<div class="empty" style="padding:1.5rem">Working out what to order…</div>';
+    // Overrides + open sales-order demand + last costs (for PO pricing).
+    reorderOverrides = {};
+    try { if (fbReady()) { (await fbList('reorder_settings')).forEach(r => { reorderOverrides[r.variantId || r.id] = Number(r.level); }); } } catch (e) {}
+    try { grvsCache = await fbList('grvs', 'createdAt', 'desc'); } catch (e) {}
+    const soDemand = {};
+    try { const r = await api('docList', { type: 'salesorder' }); (r.docs || []).forEach(d => (d.doc && d.doc.items || []).forEach(i => { soDemand[i.variantId] = (soDemand[i.variantId] || 0) + i.qty; })); } catch (e) {}
+    reorderRows = [];
+    catalogue.forEach(p => {
+      const onHand = Number(p.qty) || 0;
+      const level = reorderOverrides[p.variantId] != null ? reorderOverrides[p.variantId] : suggestLevel(p.variantId);
+      const demand = soDemand[p.variantId] || 0;
+      const rec = Math.max(0, level + demand - onHand);
+      if (rec > 0 || demand > 0 || (level > 0 && onHand <= level)) reorderRows.push({ variantId: p.variantId, name: p.name, sku: p.sku, supplier: p.vendor || '(no supplier)', onHand, level, demand, rec });
+    });
+    if (poDraft) { renderPO(); return; }
+    if (!reorderRows.length) { body.innerHTML = '<div class="empty" style="padding:1.5rem">Nothing to reorder — stock is above reorder levels and no sales orders are waiting. 🎉</div>'; return; }
+    // Group by supplier.
+    const groups = {};
+    reorderRows.forEach(r => { (groups[r.supplier] = groups[r.supplier] || []).push(r); });
+    const order = Object.keys(groups).sort();
+    body.innerHTML = `<div style="font-size:0.8rem;color:var(--muted);margin-bottom:0.5rem">Reorder level is suggested from the last 30 days of sales (editable). Tap <b>Create PO</b> for a supplier to send an order.</div>` +
+      order.map(sup => {
+        const rows = groups[sup];
+        const totalUnits = rows.reduce((t, r) => t + r.rec, 0);
+        return `<div style="border:1px solid var(--border);border-radius:10px;padding:0.6rem;margin-bottom:0.7rem">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem">
+            <div style="font-weight:700">🏭 ${esc(sup)}</div>
+            <button class="qbtn" style="width:auto;padding:0 0.7rem;background:var(--accent);color:#04210f" onclick="startPO('${esc(sup).replace(/'/g, "&#39;")}')">Create PO · ${totalUnits} units</button>
+          </div>
+          ${rows.map(r => `<div class="line">
+            <div class="lnm"><div class="t">${esc(r.name)}</div><div class="s">${esc(r.sku || '')} · on hand ${r.onHand}${r.demand ? ' · ' + r.demand + ' on order' : ''}</div></div>
+            <span style="font-size:0.72rem;color:var(--muted)">lvl</span>
+            <input type="number" value="${r.level}" style="width:50px;padding:0.35rem;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" oninput="setReorderLevel('${r.variantId}',this.value)" title="Reorder level">
+            <span class="ltot" style="color:var(--accent2)">order ${r.rec}</span>
+          </div>`).join('')}
+        </div>`;
+      }).join('');
+  }
+  async function setReorderLevel(variantId, val) {
+    const level = Math.max(0, Math.round(Number(val) || 0));
+    reorderOverrides[variantId] = level;
+    try { if (fbReady()) await fbSet('reorder_settings', variantId, { variantId, level }); } catch (e) {}
+    // Recompute that row's recommendation live without a full reload.
+    const r = reorderRows.find(x => x.variantId === variantId);
+    if (r) r.level = level;
+  }
+  function startPO(supplier) {
+    const rows = reorderRows.filter(r => r.supplier === supplier && r.rec > 0);
+    if (!rows.length) { toast('Nothing to order for ' + supplier); return; }
+    const sup = suppliersCache.find(s => (s.name || '').toLowerCase() === supplier.toLowerCase());
+    poDraft = {
+      supplier, supplierId: sup ? sup.id : null, email: sup ? sup.email : '', phone: sup ? sup.phone : '',
+      items: rows.map(r => ({ variantId: r.variantId, name: r.name, sku: r.sku, qty: r.rec, costCents: lastCostCents(r.variantId) }))
+    };
+    renderPO();
+  }
+  function poTotalCents() { return poDraft.items.reduce((t, i) => t + i.costCents * i.qty, 0); }
+  function renderPO() {
+    const body = document.getElementById('reorder-body');
+    const p = poDraft;
+    body.innerHTML = `
+      <button class="qbtn" style="width:auto;padding:0 0.7rem;margin-bottom:0.6rem" onclick="poBack()">← Back to recommendations</button>
+      <div style="font-weight:700">🏭 ${esc(p.supplier)}</div>
+      <div style="font-size:0.75rem;color:var(--muted);margin-bottom:0.5rem">${p.email ? esc(p.email) : '<span style="color:var(--warn)">no email</span>'} · ${p.phone ? esc(p.phone) : '<span style="color:var(--warn)">no phone</span>'} — set these in Suppliers to send</div>
+      ${p.items.map((i, idx) => `<div class="line">
+        <div class="lnm"><div class="t">${esc(i.name)}</div><div class="s">${esc(i.sku || '')}</div></div>
+        <input type="number" value="${i.qty}" min="0" style="width:54px;padding:0.4rem;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" oninput="poSetQty(${idx},this.value)" title="Qty">
+        <input type="number" step="0.01" value="${(i.costCents / 100).toFixed(2)}" style="width:82px;padding:0.4rem;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" oninput="poSetCost(${idx},this.value)" title="Unit cost (R)">
+        <button class="rm" onclick="poRemove(${idx})">✕</button>
+      </div>`).join('')}
+      <div class="total" style="font-size:1.2rem;margin-top:0.6rem"><span>PO TOTAL</span><span class="accent" id="po-total">${money(poTotalCents())}</span></div>
+      <div style="display:flex;gap:0.5rem;margin-top:0.4rem">
+        <button class="btn btn-pay" style="padding:0.7rem" onclick="sendPO('email')">✉ Send email</button>
+        <button class="btn btn-pay" style="padding:0.7rem;background:#25d366;color:#04210f" onclick="sendPO('whatsapp')">🟢 WhatsApp</button>
+        <button class="btn btn-ghost" style="padding:0.7rem" onclick="sendPO('save')">Save only</button>
+      </div>`;
+  }
+  function poBack() { poDraft = null; renderReorder(); }
+  function poSetQty(i, v) { poDraft.items[i].qty = Math.max(0, Math.round(Number(v) || 0)); document.getElementById('po-total').textContent = money(poTotalCents()); }
+  function poSetCost(i, v) { poDraft.items[i].costCents = toCents(v); document.getElementById('po-total').textContent = money(poTotalCents()); }
+  function poRemove(i) { poDraft.items.splice(i, 1); renderPO(); }
+  function poText(po, poNumber) {
+    let t = 'ReptiCube — Purchase Order ' + poNumber + '\n' + new Date().toLocaleDateString('en-ZA') + '\nSupplier: ' + po.supplier + '\n\n';
+    po.items.forEach(i => { t += i.qty + ' x ' + i.name + (i.sku ? ' (' + i.sku + ')' : '') + '\n'; });
+    t += '\nTotal (excl): ' + money(poTotalCents()) + '\n\nPlease supply the above. Thank you.\nReptiCube';
+    return t;
+  }
+  async function sendPO(method) {
+    const items = poDraft.items.filter(i => i.qty > 0);
+    if (!items.length) { toast('Nothing to order'); return; }
+    poDraft.items = items;
+    const seq = (parseInt(localStorage.getItem('reptipos-po-seq') || '0', 10) || 0) + 1; localStorage.setItem('reptipos-po-seq', String(seq));
+    const poNumber = 'PO-' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + String(seq).padStart(3, '0');
+    const po = { poNumber, supplierId: poDraft.supplierId, supplierName: poDraft.supplier, items: poDraft.items.map(i => ({ variantId: i.variantId, name: i.name, sku: i.sku, qty: i.qty, costCents: i.costCents })), totalCents: poTotalCents(), status: method === 'save' ? 'draft' : 'sent', sentVia: method === 'save' ? '' : method, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
+    try { if (fbReady()) await fbAdd('purchase_orders', po); } catch (e) {}
+    const text = poText(poDraft, poNumber);
+    if (method === 'email') {
+      const to = poDraft.email || '';
+      window.open('mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent('ReptiCube Purchase Order ' + poNumber) + '&body=' + encodeURIComponent(text), '_blank');
+    } else if (method === 'whatsapp') {
+      const ph = (poDraft.phone || '').replace(/[^\d]/g, '');
+      window.open('https://wa.me/' + ph + '?text=' + encodeURIComponent(text), '_blank');
+    }
+    toast(method === 'save' ? 'PO ' + poNumber + ' saved' : 'PO ' + poNumber + ' — ' + method + ' opened');
+    poDraft = null; renderReorder();
   }
 
   // ---- Payments (Phase 2) ----
@@ -1956,8 +2109,9 @@
     saveQuote, openSalesOrder, closeSalesOrder, soBalancePreview, confirmSalesOrder,
     openDocs, closeDocs, docsTab, loadQuote, soAddPayment, soMarkReady, soFulfil, soCancel, printDocById,
     openProfile, closeProfile,
-    openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier,
+    openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier, loadVendorSuppliers,
     openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, reconcileStocktake,
+    openReorder, closeReorder, setReorderLevel, startPO, poBack, poSetQty, poSetCost, poRemove, sendPO,
     lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings,
     flushQueue,
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
