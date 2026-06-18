@@ -1468,7 +1468,7 @@
   function clientOpen(c) { closeClients(); openProfile(c); }
 
   // ---- Stock take (Lightspeed-style count → reconcile to Shopify) ----
-  let stFilter = 'all', stReconciling = false;
+  let stFilter = 'all', stReconciling = false, reconcileArmed = false, reconcileTimer = null;
   function loadStocktake() { try { return JSON.parse(localStorage.getItem('reptipos-stocktake') || 'null'); } catch (e) { return null; } }
   function saveStocktake(s) { if (s) localStorage.setItem('reptipos-stocktake', JSON.stringify(s)); else localStorage.removeItem('reptipos-stocktake'); }
   function stCategories() { return [...new Set(catalogue.map(p => p.category).filter(Boolean))].sort(); }
@@ -1528,7 +1528,7 @@
       <div style="max-height:42vh;overflow:auto">${list.slice(0, 400).map(p => stRow(s, p)).join('') || '<div class="empty" style="padding:1rem">No items</div>'}</div>
       <div style="display:flex;gap:0.5rem;margin-top:0.7rem">
         <button class="btn btn-ghost" style="padding:0.7rem" onclick="cancelStocktake()">Cancel count</button>
-        <button class="btn btn-pay" style="padding:0.7rem" onclick="reconcileStocktake()">✓ Reconcile (${countedN}) → Shopify</button>
+        <button class="btn btn-pay" style="padding:0.7rem${reconcileArmed ? ';background:var(--warn);color:#3a2400' : ''}" onclick="reconcileStocktake()">${reconcileArmed ? '⚠ Tap again to confirm (' + countedN + ')' : '✓ Reconcile (' + countedN + ') → Shopify'}</button>
       </div>`;
     const si = document.getElementById('st-search'); if (si && !isMobile()) si.focus();
   }
@@ -1657,8 +1657,15 @@
     const s = loadStocktake(); if (!s) return;
     const items = stItems(s).filter(p => s.counts[p.variantId] != null);
     if (!items.length) { toast('Nothing counted to reconcile'); return; }
-    const varied = items.filter(p => Math.round(Number(s.counts[p.variantId])) !== (Number(p.qty) || 0));
-    if (!confirm('Set Shopify stock to your counted quantities for ' + items.length + ' item(s)? ' + varied.length + ' have a variance.')) return;
+    // Two-tap confirm on the button (no browser dialog — survives dialog suppression).
+    if (!reconcileArmed) {
+      const varied = items.filter(p => Math.round(Number(s.counts[p.variantId])) !== (Number(p.qty) || 0));
+      reconcileArmed = true; renderStocktake();
+      toast('Tap again to set ' + items.length + ' item(s) in Shopify (' + varied.length + ' with a variance)');
+      clearTimeout(reconcileTimer); reconcileTimer = setTimeout(() => { reconcileArmed = false; if (document.getElementById('stock-modal').classList.contains('show')) renderStocktake(); }, 6000);
+      return;
+    }
+    reconcileArmed = false;
     stReconciling = true;
     const body = document.getElementById('stock-body');
     const lineItems = items.map(p => ({ inventoryItemId: p.inventoryItemId, counted: Math.round(Number(s.counts[p.variantId])), variantId: p.variantId }));
