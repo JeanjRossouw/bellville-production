@@ -404,6 +404,7 @@
       case 'receiveStock':
         return { received: (p.lineItems || []).length, lineItems: (p.lineItems || []).map(l => ({ inventoryItemId: l.inventoryItemId, qty: l.qty })), locationId: 'demo' };
       case 'setStock':
+      case 'setCosts':
         return { set: (p.lineItems || []).length, done: (p.lineItems || []).map(l => String(l.inventoryItemId)), failed: [] };
       case 'searchCustomers': {
         const q = String(p.q || '').toLowerCase();
@@ -1507,12 +1508,14 @@
         <label>Scope</label>
         <select id="st-scope" style="width:100%;padding:0.7rem;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)"><option value="">Whole shop (all categories)</option><option value="__selected__">Only items I scan / add (spot count)</option>${opts}</select>
         <button class="btn btn-pay" style="margin-top:0.7rem" onclick="startStocktake()">Start stock take</button></div>
-        <div style="display:flex;gap:0.5rem;margin-top:0.6rem">
-          <button class="btn btn-ghost" style="padding:0.6rem" onclick="exportStockXlsx()">⬇ Export to Excel</button>
-          <button class="btn btn-ghost" style="padding:0.6rem" onclick="document.getElementById('st-file').click()">⬆ Import counts</button>
+        <div style="display:flex;gap:0.5rem;margin-top:0.6rem;flex-wrap:wrap">
+          <button class="btn btn-ghost" style="padding:0.6rem;flex:1" onclick="exportStockXlsx()">⬇ Export to Excel</button>
+          <button class="btn btn-ghost" style="padding:0.6rem;flex:1" onclick="document.getElementById('st-file').click()">⬆ Import counts</button>
+          <button class="btn btn-ghost" style="padding:0.6rem;flex:1" onclick="document.getElementById('st-cost-file').click()">💰 Import cost prices</button>
         </div>
         <input type="file" id="st-file" accept=".xlsx,.xls,.csv,text/csv" style="display:none" onchange="importStockFile(this)">
-        <div style="font-size:0.72rem;color:var(--muted);margin-top:0.3rem">Export to Excel to count offline; fill the <b>Count</b> column and import it back (Excel .xlsx or .csv) to load the counts for review &amp; reconcile.</div>
+        <input type="file" id="st-cost-file" accept=".xlsx,.xls,.csv,text/csv" style="display:none" onchange="importCostsFile(this)">
+        <div style="font-size:0.72rem;color:var(--muted);margin-top:0.3rem">Export to Excel; fill the <b>Count</b> column → <b>Import counts</b> (stock take), or fill the <b>Cost</b> column → <b>Import cost prices</b> (writes Shopify "Cost per item" so profit works).</div>
         ${stHistory()}`;
       return;
     }
@@ -1545,9 +1548,9 @@
   function csvEscape(v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
   function exportStockCsv() {
     if (!catalogue.length) { toast('No catalogue loaded'); return; }
-    const header = ['SKU', 'Barcode', 'Name', 'Category', 'Vendor', 'OnHand', 'Price', 'Count'];
+    const header = ['SKU', 'Barcode', 'Name', 'Category', 'Vendor', 'OnHand', 'Price', 'Cost', 'Count'];
     const lines = [header.join(',')];
-    catalogue.forEach(p => lines.push([p.sku, p.barcode, p.name, p.category, p.vendor, (Number(p.qty) || 0), ((p.priceCents || 0) / 100).toFixed(2), ''].map(csvEscape).join(',')));
+    catalogue.forEach(p => lines.push([p.sku, p.barcode, p.name, p.category, p.vendor, (Number(p.qty) || 0), ((p.priceCents || 0) / 100).toFixed(2), ((p.costCents || 0) / 100).toFixed(2), ''].map(csvEscape).join(',')));
     const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = 'reptipos-stock-' + new Date().toISOString().slice(0, 10) + '.csv'; a.click();
@@ -1583,7 +1586,7 @@
     if (!catalogue.length) { toast('No catalogue loaded'); return; }
     try {
       const XLSX = await loadXlsx();
-      const data = catalogue.map(p => ({ SKU: p.sku || '', Barcode: p.barcode || '', Name: p.name || '', Category: p.category || '', Vendor: p.vendor || '', OnHand: Number(p.qty) || 0, Price: (p.priceCents || 0) / 100, Count: '' }));
+      const data = catalogue.map(p => ({ SKU: p.sku || '', Barcode: p.barcode || '', Name: p.name || '', Category: p.category || '', Vendor: p.vendor || '', OnHand: Number(p.qty) || 0, Price: (p.priceCents || 0) / 100, Cost: (p.costCents || 0) / 100, Count: '' }));
       const ws = XLSX.utils.json_to_sheet(data);
       const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Stock');
       XLSX.writeFile(wb, 'reptipos-stock-' + new Date().toISOString().slice(0, 10) + '.xlsx');
@@ -1627,6 +1630,57 @@
     if (unmatched.length) console.warn('Stock import — ' + unmatched.length + ' rows did not match a product:', unmatched);
     toast('Imported ' + matched + ' counts' + (unmatched.length ? ' · ' + unmatched.length + ' unmatched (see console)' : '') + (bundles ? ' · ' + bundles + ' bundles skipped' : '') + (blank ? ' · ' + blank + ' blank skipped' : '') + ' — review then reconcile');
     renderStocktake();
+  }
+  // Bulk cost-price import: reads a Cost column, writes Shopify "Cost per item".
+  async function applyCostRows(rows) {
+    rows = (rows || []).filter(r => r && r.length && r.some(c => String(c == null ? '' : c).trim() !== ''));
+    if (rows.length < 2) { toast('File looks empty'); return; }
+    const header = rows[0].map(h => String(h == null ? '' : h).trim().toLowerCase());
+    const skuI = header.findIndex(h => /sku/.test(h));
+    const barI = header.findIndex(h => /barcode|upc/.test(h));
+    const nameI = header.findIndex(h => h === 'name' || /name|title/.test(h));
+    let costI = header.findIndex(h => h === 'cost' || h === 'cost price' || h === 'unit cost');
+    if (costI < 0) costI = header.findIndex(h => /cost/.test(h));
+    if (costI < 0) { toast('No "Cost" column found'); return; }
+    const norm = v => String(v == null ? '' : v).trim().replace(/[Rr,\s]/g, '').replace(/\.0+$/, '');
+    const matchNorm = v => String(v == null ? '' : v).trim().replace(/\.0+$/, '').toLowerCase();
+    const lineItems = []; let matched = 0; const unmatched = [];
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const sku = skuI >= 0 ? matchNorm(row[skuI]) : '';
+      const bar = barI >= 0 ? matchNorm(row[barI]) : '';
+      const nm = nameI >= 0 ? matchNorm(row[nameI]) : '';
+      const raw = norm(row[costI]); if (raw === '') continue;
+      const costCents = Math.round((parseFloat(raw) || 0) * 100);
+      const p = catalogue.find(x => (sku && matchNorm(x.sku) === sku) || (bar && matchNorm(x.barcode) === bar) || (nm && matchNorm(x.name) === nm));
+      if (p && p.inventoryItemId) { lineItems.push({ inventoryItemId: p.inventoryItemId, costCents, variantId: p.variantId }); matched++; }
+      else unmatched.push(nm || sku || bar || ('row ' + r));
+    }
+    if (!lineItems.length) { toast('No matching products with a cost found'); return; }
+    if (unmatched.length) console.warn('Cost import — ' + unmatched.length + ' rows did not match:', unmatched);
+    toast('Setting ' + matched + ' cost prices…');
+    let done = 0, failed = 0; const chunk = 20;
+    try {
+      for (let i = 0; i < lineItems.length; i += chunk) {
+        const batch = lineItems.slice(i, i + chunk);
+        try {
+          const resp = await callFn({ action: 'setCosts', lineItems: batch.map(b => ({ inventoryItemId: b.inventoryItemId, costCents: b.costCents })) });
+          const failedIds = new Set((resp.failed || []).map(f => String(f.inventoryItemId)));
+          batch.forEach(b => { if (failedIds.has(String(b.inventoryItemId))) failed++; else { const p = findProduct(b.variantId); if (p) p.costCents = b.costCents; done++; } });
+        } catch (e) { failed += batch.length; }
+      }
+      cacheCatalogue();
+      toast('Cost prices set: ' + done + (failed ? ' · ' + failed + ' failed' : '') + (unmatched.length ? ' · ' + unmatched.length + ' unmatched' : ''));
+    } catch (e) { toast('Cost import failed: ' + (e.message || e)); }
+  }
+  function importCostsFile(input) {
+    const file = input.files && input.files[0]; if (!file) return;
+    const name = (file.name || '').toLowerCase();
+    if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+      loadXlsx().then(XLSX => { const reader = new FileReader(); reader.onload = () => { try { const wb = XLSX.read(reader.result, { type: 'array' }); applyCostRows(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, blankrows: false })); } catch (e) { toast('Import failed: ' + (e.message || e)); } input.value = ''; }; reader.readAsArrayBuffer(file); }).catch(e => { toast('Excel import needs internet: ' + (e.message || e)); input.value = ''; });
+    } else {
+      const reader = new FileReader(); reader.onload = () => { try { applyCostRows(parseCsv(String(reader.result || ''))); } catch (e) { toast('Import failed: ' + (e.message || e)); } input.value = ''; }; reader.readAsText(file);
+    }
   }
   function importStockFile(input) {
     const file = input.files && input.files[0]; if (!file) return;
@@ -2446,7 +2500,7 @@
     openDocs, closeDocs, docsTab, loadQuote, soAddPayment, soMarkReady, soFulfil, soCancel, printDocById,
     openProfile, closeProfile, profileAttach, openClients, closeClients, clientSearch, clientOpen,
     openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier, loadVendorSuppliers, receivePO, deletePO,
-    openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, stAddItem, reconcileStocktake, exportStockCsv, exportStockXlsx, importStockFile,
+    openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, stAddItem, reconcileStocktake, exportStockCsv, exportStockXlsx, importStockFile, importCostsFile,
     openReorder, closeReorder, setReorderLevel, startPO, startBlankPO, poSetSupplier, poSearch, poAddItem, poBack, poSetQty, poSetCost, poRemove, sendPO,
     lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings,
     flushQueue,

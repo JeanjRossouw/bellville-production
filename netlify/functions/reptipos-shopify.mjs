@@ -242,6 +242,19 @@ async function setStock({ lineItems }) {
   return { set: done.length, done, failed };
 }
 
+// Bulk-set unit cost prices (Shopify "Cost per item"). lineItems: [{ inventoryItemId, costCents }].
+async function setCosts({ lineItems }) {
+  const lines = (lineItems || []).filter(l => l.inventoryItemId && l.costCents != null);
+  if (lines.length === 0) { const e = new Error('No costs'); e.status = 400; throw e; }
+  const done = []; const failed = [];
+  for (const l of lines) {
+    const invItem = Number(l.inventoryItemId);
+    try { await shopify(`/inventory_items/${invItem}.json`, { method: 'PUT', body: { inventory_item: { id: invItem, cost: (Number(l.costCents) / 100).toFixed(2) } } }); done.push(String(invItem)); }
+    catch (e) { failed.push({ inventoryItemId: String(invItem), error: String(e.message || e).slice(0, 160) }); }
+  }
+  return { set: done.length, done, failed };
+}
+
 async function shopInfo() {
   try { const { json } = await shopify('/shop.json'); return json.shop ? json.shop.name : ''; }
   catch (e) { return ''; }
@@ -479,6 +492,7 @@ export const handler = async (event) => {
     if (body.action === 'customerOrders') return json(200, { orders: await customerOrders(body.customerId) });
     if (body.action === 'receiveStock') return json(200, await receiveStock(body));
     if (body.action === 'setStock') return json(200, await setStock(body));
+    if (body.action === 'setCosts') return json(200, await setCosts(body));
     if (body.action === 'docSave') return json(200, await docSave(body));
     if (body.action === 'docList') return json(200, { docs: await docList(body.type, body.customerId) });
     if (body.action === 'docDelete') return json(200, await draftDelete(body.id));
