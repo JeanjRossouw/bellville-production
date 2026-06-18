@@ -1652,7 +1652,10 @@
       const nm = nameI >= 0 ? matchNorm(row[nameI]) : '';
       const raw = norm(row[costI]); if (raw === '') continue;
       const costCents = Math.round((parseFloat(raw) || 0) * 100);
-      const p = catalogue.find(x => (sku && matchNorm(x.sku) === sku) || (bar && matchNorm(x.barcode) === bar) || (nm && matchNorm(x.name) === nm));
+      const aln = s => matchNorm(s).replace(/[^a-z0-9]/g, '');
+      const nmA = aln(nm);
+      const p = catalogue.find(x => (sku && matchNorm(x.sku) === sku) || (bar && matchNorm(x.barcode) === bar) || (nm && matchNorm(x.name) === nm))
+        || (nmA ? catalogue.find(x => aln(x.name) === nmA) : null);
       if (p && p.inventoryItemId) { lineItems.push({ inventoryItemId: p.inventoryItemId, costCents, variantId: p.variantId }); matched++; }
       else unmatched.push(nm || sku || bar || ('row ' + r));
     }
