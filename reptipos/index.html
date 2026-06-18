@@ -385,7 +385,7 @@
   // Plumbed so a rate can be switched on later without code changes. Prices are
   // treated as tax-INCLUSIVE (the Shopify price is final), so a non-zero rate
   // just surfaces the tax portion already inside the price — it never adds on top.
-  const DEFAULT_SETTINGS = { taxRatePct: 0, taxLabel: 'VAT', pointsPerRand: 0.1 };
+  const DEFAULT_SETTINGS = { taxRatePct: 0, taxLabel: 'VAT', loyaltyPct: 5 };
   function settings() { try { return { ...DEFAULT_SETTINGS, ...(JSON.parse(localStorage.getItem('reptipos-settings') || '{}')) }; } catch (e) { return { ...DEFAULT_SETTINGS }; } }
   function saveSettings(s) { localStorage.setItem('reptipos-settings', JSON.stringify({ ...settings(), ...s })); }
   // Tax portion (cents) already contained in a tax-inclusive total.
@@ -768,7 +768,7 @@
   }
 
   // ---- Loyalty points (1 point = R1; earn rate configurable points-per-rand) ----
-  function pointsPerRand() { const v = Number(settings().pointsPerRand); return v > 0 ? v : 0; }
+  function loyaltyPct() { const v = Number(settings().loyaltyPct); return v > 0 ? v : 0; }
   function loyaltyCartRow() {
     if (!customer || cart.length === 0) return '';
     const balCents = customerPoints * 100;
@@ -973,10 +973,10 @@
       <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">⭐ Loyalty points</div>
       <div style="display:flex; gap:0.4rem; align-items:center">
         <span style="color:var(--muted); font-size:0.85rem">Earn</span>
-        <input id="loy-rate" type="number" step="0.01" min="0" value="${settings().pointsPerRand}" style="width:90px"><span style="color:var(--muted); font-size:0.85rem">points per R1 spent</span>
+        <input id="loy-rate" type="number" step="0.5" min="0" value="${settings().loyaltyPct}" style="width:90px"><span style="color:var(--muted); font-size:0.85rem">% back as points</span>
         <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveLoyaltySettings()">Save</button>
       </div>
-      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">1 point = R1 off a future sale. Account is keyed on the customer's cellphone number. Set 0 to turn earning off. (e.g. 0.1 = R10 spent earns 1 point.)</div>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">1 point = R1 off a future sale. Account is keyed on the customer's cellphone number. Set 0 to turn earning off. (e.g. 5% = R100 spent earns 5 points = R5.)</div>
       <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.3rem">Demo mode</div>
       <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="toggleDemo()">${isDemo() ? 'Turn demo OFF (use real Shopify)' : 'Turn demo ON (no Shopify)'}</button>
       <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Demo uses a sample catalogue; sales/orders/stock are simulated locally and never touch Shopify.</div>`;
@@ -1000,9 +1000,9 @@
   }
   function saveLoyaltySettings() {
     const rate = Math.max(0, parseFloat(document.getElementById('loy-rate').value) || 0);
-    saveSettings({ pointsPerRand: rate });
+    saveSettings({ loyaltyPct: rate });
     renderReg(); renderCart();
-    toast(rate > 0 ? `Loyalty: ${rate} pt per R1` : 'Loyalty earning off');
+    toast(rate > 0 ? `Loyalty: ${rate}% back as points` : 'Loyalty earning off');
   }
   function doOpenRegister() {
     const f = toCents(document.getElementById('reg-float').value);
@@ -2584,7 +2584,7 @@
     // Loyalty: redeem what was applied, earn on what's paid (1 pt = R1).
     const loyaltyCust = customer;
     const redeemedCents = pointsRedeemCents;
-    const earnedPoints = loyaltyCust ? Math.floor((total / 100) * pointsPerRand()) : 0;
+    const earnedPoints = loyaltyCust ? Math.floor((total / 100) * loyaltyPct() / 100) : 0;
     const sale = {
       saleNumber: nextSaleNumber(),
       idemKey: uuid(),                 // idempotency key — same sale never creates two Shopify orders
