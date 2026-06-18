@@ -193,6 +193,29 @@ async function receiveStock({ lineItems, idemKey, updateCost }) {
   return result;
 }
 
+// Set counted quantities as the ABSOLUTE stock level (stock take reconcile).
+// lineItems: [{ inventoryItemId, counted }]. Setting an absolute value is
+// naturally idempotent, so no idemKey is needed.
+async function setStock({ lineItems }) {
+  const lines = (lineItems || []).filter(l => l.inventoryItemId && l.counted != null);
+  if (lines.length === 0) { const e = new Error('No counts'); e.status = 400; throw e; }
+  const locationId = await primaryLocationId();
+  if (!locationId) { const e = new Error('No Shopify location to count into'); e.status = 400; throw e; }
+  const done = [];
+  for (const l of lines) {
+    const invItem = Number(l.inventoryItemId);
+    const available = Math.max(0, Math.round(Number(l.counted) || 0));
+    const body = { location_id: Number(locationId), inventory_item_id: invItem, available };
+    try { await shopify('/inventory_levels/set.json', { method: 'POST', body }); }
+    catch (e) {
+      await shopify('/inventory_levels/connect.json', { method: 'POST', body: { location_id: Number(locationId), inventory_item_id: invItem } }).catch(() => {});
+      await shopify('/inventory_levels/set.json', { method: 'POST', body });
+    }
+    done.push({ inventoryItemId: String(invItem), available });
+  }
+  return { set: done.length, lineItems: done };
+}
+
 async function shopInfo() {
   try { const { json } = await shopify('/shop.json'); return json.shop ? json.shop.name : ''; }
   catch (e) { return ''; }
@@ -429,6 +452,7 @@ export const handler = async (event) => {
     if (body.action === 'createCustomer') return json(200, { customer: await createCustomer(body) });
     if (body.action === 'customerOrders') return json(200, { orders: await customerOrders(body.customerId) });
     if (body.action === 'receiveStock') return json(200, await receiveStock(body));
+    if (body.action === 'setStock') return json(200, await setStock(body));
     if (body.action === 'docSave') return json(200, await docSave(body));
     if (body.action === 'docList') return json(200, { docs: await docList(body.type, body.customerId) });
     if (body.action === 'docDelete') return json(200, await draftDelete(body.id));
