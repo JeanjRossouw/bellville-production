@@ -140,6 +140,7 @@
     <span id="net"><span class="dot" id="net-dot"></span> <span id="net-txt">online</span></span>
     <span id="cat-status">loading catalogue…</span>
     <button id="queue-badge" onclick="flushQueue(true)" title="Sales waiting to sync — click to sync now" style="display:none; width:auto;padding:0 0.6rem;height:30px;font-size:0.78rem;border-radius:8px;border:1px solid var(--warn);background:transparent;color:var(--warn);cursor:pointer"></button>
+    <button class="qbtn" title="Dashboard" onclick="openDashboard()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📈 Dashboard</button>
     <button class="qbtn" title="Clients &amp; accounts" onclick="openClients()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">👥 Clients</button>
     <button class="qbtn" title="Sales orders &amp; quotes" onclick="openDocs('salesorder')" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📋 Orders</button>
     <button class="qbtn" title="Receive stock (GRV) &amp; suppliers" onclick="openGrv()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📥 Receive</button>
@@ -260,6 +261,13 @@
   <div class="modal-card" style="width:560px">
     <h2><span>Client profile</span><button class="rm" onclick="closeProfile()">✕</button></h2>
     <div id="profile-body"></div>
+  </div>
+</div>
+
+<div class="modal" id="dash-modal">
+  <div class="modal-card" style="width:720px">
+    <h2><span>Dashboard — here's what's happening</span><button class="rm" onclick="closeDashboard()">✕</button></h2>
+    <div id="dash-body"></div>
   </div>
 </div>
 
@@ -449,6 +457,16 @@
       }
       case 'refundCreate':
         return { refundId: 'DR' + Date.now(), amountCents: 0, restocked: !!p.restock };
+      case 'salesReport': {
+        const since = new Date(p.since).getTime(); const until = p.until ? new Date(p.until).getTime() : Date.now();
+        let orderCount = 0, salesCents = 0, itemCount = 0; const byV = {}; const points = [];
+        (JSON.parse(localStorage.getItem('reptipos-sales') || '[]')).forEach(s => {
+          const t = new Date(s.datetime).getTime(); if (t < since || t > until) return;
+          orderCount++; salesCents += (s.totalCents || 0); points.push({ at: s.datetime, cents: s.totalCents || 0 });
+          (s.items || []).forEach(i => { itemCount += i.qty; const v = byV[i.variantId] || (byV[i.variantId] = { variantId: i.variantId, name: i.name, qty: 0, revenueCents: 0 }); v.qty += i.qty; v.revenueCents += (i.lineTotalCents || i.priceCents * i.qty); });
+        });
+        return { orderCount, salesCents, itemCount, items: Object.values(byV), points };
+      }
       default:
         return { error: 'demo: unknown action ' + p.action };
     }
@@ -1381,6 +1399,70 @@
     if (doc.note) html += `<div class="c">${esc(doc.note)}</div>`;
     html += `<div class="c" style="margin-top:6px">${kind === 'QUOTE' ? 'Quote — subject to availability' : 'Thank you!'}</div>`;
     printReport(html);
+  }
+
+  // ---- Dashboard ----
+  let dashPeriod = 'today';
+  function openDashboard() { document.getElementById('dash-modal').classList.add('show'); renderDashboard(); }
+  function closeDashboard() { document.getElementById('dash-modal').classList.remove('show'); }
+  function setDashPeriod(p) { dashPeriod = p; renderDashboard(); }
+  function dashRange(period) {
+    const now = new Date(); const since = new Date(now);
+    if (period === 'today') since.setHours(0, 0, 0, 0);
+    else if (period === 'week') { since.setDate(now.getDate() - 6); since.setHours(0, 0, 0, 0); }
+    else { since.setDate(1); since.setHours(0, 0, 0, 0); }
+    return { since: since.toISOString(), until: now.toISOString() };
+  }
+  function dashCard(label, value, accent) {
+    return `<div style="background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.6rem 0.7rem">
+      <div style="font-size:0.72rem;color:var(--muted)">${label}</div>
+      <div style="font-weight:800;font-size:1.15rem;${accent ? 'color:var(--accent2)' : ''}">${value}</div></div>`;
+  }
+  function dashChart(points, period) {
+    const buckets = {}; const labels = [];
+    if (period === 'today') { for (let h = 6; h <= 20; h++) { buckets[h] = 0; labels.push(h); } (points || []).forEach(p => { const h = new Date(p.at).getHours(); if (buckets[h] != null) buckets[h] += p.cents; }); }
+    else { const days = period === 'week' ? 7 : 31; const now = new Date(); for (let i = days - 1; i >= 0; i--) { const d = new Date(now); d.setDate(now.getDate() - i); const k = (d.getMonth() + 1) + '/' + d.getDate(); buckets[k] = 0; labels.push(k); } (points || []).forEach(p => { const d = new Date(p.at); const k = (d.getMonth() + 1) + '/' + d.getDate(); if (buckets[k] != null) buckets[k] += p.cents; }); }
+    const vals = labels.map(l => buckets[l] || 0); const max = Math.max(1, ...vals);
+    const bars = labels.map((l, i) => `<div title="${l}: ${money(vals[i])}" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center"><div style="width:72%;background:var(--accent2);height:${Math.round(vals[i] / max * 90)}px;border-radius:2px 2px 0 0"></div></div>`).join('');
+    return `<div style="display:flex;align-items:flex-end;gap:2px;height:100px;margin:0.4rem 0;border-bottom:1px solid var(--border)">${bars}</div>`;
+  }
+  function dashTopList(arr, mode) {
+    if (!arr.length) return '<div class="empty" style="padding:0.5rem">No sales</div>';
+    return arr.map(it => `<div style="display:flex;justify-content:space-between;gap:0.5rem;font-size:0.82rem;padding:0.25rem 0;border-bottom:1px solid var(--border)"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name)}</span><span style="font-weight:700">${mode === 'qty' ? it.qty : money(it.revenueCents)}</span></div>`).join('');
+  }
+  async function renderDashboard() {
+    const body = document.getElementById('dash-body');
+    const tabs = [['today', 'Today'], ['week', 'This week'], ['month', 'This month']].map(([p, l]) => `<button class="qbtn" style="width:auto;padding:0 0.8rem;background:${dashPeriod === p ? 'var(--accent)' : 'var(--panel2)'};${dashPeriod === p ? 'color:#04210f' : ''}" onclick="setDashPeriod('${p}')">${l}</button>`).join('');
+    body.innerHTML = `<div style="display:flex;gap:0.4rem;margin-bottom:0.7rem">${tabs}</div><div id="dash-content"><div class="empty" style="padding:2rem">Loading…</div></div>`;
+    const { since, until } = dashRange(dashPeriod);
+    let rep;
+    try { rep = await api('salesReport', { since, until }); }
+    catch (e) { document.getElementById('dash-content').innerHTML = `<div class="empty" style="padding:1.5rem;color:var(--warn)">${esc(String(e.message || e))}</div>`; return; }
+    const sales = rep.salesCents || 0, count = rep.orderCount || 0, items = rep.itemCount || 0;
+    const avg = count ? Math.round(sales / count) : 0; const avgItems = count ? (items / count) : 0;
+    let cost = 0, costKnown = 0; (rep.items || []).forEach(it => { const p = it.variantId ? findProduct(it.variantId) : null; if (p && p.costCents) { cost += p.costCents * it.qty; costKnown++; } });
+    const profit = sales - cost;
+    const byQty = [...(rep.items || [])].sort((a, b) => b.qty - a.qty).slice(0, 5);
+    const byRev = [...(rep.items || [])].sort((a, b) => b.revenueCents - a.revenueCents).slice(0, 5);
+    let poWaiting = 0; try { if (fbReady()) { const pos = await fbList('purchase_orders'); poWaiting = pos.filter(x => x.status === 'sent' || x.status === 'partial').length; } } catch (e) {}
+    document.getElementById('dash-content').innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:0.6rem">
+        ${dashCard('Sales', money(sales))}
+        ${dashCard('Sales count', count)}
+        ${dashCard('Avg sale', money(avg))}
+        ${dashCard('Avg items/sale', avgItems.toFixed(1))}
+        ${dashCard('Gross profit', money(profit), true)}
+      </div>
+      ${dashChart(rep.points, dashPeriod)}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.8rem;margin-top:0.4rem">
+        <div><div style="font-size:0.8rem;font-weight:700;margin-bottom:0.2rem">Top products — by qty</div>${dashTopList(byQty, 'qty')}</div>
+        <div><div style="font-size:0.8rem;font-weight:700;margin-bottom:0.2rem">Top products — by revenue</div>${dashTopList(byRev, 'rev')}</div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;margin-top:0.8rem;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.6rem 0.7rem">
+        <div style="font-size:0.9rem"><b>${poWaiting}</b> purchase order${poWaiting === 1 ? '' : 's'} waiting to be received</div>
+        <button class="qbtn" style="width:auto;padding:0 0.7rem" onclick="closeDashboard();openGrv();setTimeout(()=>grvTab('po'),60)">View</button>
+      </div>
+      ${cost === 0 && sales > 0 ? '<div style="font-size:0.72rem;color:var(--muted);margin-top:0.4rem">Tip: gross profit needs cost prices — import them (📦 Count → 💰 Import cost prices) for accurate profit.</div>' : ''}`;
   }
 
   // ---- Client profile + Clients browser ----
@@ -2510,6 +2592,7 @@
     takeTender, closeTender, tenderMethod, finishTender,
     saveQuote, openSalesOrder, closeSalesOrder, soBalancePreview, confirmSalesOrder,
     openDocs, closeDocs, docsTab, loadQuote, soAddPayment, soMarkReady, soFulfil, soCancel, printDocById,
+    openDashboard, closeDashboard, setDashPeriod,
     openProfile, closeProfile, profileAttach, openClients, closeClients, clientSearch, clientOpen,
     openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier, loadVendorSuppliers, receivePO, deletePO,
     openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, stAddItem, reconcileStocktake, exportStockCsv, exportStockXlsx, importStockFile, importCostsFile,

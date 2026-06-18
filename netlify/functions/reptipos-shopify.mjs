@@ -466,6 +466,33 @@ async function customerOrders(customerId) {
   }));
 }
 
+// Sales report for a date range: totals + per-variant breakdown + points for a chart.
+async function salesReport({ since, until }) {
+  if (!since) { const e = new Error('No date range'); e.status = 400; throw e; }
+  let url = `/orders.json?status=any&created_at_min=${encodeURIComponent(since)}${until ? `&created_at_max=${encodeURIComponent(until)}` : ''}&limit=250`;
+  let orderCount = 0, salesCents = 0, itemCount = 0; const byVariant = {}; const points = [];
+  let guard = 0;
+  while (url && guard < 25) {
+    guard++;
+    const { json, headers } = await shopify(url);
+    for (const o of json.orders || []) {
+      if (o.cancelled_at) continue;
+      const cents = Math.round((Number(o.total_price) || 0) * 100);
+      orderCount++; salesCents += cents; points.push({ at: o.created_at, cents });
+      for (const li of o.line_items || []) {
+        const q = Number(li.quantity) || 0; itemCount += q;
+        const vid = li.variant_id != null ? String(li.variant_id) : ('t:' + (li.title || ''));
+        const v = byVariant[vid] || (byVariant[vid] = { variantId: li.variant_id != null ? String(li.variant_id) : '', name: li.title || '', qty: 0, revenueCents: 0 });
+        v.qty += q; v.revenueCents += Math.round((Number(li.price) || 0) * 100) * q;
+      }
+    }
+    const link = (headers.get('link') || headers.get('Link') || '');
+    const m = link.match(/<([^>]+)>;\s*rel="next"/);
+    url = m ? m[1].replace(/^https?:\/\/[^/]+\/admin\/api\/[^/]+/, '') : null;
+  }
+  return { orderCount, salesCents, itemCount, items: Object.values(byVariant), points };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'POST only' };
   let body;
@@ -490,6 +517,7 @@ export const handler = async (event) => {
     if (body.action === 'searchCustomers') return json(200, { customers: await searchCustomers(body.q) });
     if (body.action === 'createCustomer') return json(200, { customer: await createCustomer(body) });
     if (body.action === 'customerOrders') return json(200, { orders: await customerOrders(body.customerId) });
+    if (body.action === 'salesReport') return json(200, await salesReport(body));
     if (body.action === 'receiveStock') return json(200, await receiveStock(body));
     if (body.action === 'setStock') return json(200, await setStock(body));
     if (body.action === 'setCosts') return json(200, await setCosts(body));
