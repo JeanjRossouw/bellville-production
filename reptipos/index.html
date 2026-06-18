@@ -2201,7 +2201,12 @@
   const scan = document.getElementById('scan');
   scan.addEventListener('input', onScanInput);
   scan.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); onScanEnter(); } });
-  function keepFocus() { if (isMobile()) return; if (document.activeElement !== scan && !/^(INPUT|TEXTAREA|BUTTON)$/.test(document.activeElement.tagName)) scan.focus(); }
+  function keepFocus() {
+    if (isMobile()) return;
+    if (document.querySelector('.modal.show')) return;           // a dialog/dropdown is open
+    const ae = document.activeElement;
+    if (ae !== scan && !/^(INPUT|TEXTAREA|BUTTON|SELECT|OPTION)$/.test(ae.tagName)) scan.focus();
+  }
   document.addEventListener('click', () => setTimeout(keepFocus, 0));
   setInterval(keepFocus, 1500);
 
