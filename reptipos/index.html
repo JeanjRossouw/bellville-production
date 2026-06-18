@@ -1594,20 +1594,28 @@
     if (cntI < 0) cntI = header.findIndex(h => /^count|^counted|^qty|^quantity|^counted qty/.test(h));
     if (cntI < 0) cntI = header.findIndex(h => /count|qty|quantity/.test(h) && !/on ?hand|system/.test(h));
     if (cntI < 0) { toast('No "Count" column found — fill the Count column in the export'); return; }
-    if (skuI < 0 && barI < 0) { toast('Need a SKU or Barcode column to match items'); return; }
+    const nameI = header.findIndex(h => h === 'name' || /name|title|description/.test(h));
+    if (skuI < 0 && barI < 0 && nameI < 0) { toast('Need a SKU, Barcode or Name column to match items'); return; }
     const s = loadStocktake() || { id: 'CNT-' + Date.now(), startedAt: new Date().toISOString(), startedBy: currentStaff ? currentStaff.name : '', mode: 'selected', scope: null, counts: {}, status: 'open' };
-    let matched = 0, missed = 0;
+    // Normalise: trim, drop a trailing ".0" Excel adds to numeric SKUs/barcodes, lowercase.
+    const norm = v => String(v == null ? '' : v).trim().replace(/\.0+$/, '').toLowerCase();
+    let matched = 0, blank = 0; const unmatched = [];
     for (let r = 1; r < rows.length; r++) {
       const row = rows[r] || [];
-      const sku = skuI >= 0 ? String(row[skuI] == null ? '' : row[skuI]).trim() : '';
-      const bar = barI >= 0 ? String(row[barI] == null ? '' : row[barI]).trim() : '';
-      const raw = String(row[cntI] == null ? '' : row[cntI]).trim(); if (raw === '') continue;
+      const sku = skuI >= 0 ? norm(row[skuI]) : '';
+      const bar = barI >= 0 ? norm(row[barI]) : '';
+      const nm = nameI >= 0 ? norm(row[nameI]) : '';
+      const raw = String(row[cntI] == null ? '' : row[cntI]).trim(); if (raw === '') { blank++; continue; }
       const cnt = Math.max(0, Math.round(Number(raw) || 0));
-      const p = catalogue.find(x => (sku && (x.sku || '').toLowerCase() === sku.toLowerCase()) || (bar && (x.barcode || '').toLowerCase() === bar.toLowerCase()));
-      if (p) { s.counts[p.variantId] = cnt; matched++; } else missed++;
+      const p = catalogue.find(x =>
+        (sku && norm(x.sku) === sku) ||
+        (bar && norm(x.barcode) === bar) ||
+        (nm && norm(x.name) === nm));
+      if (p) { s.counts[p.variantId] = cnt; matched++; } else unmatched.push(nm || sku || bar || ('row ' + r));
     }
     saveStocktake(s);
-    toast('Imported ' + matched + ' counts' + (missed ? ' · ' + missed + ' unmatched' : '') + ' — review then reconcile');
+    if (unmatched.length) console.warn('Stock import — ' + unmatched.length + ' rows did not match a product:', unmatched);
+    toast('Imported ' + matched + ' counts' + (unmatched.length ? ' · ' + unmatched.length + ' unmatched (see console)' : '') + (blank ? ' · ' + blank + ' blank skipped' : '') + ' — review then reconcile');
     renderStocktake();
   }
   function importStockFile(input) {
