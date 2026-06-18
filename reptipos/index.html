@@ -1414,10 +1414,16 @@
   function loadStocktake() { try { return JSON.parse(localStorage.getItem('reptipos-stocktake') || 'null'); } catch (e) { return null; } }
   function saveStocktake(s) { if (s) localStorage.setItem('reptipos-stocktake', JSON.stringify(s)); else localStorage.removeItem('reptipos-stocktake'); }
   function stCategories() { return [...new Set(catalogue.map(p => p.category).filter(Boolean))].sort(); }
-  function stItems(s) { return catalogue.filter(p => !s.scope || p.category === s.scope); }
+  function stItems(s) { if (s.mode === 'selected') return catalogue.filter(p => s.counts[p.variantId] != null); return catalogue.filter(p => !s.scope || p.category === s.scope); }
+  function stAddItem(variantId) { const s = loadStocktake(); if (!s) return; const p = findProduct(variantId); s.counts[variantId] = Number(p ? p.qty : 0) || 0; saveStocktake(s); const si = document.getElementById('st-search'); if (si) si.value = ''; renderStocktake(); toast('Added ' + (p ? p.name : '') + ' — set its count'); }
   function openStocktake() { document.getElementById('stock-modal').classList.add('show'); renderStocktake(); }
   function closeStocktake() { document.getElementById('stock-modal').classList.remove('show'); }
-  function startStocktake() { const sel = document.getElementById('st-scope'); const category = sel ? sel.value : ''; saveStocktake({ id: 'CNT-' + Date.now(), startedAt: new Date().toISOString(), startedBy: currentStaff ? currentStaff.name : '', scope: category || null, counts: {}, status: 'open' }); stFilter = 'all'; renderStocktake(); }
+  function startStocktake() {
+    const sel = document.getElementById('st-scope'); const val = sel ? sel.value : '';
+    const mode = val === '__selected__' ? 'selected' : (val ? 'category' : 'all');
+    saveStocktake({ id: 'CNT-' + Date.now(), startedAt: new Date().toISOString(), startedBy: currentStaff ? currentStaff.name : '', mode, scope: mode === 'category' ? val : null, counts: {}, status: 'open' });
+    stFilter = 'all'; renderStocktake();
+  }
   function cancelStocktake() { if (!confirm('Discard this count? Nothing will be changed in Shopify.')) return; saveStocktake(null); renderStocktake(); }
   function stHistory() {
     let arr = []; try { arr = JSON.parse(localStorage.getItem('reptipos-stocktakes') || '[]'); } catch (e) {}
@@ -1432,7 +1438,7 @@
       const opts = stCategories().map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
       body.innerHTML = `<div class="field"><div style="color:var(--muted);font-size:0.85rem;margin-bottom:0.6rem">Count the whole shop or one category. Scan items (each scan = +1) or type counts, then reconcile to set Shopify stock to your physical count.</div>
         <label>Scope</label>
-        <select id="st-scope" style="width:100%;padding:0.7rem;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)"><option value="">Whole shop (all categories)</option>${opts}</select>
+        <select id="st-scope" style="width:100%;padding:0.7rem;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)"><option value="">Whole shop (all categories)</option><option value="__selected__">Only items I scan / add (spot count)</option>${opts}</select>
         <button class="btn btn-pay" style="margin-top:0.7rem" onclick="startStocktake()">Start stock take</button></div>
         <div style="display:flex;gap:0.5rem;margin-top:0.6rem">
           <button class="btn btn-ghost" style="padding:0.6rem" onclick="exportStockCsv()">⬇ Export stock CSV</button>
@@ -1454,9 +1460,10 @@
     const qq = q.trim().toLowerCase();
     if (qq) list = list.filter(p => (p.name || '').toLowerCase().includes(qq) || (p.sku || '').toLowerCase().includes(qq) || (p.barcode || '').toLowerCase().includes(qq));
     body.innerHTML = `
-      <div style="font-size:0.8rem;color:var(--muted)">${s.scope ? esc(s.scope) : 'Whole shop'} · started ${new Date(s.startedAt).toLocaleString('en-ZA')}${s.startedBy ? ' · ' + esc(s.startedBy) : ''}</div>
-      <div style="font-weight:700;margin:0.4rem 0">${countedN}/${items.length} counted · variance ${varTotal > 0 ? '+' : ''}${varTotal}</div>
-      <input id="st-search" autocomplete="off" placeholder="🔍 scan barcode (= +1) or search to type a count" oninput="renderStocktake()" onkeydown="if(event.key==='Enter'){event.preventDefault();stScanEnter()}" style="margin-bottom:0.5rem">
+      <div style="font-size:0.8rem;color:var(--muted)">${s.mode === 'selected' ? 'Selected items (spot count)' : (s.scope ? esc(s.scope) : 'Whole shop')} · started ${new Date(s.startedAt).toLocaleString('en-ZA')}${s.startedBy ? ' · ' + esc(s.startedBy) : ''}</div>
+      <div style="font-weight:700;margin:0.4rem 0">${countedN}${s.mode === 'selected' ? '' : '/' + items.length} counted · variance ${varTotal > 0 ? '+' : ''}${varTotal}</div>
+      <input id="st-search" autocomplete="off" placeholder="${s.mode === 'selected' ? '🔍 scan or search to add an item to count' : '🔍 scan barcode (= +1) or search to type a count'}" oninput="renderStocktake()" onkeydown="if(event.key==='Enter'){event.preventDefault();stScanEnter()}" style="margin-bottom:0.5rem">
+      ${s.mode === 'selected' && qq ? `<div style="max-height:140px;overflow:auto;margin-bottom:0.5rem;border:1px solid var(--border);border-radius:8px">${catalogue.filter(p => s.counts[p.variantId] == null && ((p.name || '').toLowerCase().includes(qq) || (p.sku || '').toLowerCase().includes(qq) || (p.barcode || '').toLowerCase().includes(qq))).slice(0, 8).map(p => `<div class="cust-result" onclick="stAddItem('${p.variantId}')"><div><div style="font-weight:600">${esc(p.name)}</div><div style="font-size:0.72rem;color:var(--muted)">${esc(p.sku || '')} · system ${Number(p.qty) || 0}</div></div><div style="color:var(--accent2)">+ add</div></div>`).join('') || '<div class="empty" style="padding:0.5rem">No matches</div>'}</div>` : ''}
       <div style="display:flex;gap:0.3rem;margin-bottom:0.5rem;font-size:0.78rem">
         ${['all', 'counted', 'missed', 'variance'].map(f => `<button class="qbtn" style="width:auto;padding:0 0.6rem;background:${stFilter === f ? 'var(--accent)' : 'var(--panel2)'}" onclick="stSetFilter('${f}')">${f}</button>`).join('')}
       </div>
@@ -1474,11 +1481,11 @@
     const header = ['SKU', 'Barcode', 'Name', 'Category', 'Vendor', 'OnHand', 'Price', 'Count'];
     const lines = [header.join(',')];
     catalogue.forEach(p => lines.push([p.sku, p.barcode, p.name, p.category, p.vendor, (Number(p.qty) || 0), ((p.priceCents || 0) / 100).toFixed(2), ''].map(csvEscape).join(',')));
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = 'reptipos-stock-' + new Date().toISOString().slice(0, 10) + '.csv'; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
-    toast('Exported ' + catalogue.length + ' items (use the Count column to import back)');
+    toast('Exported ' + catalogue.length + ' items — opens in Excel; fill the Count column then import');
   }
   function parseCsv(text) {
     const rows = []; let i = 0, field = '', row = [], inQ = false;
@@ -1782,10 +1789,12 @@
     const toAdd = vendors.filter(v => !existing.has(v.toLowerCase()));
     if (!toAdd.length) { toast('All ' + vendors.length + ' vendors are already suppliers'); return; }
     if (!confirm('Add ' + toAdd.length + ' supplier(s) from your Shopify product vendors?\n\n' + toAdd.slice(0, 12).join(', ') + (toAdd.length > 12 ? '…' : ''))) return;
-    for (const v of toAdd) { await fbAdd('suppliers', { name: v, phone: '', email: '', fromVendor: true, createdAt: new Date().toISOString() }); }
-    suppliersCache = await fbList('suppliers', 'name', 'asc');
-    toast('Added ' + toAdd.length + ' supplier(s) — add their phone/email to send POs');
-    renderSuppliers();
+    try {
+      for (const v of toAdd) { await fbAdd('suppliers', { name: v, phone: '', email: '', fromVendor: true, createdAt: new Date().toISOString() }); }
+      suppliersCache = await fbList('suppliers', 'name', 'asc');
+      toast('Added ' + toAdd.length + ' supplier(s) — add their phone/email to send POs');
+      renderSuppliers();
+    } catch (e) { toast('Load failed: ' + (e.message || e)); }
   }
   function printGrvById(id) { const g = grvsCache.find(x => x.id === id); if (g) printGrv(g); }
   function printGrv(g) {
@@ -2172,7 +2181,7 @@
     openDocs, closeDocs, docsTab, loadQuote, soAddPayment, soMarkReady, soFulfil, soCancel, printDocById,
     openProfile, closeProfile,
     openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier, loadVendorSuppliers,
-    openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, reconcileStocktake, exportStockCsv, importStockFile,
+    openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, stAddItem, reconcileStocktake, exportStockCsv, importStockFile,
     openReorder, closeReorder, setReorderLevel, startPO, poBack, poSetQty, poSetCost, poRemove, sendPO,
     lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings,
     flushQueue,
