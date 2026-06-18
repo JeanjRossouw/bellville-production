@@ -139,6 +139,9 @@
   .tile .pr { font-size:1.2rem; margin-top:0.3rem; }
   .tile .st { font-size:0.74rem; }
   .right { max-width:480px; }
+  /* Dashboard as a full page */
+  #dash-modal .modal-card { width:100vw; max-width:100vw; height:100vh; max-height:100vh; border-radius:0; padding:1.1rem 1.4rem; }
+  #dash-modal #dash-body { max-width:1040px; margin:0 auto; }
   #cart { padding:0.6rem 1rem; }
   .total { font-size:1.8rem; }
   .btn-pay { padding:1.05rem; font-size:1.1rem; }
@@ -1451,8 +1454,8 @@
     if (period === 'today') { for (let h = 6; h <= 20; h++) { buckets[h] = 0; labels.push(h); } (points || []).forEach(p => { const h = new Date(p.at).getHours(); if (buckets[h] != null) buckets[h] += p.cents; }); }
     else { const days = period === 'week' ? 7 : 31; const now = new Date(); for (let i = days - 1; i >= 0; i--) { const d = new Date(now); d.setDate(now.getDate() - i); const k = (d.getMonth() + 1) + '/' + d.getDate(); buckets[k] = 0; labels.push(k); } (points || []).forEach(p => { const d = new Date(p.at); const k = (d.getMonth() + 1) + '/' + d.getDate(); if (buckets[k] != null) buckets[k] += p.cents; }); }
     const vals = labels.map(l => buckets[l] || 0); const max = Math.max(1, ...vals);
-    const bars = labels.map((l, i) => `<div title="${l}: ${money(vals[i])}" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center"><div style="width:72%;background:var(--accent2);height:${Math.round(vals[i] / max * 90)}px;border-radius:2px 2px 0 0"></div></div>`).join('');
-    return `<div style="display:flex;align-items:flex-end;gap:2px;height:100px;margin:0.4rem 0;border-bottom:1px solid var(--border)">${bars}</div>`;
+    const bars = labels.map((l, i) => `<div title="${l}: ${money(vals[i])}" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center"><div style="width:72%;background:var(--accent2);height:${Math.round(vals[i] / max * 150)}px;border-radius:2px 2px 0 0"></div></div>`).join('');
+    return `<div style="display:flex;align-items:flex-end;gap:2px;height:170px;margin:0.6rem 0;border-bottom:1px solid var(--border)">${bars}</div>`;
   }
   function dashTopList(arr, mode) {
     if (!arr.length) return '<div class="empty" style="padding:0.5rem">No sales</div>';
