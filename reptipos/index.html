@@ -2244,6 +2244,15 @@
     const poNumber = 'PO-' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + String(seq).padStart(3, '0');
     const po = { poNumber, supplierId: poDraft.supplierId, supplierName: poDraft.supplier, items: poDraft.items.map(i => ({ variantId: i.variantId, inventoryItemId: i.inventoryItemId || (findProduct(i.variantId) || {}).inventoryItemId || '', name: i.name, sku: i.sku, qty: i.qty, costCents: i.costCents })), totalCents: poTotalCents(), status: method === 'save' ? 'draft' : 'sent', sentVia: method === 'save' ? '' : method, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
     try { if (fbReady()) await fbAdd('purchase_orders', po); } catch (e) {}
+    // Save the entered costs onto the products (Shopify "Cost per item") so they're remembered.
+    try {
+      const costLines = po.items.filter(i => i.costCents > 0 && (i.inventoryItemId || (findProduct(i.variantId) || {}).inventoryItemId));
+      if (costLines.length) {
+        await callFn({ action: 'setCosts', lineItems: costLines.map(i => ({ inventoryItemId: i.inventoryItemId || (findProduct(i.variantId) || {}).inventoryItemId, costCents: i.costCents })) });
+        costLines.forEach(i => { const p = findProduct(i.variantId); if (p) p.costCents = i.costCents; });
+        cacheCatalogue();
+      }
+    } catch (e) { console.warn('PO cost save failed', e); }
     const text = poText(poDraft, poNumber);
     if (method === 'email') {
       const to = poDraft.email || '';
@@ -2252,8 +2261,8 @@
       const ph = (poDraft.phone || '').replace(/[^\d]/g, '');
       window.open('https://wa.me/' + ph + '?text=' + encodeURIComponent(text), '_blank');
     }
-    toast(method === 'save' ? 'PO ' + poNumber + ' saved' : 'PO ' + poNumber + ' — ' + method + ' opened');
-    poDraft = null; renderReorder();
+    toast(method === 'save' ? 'PO ' + poNumber + ' saved · costs updated' : 'PO ' + poNumber + ' — ' + method + ' opened · costs updated');
+    poDraft = null; closeReorder();
   }
 
   // ---- Payments (Phase 2) ----
