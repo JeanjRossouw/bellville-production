@@ -115,6 +115,34 @@
   .cust-result { display:flex; justify-content:space-between; align-items:center; gap:0.5rem; padding:0.55rem; border-bottom:1px solid var(--border); cursor:pointer; }
   .cust-result:hover { background:var(--panel2); }
 
+  /* Nicer header nav buttons */
+  header { padding:0.55rem 1rem; }
+  header .brand { white-space:nowrap; font-size:1.1rem; }
+  .status { gap:0.4rem; flex-wrap:wrap; }
+  header .status > button:not(#queue-badge) {
+    height:38px !important; padding:0 0.8rem !important; border-radius:10px !important;
+    border:1px solid var(--border) !important; background:var(--panel2) !important; color:var(--text) !important;
+    font-size:0.82rem !important; font-weight:600; cursor:pointer;
+    display:inline-flex; align-items:center; gap:0.35rem; line-height:1;
+    transition:background .12s, border-color .12s, transform .04s;
+  }
+  header .status > button:not(#queue-badge):hover { background:#232a39 !important; border-color:var(--accent2) !important; }
+  header .status > button:not(#queue-badge):active { transform:translateY(1px); }
+
+  /* Bigger, comfier sell screen */
+  .left { padding:1rem 1.1rem; }
+  #scan { padding:1.15rem 1.25rem; font-size:1.2rem; border-radius:14px; }
+  #grid { grid-template-columns:repeat(auto-fill,minmax(176px,1fr)); gap:0.75rem; margin-top:1rem; }
+  .tile { padding:0.7rem; border-radius:14px; }
+  .tile .thumb { height:112px; font-size:2rem; margin-bottom:0.55rem; }
+  .tile .nm { font-size:0.9rem; height:2.4em; }
+  .tile .pr { font-size:1.2rem; margin-top:0.3rem; }
+  .tile .st { font-size:0.74rem; }
+  .right { max-width:480px; }
+  #cart { padding:0.6rem 1rem; }
+  .total { font-size:1.8rem; }
+  .btn-pay { padding:1.05rem; font-size:1.1rem; }
+
   /* ---- Phone layout: stack to one column + Shop/Cart switcher ---- */
   @media (max-width: 760px) {
     header { flex-wrap:wrap; padding:0.5rem 0.7rem; gap:0.4rem; }
