@@ -81,9 +81,13 @@ async function getProducts() {
     const { json, headers } = await shopify(url);
     for (const p of json.products || []) {
       const variants = p.variants || [];
-      const image = (p.image && p.image.src) || (p.images && p.images[0] && p.images[0].src) || '';
+      const productImage = (p.image && p.image.src) || (p.images && p.images[0] && p.images[0].src) || '';
+      // Map each image id → src so a variant can show its OWN photo.
+      const imgById = {};
+      (p.images || []).forEach(im => { if (im && im.id != null) imgById[String(im.id)] = im.src; });
       for (const v of variants) {
         const named = variants.length > 1 && v.title && v.title !== 'Default Title';
+        const variantImage = (v.image_id != null && imgById[String(v.image_id)]) || productImage;
         out.push({
           productId: String(p.id),
           variantId: String(v.id),
@@ -95,7 +99,7 @@ async function getProducts() {
           qty: Number(v.inventory_quantity) || 0,
           category: p.product_type || '',
           vendor: p.vendor || '',
-          imageUrl: image
+          imageUrl: variantImage
         });
       }
     }
