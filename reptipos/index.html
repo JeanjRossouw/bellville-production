@@ -1018,17 +1018,28 @@
   }
   function closeRefund() { document.getElementById('refund-modal').classList.remove('show'); }
   function renderRefundLookup(prefill) {
+    const recent = loadSales().slice(0, 8);
+    const recentHtml = recent.length ? `<div style="font-size:0.8rem;font-weight:700;margin:0.9rem 0 0.3rem">Recent sales — tap to refund</div>` +
+      recent.map(s => `<div class="cust-result" onclick="rfPick('${esc(s.saleNumber)}')">
+        <div><div style="font-weight:600">${esc(s.saleNumber)}${s.shopifyOrder ? ' · ' + esc(s.shopifyOrder) : (s.synced ? '' : ' <span style=\"color:var(--warn)\">⏳</span>')}</div>
+          <div style="font-size:0.72rem;color:var(--muted)">${new Date(s.datetime).toLocaleString('en-ZA')}</div></div>
+        <div style="font-weight:700">${money(s.totalCents)}</div></div>`).join('') : '';
     document.getElementById('refund-body').innerHTML = `
-      <div class="field"><label>Order number</label>
-        <input id="rf-q" autocomplete="off" placeholder="e.g. #1001 or 1001" value="${esc(prefill || '')}" onkeydown="if(event.key==='Enter')lookupRefundOrder()">
+      <div class="field"><label>Order number (Shopify #, or POS sale no.)</label>
+        <input id="rf-q" autocomplete="off" placeholder="e.g. #1001, 1001, or RC-…" value="${esc(prefill || '')}" onkeydown="if(event.key==='Enter')lookupRefundOrder()">
       </div>
       <button class="btn btn-pay" style="margin-top:0.7rem" onclick="lookupRefundOrder()">Find order</button>
-      <div id="rf-result" style="margin-top:0.8rem"></div>`;
+      <div id="rf-result" style="margin-top:0.8rem"></div>
+      ${recentHtml}`;
     const i = document.getElementById('rf-q'); if (i) i.focus();
   }
+  function rfPick(num) { const i = document.getElementById('rf-q'); if (i) i.value = num; lookupRefundOrder(); }
   async function lookupRefundOrder() {
-    const q = (document.getElementById('rf-q').value || '').trim();
+    let q = (document.getElementById('rf-q').value || '').trim();
     if (!q) { toast('Enter an order number'); return; }
+    // If they typed a POS sale number (RC-…), map it to the real Shopify order name.
+    const local = loadSales().find(s => String(s.saleNumber).toLowerCase() === q.toLowerCase());
+    if (local && local.shopifyOrder) q = local.shopifyOrder;
     const box = document.getElementById('rf-result');
     box.innerHTML = '<div class="empty" style="padding:1rem">Searching…</div>';
     try {
@@ -1862,7 +1873,7 @@
   Object.assign(window, { mView, toggleDemo, setDemo, refreshCatalogue, addToCart, changeQty, removeLine, clearCart,
     lineDiscount, setCartDiscount,
     parkSale, openParked, closeParked, retrieveParked, deleteParked,
-    openRefund, closeRefund, lookupRefundOrder, setRefundQty, confirmRefund,
+    openRefund, closeRefund, lookupRefundOrder, rfPick, setRefundQty, confirmRefund,
     openCamScan, closeCamScan, openSales, closeSales, reprintSale,
     takeTender, closeTender, tenderMethod, finishTender,
     saveQuote, openSalesOrder, closeSalesOrder, soBalancePreview, confirmSalesOrder,
