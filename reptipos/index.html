@@ -1471,8 +1471,16 @@
   let stFilter = 'all', stReconciling = false, reconcileArmed = false, reconcileTimer = null;
   function loadStocktake() { try { return JSON.parse(localStorage.getItem('reptipos-stocktake') || 'null'); } catch (e) { return null; } }
   function saveStocktake(s) { if (s) localStorage.setItem('reptipos-stocktake', JSON.stringify(s)); else localStorage.removeItem('reptipos-stocktake'); }
+  // Items whose stock can't be set (bundles / inventory not tracked) — excluded from counts.
+  function noCountSet() { try { return new Set(JSON.parse(localStorage.getItem('reptipos-nocount') || '[]')); } catch (e) { return new Set(); } }
+  function addNoCount(ids) { if (!ids || !ids.length) return; const s = noCountSet(); ids.forEach(i => s.add(i)); localStorage.setItem('reptipos-nocount', JSON.stringify([...s])); }
+  function isBundleish(p) { return /starter kit|\bbundle\b/i.test((p.category || '') + ' ' + (p.name || '')) || noCountSet().has(p.variantId); }
   function stCategories() { return [...new Set(catalogue.map(p => p.category).filter(Boolean))].sort(); }
-  function stItems(s) { if (s.mode === 'selected') return catalogue.filter(p => s.counts[p.variantId] != null); return catalogue.filter(p => !s.scope || p.category === s.scope); }
+  function stItems(s) {
+    const base = s.mode === 'selected' ? catalogue.filter(p => s.counts[p.variantId] != null) : catalogue.filter(p => !s.scope || p.category === s.scope);
+    // Hide bundles / un-settable items, unless they're already counted in this session.
+    return base.filter(p => s.counts[p.variantId] != null || !isBundleish(p));
+  }
   function stAddItem(variantId) { const s = loadStocktake(); if (!s) return; const p = findProduct(variantId); s.counts[variantId] = Number(p ? p.qty : 0) || 0; saveStocktake(s); const si = document.getElementById('st-search'); if (si) si.value = ''; renderStocktake(); toast('Added ' + (p ? p.name : '') + ' — set its count'); }
   function openStocktake() { document.getElementById('stock-modal').classList.add('show'); renderStocktake(); }
   function closeStocktake() { document.getElementById('stock-modal').classList.remove('show'); }
@@ -1521,7 +1529,7 @@
       <div style="font-size:0.8rem;color:var(--muted)">${s.mode === 'selected' ? 'Selected items (spot count)' : (s.scope ? esc(s.scope) : 'Whole shop')} · started ${new Date(s.startedAt).toLocaleString('en-ZA')}${s.startedBy ? ' · ' + esc(s.startedBy) : ''}</div>
       <div style="font-weight:700;margin:0.4rem 0">${countedN}${s.mode === 'selected' ? '' : '/' + items.length} counted · variance ${varTotal > 0 ? '+' : ''}${varTotal}</div>
       <input id="st-search" autocomplete="off" placeholder="${s.mode === 'selected' ? '🔍 scan or search to add an item to count' : '🔍 scan barcode (= +1) or search to type a count'}" oninput="renderStocktake()" onkeydown="if(event.key==='Enter'){event.preventDefault();stScanEnter()}" style="margin-bottom:0.5rem">
-      ${s.mode === 'selected' && qq ? `<div style="max-height:140px;overflow:auto;margin-bottom:0.5rem;border:1px solid var(--border);border-radius:8px">${catalogue.filter(p => s.counts[p.variantId] == null && ((p.name || '').toLowerCase().includes(qq) || (p.sku || '').toLowerCase().includes(qq) || (p.barcode || '').toLowerCase().includes(qq))).slice(0, 8).map(p => `<div class="cust-result" onclick="stAddItem('${p.variantId}')"><div><div style="font-weight:600">${esc(p.name)}</div><div style="font-size:0.72rem;color:var(--muted)">${esc(p.sku || '')} · system ${Number(p.qty) || 0}</div></div><div style="color:var(--accent2)">+ add</div></div>`).join('') || '<div class="empty" style="padding:0.5rem">No matches</div>'}</div>` : ''}
+      ${s.mode === 'selected' && qq ? `<div style="max-height:140px;overflow:auto;margin-bottom:0.5rem;border:1px solid var(--border);border-radius:8px">${catalogue.filter(p => s.counts[p.variantId] == null && !isBundleish(p) && ((p.name || '').toLowerCase().includes(qq) || (p.sku || '').toLowerCase().includes(qq) || (p.barcode || '').toLowerCase().includes(qq))).slice(0, 8).map(p => `<div class="cust-result" onclick="stAddItem('${p.variantId}')"><div><div style="font-weight:600">${esc(p.name)}</div><div style="font-size:0.72rem;color:var(--muted)">${esc(p.sku || '')} · system ${Number(p.qty) || 0}</div></div><div style="color:var(--accent2)">+ add</div></div>`).join('') || '<div class="empty" style="padding:0.5rem">No matches</div>'}</div>` : ''}
       <div style="display:flex;gap:0.3rem;margin-bottom:0.5rem;font-size:0.78rem">
         ${['all', 'counted', 'missed', 'variance'].map(f => `<button class="qbtn" style="width:auto;padding:0 0.6rem;background:${stFilter === f ? 'var(--accent)' : 'var(--panel2)'}" onclick="stSetFilter('${f}')">${f}</button>`).join('')}
       </div>
@@ -1599,7 +1607,7 @@
     const s = loadStocktake() || { id: 'CNT-' + Date.now(), startedAt: new Date().toISOString(), startedBy: currentStaff ? currentStaff.name : '', mode: 'selected', scope: null, counts: {}, status: 'open' };
     // Normalise: trim, drop a trailing ".0" Excel adds to numeric SKUs/barcodes, lowercase.
     const norm = v => String(v == null ? '' : v).trim().replace(/\.0+$/, '').toLowerCase();
-    let matched = 0, blank = 0; const unmatched = [];
+    let matched = 0, blank = 0, bundles = 0; const unmatched = [];
     for (let r = 1; r < rows.length; r++) {
       const row = rows[r] || [];
       const sku = skuI >= 0 ? norm(row[skuI]) : '';
@@ -1611,11 +1619,12 @@
         (sku && norm(x.sku) === sku) ||
         (bar && norm(x.barcode) === bar) ||
         (nm && norm(x.name) === nm));
-      if (p) { s.counts[p.variantId] = cnt; matched++; } else unmatched.push(nm || sku || bar || ('row ' + r));
+      if (p && isBundleish(p)) { bundles++; }
+      else if (p) { s.counts[p.variantId] = cnt; matched++; } else unmatched.push(nm || sku || bar || ('row ' + r));
     }
     saveStocktake(s);
     if (unmatched.length) console.warn('Stock import — ' + unmatched.length + ' rows did not match a product:', unmatched);
-    toast('Imported ' + matched + ' counts' + (unmatched.length ? ' · ' + unmatched.length + ' unmatched (see console)' : '') + (blank ? ' · ' + blank + ' blank skipped' : '') + ' — review then reconcile');
+    toast('Imported ' + matched + ' counts' + (unmatched.length ? ' · ' + unmatched.length + ' unmatched (see console)' : '') + (bundles ? ' · ' + bundles + ' bundles skipped' : '') + (blank ? ' · ' + blank + ' blank skipped' : '') + ' — review then reconcile');
     renderStocktake();
   }
   function importStockFile(input) {
@@ -1670,7 +1679,7 @@
     const body = document.getElementById('stock-body');
     body.innerHTML = '<div class="empty" style="padding:2rem">Reconciling… starting</div>';
     const lineItems = items.map(p => ({ inventoryItemId: p.inventoryItemId, counted: Math.round(Number(s.counts[p.variantId])), variantId: p.variantId }));
-    let done = 0, failed = 0; const chunk = 8; const report = []; const reasons = [];
+    let done = 0, failed = 0; const chunk = 8; const report = []; const reasons = []; const failedVariants = [];
     try {
       for (let i = 0; i < lineItems.length; i += chunk) {
         const batch = lineItems.slice(i, i + chunk);
@@ -1684,12 +1693,13 @@
           reasons.push({ error: e.message || String(e) });
         }
         batch.forEach(b => {
-          if (failedIds.has(String(b.inventoryItemId))) { failed++; }
+          if (failedIds.has(String(b.inventoryItemId))) { failed++; failedVariants.push(b.variantId); }
           else { const p = findProduct(b.variantId); const exp = p ? Number(p.qty) || 0 : 0; report.push({ name: p ? p.name : b.variantId, sku: p ? p.sku : '', expected: exp, counted: b.counted }); if (p) p.qty = b.counted; delete s.counts[b.variantId]; }
         });
         done += batch.length;
         body.innerHTML = `<div class="empty" style="padding:2rem">Reconciling… ${done}/${lineItems.length}${failed ? '<br><span style="color:var(--warn)">' + failed + ' couldn\'t be set</span>' : ''}</div>`;
       }
+      addNoCount(failedVariants); // remember un-settable items so they're hidden from future counts
       if (reasons.length) console.warn('Stock reconcile — items that could not be set (e.g. bundles / inventory not tracked):', reasons);
       cacheCatalogue(); renderGrid();
       if (report.length) {
