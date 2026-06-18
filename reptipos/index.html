@@ -1750,7 +1750,7 @@
   }
 
   let suppliersCache = [], grvsCache = [], grvLines = [], grvSupplierId = null, grvInFlight = false, grvCurTab = 'new', receivingPoId = null, posCache = [];
-  function openGrv() { receivingPoId = null; grvLines = []; grvSupplierId = null; document.getElementById('grv-modal').classList.add('show'); grvTab('new'); }
+  function openGrv() { receivingPoId = null; grvLines = []; grvSupplierId = null; grvInFlight = false; document.getElementById('grv-modal').classList.add('show'); grvTab('new'); }
   function closeGrv() { document.getElementById('grv-modal').classList.remove('show'); }
   function grvTab(t) {
     grvCurTab = t;
@@ -1840,21 +1840,22 @@
   function grvSetCost(i, v) { grvLines[i].costCents = toCents(v); updateGrvTotalsUI(); }
   function grvRemove(i) { grvLines.splice(i, 1); renderGrvLines(); }
   async function confirmGrv() {
-    if (grvInFlight) return;
+    console.log('[GRV] confirm tapped', { grvInFlight, receivingPoId, lines: grvLines.length, grvSupplierId });
+    if (grvInFlight) { toast('Already receiving — please wait a moment'); return; }
     if (!fbReady()) { toast('Need a connection to record the GRV'); return; }
+    const linkedPo = receivingPoId ? posCache.find(p => p.id === receivingPoId) : null;
     const supSel = document.getElementById('grv-sup'); const supId = grvSupplierId || (supSel ? supSel.value : '');
-    if (!supId) { toast('Select a supplier'); return; }
+    if (!supId && !linkedPo) { toast('Select a supplier'); return; }
     const lines = grvLines.filter(l => l.qty > 0 && l.inventoryItemId);
     if (!lines.length) {
       if (grvLines.some(l => l.qty > 0)) toast('These items aren’t linked to Shopify stock — tap ↻ to refresh the catalogue, then receive again');
       else toast('Set a quantity on at least one item');
       return;
     }
-    const ref = (document.getElementById('grv-ref').value || '').trim();
-    const date = document.getElementById('grv-date').value || new Date().toISOString().slice(0, 10);
-    const updateCost = document.getElementById('grv-updcost').checked;
+    const refEl = document.getElementById('grv-ref'); const ref = refEl ? (refEl.value || '').trim() : '';
+    const dateEl = document.getElementById('grv-date'); const date = (dateEl && dateEl.value) || new Date().toISOString().slice(0, 10);
+    const ucEl = document.getElementById('grv-updcost'); const updateCost = ucEl ? ucEl.checked : true;
     const total = lines.reduce((t, l) => t + l.costCents * l.qty, 0);
-    const linkedPo = receivingPoId ? posCache.find(p => p.id === receivingPoId) : null;
     grvInFlight = true;
     const btn = document.getElementById('grv-confirm'); if (btn) { btn.disabled = true; btn.textContent = 'Receiving…'; }
     const idemKey = uuid();
@@ -1863,8 +1864,9 @@
       lines.forEach(l => { const p = findProduct(l.variantId); if (p) p.qty = (Number(p.qty) || 0) + l.qty; }); cacheCatalogue(); renderGrid();
       const seq = (parseInt(localStorage.getItem('reptipos-grv-seq') || '0', 10) || 0) + 1; localStorage.setItem('reptipos-grv-seq', String(seq));
       const sup = suppliersCache.find(s => s.id === supId);
+      const supplierName = sup ? sup.name : (linkedPo ? linkedPo.supplierName : '');
       const grvNumber = 'GRV-' + date.replace(/-/g, '') + '-' + String(seq).padStart(3, '0');
-      const grv = { grvNumber, supplierId: supId, supplierName: sup ? sup.name : '', supplierRef: ref, date, idemKey,
+      const grv = { grvNumber, supplierId: supId || (linkedPo ? (linkedPo.supplierId || '') : ''), supplierName, supplierRef: ref, date, idemKey,
         poNumber: linkedPo ? linkedPo.poNumber : '',
         lineItems: lines.map(l => ({ variantId: l.variantId, inventoryItemId: l.inventoryItemId, name: l.name, sku: l.sku, qty: l.qty, costCents: l.costCents })),
         totalCents: total, amountPaidCents: 0, status: 'open', payments: [], createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
@@ -1998,6 +2000,7 @@
     });
     grvSupplierId = po.supplierId;
     receivingPoId = id;
+    grvInFlight = false;
     grvTab('new');
   }
   function printGrvById(id) { const g = grvsCache.find(x => x.id === id); if (g) printGrv(g); }
