@@ -1424,7 +1424,7 @@
     saveStocktake({ id: 'CNT-' + Date.now(), startedAt: new Date().toISOString(), startedBy: currentStaff ? currentStaff.name : '', mode, scope: mode === 'category' ? val : null, counts: {}, status: 'open' });
     stFilter = 'all'; renderStocktake();
   }
-  function cancelStocktake() { if (!confirm('Discard this count? Nothing will be changed in Shopify.')) return; saveStocktake(null); renderStocktake(); }
+  function cancelStocktake() { saveStocktake(null); stFilter = 'all'; renderStocktake(); toast('Count discarded — nothing changed in Shopify'); }
   function stHistory() {
     let arr = []; try { arr = JSON.parse(localStorage.getItem('reptipos-stocktakes') || '[]'); } catch (e) {}
     if (!arr.length) return '';
