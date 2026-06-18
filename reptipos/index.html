@@ -1441,11 +1441,11 @@
         <select id="st-scope" style="width:100%;padding:0.7rem;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)"><option value="">Whole shop (all categories)</option><option value="__selected__">Only items I scan / add (spot count)</option>${opts}</select>
         <button class="btn btn-pay" style="margin-top:0.7rem" onclick="startStocktake()">Start stock take</button></div>
         <div style="display:flex;gap:0.5rem;margin-top:0.6rem">
-          <button class="btn btn-ghost" style="padding:0.6rem" onclick="exportStockCsv()">⬇ Export stock CSV</button>
-          <button class="btn btn-ghost" style="padding:0.6rem" onclick="document.getElementById('st-file').click()">⬆ Import counts CSV</button>
+          <button class="btn btn-ghost" style="padding:0.6rem" onclick="exportStockXlsx()">⬇ Export to Excel</button>
+          <button class="btn btn-ghost" style="padding:0.6rem" onclick="document.getElementById('st-file').click()">⬆ Import counts</button>
         </div>
-        <input type="file" id="st-file" accept=".csv,text/csv" style="display:none" onchange="importStockFile(this)">
-        <div style="font-size:0.72rem;color:var(--muted);margin-top:0.3rem">Export the catalogue to count offline; import a CSV with a SKU/Barcode column and a Count/Qty column to load the counts back for review &amp; reconcile.</div>
+        <input type="file" id="st-file" accept=".xlsx,.xls,.csv,text/csv" style="display:none" onchange="importStockFile(this)">
+        <div style="font-size:0.72rem;color:var(--muted);margin-top:0.3rem">Export to Excel to count offline; fill the <b>Count</b> column and import it back (Excel .xlsx or .csv) to load the counts for review &amp; reconcile.</div>
         ${stHistory()}`;
       return;
     }
@@ -1498,36 +1498,70 @@
     if (field.length || row.length) { row.push(field); rows.push(row); }
     return rows;
   }
+  // Lazy-load SheetJS (only when exporting/importing Excel; needs internet).
+  let xlsxLoading = null;
+  function loadXlsx() {
+    if (window.XLSX) return Promise.resolve(window.XLSX);
+    if (xlsxLoading) return xlsxLoading;
+    xlsxLoading = new Promise((res, rej) => {
+      const sc = document.createElement('script');
+      sc.src = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
+      sc.onload = () => res(window.XLSX);
+      sc.onerror = () => { xlsxLoading = null; rej(new Error('Could not load the Excel library — needs internet')); };
+      document.head.appendChild(sc);
+    });
+    return xlsxLoading;
+  }
+  async function exportStockXlsx() {
+    if (!catalogue.length) { toast('No catalogue loaded'); return; }
+    try {
+      const XLSX = await loadXlsx();
+      const data = catalogue.map(p => ({ SKU: p.sku || '', Barcode: p.barcode || '', Name: p.name || '', Category: p.category || '', Vendor: p.vendor || '', OnHand: Number(p.qty) || 0, Price: (p.priceCents || 0) / 100, Count: '' }));
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Stock');
+      XLSX.writeFile(wb, 'reptipos-stock-' + new Date().toISOString().slice(0, 10) + '.xlsx');
+      toast('Exported ' + catalogue.length + ' items to Excel — fill the Count column then import');
+    } catch (e) { toast('Excel export failed: ' + (e.message || e)); }
+  }
+  // Apply imported rows (array-of-arrays, first row = header) into a stock take.
+  function applyImportRows(rows) {
+    rows = (rows || []).filter(r => r && r.length && r.some(c => String(c == null ? '' : c).trim() !== ''));
+    if (rows.length < 2) { toast('File looks empty'); return; }
+    const header = rows[0].map(h => String(h == null ? '' : h).trim().toLowerCase());
+    const skuI = header.findIndex(h => /sku/.test(h));
+    const barI = header.findIndex(h => /barcode|upc/.test(h));
+    const cntI = header.findIndex(h => /count|qty|on ?hand|quantity|stock/.test(h));
+    if (cntI < 0) { toast('No Count/Qty column found'); return; }
+    if (skuI < 0 && barI < 0) { toast('Need a SKU or Barcode column to match items'); return; }
+    const s = loadStocktake() || { id: 'CNT-' + Date.now(), startedAt: new Date().toISOString(), startedBy: currentStaff ? currentStaff.name : '', mode: 'selected', scope: null, counts: {}, status: 'open' };
+    let matched = 0, missed = 0;
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const sku = skuI >= 0 ? String(row[skuI] == null ? '' : row[skuI]).trim() : '';
+      const bar = barI >= 0 ? String(row[barI] == null ? '' : row[barI]).trim() : '';
+      const raw = String(row[cntI] == null ? '' : row[cntI]).trim(); if (raw === '') continue;
+      const cnt = Math.max(0, Math.round(Number(raw) || 0));
+      const p = catalogue.find(x => (sku && (x.sku || '').toLowerCase() === sku.toLowerCase()) || (bar && (x.barcode || '').toLowerCase() === bar.toLowerCase()));
+      if (p) { s.counts[p.variantId] = cnt; matched++; } else missed++;
+    }
+    saveStocktake(s);
+    toast('Imported ' + matched + ' counts' + (missed ? ' · ' + missed + ' unmatched' : '') + ' — review then reconcile');
+    renderStocktake();
+  }
   function importStockFile(input) {
     const file = input.files && input.files[0]; if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const rows = parseCsv(String(reader.result || '')).filter(r => r.length && r.some(c => c.trim() !== ''));
-        if (rows.length < 2) { toast('Empty CSV'); input.value = ''; return; }
-        const header = rows[0].map(h => h.trim().toLowerCase());
-        const skuI = header.findIndex(h => /sku/.test(h));
-        const barI = header.findIndex(h => /barcode|upc/.test(h));
-        const cntI = header.findIndex(h => /count|qty|on ?hand|quantity|stock/.test(h));
-        if (cntI < 0) { toast('No Count/Qty column found in the CSV'); input.value = ''; return; }
-        if (skuI < 0 && barI < 0) { toast('Need a SKU or Barcode column to match items'); input.value = ''; return; }
-        const s = loadStocktake() || { id: 'CNT-' + Date.now(), startedAt: new Date().toISOString(), startedBy: currentStaff ? currentStaff.name : '', scope: null, counts: {}, status: 'open' };
-        let matched = 0, missed = 0;
-        for (let r = 1; r < rows.length; r++) {
-          const row = rows[r];
-          const sku = skuI >= 0 ? (row[skuI] || '').trim() : '';
-          const bar = barI >= 0 ? (row[barI] || '').trim() : '';
-          const raw = (row[cntI] || '').trim(); if (raw === '') continue;
-          const cnt = Math.max(0, Math.round(Number(raw) || 0));
-          const p = catalogue.find(x => (sku && (x.sku || '').toLowerCase() === sku.toLowerCase()) || (bar && (x.barcode || '').toLowerCase() === bar.toLowerCase()));
-          if (p) { s.counts[p.variantId] = cnt; matched++; } else missed++;
-        }
-        saveStocktake(s); input.value = '';
-        toast('Imported ' + matched + ' counts' + (missed ? ' · ' + missed + ' unmatched' : '') + ' — review then reconcile');
-        renderStocktake();
-      } catch (e) { toast('Import failed: ' + (e.message || e)); input.value = ''; }
-    };
-    reader.readAsText(file);
+    const name = (file.name || '').toLowerCase();
+    if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+      loadXlsx().then(XLSX => {
+        const reader = new FileReader();
+        reader.onload = () => { try { const wb = XLSX.read(reader.result, { type: 'array' }); const ws = wb.Sheets[wb.SheetNames[0]]; applyImportRows(XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false })); } catch (e) { toast('Import failed: ' + (e.message || e)); } input.value = ''; };
+        reader.readAsArrayBuffer(file);
+      }).catch(e => { toast('Excel import needs internet: ' + (e.message || e)); input.value = ''; });
+    } else {
+      const reader = new FileReader();
+      reader.onload = () => { try { applyImportRows(parseCsv(String(reader.result || ''))); } catch (e) { toast('Import failed: ' + (e.message || e)); } input.value = ''; };
+      reader.readAsText(file);
+    }
   }
   function stRow(s, p) {
     const c = s.counts[p.variantId];
@@ -2181,7 +2215,7 @@
     openDocs, closeDocs, docsTab, loadQuote, soAddPayment, soMarkReady, soFulfil, soCancel, printDocById,
     openProfile, closeProfile,
     openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier, loadVendorSuppliers,
-    openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, stAddItem, reconcileStocktake, exportStockCsv, importStockFile,
+    openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, stAddItem, reconcileStocktake, exportStockCsv, exportStockXlsx, importStockFile,
     openReorder, closeReorder, setReorderLevel, startPO, poBack, poSetQty, poSetCost, poRemove, sendPO,
     lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings,
     flushQueue,
