@@ -144,7 +144,7 @@
     <button class="qbtn" title="Sales orders &amp; quotes" onclick="openDocs('salesorder')" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📋 Orders</button>
     <button class="qbtn" title="Receive stock (GRV) &amp; suppliers" onclick="openGrv()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📥 Receive</button>
     <button class="qbtn" title="Stock take / count" onclick="openStocktake()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📦 Count</button>
-    <button class="qbtn" title="Low stock &amp; reorder recommendations" onclick="openReorder()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🔻 Reorder</button>
+    <button class="qbtn" title="Create a purchase order" onclick="openReorder()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🧾 PO Order</button>
     <button class="qbtn" title="Sales history" onclick="openSales()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📊 Sales</button>
     <button class="qbtn" title="Refund / return" onclick="openRefund()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">↩ Refund</button>
     <button class="qbtn" title="Register / cash-up" onclick="openReg()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🧾 Register</button>
@@ -206,7 +206,7 @@
 
 <div class="modal" id="reorder-modal">
   <div class="modal-card" style="width:720px">
-    <h2><span>Reorder &amp; purchase orders</span><button class="rm" onclick="closeReorder()">✕</button></h2>
+    <h2><span>New purchase order</span><button class="rm" onclick="closeReorder()">✕</button></h2>
     <div id="reorder-body"></div>
   </div>
 </div>
@@ -2042,7 +2042,7 @@
     for (const g of grvsCache) { const li = (g.lineItems || []).find(l => l.variantId === variantId); if (li && li.costCents != null) return li.costCents; }
     return 0;
   }
-  function openReorder() { document.getElementById('reorder-modal').classList.add('show'); poDraft = null; renderReorder(); }
+  async function openReorder() { document.getElementById('reorder-modal').classList.add('show'); await ensureSuppliers(); try { grvsCache = await fbList('grvs', 'createdAt', 'desc'); } catch (e) {} poDraft = null; startBlankPO(); }
   function closeReorder() { document.getElementById('reorder-modal').classList.remove('show'); }
   async function renderReorder() {
     const body = document.getElementById('reorder-body');
@@ -2139,7 +2139,7 @@
     const p = poDraft;
     const supOpts = suppliersCache.map(s => `<option value="${s.id}" ${s.id === p.supplierId ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
     body.innerHTML = `
-      <button class="qbtn" style="width:auto;padding:0 0.7rem;margin-bottom:0.6rem" onclick="poBack()">← Back</button>
+      <button class="qbtn" style="width:auto;padding:0 0.7rem;margin-bottom:0.6rem" onclick="poBack()">↺ Start over</button>
       <div class="field"><label>Supplier</label>
         <select id="po-sup" style="width:100%;padding:0.6rem;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" onchange="poSetSupplier(this.value)">
           <option value="">— select supplier —</option>${supOpts}</select></div>
@@ -2168,7 +2168,7 @@
         <button class="btn btn-ghost" style="padding:0.7rem" onclick="sendPO('save')">Save only</button>
       </div>`;
   }
-  function poBack() { poDraft = null; renderReorder(); }
+  function poBack() { startBlankPO(); }
   function poSetQty(i, v) { poDraft.items[i].qty = Math.max(0, Math.round(Number(v) || 0)); updatePoTotalsUI(); }
   function poSetCost(i, v) { poDraft.items[i].costCents = toCents(v); updatePoTotalsUI(); }
   function poRemove(i) { poDraft.items.splice(i, 1); renderPO(); }
