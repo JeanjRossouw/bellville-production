@@ -140,7 +140,6 @@
     <span id="net"><span class="dot" id="net-dot"></span> <span id="net-txt">online</span></span>
     <span id="cat-status">loading catalogue…</span>
     <button id="queue-badge" onclick="flushQueue(true)" title="Sales waiting to sync — click to sync now" style="display:none; width:auto;padding:0 0.6rem;height:30px;font-size:0.78rem;border-radius:8px;border:1px solid var(--warn);background:transparent;color:var(--warn);cursor:pointer"></button>
-    <button class="qbtn" title="Parked sales" onclick="openParked()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">⏸ Parked</button>
     <button class="qbtn" title="Sales orders &amp; quotes" onclick="openDocs('salesorder')" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📋 Orders</button>
     <button class="qbtn" title="Receive stock (GRV) &amp; suppliers" onclick="openGrv()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📥 Receive</button>
     <button class="qbtn" title="Stock take / count" onclick="openStocktake()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📦 Count</button>
@@ -163,7 +162,7 @@
   </div>
   <div class="right">
     <div id="customer" class="custbar"></div>
-    <div class="rhead"><span>Cart</span><div style="display:flex; gap:0.6rem"><button class="rm" onclick="parkSale()" title="Park this sale">⏸ Park</button><button class="rm" onclick="clearCart()" title="Clear cart">Clear</button></div></div>
+    <div class="rhead"><span>Cart</span><div style="display:flex; gap:0.6rem"><button class="rm" onclick="clearCart()" title="Clear cart">Clear</button></div></div>
     <div id="cart"></div>
     <div class="foot">
       <div id="tax-line" style="display:none; justify-content:space-between; font-size:0.8rem; color:var(--muted); margin-bottom:0.3rem"></div>
@@ -200,13 +199,6 @@
   <div class="modal-card">
     <h2><span>Customer</span><button class="rm" onclick="custClose()">✕</button></h2>
     <div id="cust-body"></div>
-  </div>
-</div>
-
-<div class="modal" id="park-modal">
-  <div class="modal-card">
-    <h2><span>Parked sales</span><button class="rm" onclick="closeParked()">✕</button></h2>
-    <div id="park-body"></div>
   </div>
 </div>
 
@@ -899,51 +891,6 @@
     printReport(zReportHtml(s, counted, 'Z'));
     saveShift(null);
     closeReg(); renderReg(); toast('Register closed');
-  }
-
-  // ---- Park / retrieve (Shopify draft orders) ----
-  async function parkSale() {
-    if (cart.length === 0) { toast('Cart is empty'); return; }
-    toast('Parking…');
-    try {
-      const parkData = { cart, cartDiscount, customer };
-      const out = await api('parkSale', { lineItems: cart.map(l => ({ variantId: l.variantId, qty: l.qty })), customerId: customer ? customer.id : undefined, parkData });
-      cart = []; cartDiscount = null; customer = null;
-      renderCart(); renderCustomer(); renderGrid();
-      toast('Parked ' + (out.name || ''));
-    } catch (e) { toast('Park failed: ' + (e.message || e)); }
-  }
-  function closeParked() { document.getElementById('park-modal').classList.remove('show'); }
-  async function openParked() {
-    document.getElementById('park-modal').classList.add('show');
-    const body = document.getElementById('park-body');
-    body.innerHTML = '<div class="empty" style="padding:1.5rem">Loading…</div>';
-    try {
-      const { parked } = await api('listParked');
-      if (!parked.length) { body.innerHTML = '<div class="empty" style="padding:1.5rem">No parked sales</div>'; return; }
-      body.innerHTML = parked.map(d => `<div class="cust-result" style="cursor:default">
-        <div><div style="font-weight:600">${esc(d.name)}${d.customerName ? ' · ' + esc(d.customerName) : ''}</div>
-          <div style="font-size:0.72rem;color:var(--muted)">${new Date(d.createdAt).toLocaleString('en-ZA')} · ${money(d.totalCents)}</div></div>
-        <div style="display:flex; gap:0.4rem">
-          <button class="qbtn" style="width:auto;padding:0 0.7rem" onclick='retrieveParked(${JSON.stringify(d).replace(/'/g, "&#39;")})'>Open</button>
-          <button class="rm" onclick="deleteParked('${d.id}')">✕</button>
-        </div></div>`).join('');
-    } catch (e) { body.innerHTML = `<div class="empty" style="padding:1.5rem; color:var(--warn)">${esc(String(e.message || e))}</div>`; }
-  }
-  async function retrieveParked(d) {
-    if (cart.length && !confirm('Replace the current cart with the parked sale?')) return;
-    const pd = d.parkData || {};
-    cart = Array.isArray(pd.cart) ? pd.cart : [];
-    cartDiscount = pd.cartDiscount || null;
-    customer = pd.customer || null;
-    closeParked();
-    renderCart(); renderCustomer(); renderGrid();
-    try { await api('deleteParked', { id: d.id }); } catch (e) { /* it'll just linger in the parked list */ }
-    toast('Retrieved ' + (d.name || ''));
-  }
-  async function deleteParked(id) {
-    if (!confirm('Delete this parked sale?')) return;
-    try { await api('deleteParked', { id }); openParked(); } catch (e) { toast('Delete failed'); }
   }
 
   // ---- Sales history (local log) + reprint ----
@@ -2003,7 +1950,6 @@
   // Expose handlers
   Object.assign(window, { mView, toggleDemo, setDemo, refreshCatalogue, addToCart, changeQty, removeLine, clearCart,
     lineDiscount, setCartDiscount,
-    parkSale, openParked, closeParked, retrieveParked, deleteParked,
     openRefund, closeRefund, lookupRefundOrder, rfPick, setRefundQty, confirmRefund,
     openCamScan, closeCamScan, openSales, closeSales, reprintSale,
     takeTender, closeTender, tenderMethod, finishTender,
