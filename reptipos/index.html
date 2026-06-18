@@ -403,7 +403,7 @@
       case 'receiveStock':
         return { received: (p.lineItems || []).length, lineItems: (p.lineItems || []).map(l => ({ inventoryItemId: l.inventoryItemId, qty: l.qty })), locationId: 'demo' };
       case 'setStock':
-        return { set: (p.lineItems || []).length, lineItems: (p.lineItems || []).map(l => ({ inventoryItemId: l.inventoryItemId, available: l.counted })) };
+        return { set: (p.lineItems || []).length, done: (p.lineItems || []).map(l => String(l.inventoryItemId)), failed: [] };
       case 'searchCustomers': {
         const q = String(p.q || '').toLowerCase();
         return { customers: demoGet('reptipos-demo-customers').filter(c => (c.name + ' ' + (c.phone || '') + ' ' + (c.email || '')).toLowerCase().includes(q)) };
@@ -1668,20 +1668,29 @@
     reconcileArmed = false;
     stReconciling = true;
     const body = document.getElementById('stock-body');
+    body.innerHTML = '<div class="empty" style="padding:2rem">Reconciling… starting</div>';
     const lineItems = items.map(p => ({ inventoryItemId: p.inventoryItemId, counted: Math.round(Number(s.counts[p.variantId])), variantId: p.variantId }));
-    let done = 0, failed = 0; const chunk = 8; const report = []; const stillFailed = {};
+    let done = 0, failed = 0; const chunk = 8; const report = []; const reasons = [];
     try {
       for (let i = 0; i < lineItems.length; i += chunk) {
         const batch = lineItems.slice(i, i + chunk);
+        let failedIds = new Set();
         try {
-          await callFn({ action: 'setStock', lineItems: batch.map(b => ({ inventoryItemId: b.inventoryItemId, counted: b.counted })) });
-          batch.forEach(b => { const p = findProduct(b.variantId); const exp = p ? Number(p.qty) || 0 : 0; report.push({ name: p ? p.name : b.variantId, sku: p ? p.sku : '', expected: exp, counted: b.counted }); if (p) p.qty = b.counted; delete s.counts[b.variantId]; });
+          const resp = await callFn({ action: 'setStock', lineItems: batch.map(b => ({ inventoryItemId: b.inventoryItemId, counted: b.counted })) });
+          failedIds = new Set((resp.failed || []).map(f => String(f.inventoryItemId)));
+          (resp.failed || []).forEach(f => reasons.push(f));
         } catch (e) {
-          failed += batch.length; batch.forEach(b => { stillFailed[b.variantId] = true; });
+          failedIds = new Set(batch.map(b => String(b.inventoryItemId))); // whole batch failed (network)
+          reasons.push({ error: e.message || String(e) });
         }
+        batch.forEach(b => {
+          if (failedIds.has(String(b.inventoryItemId))) { failed++; }
+          else { const p = findProduct(b.variantId); const exp = p ? Number(p.qty) || 0 : 0; report.push({ name: p ? p.name : b.variantId, sku: p ? p.sku : '', expected: exp, counted: b.counted }); if (p) p.qty = b.counted; delete s.counts[b.variantId]; }
+        });
         done += batch.length;
-        body.innerHTML = `<div class="empty" style="padding:2rem">Reconciling… ${done}/${lineItems.length}${failed ? '<br><span style="color:var(--warn)">' + failed + ' need retry</span>' : ''}</div>`;
+        body.innerHTML = `<div class="empty" style="padding:2rem">Reconciling… ${done}/${lineItems.length}${failed ? '<br><span style="color:var(--warn)">' + failed + ' couldn\'t be set</span>' : ''}</div>`;
       }
+      if (reasons.length) console.warn('Stock reconcile — items that could not be set (e.g. bundles / inventory not tracked):', reasons);
       cacheCatalogue(); renderGrid();
       if (report.length) {
         const record = { id: s.id, startedAt: s.startedAt, finishedAt: new Date().toISOString(), by: currentStaff ? currentStaff.name : '', scope: s.scope, items: report, countedCount: report.length, varianceCount: report.filter(r => r.counted !== r.expected).length };
@@ -1690,7 +1699,7 @@
         printStocktake(record);
       }
       // Keep only the items that failed, so you can hit Reconcile again to retry just those.
-      if (failed) { saveStocktake(s); toast(report.length + ' updated · ' + failed + ' failed — tap Reconcile again to retry'); }
+      if (failed) { saveStocktake(s); toast(report.length + " updated · " + failed + " couldn't be set (see console — usually bundles / inventory not tracked in Shopify)"); }
       else { saveStocktake(null); toast('Stock take reconciled — ' + report.length + ' items updated'); }
       renderStocktake();
     } catch (e) { toast('Reconcile failed: ' + (e.message || e)); renderStocktake(); }

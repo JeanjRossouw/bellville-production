@@ -209,19 +209,25 @@ async function setStock({ lineItems }) {
   if (lines.length === 0) { const e = new Error('No counts'); e.status = 400; throw e; }
   const locationId = await primaryLocationId();
   if (!locationId) { const e = new Error('No Shopify location to count into'); e.status = 400; throw e; }
-  const done = [];
+  const done = []; const failed = [];
   for (const l of lines) {
     const invItem = Number(l.inventoryItemId);
     const available = Math.max(0, Math.round(Number(l.counted) || 0));
     const body = { location_id: Number(locationId), inventory_item_id: invItem, available };
-    try { await shopify('/inventory_levels/set.json', { method: 'POST', body }); }
-    catch (e) {
-      await shopify('/inventory_levels/connect.json', { method: 'POST', body: { location_id: Number(locationId), inventory_item_id: invItem } }).catch(() => {});
-      await shopify('/inventory_levels/set.json', { method: 'POST', body });
+    try {
+      try { await shopify('/inventory_levels/set.json', { method: 'POST', body }); }
+      catch (e) {
+        // Maybe not stocked at this location yet — connect, then retry once.
+        await shopify('/inventory_levels/connect.json', { method: 'POST', body: { location_id: Number(locationId), inventory_item_id: invItem } }).catch(() => {});
+        await shopify('/inventory_levels/set.json', { method: 'POST', body });
+      }
+      done.push(String(invItem));
+    } catch (e) {
+      // One item failing (e.g. a bundle / inventory not tracked) must not abort the rest.
+      failed.push({ inventoryItemId: String(invItem), error: String(e.message || e).slice(0, 160) });
     }
-    done.push({ inventoryItemId: String(invItem), available });
   }
-  return { set: done.length, lineItems: done };
+  return { set: done.length, done, failed };
 }
 
 async function shopInfo() {
