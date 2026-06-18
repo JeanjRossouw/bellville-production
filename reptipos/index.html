@@ -1433,7 +1433,14 @@
       body.innerHTML = `<div class="field"><div style="color:var(--muted);font-size:0.85rem;margin-bottom:0.6rem">Count the whole shop or one category. Scan items (each scan = +1) or type counts, then reconcile to set Shopify stock to your physical count.</div>
         <label>Scope</label>
         <select id="st-scope" style="width:100%;padding:0.7rem;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)"><option value="">Whole shop (all categories)</option>${opts}</select>
-        <button class="btn btn-pay" style="margin-top:0.7rem" onclick="startStocktake()">Start stock take</button></div>${stHistory()}`;
+        <button class="btn btn-pay" style="margin-top:0.7rem" onclick="startStocktake()">Start stock take</button></div>
+        <div style="display:flex;gap:0.5rem;margin-top:0.6rem">
+          <button class="btn btn-ghost" style="padding:0.6rem" onclick="exportStockCsv()">⬇ Export stock CSV</button>
+          <button class="btn btn-ghost" style="padding:0.6rem" onclick="document.getElementById('st-file').click()">⬆ Import counts CSV</button>
+        </div>
+        <input type="file" id="st-file" accept=".csv,text/csv" style="display:none" onchange="importStockFile(this)">
+        <div style="font-size:0.72rem;color:var(--muted);margin-top:0.3rem">Export the catalogue to count offline; import a CSV with a SKU/Barcode column and a Count/Qty column to load the counts back for review &amp; reconcile.</div>
+        ${stHistory()}`;
       return;
     }
     const items = stItems(s);
@@ -1459,6 +1466,61 @@
         <button class="btn btn-pay" style="padding:0.7rem" onclick="reconcileStocktake()">✓ Reconcile (${countedN}) → Shopify</button>
       </div>`;
     const si = document.getElementById('st-search'); if (si && !isMobile()) si.focus();
+  }
+  // Export the catalogue to CSV (count offline / records).
+  function csvEscape(v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+  function exportStockCsv() {
+    if (!catalogue.length) { toast('No catalogue loaded'); return; }
+    const header = ['SKU', 'Barcode', 'Name', 'Category', 'Vendor', 'OnHand', 'Price', 'Count'];
+    const lines = [header.join(',')];
+    catalogue.forEach(p => lines.push([p.sku, p.barcode, p.name, p.category, p.vendor, (Number(p.qty) || 0), ((p.priceCents || 0) / 100).toFixed(2), ''].map(csvEscape).join(',')));
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'reptipos-stock-' + new Date().toISOString().slice(0, 10) + '.csv'; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    toast('Exported ' + catalogue.length + ' items (use the Count column to import back)');
+  }
+  function parseCsv(text) {
+    const rows = []; let i = 0, field = '', row = [], inQ = false;
+    while (i < text.length) {
+      const c = text[i];
+      if (inQ) { if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; } else field += c; }
+      else { if (c === '"') inQ = true; else if (c === ',') { row.push(field); field = ''; } else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; } else if (c !== '\r') field += c; }
+      i++;
+    }
+    if (field.length || row.length) { row.push(field); rows.push(row); }
+    return rows;
+  }
+  function importStockFile(input) {
+    const file = input.files && input.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const rows = parseCsv(String(reader.result || '')).filter(r => r.length && r.some(c => c.trim() !== ''));
+        if (rows.length < 2) { toast('Empty CSV'); input.value = ''; return; }
+        const header = rows[0].map(h => h.trim().toLowerCase());
+        const skuI = header.findIndex(h => /sku/.test(h));
+        const barI = header.findIndex(h => /barcode|upc/.test(h));
+        const cntI = header.findIndex(h => /count|qty|on ?hand|quantity|stock/.test(h));
+        if (cntI < 0) { toast('No Count/Qty column found in the CSV'); input.value = ''; return; }
+        if (skuI < 0 && barI < 0) { toast('Need a SKU or Barcode column to match items'); input.value = ''; return; }
+        const s = loadStocktake() || { id: 'CNT-' + Date.now(), startedAt: new Date().toISOString(), startedBy: currentStaff ? currentStaff.name : '', scope: null, counts: {}, status: 'open' };
+        let matched = 0, missed = 0;
+        for (let r = 1; r < rows.length; r++) {
+          const row = rows[r];
+          const sku = skuI >= 0 ? (row[skuI] || '').trim() : '';
+          const bar = barI >= 0 ? (row[barI] || '').trim() : '';
+          const raw = (row[cntI] || '').trim(); if (raw === '') continue;
+          const cnt = Math.max(0, Math.round(Number(raw) || 0));
+          const p = catalogue.find(x => (sku && (x.sku || '').toLowerCase() === sku.toLowerCase()) || (bar && (x.barcode || '').toLowerCase() === bar.toLowerCase()));
+          if (p) { s.counts[p.variantId] = cnt; matched++; } else missed++;
+        }
+        saveStocktake(s); input.value = '';
+        toast('Imported ' + matched + ' counts' + (missed ? ' · ' + missed + ' unmatched' : '') + ' — review then reconcile');
+        renderStocktake();
+      } catch (e) { toast('Import failed: ' + (e.message || e)); input.value = ''; }
+    };
+    reader.readAsText(file);
   }
   function stRow(s, p) {
     const c = s.counts[p.variantId];
@@ -2110,7 +2172,7 @@
     openDocs, closeDocs, docsTab, loadQuote, soAddPayment, soMarkReady, soFulfil, soCancel, printDocById,
     openProfile, closeProfile,
     openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier, loadVendorSuppliers,
-    openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, reconcileStocktake,
+    openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, reconcileStocktake, exportStockCsv, importStockFile,
     openReorder, closeReorder, setReorderLevel, startPO, poBack, poSetQty, poSetCost, poRemove, sendPO,
     lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings,
     flushQueue,
