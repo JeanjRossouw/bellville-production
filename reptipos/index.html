@@ -1845,7 +1845,11 @@
     const supSel = document.getElementById('grv-sup'); const supId = grvSupplierId || (supSel ? supSel.value : '');
     if (!supId) { toast('Select a supplier'); return; }
     const lines = grvLines.filter(l => l.qty > 0 && l.inventoryItemId);
-    if (!lines.length) { toast('Add at least one item with qty + an inventory id'); return; }
+    if (!lines.length) {
+      if (grvLines.some(l => l.qty > 0)) toast('These items aren’t linked to Shopify stock — tap ↻ to refresh the catalogue, then receive again');
+      else toast('Set a quantity on at least one item');
+      return;
+    }
     const ref = (document.getElementById('grv-ref').value || '').trim();
     const date = document.getElementById('grv-date').value || new Date().toISOString().slice(0, 10);
     const updateCost = document.getElementById('grv-updcost').checked;
@@ -1869,7 +1873,7 @@
       if (linkedPo) {
         lines.forEach(l => { const it = (linkedPo.items || []).find(x => x.variantId === l.variantId); if (it) it.receivedQty = (it.receivedQty || 0) + l.qty; });
         // Fully received once every receivable line is in (items missing from the catalogue can't be received, so don't let them block it).
-        linkedPo.status = (linkedPo.items || []).every(x => (x.receivedQty || 0) >= x.qty || !((findProduct(x.variantId) || {}).inventoryItemId)) ? 'received' : 'partial';
+        linkedPo.status = (linkedPo.items || []).every(x => (x.receivedQty || 0) >= x.qty || !(x.inventoryItemId || (findProduct(x.variantId) || {}).inventoryItemId)) ? 'received' : 'partial';
         try { await fbSet('purchase_orders', linkedPo.id, { items: linkedPo.items, status: linkedPo.status }); } catch (e) {}
       }
       printGrv(grv);
@@ -1989,9 +1993,8 @@
   function receivePO(id) {
     const po = posCache.find(p => p.id === id); if (!po) return;
     grvLines = (po.items || []).map(i => {
-      const p = findProduct(i.variantId);
       const outstanding = Math.max(0, i.qty - (i.receivedQty || 0));
-      return { variantId: i.variantId, inventoryItemId: (p ? p.inventoryItemId : '') || '', name: i.name, sku: i.sku || '', qty: outstanding, costCents: i.costCents || 0 };
+      return { variantId: i.variantId, inventoryItemId: i.inventoryItemId || (findProduct(i.variantId) || {}).inventoryItemId || '', name: i.name, sku: i.sku || '', qty: outstanding, costCents: i.costCents || 0 };
     });
     grvSupplierId = po.supplierId;
     receivingPoId = id;
@@ -2046,7 +2049,7 @@
       const level = reorderOverrides[p.variantId] != null ? reorderOverrides[p.variantId] : suggestLevel(p.variantId);
       const demand = soDemand[p.variantId] || 0;
       const rec = Math.max(0, level + demand - onHand);
-      if (rec > 0 || demand > 0 || (level > 0 && onHand <= level)) reorderRows.push({ variantId: p.variantId, name: p.name, sku: p.sku, supplier: p.vendor || '(no supplier)', onHand, level, demand, rec });
+      if (rec > 0 || demand > 0 || (level > 0 && onHand <= level)) reorderRows.push({ variantId: p.variantId, inventoryItemId: p.inventoryItemId || '', name: p.name, sku: p.sku, supplier: p.vendor || '(no supplier)', onHand, level, demand, rec });
     });
     if (poDraft) { renderPO(); return; }
     if (!reorderRows.length) { body.innerHTML = '<div class="empty" style="padding:1.5rem">Nothing to reorder — stock is above reorder levels and no sales orders are waiting. 🎉</div>'; return; }
@@ -2086,7 +2089,7 @@
     const sup = suppliersCache.find(s => (s.name || '').toLowerCase() === supplier.toLowerCase());
     poDraft = {
       supplier, supplierId: sup ? sup.id : null, email: sup ? sup.email : '', phone: sup ? sup.phone : '',
-      items: rows.map(r => ({ variantId: r.variantId, name: r.name, sku: r.sku, qty: r.rec, costCents: lastCostCents(r.variantId) }))
+      items: rows.map(r => ({ variantId: r.variantId, inventoryItemId: r.inventoryItemId || (findProduct(r.variantId) || {}).inventoryItemId || '', name: r.name, sku: r.sku, qty: r.rec, costCents: lastCostCents(r.variantId) }))
     };
     renderPO();
   }
@@ -2141,7 +2144,7 @@
     poDraft.items = items;
     const seq = (parseInt(localStorage.getItem('reptipos-po-seq') || '0', 10) || 0) + 1; localStorage.setItem('reptipos-po-seq', String(seq));
     const poNumber = 'PO-' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + String(seq).padStart(3, '0');
-    const po = { poNumber, supplierId: poDraft.supplierId, supplierName: poDraft.supplier, items: poDraft.items.map(i => ({ variantId: i.variantId, name: i.name, sku: i.sku, qty: i.qty, costCents: i.costCents })), totalCents: poTotalCents(), status: method === 'save' ? 'draft' : 'sent', sentVia: method === 'save' ? '' : method, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
+    const po = { poNumber, supplierId: poDraft.supplierId, supplierName: poDraft.supplier, items: poDraft.items.map(i => ({ variantId: i.variantId, inventoryItemId: i.inventoryItemId || (findProduct(i.variantId) || {}).inventoryItemId || '', name: i.name, sku: i.sku, qty: i.qty, costCents: i.costCents })), totalCents: poTotalCents(), status: method === 'save' ? 'draft' : 'sent', sentVia: method === 'save' ? '' : method, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
     try { if (fbReady()) await fbAdd('purchase_orders', po); } catch (e) {}
     const text = poText(poDraft, poNumber);
     if (method === 'email') {
