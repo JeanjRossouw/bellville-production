@@ -1530,8 +1530,12 @@
     const header = rows[0].map(h => String(h == null ? '' : h).trim().toLowerCase());
     const skuI = header.findIndex(h => /sku/.test(h));
     const barI = header.findIndex(h => /barcode|upc/.test(h));
-    const cntI = header.findIndex(h => /count|qty|on ?hand|quantity|stock/.test(h));
-    if (cntI < 0) { toast('No Count/Qty column found'); return; }
+    // Prefer an explicit "Count" column; only fall back to qty/quantity/stock.
+    // (Never auto-pick "OnHand" — that's the system figure, not your count.)
+    let cntI = header.findIndex(h => h === 'count' || h === 'counted');
+    if (cntI < 0) cntI = header.findIndex(h => /^count|^counted|^qty|^quantity|^counted qty/.test(h));
+    if (cntI < 0) cntI = header.findIndex(h => /count|qty|quantity/.test(h) && !/on ?hand|system/.test(h));
+    if (cntI < 0) { toast('No "Count" column found — fill the Count column in the export'); return; }
     if (skuI < 0 && barI < 0) { toast('Need a SKU or Barcode column to match items'); return; }
     const s = loadStocktake() || { id: 'CNT-' + Date.now(), startedAt: new Date().toISOString(), startedBy: currentStaff ? currentStaff.name : '', mode: 'selected', scope: null, counts: {}, status: 'open' };
     let matched = 0, missed = 0;
