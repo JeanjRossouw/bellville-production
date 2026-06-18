@@ -699,10 +699,21 @@
   async function custCreate() {
     const name = (document.getElementById('nc-name').value || '').trim();
     if (!name) { toast('Enter a customer name'); return; }
+    const phone = (document.getElementById('nc-phone').value || '').trim();
+    const email = (document.getElementById('nc-email').value || '').trim();
     try {
-      const { customer: c } = await api('createCustomer', { name, phone: (document.getElementById('nc-phone').value || '').trim(), email: (document.getElementById('nc-email').value || '').trim() });
+      const { customer: c } = await api('createCustomer', { name, phone, email });
       custAttach(c); toast('Customer created');
-    } catch (e) { toast('Create failed: ' + (e.message || e)); }
+    } catch (e) {
+      const msg = String(e.message || e);
+      if (/has already been taken/i.test(msg)) {
+        // A customer with that phone/email already exists — search so they can attach it.
+        const term = phone || email || name;
+        toast('That phone/email is already on a customer — showing matches');
+        const box = document.getElementById('cust-q'); if (box) box.value = term;
+        custSearch(term);
+      } else { toast('Create failed: ' + msg); }
+    }
   }
   async function custHistory() {
     if (!customer) return;
