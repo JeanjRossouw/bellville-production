@@ -1995,8 +1995,15 @@
   function receivePO(id) {
     const po = posCache.find(p => p.id === id); if (!po) return;
     grvLines = (po.items || []).map(i => {
+      let invId = i.inventoryItemId || (findProduct(i.variantId) || {}).inventoryItemId || '';
+      let variantId = i.variantId;
+      // Fallback: resolve by SKU/barcode against the live catalogue (helps older POs).
+      if (!invId) {
+        const byCode = catalogue.find(x => (i.sku && (x.sku || '').toLowerCase() === String(i.sku).toLowerCase()) || (i.barcode && (x.barcode || '') === i.barcode));
+        if (byCode) { invId = byCode.inventoryItemId || ''; variantId = byCode.variantId; }
+      }
       const outstanding = Math.max(0, i.qty - (i.receivedQty || 0));
-      return { variantId: i.variantId, inventoryItemId: i.inventoryItemId || (findProduct(i.variantId) || {}).inventoryItemId || '', name: i.name, sku: i.sku || '', qty: outstanding, costCents: i.costCents || 0 };
+      return { variantId, inventoryItemId: invId, name: i.name, sku: i.sku || '', qty: outstanding, costCents: i.costCents || 0 };
     });
     grvSupplierId = po.supplierId;
     receivingPoId = id;
