@@ -66,6 +66,11 @@
   #scan { width:100%; padding:1rem 1.1rem; font-size:1.1rem; border-radius:12px; border:2px solid var(--accent); background:var(--panel2); color:var(--text); outline:none; }
   #scan::placeholder { color:var(--muted); }
 
+  .cat-bar { display:flex; gap:0.4rem; overflow-x:auto; margin-top:0.6rem; padding-bottom:0.2rem; flex-wrap:nowrap; -webkit-overflow-scrolling:touch; }
+  .cat-bar::-webkit-scrollbar { height:6px; }
+  .cat-chip { flex:0 0 auto; padding:0.4rem 0.8rem; border:1px solid var(--border); background:var(--panel2); color:var(--text); border-radius:999px; cursor:pointer; font-size:0.85rem; white-space:nowrap; transition:background .1s, border-color .1s; }
+  .cat-chip:hover { border-color:var(--accent); }
+  .cat-chip.active { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:700; }
   #grid { flex:1; overflow:auto; margin-top:0.8rem; display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); grid-auto-rows:min-content; gap:0.6rem; align-content:start; }
   .tile { text-align:left; padding:0.55rem; border:1px solid var(--border); background:var(--panel2); border-radius:12px; color:var(--text); cursor:pointer; transition:transform .05s; }
   .tile:active { transform:scale(0.97); }
@@ -192,6 +197,7 @@
       <input id="scan" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="🔍 Scan barcode or search by name / SKU…" style="flex:1">
       <button class="qbtn" title="Scan with camera" onclick="openCamScan()" style="width:56px; border-radius:12px; font-size:1.3rem">📷</button>
     </div>
+    <div id="cat-bar" class="cat-bar"></div>
     <div id="grid"></div>
   </div>
   <div class="right">
@@ -352,6 +358,8 @@
 <script>
   const FN = '/.netlify/functions/reptipos-shopify';
   let catalogue = [];      // products incl. priceCents (integer money — never floats)
+  let currentCat = '';     // selected category filter on the sale screen ('' = All)
+  let catBarSig = '';      // signature of the category list currently drawn (avoids needless rebuilds)
   let locationId = null;
   let cart = [];           // [{ variantId, qty, disc:{type,value}? }]
   let cartDiscount = null; // { type:'pct'|'amt', value } applied to the whole cart
@@ -563,15 +571,31 @@
     return catalogue.find(p => (p.barcode || '').toLowerCase() === c) ||
            catalogue.find(p => (p.sku || '').toLowerCase() === c) || null;
   }
+  // Distinct Shopify categories (product_type) present in the catalogue, sorted.
+  function catList() { return [...new Set(catalogue.map(p => p.category).filter(Boolean))].sort((a, b) => a.localeCompare(b)); }
+  function setCat(c) { currentCat = c || ''; renderCatBar(); renderGrid(); }
+  function renderCatBar() {
+    const bar = document.getElementById('cat-bar'); if (!bar) return;
+    const cats = catList();
+    catBarSig = cats.join('|');
+    if (!cats.length) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+    bar.style.display = 'flex';
+    const chip = (label, val) => `<button class="cat-chip${currentCat === val ? ' active' : ''}" onclick="setCat('${esc(val).replace(/'/g, "\\'")}')">${esc(label)}</button>`;
+    bar.innerHTML = chip('All', '') + cats.map(c => chip(c, c)).join('');
+  }
   function renderGrid() {
     const grid = document.getElementById('grid');
     const q = document.getElementById('scan').value.trim().toLowerCase();
+    // Rebuild the category bar only when the set of categories changes (keeps scroll position).
+    if (catList().join('|') !== catBarSig) renderCatBar();
     let items = catalogue;
-    if (q) items = catalogue.filter(p =>
+    // A typed search spans every category; otherwise honour the selected category.
+    if (q) items = items.filter(p =>
       (p.name || '').toLowerCase().includes(q) ||
       (p.sku || '').toLowerCase().includes(q) ||
       (p.barcode || '').toLowerCase().includes(q));
-    if (items.length === 0) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1">${catalogue.length ? 'No matches' : 'Catalogue loading…'}</div>`; return; }
+    else if (currentCat) items = items.filter(p => p.category === currentCat);
+    if (items.length === 0) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1">${catalogue.length ? 'No matches' + (currentCat ? ' in ' + esc(currentCat) : '') : 'Catalogue loading…'}</div>`; return; }
     grid.innerHTML = items.slice(0, 300).map(p => {
       const oos = (Number(p.qty) || 0) <= 0;
       const thumb = p.imageUrl
@@ -2700,7 +2724,7 @@
   setInterval(keepFocus, 1500);
 
   // Expose handlers
-  Object.assign(window, { mView, toggleDemo, setDemo, refreshCatalogue, addToCart, changeQty, removeLine, clearCart,
+  Object.assign(window, { mView, toggleDemo, setDemo, refreshCatalogue, setCat, addToCart, changeQty, removeLine, clearCart,
     lineDiscount, setCartDiscount,
     openRefund, closeRefund, lookupRefundOrder, rfPick, setRefundQty, confirmRefund,
     openCamScan, closeCamScan, openSales, closeSales, reprintSale,
