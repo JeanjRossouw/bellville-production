@@ -223,6 +223,7 @@
     <h2><span>Receive stock &amp; suppliers</span><button class="rm" onclick="closeGrv()">✕</button></h2>
     <div style="display:flex; gap:0.4rem; margin-bottom:0.7rem; flex-wrap:wrap">
       <button class="qbtn" id="gtab-new" style="width:auto; padding:0 0.8rem" onclick="grvTab('new')">📥 New GRV</button>
+      <button class="qbtn" id="gtab-po" style="width:auto; padding:0 0.8rem" onclick="grvTab('po')">📦 Receive a PO</button>
       <button class="qbtn" id="gtab-list" style="width:auto; padding:0 0.8rem" onclick="grvTab('list')">🧾 GRVs &amp; payments</button>
       <button class="qbtn" id="gtab-sup" style="width:auto; padding:0 0.8rem" onclick="grvTab('suppliers')">🏭 Suppliers</button>
     </div>
@@ -1748,24 +1749,38 @@
     const snap = await fns.getDocs(q); const out = []; snap.forEach(d => out.push({ id: d.id, ...d.data() })); return out;
   }
 
-  let suppliersCache = [], grvsCache = [], grvLines = [], grvSupplierId = null, grvInFlight = false, grvCurTab = 'new';
-  function openGrv() { document.getElementById('grv-modal').classList.add('show'); grvTab('new'); }
+  let suppliersCache = [], grvsCache = [], grvLines = [], grvSupplierId = null, grvInFlight = false, grvCurTab = 'new', receivingPoId = null, posCache = [];
+  function openGrv() { receivingPoId = null; grvLines = []; grvSupplierId = null; document.getElementById('grv-modal').classList.add('show'); grvTab('new'); }
   function closeGrv() { document.getElementById('grv-modal').classList.remove('show'); }
   function grvTab(t) {
     grvCurTab = t;
     document.getElementById('gtab-new').style.background = t === 'new' ? 'var(--accent)' : 'var(--panel2)';
+    document.getElementById('gtab-po').style.background = t === 'po' ? 'var(--accent)' : 'var(--panel2)';
     document.getElementById('gtab-list').style.background = t === 'list' ? 'var(--accent)' : 'var(--panel2)';
     document.getElementById('gtab-sup').style.background = t === 'suppliers' ? 'var(--accent)' : 'var(--panel2)';
-    if (t === 'new') renderGrvNew(); else if (t === 'list') renderGrvList(); else renderSuppliers();
+    if (t === 'new') renderGrvNew(); else if (t === 'po') renderPOList(); else if (t === 'list') renderGrvList(); else renderSuppliers();
   }
   function grvTotalCents() { return grvLines.reduce((t, l) => t + l.costCents * l.qty, 0); }
+  function grvTotals() {
+    let cost = 0, retail = 0;
+    grvLines.forEach(l => { cost += l.costCents * l.qty; const p = findProduct(l.variantId); retail += (p ? p.priceCents : 0) * l.qty; });
+    return { cost, retail, profit: retail - cost };
+  }
+  function updateGrvTotalsUI() {
+    const t = grvTotals();
+    const c = document.getElementById('grv-total'); if (c) c.textContent = money(t.cost);
+    const r = document.getElementById('grv-retail'); if (r) r.textContent = money(t.retail);
+    const pr = document.getElementById('grv-profit'); if (pr) pr.textContent = money(t.profit);
+  }
   async function ensureSuppliers() { if (!suppliersCache.length && fbReady()) { try { suppliersCache = await fbList('suppliers', 'name', 'asc'); } catch (e) {} } }
   async function renderGrvNew() {
     const body = document.getElementById('grv-body');
     if (!fbReady()) { body.innerHTML = '<div class="empty" style="padding:1.5rem">Need a connection to receive stock</div>'; return; }
     await ensureSuppliers();
     const supOpts = suppliersCache.map(s => `<option value="${s.id}" ${s.id === grvSupplierId ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
+    const linkedPo = receivingPoId ? posCache.find(p => p.id === receivingPoId) : null;
     body.innerHTML = `
+      ${linkedPo ? `<div style="background:var(--panel2);border:1px solid var(--accent);border-radius:8px;padding:0.55rem;margin-bottom:0.6rem;font-size:0.85rem">📦 Receiving <b>${esc(linkedPo.poNumber)}</b> — set the qty that actually arrived (0 to skip an item). Remaining stays on the PO.</div>` : ''}
       <div class="field"><label>Supplier</label>
         <div style="display:flex;gap:0.4rem">
           <select id="grv-sup" style="flex:1;padding:0.7rem;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" onchange="grvSupplierId=this.value">
@@ -1780,8 +1795,12 @@
         <input id="grv-search" autocomplete="off" placeholder="🔍 product name / SKU / barcode" oninput="renderGrvSearch(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();grvSearchEnter()}">
         <div id="grv-search-res" style="max-height:150px;overflow:auto"></div></div>
       <div id="grv-lines"></div>
-      <div class="total" style="font-size:1.3rem;margin-top:0.6rem"><span>GRV TOTAL (cost)</span><span class="accent" id="grv-total">${money(grvTotalCents())}</span></div>
-      <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.85rem;cursor:pointer"><input type="checkbox" id="grv-updcost" checked style="width:auto"> Update product cost prices in Shopify</label>
+      <div style="margin-top:0.6rem;border-top:1px solid var(--border);padding-top:0.5rem">
+        <div style="display:flex;justify-content:space-between;font-size:0.9rem"><span>Total cost</span><span id="grv-total">R0.00</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:0.9rem;color:var(--muted)"><span>Retail value</span><span id="grv-retail">R0.00</span></div>
+        <div style="display:flex;justify-content:space-between;font-weight:800;font-size:1.05rem"><span>Profit if sold</span><span class="accent" id="grv-profit">R0.00</span></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.85rem;cursor:pointer;margin-top:0.4rem"><input type="checkbox" id="grv-updcost" checked style="width:auto"> Update product cost prices in Shopify</label>
       <button class="btn btn-pay" style="margin-top:0.6rem" id="grv-confirm" onclick="confirmGrv()">📥 Receive into stock</button>`;
     renderGrvLines();
   }
@@ -1806,16 +1825,19 @@
   }
   function renderGrvLines() {
     const el = document.getElementById('grv-lines'); if (!el) return;
-    if (!grvLines.length) { el.innerHTML = '<div class="empty" style="padding:0.6rem">No items yet — scan or search to add</div>'; const t = document.getElementById('grv-total'); if (t) t.textContent = money(0); return; }
-    el.innerHTML = grvLines.map((l, i) => `<div class="line">
-      <div class="lnm"><div class="t">${esc(l.name)}</div><div class="s">${esc(l.sku || '')}</div></div>
-      <input type="number" value="${l.qty}" min="0" style="width:54px;padding:0.4rem;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" oninput="grvSetQty(${i},this.value)" title="Qty received">
-      <input type="number" step="0.01" value="${(l.costCents / 100).toFixed(2)}" style="width:82px;padding:0.4rem;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" oninput="grvSetCost(${i},this.value)" title="Unit cost (R)">
-      <button class="rm" onclick="grvRemove(${i})">✕</button></div>`).join('');
-    const t = document.getElementById('grv-total'); if (t) t.textContent = money(grvTotalCents());
+    if (!grvLines.length) { el.innerHTML = '<div class="empty" style="padding:0.6rem">No items yet — scan or search to add</div>'; updateGrvTotalsUI(); return; }
+    el.innerHTML = grvLines.map((l, i) => {
+      const p = findProduct(l.variantId); const retail = p ? p.priceCents : 0; const margin = retail - l.costCents;
+      return `<div class="line">
+      <div class="lnm"><div class="t">${esc(l.name)}</div><div class="s">${esc(l.sku || '')} · sells ${money(retail)}${l.costCents ? ` · margin <span style="color:${margin >= 0 ? 'var(--accent2)' : 'var(--danger)'}">${money(margin)}</span>` : ''}</div></div>
+      <input type="number" value="${l.qty}" min="0" style="width:50px;padding:0.4rem;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" oninput="grvSetQty(${i},this.value)" title="Qty received">
+      <input type="number" step="0.01" value="${(l.costCents / 100).toFixed(2)}" style="width:78px;padding:0.4rem;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" oninput="grvSetCost(${i},this.value)" title="Unit cost (R)">
+      <button class="rm" onclick="grvRemove(${i})">✕</button></div>`;
+    }).join('');
+    updateGrvTotalsUI();
   }
-  function grvSetQty(i, v) { grvLines[i].qty = Math.max(0, parseInt(v) || 0); const t = document.getElementById('grv-total'); if (t) t.textContent = money(grvTotalCents()); }
-  function grvSetCost(i, v) { grvLines[i].costCents = toCents(v); const t = document.getElementById('grv-total'); if (t) t.textContent = money(grvTotalCents()); }
+  function grvSetQty(i, v) { grvLines[i].qty = Math.max(0, parseInt(v) || 0); updateGrvTotalsUI(); }
+  function grvSetCost(i, v) { grvLines[i].costCents = toCents(v); updateGrvTotalsUI(); }
   function grvRemove(i) { grvLines.splice(i, 1); renderGrvLines(); }
   async function confirmGrv() {
     if (grvInFlight) return;
@@ -1828,8 +1850,7 @@
     const date = document.getElementById('grv-date').value || new Date().toISOString().slice(0, 10);
     const updateCost = document.getElementById('grv-updcost').checked;
     const total = lines.reduce((t, l) => t + l.costCents * l.qty, 0);
-    const units = lines.reduce((n, l) => n + l.qty, 0);
-    if (!confirm('Receive ' + units + ' unit(s) into stock for ' + money(total) + '?')) return;
+    const linkedPo = receivingPoId ? posCache.find(p => p.id === receivingPoId) : null;
     grvInFlight = true;
     const btn = document.getElementById('grv-confirm'); if (btn) { btn.disabled = true; btn.textContent = 'Receiving…'; }
     const idemKey = uuid();
@@ -1840,12 +1861,19 @@
       const sup = suppliersCache.find(s => s.id === supId);
       const grvNumber = 'GRV-' + date.replace(/-/g, '') + '-' + String(seq).padStart(3, '0');
       const grv = { grvNumber, supplierId: supId, supplierName: sup ? sup.name : '', supplierRef: ref, date, idemKey,
+        poNumber: linkedPo ? linkedPo.poNumber : '',
         lineItems: lines.map(l => ({ variantId: l.variantId, inventoryItemId: l.inventoryItemId, name: l.name, sku: l.sku, qty: l.qty, costCents: l.costCents })),
         totalCents: total, amountPaidCents: 0, status: 'open', payments: [], createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
       const id = await fbAdd('grvs', grv); grv.id = id; grvsCache.unshift(grv);
+      // If this was received against a PO, update its received quantities + status.
+      if (linkedPo) {
+        lines.forEach(l => { const it = (linkedPo.items || []).find(x => x.variantId === l.variantId); if (it) it.receivedQty = (it.receivedQty || 0) + l.qty; });
+        linkedPo.status = (linkedPo.items || []).every(x => (x.receivedQty || 0) >= x.qty) ? 'received' : 'partial';
+        try { await fbSet('purchase_orders', linkedPo.id, { items: linkedPo.items, status: linkedPo.status }); } catch (e) {}
+      }
       printGrv(grv);
-      toast('Received into stock · ' + grvNumber);
-      grvLines = []; grvSupplierId = null;
+      toast('Received into stock · ' + grvNumber + (linkedPo ? ' (' + linkedPo.poNumber + ' ' + linkedPo.status + ')' : ''));
+      grvLines = []; grvSupplierId = null; receivingPoId = null;
       grvTab('list');
     } catch (e) { toast('Receive failed: ' + (e.message || e)); }
     finally { grvInFlight = false; const b = document.getElementById('grv-confirm'); if (b) { b.disabled = false; b.textContent = '📥 Receive into stock'; } }
@@ -1932,6 +1960,37 @@
       toast('Added ' + toAdd.length + ' supplier(s) — add their phone/email to send POs');
       renderSuppliers();
     } catch (e) { toast('Load failed: ' + (e.message || e)); }
+  }
+  // Receive against a sent purchase order.
+  async function renderPOList() {
+    const body = document.getElementById('grv-body');
+    if (!fbReady()) { body.innerHTML = '<div class="empty" style="padding:1.5rem">Need a connection to view purchase orders</div>'; return; }
+    body.innerHTML = '<div class="empty" style="padding:1.5rem">Loading purchase orders…</div>';
+    try {
+      posCache = await fbList('purchase_orders', 'createdAt', 'desc');
+      const open = posCache.filter(po => po.status !== 'received' && po.status !== 'cancelled');
+      if (!open.length) { body.innerHTML = '<div class="empty" style="padding:1.5rem">No open purchase orders. Create one in 🔻 Reorder, then receive it here when it arrives.</div>'; return; }
+      body.innerHTML = `<div style="max-height:55vh;overflow:auto">${open.map(po => {
+        const items = po.items || []; const ordered = items.reduce((n, i) => n + i.qty, 0); const recv = items.reduce((n, i) => n + (i.receivedQty || 0), 0);
+        const label = po.status === 'partial' ? '◐ part-received' : (po.status === 'sent' ? '⏳ sent' : (po.status || 'draft'));
+        return `<div class="cust-result" style="cursor:default;flex-direction:column;align-items:stretch;gap:0.3rem">
+          <div style="display:flex;justify-content:space-between"><div style="font-weight:600">${esc(po.poNumber || 'PO')} · ${esc(po.supplierName || '')}</div><div style="font-weight:700">${money(po.totalCents || 0)}</div></div>
+          <div style="font-size:0.72rem;color:var(--muted)">${new Date(po.createdAt).toLocaleString('en-ZA')} · ${recv}/${ordered} received · ${esc(label)}</div>
+          <div style="display:flex;gap:0.4rem"><button class="qbtn" style="width:auto;padding:0 0.7rem;background:var(--accent);color:#04210f" onclick="receivePO('${po.id}')">📥 Receive what came in</button></div>
+        </div>`;
+      }).join('')}</div>`;
+    } catch (e) { body.innerHTML = `<div class="empty" style="padding:1.5rem;color:var(--warn)">${esc(String(e.message || e))}</div>`; }
+  }
+  function receivePO(id) {
+    const po = posCache.find(p => p.id === id); if (!po) return;
+    grvLines = (po.items || []).map(i => {
+      const p = findProduct(i.variantId);
+      const outstanding = Math.max(0, i.qty - (i.receivedQty || 0));
+      return { variantId: i.variantId, inventoryItemId: (p ? p.inventoryItemId : '') || '', name: i.name, sku: i.sku || '', qty: outstanding, costCents: i.costCents || 0 };
+    });
+    grvSupplierId = po.supplierId;
+    receivingPoId = id;
+    grvTab('new');
   }
   function printGrvById(id) { const g = grvsCache.find(x => x.id === id); if (g) printGrv(g); }
   function printGrv(g) {
@@ -2026,6 +2085,13 @@
     renderPO();
   }
   function poTotalCents() { return poDraft.items.reduce((t, i) => t + i.costCents * i.qty, 0); }
+  function poRetailCents() { return poDraft.items.reduce((t, i) => { const p = findProduct(i.variantId); return t + (p ? p.priceCents : 0) * i.qty; }, 0); }
+  function updatePoTotalsUI() {
+    const cost = poTotalCents(), retail = poRetailCents();
+    const c = document.getElementById('po-total'); if (c) c.textContent = money(cost);
+    const r = document.getElementById('po-retail'); if (r) r.textContent = money(retail);
+    const pr = document.getElementById('po-profit'); if (pr) pr.textContent = money(retail - cost);
+  }
   function renderPO() {
     const body = document.getElementById('reorder-body');
     const p = poDraft;
@@ -2033,22 +2099,29 @@
       <button class="qbtn" style="width:auto;padding:0 0.7rem;margin-bottom:0.6rem" onclick="poBack()">← Back to recommendations</button>
       <div style="font-weight:700">🏭 ${esc(p.supplier)}</div>
       <div style="font-size:0.75rem;color:var(--muted);margin-bottom:0.5rem">${p.email ? esc(p.email) : '<span style="color:var(--warn)">no email</span>'} · ${p.phone ? esc(p.phone) : '<span style="color:var(--warn)">no phone</span>'} — set these in Suppliers to send</div>
-      ${p.items.map((i, idx) => `<div class="line">
-        <div class="lnm"><div class="t">${esc(i.name)}</div><div class="s">${esc(i.sku || '')}</div></div>
-        <input type="number" value="${i.qty}" min="0" style="width:54px;padding:0.4rem;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" oninput="poSetQty(${idx},this.value)" title="Qty">
-        <input type="number" step="0.01" value="${(i.costCents / 100).toFixed(2)}" style="width:82px;padding:0.4rem;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" oninput="poSetCost(${idx},this.value)" title="Unit cost (R)">
+      ${p.items.map((i, idx) => {
+        const pr = findProduct(i.variantId); const retail = pr ? pr.priceCents : 0; const margin = retail - i.costCents;
+        return `<div class="line">
+        <div class="lnm"><div class="t">${esc(i.name)}</div><div class="s">sells ${money(retail)}${i.costCents ? ` · margin <span style="color:${margin >= 0 ? 'var(--accent2)' : 'var(--danger)'}">${money(margin)}</span>` : ''}</div></div>
+        <input type="number" value="${i.qty}" min="0" style="width:50px;padding:0.4rem;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" oninput="poSetQty(${idx},this.value)" title="Qty">
+        <input type="number" step="0.01" value="${(i.costCents / 100).toFixed(2)}" style="width:78px;padding:0.4rem;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" oninput="poSetCost(${idx},this.value)" title="Unit cost (R)">
         <button class="rm" onclick="poRemove(${idx})">✕</button>
-      </div>`).join('')}
-      <div class="total" style="font-size:1.2rem;margin-top:0.6rem"><span>PO TOTAL</span><span class="accent" id="po-total">${money(poTotalCents())}</span></div>
-      <div style="display:flex;gap:0.5rem;margin-top:0.4rem">
+      </div>`;
+      }).join('')}
+      <div style="margin-top:0.6rem;border-top:1px solid var(--border);padding-top:0.5rem">
+        <div style="display:flex;justify-content:space-between;font-size:0.95rem;font-weight:700"><span>Order cost</span><span id="po-total">${money(poTotalCents())}</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:0.9rem;color:var(--muted)"><span>Retail value</span><span id="po-retail">${money(poRetailCents())}</span></div>
+        <div style="display:flex;justify-content:space-between;font-weight:800;font-size:1.05rem"><span>Profit if all sold</span><span class="accent" id="po-profit">${money(poRetailCents() - poTotalCents())}</span></div>
+      </div>
+      <div style="display:flex;gap:0.5rem;margin-top:0.6rem">
         <button class="btn btn-pay" style="padding:0.7rem" onclick="sendPO('email')">✉ Send email</button>
         <button class="btn btn-pay" style="padding:0.7rem;background:#25d366;color:#04210f" onclick="sendPO('whatsapp')">🟢 WhatsApp</button>
         <button class="btn btn-ghost" style="padding:0.7rem" onclick="sendPO('save')">Save only</button>
       </div>`;
   }
   function poBack() { poDraft = null; renderReorder(); }
-  function poSetQty(i, v) { poDraft.items[i].qty = Math.max(0, Math.round(Number(v) || 0)); document.getElementById('po-total').textContent = money(poTotalCents()); }
-  function poSetCost(i, v) { poDraft.items[i].costCents = toCents(v); document.getElementById('po-total').textContent = money(poTotalCents()); }
+  function poSetQty(i, v) { poDraft.items[i].qty = Math.max(0, Math.round(Number(v) || 0)); updatePoTotalsUI(); }
+  function poSetCost(i, v) { poDraft.items[i].costCents = toCents(v); updatePoTotalsUI(); }
   function poRemove(i) { poDraft.items.splice(i, 1); renderPO(); }
   function poText(po, poNumber) {
     let t = 'ReptiCube — Purchase Order ' + poNumber + '\n' + new Date().toLocaleDateString('en-ZA') + '\nSupplier: ' + po.supplier + '\n\n';
@@ -2322,7 +2395,7 @@
     saveQuote, openSalesOrder, closeSalesOrder, soBalancePreview, confirmSalesOrder,
     openDocs, closeDocs, docsTab, loadQuote, soAddPayment, soMarkReady, soFulfil, soCancel, printDocById,
     openProfile, closeProfile, profileAttach, openClients, closeClients, clientSearch, clientOpen,
-    openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier, loadVendorSuppliers,
+    openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier, loadVendorSuppliers, receivePO,
     openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, stAddItem, reconcileStocktake, exportStockCsv, exportStockXlsx, importStockFile,
     openReorder, closeReorder, setReorderLevel, startPO, poBack, poSetQty, poSetCost, poRemove, sendPO,
     lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings,
