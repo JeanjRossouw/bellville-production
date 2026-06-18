@@ -140,6 +140,7 @@
     <span id="net"><span class="dot" id="net-dot"></span> <span id="net-txt">online</span></span>
     <span id="cat-status">loading catalogue…</span>
     <button id="queue-badge" onclick="flushQueue(true)" title="Sales waiting to sync — click to sync now" style="display:none; width:auto;padding:0 0.6rem;height:30px;font-size:0.78rem;border-radius:8px;border:1px solid var(--warn);background:transparent;color:var(--warn);cursor:pointer"></button>
+    <button class="qbtn" title="Clients &amp; accounts" onclick="openClients()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">👥 Clients</button>
     <button class="qbtn" title="Sales orders &amp; quotes" onclick="openDocs('salesorder')" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📋 Orders</button>
     <button class="qbtn" title="Receive stock (GRV) &amp; suppliers" onclick="openGrv()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📥 Receive</button>
     <button class="qbtn" title="Stock take / count" onclick="openStocktake()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📦 Count</button>
@@ -258,6 +259,13 @@
   <div class="modal-card" style="width:560px">
     <h2><span>Client profile</span><button class="rm" onclick="closeProfile()">✕</button></h2>
     <div id="profile-body"></div>
+  </div>
+</div>
+
+<div class="modal" id="clients-modal">
+  <div class="modal-card" style="width:560px">
+    <h2><span>Clients</span><button class="rm" onclick="closeClients()">✕</button></h2>
+    <div id="clients-body"></div>
   </div>
 </div>
 
@@ -1373,26 +1381,29 @@
     printReport(html);
   }
 
-  // ---- Client profile ----
+  // ---- Client profile + Clients browser ----
+  let profileClient = null;
   function closeProfile() { document.getElementById('profile-modal').classList.remove('show'); }
   function sectionList(title, lines) {
     return `<div style="font-size:0.8rem;font-weight:700;margin:0.7rem 0 0.3rem">${esc(title)}</div>` +
       (lines.length ? lines.map(l => `<div style="font-size:0.82rem;padding:0.28rem 0;border-bottom:1px solid var(--border)">${l}</div>`).join('') : '<div class="empty" style="padding:0.4rem">None</div>');
   }
-  async function openProfile() {
-    if (!customer) return;
+  async function openProfile(client) {
+    const pc = client || customer; if (!pc) return;
+    profileClient = pc;
     document.getElementById('profile-modal').classList.add('show');
     const body = document.getElementById('profile-body');
-    body.innerHTML = `<div style="font-weight:700;font-size:1.05rem">${esc(customer.name)}</div>
-      <div style="color:var(--muted);font-size:0.85rem;margin-bottom:0.4rem">${esc(customer.phone || '')}${customer.phone && customer.email ? ' · ' : ''}${esc(customer.email || '')}</div>
+    const attached = customer && customer.id === pc.id;
+    body.innerHTML = `<div style="font-weight:700;font-size:1.05rem">${esc(pc.name)}</div>
+      <div style="color:var(--muted);font-size:0.85rem;margin-bottom:0.4rem">${esc(pc.phone || '')}${pc.phone && pc.email ? ' · ' : ''}${esc(pc.email || '')}</div>
       <div id="prof-acct" class="empty" style="padding:0.8rem">Loading account…</div>`;
     try {
-      const { docs } = await api('docList', { customerId: customer.id });
+      const { docs } = await api('docList', { customerId: pc.id });
       const sos = docs.filter(d => d.doc && d.doc.type === 'salesorder');
       const quotes = docs.filter(d => d.doc && d.doc.type === 'quote');
       const depositsHeld = sos.reduce((t, d) => t + (d.doc.depositCents || 0), 0);
       const balanceOwing = sos.reduce((t, d) => t + ((d.doc.totalCents || 0) - (d.doc.depositCents || 0)), 0);
-      let orders = []; try { const r = await api('customerOrders', { customerId: customer.id }); orders = r.orders || []; } catch (e) {}
+      let orders = []; try { const r = await api('customerOrders', { customerId: pc.id }); orders = r.orders || []; } catch (e) {}
       const acct = document.getElementById('prof-acct');
       acct.className = ''; acct.removeAttribute('style');
       acct.innerHTML = `
@@ -1404,10 +1415,57 @@
         ${sectionList('Open quotes', quotes.map(d => `${esc(d.name)} · ${money(d.doc.totalCents || 0)}`))}
         ${sectionList('Recent purchases', orders.map(o => `${esc(o.name)} · ${new Date(o.createdAt).toLocaleDateString('en-ZA')} · ${o.items} item(s) · ${money(o.totalCents)}`))}
         <div style="display:flex;gap:0.5rem;margin-top:0.9rem">
+          ${attached ? '' : `<button class="btn btn-pay" onclick='profileAttach()'>Attach to sale</button>`}
           <button class="btn btn-ghost" onclick="closeProfile();openDocs('salesorder')">Manage orders</button>
         </div>`;
     } catch (e) { const el = document.getElementById('prof-acct'); if (el) el.textContent = 'Could not load account: ' + (e.message || e); }
   }
+  function profileAttach() { if (profileClient) { customer = { id: profileClient.id, name: profileClient.name, phone: profileClient.phone || '', email: profileClient.email || '' }; renderCustomer(); } closeProfile(); toast('Customer attached to sale'); }
+
+  // Clients browser: opens with accounts that have balances; search finds anyone.
+  let clientSearchTimer = null;
+  function openClients() {
+    document.getElementById('clients-modal').classList.add('show');
+    document.getElementById('clients-body').innerHTML = `<input id="cl-q" autocomplete="off" placeholder="🔍 Search clients by name / phone / email" oninput="clientSearch(this.value)"><div id="cl-results" style="margin-top:0.6rem"></div>`;
+    loadOutstanding();
+    const i = document.getElementById('cl-q'); if (i && !isMobile()) i.focus();
+  }
+  function closeClients() { document.getElementById('clients-modal').classList.remove('show'); }
+  function clientRow(c) {
+    const right = c.outstanding ? `<div style="font-size:0.7rem;color:var(--muted)">owing</div><div style="font-weight:700;color:var(--warn)">${money(c.outstanding)}</div>`
+      : (c.deposits ? `<div style="font-size:0.7rem;color:var(--muted)">deposit</div><div style="font-weight:700;color:var(--accent2)">${money(c.deposits)}</div>` : '<div style="color:var(--muted);font-size:0.78rem">view ›</div>');
+    return `<div class="cust-result" onclick='clientOpen(${JSON.stringify({ id: c.id, name: c.name, phone: c.phone || '', email: c.email || '' }).replace(/'/g, "&#39;")})'>
+      <div><div style="font-weight:600">${esc(c.name)}</div><div style="font-size:0.72rem;color:var(--muted)">${esc(c.phone || c.email || '')}${c.orders ? ' · ' + c.orders + ' sales order(s)' : ''}</div></div>
+      <div style="text-align:right">${right}</div></div>`;
+  }
+  async function loadOutstanding() {
+    const box = document.getElementById('cl-results'); if (!box) return;
+    box.innerHTML = '<div class="empty" style="padding:1rem">Loading accounts with balances…</div>';
+    try {
+      const { docs } = await api('docList', { type: 'salesorder' });
+      const byCust = {};
+      (docs || []).forEach(d => {
+        if (!d.customer) return;
+        const bal = (d.doc.totalCents || 0) - (d.doc.depositCents || 0);
+        const c = byCust[d.customer.id] || (byCust[d.customer.id] = { id: d.customer.id, name: d.customer.name, outstanding: 0, deposits: 0, orders: 0 });
+        c.outstanding += bal; c.deposits += (d.doc.depositCents || 0); c.orders += 1;
+      });
+      const list = Object.values(byCust).filter(c => c.outstanding > 0 || c.deposits > 0).sort((a, b) => b.outstanding - a.outstanding);
+      box.innerHTML = `<div style="font-size:0.8rem;font-weight:700;margin:0.3rem 0">Accounts with balances</div>` + (list.length ? list.map(clientRow).join('') : '<div class="empty" style="padding:1rem">No outstanding accounts — search above to find any client</div>');
+    } catch (e) { box.innerHTML = `<div class="empty" style="padding:1rem;color:var(--warn)">${esc(String(e.message || e))}</div>`; }
+  }
+  function clientSearch(q) {
+    clearTimeout(clientSearchTimer);
+    const term = (q || '').trim();
+    const box = document.getElementById('cl-results'); if (!box) return;
+    if (!term) { loadOutstanding(); return; }
+    box.innerHTML = '<div class="empty" style="padding:1rem">Searching…</div>';
+    clientSearchTimer = setTimeout(async () => {
+      try { const { customers } = await api('searchCustomers', { q: term }); box.innerHTML = customers.length ? customers.map(c => clientRow({ id: c.id, name: c.name, phone: c.phone, email: c.email })).join('') : '<div class="empty" style="padding:1rem">No matches</div>'; }
+      catch (e) { box.innerHTML = `<div class="empty" style="padding:1rem;color:var(--warn)">${esc(String(e.message || e))}</div>`; }
+    }, 350);
+  }
+  function clientOpen(c) { closeClients(); openProfile(c); }
 
   // ---- Stock take (Lightspeed-style count → reconcile to Shopify) ----
   let stFilter = 'all', stReconciling = false;
@@ -2229,7 +2287,7 @@
     takeTender, closeTender, tenderMethod, finishTender,
     saveQuote, openSalesOrder, closeSalesOrder, soBalancePreview, confirmSalesOrder,
     openDocs, closeDocs, docsTab, loadQuote, soAddPayment, soMarkReady, soFulfil, soCancel, printDocById,
-    openProfile, closeProfile,
+    openProfile, closeProfile, profileAttach, openClients, closeClients, clientSearch, clientOpen,
     openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier, loadVendorSuppliers,
     openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, stAddItem, reconcileStocktake, exportStockCsv, exportStockXlsx, importStockFile,
     openReorder, closeReorder, setReorderLevel, startPO, poBack, poSetQty, poSetCost, poRemove, sendPO,
