@@ -104,6 +104,18 @@ async function getProducts() {
     const m = link.match(/<([^>]+)>;\s*rel="next"/);
     url = m ? m[1].replace(/^https?:\/\/[^/]+\/admin\/api\/[^/]+/, '') : null;
   }
+  // Best-effort: pull each variant's unit cost (Shopify "Cost per item") so the
+  // POS can show margins. Batched; never blocks the catalogue if it fails.
+  try {
+    const ids = [...new Set(out.map(r => r.inventoryItemId).filter(Boolean))];
+    const costMap = {};
+    for (let i = 0; i < ids.length; i += 100) {
+      const batch = ids.slice(i, i + 100);
+      const { json } = await shopify(`/inventory_items.json?ids=${batch.join(',')}&limit=100`);
+      (json.inventory_items || []).forEach(it => { if (it.cost != null && it.cost !== '') costMap[String(it.id)] = Math.round((Number(it.cost) || 0) * 100); });
+    }
+    out.forEach(r => { if (costMap[r.inventoryItemId] != null) r.costCents = costMap[r.inventoryItemId]; });
+  } catch (e) { /* costs optional (needs read_inventory) */ }
   return out;
 }
 

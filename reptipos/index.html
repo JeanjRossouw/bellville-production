@@ -1818,7 +1818,7 @@
     if (ex) ex.qty++;
     else {
       if (!p.inventoryItemId) toast('No inventory id — refresh the catalogue (↻)');
-      grvLines.push({ variantId, inventoryItemId: p.inventoryItemId || '', name: p.name, sku: p.sku || '', qty: 1, costCents: 0 });
+      grvLines.push({ variantId, inventoryItemId: p.inventoryItemId || '', name: p.name, sku: p.sku || '', qty: 1, costCents: p.costCents || 0 });
     }
     const f = document.getElementById('grv-search'); if (f) f.value = '';
     renderGrvSearch(''); renderGrvLines();
@@ -1868,7 +1868,8 @@
       // If this was received against a PO, update its received quantities + status.
       if (linkedPo) {
         lines.forEach(l => { const it = (linkedPo.items || []).find(x => x.variantId === l.variantId); if (it) it.receivedQty = (it.receivedQty || 0) + l.qty; });
-        linkedPo.status = (linkedPo.items || []).every(x => (x.receivedQty || 0) >= x.qty) ? 'received' : 'partial';
+        // Fully received once every receivable line is in (items missing from the catalogue can't be received, so don't let them block it).
+        linkedPo.status = (linkedPo.items || []).every(x => (x.receivedQty || 0) >= x.qty || !((findProduct(x.variantId) || {}).inventoryItemId)) ? 'received' : 'partial';
         try { await fbSet('purchase_orders', linkedPo.id, { items: linkedPo.items, status: linkedPo.status }); } catch (e) {}
       }
       printGrv(grv);
@@ -1976,10 +1977,14 @@
         return `<div class="cust-result" style="cursor:default;flex-direction:column;align-items:stretch;gap:0.3rem">
           <div style="display:flex;justify-content:space-between"><div style="font-weight:600">${esc(po.poNumber || 'PO')} · ${esc(po.supplierName || '')}</div><div style="font-weight:700">${money(po.totalCents || 0)}</div></div>
           <div style="font-size:0.72rem;color:var(--muted)">${new Date(po.createdAt).toLocaleString('en-ZA')} · ${recv}/${ordered} received · ${esc(label)}</div>
-          <div style="display:flex;gap:0.4rem"><button class="qbtn" style="width:auto;padding:0 0.7rem;background:var(--accent);color:#04210f" onclick="receivePO('${po.id}')">📥 Receive what came in</button></div>
+          <div style="display:flex;gap:0.4rem"><button class="qbtn" style="width:auto;padding:0 0.7rem;background:var(--accent);color:#04210f" onclick="receivePO('${po.id}')">📥 Receive what came in</button><button class="rm" onclick="deletePO('${po.id}')" title="Delete this PO">✕ Delete</button></div>
         </div>`;
       }).join('')}</div>`;
     } catch (e) { body.innerHTML = `<div class="empty" style="padding:1.5rem;color:var(--warn)">${esc(String(e.message || e))}</div>`; }
+  }
+  async function deletePO(id) {
+    try { await fbSet('purchase_orders', id, { status: 'cancelled' }); const po = posCache.find(p => p.id === id); if (po) po.status = 'cancelled'; toast('Purchase order deleted'); renderPOList(); }
+    catch (e) { toast('Delete failed: ' + (e.message || e)); }
   }
   function receivePO(id) {
     const po = posCache.find(p => p.id === id); if (!po) return;
@@ -2020,6 +2025,7 @@
   }
   function suggestLevel(variantId) { return Math.ceil(salesVelocity(variantId, 30) * 14); } // ~2 weeks cover
   function lastCostCents(variantId) {
+    const p = findProduct(variantId); if (p && p.costCents) return p.costCents; // Shopify's "Cost per item"
     for (const g of grvsCache) { const li = (g.lineItems || []).find(l => l.variantId === variantId); if (li && li.costCents != null) return li.costCents; }
     return 0;
   }
@@ -2395,7 +2401,7 @@
     saveQuote, openSalesOrder, closeSalesOrder, soBalancePreview, confirmSalesOrder,
     openDocs, closeDocs, docsTab, loadQuote, soAddPayment, soMarkReady, soFulfil, soCancel, printDocById,
     openProfile, closeProfile, profileAttach, openClients, closeClients, clientSearch, clientOpen,
-    openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier, loadVendorSuppliers, receivePO,
+    openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier, loadVendorSuppliers, receivePO, deletePO,
     openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, stAddItem, reconcileStocktake, exportStockCsv, exportStockXlsx, importStockFile,
     openReorder, closeReorder, setReorderLevel, startPO, poBack, poSetQty, poSetCost, poRemove, sendPO,
     lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings,
