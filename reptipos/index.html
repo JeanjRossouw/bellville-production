@@ -79,6 +79,9 @@
   .tile .nm { font-size:0.8rem; font-weight:600; line-height:1.15; height:2.3em; overflow:hidden; }
   .tile .pr { font-size:1rem; font-weight:800; color:var(--accent2); margin-top:0.25rem; }
   .tile .st { font-size:0.7rem; color:var(--muted); }
+  .cat-tile { text-align:center; }
+  .cat-tile .nm { height:auto; font-size:0.95rem; font-weight:700; }
+  .cat-tile .thumb { filter:brightness(0.92); }
 
   .right .rhead { padding:0.85rem; border-bottom:1px solid var(--border); font-weight:700; display:flex; justify-content:space-between; align-items:center; }
   #cart { flex:1; overflow:auto; padding:0.5rem 0.85rem; }
@@ -358,7 +361,7 @@
 <script>
   const FN = '/.netlify/functions/reptipos-shopify';
   let catalogue = [];      // products incl. priceCents (integer money — never floats)
-  let currentCat = '';     // selected category filter on the sale screen ('' = All)
+  let currentCat = '__home__'; // '__home__' = category picker, '' = all products, else a category
   let catBarSig = '';      // signature of the category list currently drawn (avoids needless rebuilds)
   let locationId = null;
   let cart = [];           // [{ variantId, qty, disc:{type,value}? }]
@@ -573,7 +576,7 @@
   }
   // Distinct Shopify categories (product_type) present in the catalogue, sorted.
   function catList() { return [...new Set(catalogue.map(p => p.category).filter(Boolean))].sort((a, b) => a.localeCompare(b)); }
-  function setCat(c) { currentCat = c || ''; renderCatBar(); renderGrid(); }
+  function setCat(c) { currentCat = (c == null ? '__home__' : c); renderCatBar(); renderGrid(); }
   function renderCatBar() {
     const bar = document.getElementById('cat-bar'); if (!bar) return;
     const cats = catList();
@@ -581,21 +584,43 @@
     if (!cats.length) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
     bar.style.display = 'flex';
     const chip = (label, val) => `<button class="cat-chip${currentCat === val ? ' active' : ''}" onclick="setCat('${esc(val).replace(/'/g, "\\'")}')">${esc(label)}</button>`;
-    bar.innerHTML = chip('All', '') + cats.map(c => chip(c, c)).join('');
+    bar.innerHTML = chip('🗂 Categories', '__home__') + chip('All', '') + cats.map(c => chip(c, c)).join('');
+  }
+  // The category landing: one big picture tile per Shopify category. Tapping a
+  // tile drills into that category (e.g. tap "Substrate" → see all substrate).
+  function renderCategoryTiles() {
+    const grid = document.getElementById('grid');
+    const cats = catList();
+    if (!cats.length) { currentCat = ''; renderGrid(); return; }
+    grid.innerHTML = cats.map(c => {
+      const inCat = catalogue.filter(p => p.category === c);
+      const withImg = inCat.find(p => p.imageUrl);
+      const count = inCat.length;
+      const thumb = withImg
+        ? `<div class="thumb" style="background-image:url('${esc(withImg.imageUrl)}')"></div>`
+        : `<div class="thumb">🗂</div>`;
+      return `<button class="tile cat-tile" onclick="setCat('${esc(c).replace(/'/g, "\\'")}')">
+        ${thumb}
+        <div class="nm">${esc(c)}</div>
+        <div class="st">${count} item${count === 1 ? '' : 's'}</div>
+      </button>`;
+    }).join('');
   }
   function renderGrid() {
     const grid = document.getElementById('grid');
     const q = document.getElementById('scan').value.trim().toLowerCase();
     // Rebuild the category bar only when the set of categories changes (keeps scroll position).
     if (catList().join('|') !== catBarSig) renderCatBar();
+    // Category landing page (no active search): show the picture tiles.
+    if (currentCat === '__home__' && !q) { renderCategoryTiles(); return; }
     let items = catalogue;
     // A typed search spans every category; otherwise honour the selected category.
     if (q) items = items.filter(p =>
       (p.name || '').toLowerCase().includes(q) ||
       (p.sku || '').toLowerCase().includes(q) ||
       (p.barcode || '').toLowerCase().includes(q));
-    else if (currentCat) items = items.filter(p => p.category === currentCat);
-    if (items.length === 0) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1">${catalogue.length ? 'No matches' + (currentCat ? ' in ' + esc(currentCat) : '') : 'Catalogue loading…'}</div>`; return; }
+    else if (currentCat && currentCat !== '__home__') items = items.filter(p => p.category === currentCat);
+    if (items.length === 0) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1">${catalogue.length ? 'No matches' + (currentCat && currentCat !== '__home__' ? ' in ' + esc(currentCat) : '') : 'Catalogue loading…'}</div>`; return; }
     grid.innerHTML = items.slice(0, 300).map(p => {
       const oos = (Number(p.qty) || 0) <= 0;
       const thumb = p.imageUrl
