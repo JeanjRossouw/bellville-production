@@ -2040,6 +2040,7 @@
   async function renderReorder() {
     const body = document.getElementById('reorder-body');
     body.innerHTML = '<div class="empty" style="padding:1.5rem">Working out what to order…</div>';
+    await ensureSuppliers();
     // Overrides + open sales-order demand + last costs (for PO pricing).
     reorderOverrides = {};
     try { if (fbReady()) { (await fbList('reorder_settings')).forEach(r => { reorderOverrides[r.variantId || r.id] = Number(r.level); }); } } catch (e) {}
@@ -2055,12 +2056,13 @@
       if (rec > 0 || demand > 0 || (level > 0 && onHand <= level)) reorderRows.push({ variantId: p.variantId, inventoryItemId: p.inventoryItemId || '', name: p.name, sku: p.sku, supplier: p.vendor || '(no supplier)', onHand, level, demand, rec });
     });
     if (poDraft) { renderPO(); return; }
-    if (!reorderRows.length) { body.innerHTML = '<div class="empty" style="padding:1.5rem">Nothing to reorder — stock is above reorder levels and no sales orders are waiting. 🎉</div>'; return; }
+    const newPoBtn = `<button class="btn btn-pay" style="padding:0.6rem;margin-bottom:0.7rem" onclick="startBlankPO()">＋ New purchase order (pick supplier + items)</button>`;
+    if (!reorderRows.length) { body.innerHTML = newPoBtn + '<div class="empty" style="padding:1.5rem">Nothing flagged to reorder — stock is above reorder levels and no sales orders are waiting. 🎉<br><br>Use ＋ New purchase order above to order anything manually.</div>'; return; }
     // Group by supplier.
     const groups = {};
     reorderRows.forEach(r => { (groups[r.supplier] = groups[r.supplier] || []).push(r); });
     const order = Object.keys(groups).sort();
-    body.innerHTML = `<div style="font-size:0.8rem;color:var(--muted);margin-bottom:0.5rem">Reorder level is suggested from the last 30 days of sales (editable). Tap <b>Create PO</b> for a supplier to send an order.</div>` +
+    body.innerHTML = newPoBtn + `<div style="font-size:0.8rem;color:var(--muted);margin-bottom:0.5rem">Reorder level is suggested from the last 30 days of sales (editable). Tap <b>Create PO</b> for a supplier to send an order.</div>` +
       order.map(sup => {
         const rows = groups[sup];
         const totalUnits = rows.reduce((t, r) => t + r.rec, 0);
@@ -2086,6 +2088,27 @@
     const r = reorderRows.find(x => x.variantId === variantId);
     if (r) r.level = level;
   }
+  function startBlankPO() { poDraft = { supplier: '', supplierId: null, email: '', phone: '', items: [] }; renderPO(); }
+  function poSetSupplier(id) {
+    const s = suppliersCache.find(x => x.id === id);
+    poDraft.supplier = s ? s.name : ''; poDraft.supplierId = s ? s.id : null; poDraft.email = s ? (s.email || '') : ''; poDraft.phone = s ? (s.phone || '') : '';
+    renderPO();
+  }
+  function poSearch(q) {
+    const box = document.getElementById('po-search-res'); if (!box) return;
+    const term = (q || '').trim().toLowerCase();
+    if (!term) { box.innerHTML = ''; return; }
+    const items = catalogue.filter(p => (p.name || '').toLowerCase().includes(term) || (p.sku || '').toLowerCase().includes(term) || (p.barcode || '').toLowerCase().includes(term)).slice(0, 8);
+    box.innerHTML = items.length ? items.map(p => `<div class="cust-result" onclick="poAddItem('${p.variantId}')"><div><div style="font-weight:600">${esc(p.name)}</div><div style="font-size:0.72rem;color:var(--muted)">${esc(p.sku || '')} · sells ${money(p.priceCents)} · on hand ${Number(p.qty) || 0}</div></div><div style="color:var(--accent2)">+ add</div></div>`).join('') : '<div class="empty" style="padding:0.5rem">No matches</div>';
+  }
+  function poAddItem(variantId) {
+    const p = findProduct(variantId); if (!p) return;
+    const ex = poDraft.items.find(i => i.variantId === variantId);
+    if (ex) ex.qty++;
+    else poDraft.items.push({ variantId, inventoryItemId: p.inventoryItemId || '', name: p.name, sku: p.sku || '', qty: 1, costCents: lastCostCents(variantId) });
+    const f = document.getElementById('po-search'); if (f) f.value = '';
+    renderPO();
+  }
   function startPO(supplier) {
     const rows = reorderRows.filter(r => r.supplier === supplier && r.rec > 0);
     if (!rows.length) { toast('Nothing to order for ' + supplier); return; }
@@ -2107,10 +2130,17 @@
   function renderPO() {
     const body = document.getElementById('reorder-body');
     const p = poDraft;
+    const supOpts = suppliersCache.map(s => `<option value="${s.id}" ${s.id === p.supplierId ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
     body.innerHTML = `
-      <button class="qbtn" style="width:auto;padding:0 0.7rem;margin-bottom:0.6rem" onclick="poBack()">← Back to recommendations</button>
-      <div style="font-weight:700">🏭 ${esc(p.supplier)}</div>
-      <div style="font-size:0.75rem;color:var(--muted);margin-bottom:0.5rem">${p.email ? esc(p.email) : '<span style="color:var(--warn)">no email</span>'} · ${p.phone ? esc(p.phone) : '<span style="color:var(--warn)">no phone</span>'} — set these in Suppliers to send</div>
+      <button class="qbtn" style="width:auto;padding:0 0.7rem;margin-bottom:0.6rem" onclick="poBack()">← Back</button>
+      <div class="field"><label>Supplier</label>
+        <select id="po-sup" style="width:100%;padding:0.6rem;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" onchange="poSetSupplier(this.value)">
+          <option value="">— select supplier —</option>${supOpts}</select></div>
+      <div style="font-size:0.72rem;color:var(--muted);margin:0.2rem 0 0.5rem">${p.email ? esc(p.email) : '<span style="color:var(--warn)">no email</span>'} · ${p.phone ? esc(p.phone) : '<span style="color:var(--warn)">no phone</span>'} — set in Suppliers to send</div>
+      <div class="field"><label>Add item</label>
+        <input id="po-search" autocomplete="off" placeholder="🔍 search product name / SKU / barcode" oninput="poSearch(this.value)">
+        <div id="po-search-res" style="max-height:150px;overflow:auto"></div></div>
+      ${p.items.length ? '' : '<div class="empty" style="padding:0.6rem">No items yet — search above to add</div>'}
       ${p.items.map((i, idx) => {
         const pr = findProduct(i.variantId); const retail = pr ? pr.priceCents : 0; const margin = retail - i.costCents;
         return `<div class="line">
@@ -2142,8 +2172,9 @@
     return t;
   }
   async function sendPO(method) {
+    if (!poDraft.supplierId && !poDraft.supplier) { toast('Choose a supplier first'); return; }
     const items = poDraft.items.filter(i => i.qty > 0);
-    if (!items.length) { toast('Nothing to order'); return; }
+    if (!items.length) { toast('Add at least one item'); return; }
     poDraft.items = items;
     const seq = (parseInt(localStorage.getItem('reptipos-po-seq') || '0', 10) || 0) + 1; localStorage.setItem('reptipos-po-seq', String(seq));
     const poNumber = 'PO-' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + String(seq).padStart(3, '0');
@@ -2409,7 +2440,7 @@
     openProfile, closeProfile, profileAttach, openClients, closeClients, clientSearch, clientOpen,
     openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier, loadVendorSuppliers, receivePO, deletePO,
     openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, stAddItem, reconcileStocktake, exportStockCsv, exportStockXlsx, importStockFile,
-    openReorder, closeReorder, setReorderLevel, startPO, poBack, poSetQty, poSetCost, poRemove, sendPO,
+    openReorder, closeReorder, setReorderLevel, startPO, startBlankPO, poSetSupplier, poSearch, poAddItem, poBack, poSetQty, poSetCost, poRemove, sendPO,
     lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings,
     flushQueue,
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
