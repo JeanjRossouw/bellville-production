@@ -356,6 +356,8 @@
   let cart = [];           // [{ variantId, qty, disc:{type,value}? }]
   let cartDiscount = null; // { type:'pct'|'amt', value } applied to the whole cart
   let customer = null;     // { id, name, email, phone } attached to the sale
+  let customerPoints = 0;  // loyalty points balance of the attached customer (1 pt = R1)
+  let pointsRedeemCents = 0; // points being redeemed on this sale (cents)
   let saleInFlight = false; // guard against double-submit creating duplicate orders
   let custSearchTimer = null;
 
@@ -372,7 +374,7 @@
   // Plumbed so a rate can be switched on later without code changes. Prices are
   // treated as tax-INCLUSIVE (the Shopify price is final), so a non-zero rate
   // just surfaces the tax portion already inside the price — it never adds on top.
-  const DEFAULT_SETTINGS = { taxRatePct: 0, taxLabel: 'VAT' };
+  const DEFAULT_SETTINGS = { taxRatePct: 0, taxLabel: 'VAT', pointsPerRand: 0.1 };
   function settings() { try { return { ...DEFAULT_SETTINGS, ...(JSON.parse(localStorage.getItem('reptipos-settings') || '{}')) }; } catch (e) { return { ...DEFAULT_SETTINGS }; } }
   function saveSettings(s) { localStorage.setItem('reptipos-settings', JSON.stringify({ ...settings(), ...s })); }
   // Tax portion (cents) already contained in a tax-inclusive total.
@@ -647,8 +649,8 @@
   // Compute the whole cart in integer cents, applying line then cart discounts.
   // Cart discount is distributed across lines proportionally so per-line unit
   // prices (sent to Shopify) sum exactly to the total.
-  function computeCart() { return computeCartFor(cart, cartDiscount); }
-  function computeCartFor(cartArr, disc) {
+  function computeCart() { return computeCartFor(cart, cartDiscount, pointsRedeemCents); }
+  function computeCartFor(cartArr, disc, extraDiscCents) {
     const lines = (cartArr || []).map(l => {
       const p = findProduct(l.variantId);
       const base = p ? p.priceCents * l.qty : 0;
@@ -659,6 +661,8 @@
     const subtotal = lines.reduce((t, x) => t + x.afterLine, 0);
     let cartDisc = 0;
     if (disc && subtotal > 0) cartDisc = disc.type === 'pct' ? Math.round(subtotal * disc.value / 100) : Math.min(subtotal, disc.value);
+    // Loyalty points redemption is an extra cash discount, distributed like a cart discount.
+    if (extraDiscCents) cartDisc = Math.min(subtotal, cartDisc + extraDiscCents);
     // Distribute cartDisc proportionally; fix rounding on the last line.
     let allocated = 0;
     lines.forEach((x, i) => {
@@ -695,7 +699,7 @@
       }).join('') + `<div style="display:flex; justify-content:space-between; align-items:center; padding:0.6rem 0 0; font-size:0.8rem; color:var(--muted)">
           <button class="qbtn" style="width:auto; padding:0 0.6rem; height:30px" onclick="setCartDiscount()">${cartDiscount ? 'Cart disc: ' + discLabel(cartDiscount) : '+ Cart discount'}</button>
           ${c.totalDisc > 0 ? `<span>−${money(c.totalDisc)} saved</span>` : ''}
-        </div>`;
+        </div>` + loyaltyCartRow();
     }
     const count = cart.reduce((n, l) => n + l.qty, 0);
     // Tax line (only when a rate is configured — default is none).
@@ -714,6 +718,37 @@
     if (mc) mc.textContent = '🛒 Cart' + (count ? ' (' + count + ')' : '') + ' · ' + money(c.total);
   }
 
+  // ---- Loyalty points (1 point = R1; earn rate configurable points-per-rand) ----
+  function pointsPerRand() { const v = Number(settings().pointsPerRand); return v > 0 ? v : 0; }
+  function loyaltyCartRow() {
+    if (!customer || cart.length === 0) return '';
+    const balCents = customerPoints * 100;
+    if (balCents <= 0 && pointsRedeemCents <= 0) return '';
+    const redeeming = pointsRedeemCents > 0;
+    const label = redeeming
+      ? `Points applied: −${money(pointsRedeemCents)} · tap to remove`
+      : `${customerPoints} pts (${money(balCents)}) · tap to redeem`;
+    return `<div style="display:flex; justify-content:space-between; align-items:center; padding:0.4rem 0 0; font-size:0.8rem">
+        <span style="color:var(--muted)">⭐ Loyalty</span>
+        <button class="qbtn" style="width:auto; padding:0 0.6rem; height:30px; color:${redeeming ? 'var(--accent2)' : ''}" onclick="toggleRedeemPoints()">${label}</button>
+      </div>`;
+  }
+  function toggleRedeemPoints() {
+    if (pointsRedeemCents > 0) { pointsRedeemCents = 0; renderCart(); return; }
+    if (!customer || customerPoints <= 0) { toast('No points to redeem'); return; }
+    const payable = computeCartFor(cart, cartDiscount, 0).total; // total before points
+    pointsRedeemCents = Math.min(customerPoints * 100, payable);
+    if (pointsRedeemCents <= 0) { toast('Nothing to redeem against'); return; }
+    renderCart();
+    toast('Redeeming ' + money(pointsRedeemCents) + ' in points');
+  }
+  // Load the attached customer's points balance, then refresh the cart/customer UI.
+  async function refreshCustomerPoints() {
+    pointsRedeemCents = 0;
+    customerPoints = customer ? await loadPoints(customer) : 0;
+    renderCustomer(); renderCart();
+  }
+
   // ---- Customers ----
   async function api(action, extra) {
     return callFn({ action, ...(extra || {}) });
@@ -722,14 +757,15 @@
     const el = document.getElementById('customer');
     if (!el) return;
     if (customer) {
-      el.innerHTML = `<div class="cinfo"><div class="cn">👤 ${esc(customer.name)}</div><div class="cm">${esc(customer.phone || customer.email || '')}</div></div>
+      const pts = customerPoints > 0 ? ` · ⭐ ${customerPoints} pts` : '';
+      el.innerHTML = `<div class="cinfo"><div class="cn">👤 ${esc(customer.name)}</div><div class="cm">${esc(customer.phone || customer.email || '')}${pts}</div></div>
         <div style="display:flex; gap:0.35rem"><button onclick="openProfile()">Profile</button><button onclick="custClear()">✕</button></div>`;
     } else {
       el.innerHTML = `<div class="cinfo"><div class="cn" style="color:var(--muted)">Walk-in customer</div></div>
         <button onclick="custOpen()">+ Add customer</button>`;
     }
   }
-  function custClear() { customer = null; renderCustomer(); }
+  function custClear() { customer = null; customerPoints = 0; pointsRedeemCents = 0; renderCustomer(); renderCart(); }
   function custOpen() { document.getElementById('cust-modal').classList.add('show'); renderCustBody(''); }
   function custClose() { document.getElementById('cust-modal').classList.remove('show'); }
   function renderCustBody(q, results) {
@@ -764,7 +800,7 @@
       catch (e) { box.innerHTML = `<div class="empty" style="padding:1rem; color:var(--warn)">${esc(String(e.message || e))}</div>`; }
     }, 350);
   }
-  function custAttach(c) { customer = c; custClose(); renderCustomer(); }
+  function custAttach(c) { customer = c; custClose(); renderCustomer(); refreshCustomerPoints(); }
   async function custCreate() {
     const name = (document.getElementById('nc-name').value || '').trim();
     if (!name) { toast('Enter a customer name'); return; }
@@ -885,6 +921,13 @@
         <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveTaxSettings()">Save</button>
       </div>
       <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Prices stay tax-inclusive (Shopify price is final). 0% shows no tax anywhere.</div>
+      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">⭐ Loyalty points</div>
+      <div style="display:flex; gap:0.4rem; align-items:center">
+        <span style="color:var(--muted); font-size:0.85rem">Earn</span>
+        <input id="loy-rate" type="number" step="0.01" min="0" value="${settings().pointsPerRand}" style="width:90px"><span style="color:var(--muted); font-size:0.85rem">points per R1 spent</span>
+        <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveLoyaltySettings()">Save</button>
+      </div>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">1 point = R1 off a future sale. Account is keyed on the customer's cellphone number. Set 0 to turn earning off. (e.g. 0.1 = R10 spent earns 1 point.)</div>
       <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.3rem">Demo mode</div>
       <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="toggleDemo()">${isDemo() ? 'Turn demo OFF (use real Shopify)' : 'Turn demo ON (no Shopify)'}</button>
       <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Demo uses a sample catalogue; sales/orders/stock are simulated locally and never touch Shopify.</div>`;
@@ -905,6 +948,12 @@
     saveSettings({ taxRatePct: rate, taxLabel: label });
     renderCart(); renderReg();
     toast(rate > 0 ? `Tax set: ${label} ${rate}% (inclusive)` : 'Tax off');
+  }
+  function saveLoyaltySettings() {
+    const rate = Math.max(0, parseFloat(document.getElementById('loy-rate').value) || 0);
+    saveSettings({ pointsPerRand: rate });
+    renderReg(); renderCart();
+    toast(rate > 0 ? `Loyalty: ${rate} pt per R1` : 'Loyalty earning off');
   }
   function doOpenRegister() {
     const f = toCents(document.getElementById('reg-float').value);
@@ -1519,12 +1568,14 @@
       const depositsHeld = sos.reduce((t, d) => t + (d.doc.depositCents || 0), 0);
       const balanceOwing = sos.reduce((t, d) => t + ((d.doc.totalCents || 0) - (d.doc.depositCents || 0)), 0);
       let orders = []; try { const r = await api('customerOrders', { customerId: pc.id }); orders = r.orders || []; } catch (e) {}
+      let pts = 0; try { pts = await loadPoints(pc); } catch (e) {}
       const acct = document.getElementById('prof-acct');
       acct.className = ''; acct.removeAttribute('style');
       acct.innerHTML = `
         <div style="display:flex;gap:0.6rem;margin-bottom:0.3rem">
           <div style="flex:1;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.6rem;text-align:center"><div style="font-size:0.72rem;color:var(--muted)">Deposits held</div><div style="font-weight:800;color:var(--accent2)">${money(depositsHeld)}</div></div>
           <div style="flex:1;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.6rem;text-align:center"><div style="font-size:0.72rem;color:var(--muted)">Balance owing</div><div style="font-weight:800;color:var(--warn)">${money(balanceOwing)}</div></div>
+          <div style="flex:1;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.6rem;text-align:center"><div style="font-size:0.72rem;color:var(--muted)">⭐ Points</div><div style="font-weight:800">${pts} <span style="font-size:0.72rem;color:var(--muted)">(${money(pts * 100)})</span></div></div>
         </div>
         ${sectionList('Open sales orders', sos.map(d => `${esc(d.name)} · ${money(d.doc.totalCents || 0)} · bal ${money((d.doc.totalCents || 0) - (d.doc.depositCents || 0))} · ${esc(d.doc.status || '')}`))}
         ${sectionList('Open quotes', quotes.map(d => `${esc(d.name)} · ${money(d.doc.totalCents || 0)}`))}
@@ -1535,7 +1586,7 @@
         </div>`;
     } catch (e) { const el = document.getElementById('prof-acct'); if (el) el.textContent = 'Could not load account: ' + (e.message || e); }
   }
-  function profileAttach() { if (profileClient) { customer = { id: profileClient.id, name: profileClient.name, phone: profileClient.phone || '', email: profileClient.email || '' }; renderCustomer(); } closeProfile(); toast('Customer attached to sale'); }
+  function profileAttach() { if (profileClient) { customer = { id: profileClient.id, name: profileClient.name, phone: profileClient.phone || '', email: profileClient.email || '' }; renderCustomer(); refreshCustomerPoints(); } closeProfile(); toast('Customer attached to sale'); }
 
   // Clients browser: opens with accounts that have balances; search finds anyone.
   let clientSearchTimer = null;
@@ -1908,6 +1959,25 @@
     if (isDemo()) { const k = 'reptipos-demo-' + coll; const list = demoGet(k); const i = list.findIndex(x => x.id === id); if (i >= 0) list[i] = { ...list[i], ...data }; else list.push({ id, ...data }); demoPut(k, list); return; }
     const { db, fns } = window.fb; await fns.setDoc(fns.doc(db, coll, id), data, { merge: true });
   }
+  async function fbGet(coll, id) {
+    if (isDemo()) { return demoGet('reptipos-demo-' + coll).find(x => x.id === id) || null; }
+    const { db, fns } = window.fb; const snap = await fns.getDoc(fns.doc(db, coll, id)); return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+  }
+  // ---- Loyalty points (1 point = R1; earn rate set in admin) ----
+  // The account is keyed on the customer's CELLPHONE NUMBER (normalised), so a
+  // shopper's points follow their phone number. Falls back to the Shopify id
+  // for customers with no phone on file.
+  function normPhone(p) { const d = String(p || '').replace(/\D/g, ''); if (!d) return ''; return d.startsWith('0') ? '27' + d.slice(1) : d; }
+  function loyaltyKey(c) { if (!c) return ''; return normPhone(c.phone) || (c.id ? 'id' + c.id : ''); }
+  async function loadPoints(c) {
+    const key = loyaltyKey(c); if (!key) return 0;
+    if (!isDemo() && !fbReady()) return 0;
+    try { const d = await fbGet('loyalty', key); return d ? Math.max(0, Number(d.points) || 0) : 0; } catch (e) { return 0; }
+  }
+  async function savePoints(c, points) {
+    const key = loyaltyKey(c); if (!key) return;
+    if (!isDemo() && !fbReady()) return;
+    try { await fbSet('loyalty', key, { key, phone: normPhone(c.phone), customerId: c.id ? String(c.id) : '', name: c.name || '', points: Math.max(0, Math.round(points)), updatedAt: new Date().toISOString() }); } catch (e) {} }
   async function fbList(coll, orderField, dir) {
     if (isDemo()) {
       const list = demoGet('reptipos-demo-' + coll);
@@ -2460,13 +2530,18 @@
     if (cart.length === 0) { toast('Cart is empty'); return; }
     saleInFlight = true;
     const c = computeCart();
-    const total = c.total; // cents (after discounts)
+    const total = c.total; // cents (after discounts + points)
     const items = c.lines.map(x => ({ variantId: x.variantId, name: x.p.name, sku: x.p.sku, listPriceCents: x.p.priceCents, priceCents: x.finalUnit, qty: x.qty, lineTotalCents: x.finalLine }));
+    // Loyalty: redeem what was applied, earn on what's paid (1 pt = R1).
+    const loyaltyCust = customer;
+    const redeemedCents = pointsRedeemCents;
+    const earnedPoints = loyaltyCust ? Math.floor((total / 100) * pointsPerRand()) : 0;
     const sale = {
       saleNumber: nextSaleNumber(),
       idemKey: uuid(),                 // idempotency key — same sale never creates two Shopify orders
       datetime: new Date().toISOString(),
       items, totalCents: total, discountCents: c.totalDisc, taxCents: taxPortionCents(total), taxLabel: settings().taxLabel, payment,
+      pointsRedeemedCents: redeemedCents, pointsEarned: earnedPoints,
       customer: customer ? { id: customer.id, name: customer.name } : null,
       staff: currentStaff ? currentStaff.name : null,
       shopifyOrder: null, synced: false
@@ -2496,11 +2571,18 @@
 
     // Record against the open register shift (cash-up).
     shiftRecordSale(sale);
+    // Loyalty: update the balance (subtract redeemed, add earned).
+    if (loyaltyCust && (redeemedCents > 0 || earnedPoints > 0)) {
+      const newBal = Math.max(0, customerPoints - Math.round(redeemedCents / 100) + earnedPoints);
+      savePoints(loyaltyCust, newBal);
+      if (earnedPoints > 0) toast('⭐ ' + loyaltyCust.name.split(' ')[0] + ' earned ' + earnedPoints + ' pts (bal ' + newBal + ')');
+    }
     // Reflect stock locally + reset.
     items.forEach(i => { const p = findProduct(i.variantId); if (p) p.qty = Math.max(0, (Number(p.qty) || 0) - i.qty); });
     cacheCatalogue();
     cart = [];
     cartDiscount = null;
+    pointsRedeemCents = 0; customerPoints = 0;
     customer = null; renderCustomer();
     renderCart(); renderGrid();
     if (isMobile()) mView('shop');
@@ -2591,6 +2673,8 @@
       ${sale.customer ? `<div class="c">Customer: ${esc(sale.customer.name)}</div>` : ''}
       <table>${rows}${sale.discountCents ? `<tr><td>Discount</td><td style="text-align:right">−${money(sale.discountCents)}</td></tr>` : ''}<tr class="tot"><td>TOTAL</td><td style="text-align:right">${money(sale.totalCents)}</td></tr>${sale.taxCents ? `<tr><td>incl. ${esc(sale.taxLabel || 'VAT')}</td><td style="text-align:right">${money(sale.taxCents)}</td></tr>` : ''}</table>
       <div class="c">Paid: ${esc(paymentSummary(sale.payment))}</div>
+      ${sale.pointsRedeemedCents ? `<div class="c">Points redeemed: −${money(sale.pointsRedeemedCents)}</div>` : ''}
+      ${sale.pointsEarned ? `<div class="c">⭐ Points earned: ${esc(sale.pointsEarned)}</div>` : ''}
       ${sale.shopifyOrder ? `<div class="c">Order ${esc(sale.shopifyOrder)}</div>` : ''}
       <div class="c" style="margin-top:8px">Thank you!</div>
       <div class="btns noprint">
@@ -2628,7 +2712,8 @@
     openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier, loadVendorSuppliers, receivePO, deletePO,
     openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, stAddItem, reconcileStocktake, exportStockCsv, exportStockXlsx, importStockFile, importCostsFile,
     openReorder, closeReorder, setReorderLevel, startPO, startBlankPO, poSetSupplier, poSearch, poAddItem, poBack, poSetQty, poSetCost, poRemove, sendPO,
-    lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings,
+    lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings, saveLoyaltySettings,
+    toggleRedeemPoints,
     flushQueue,
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
     custOpen, custClose, custClear, custSearch, custAttach, custCreate, custHistory, renderCustBody });
