@@ -46,7 +46,8 @@ async function accessToken() {
   return tokenCache.token;
 }
 
-async function shopify(path, { method = 'GET', body } = {}) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function shopify(path, { method = 'GET', body } = {}, _retry = 0) {
   const c = cfg();
   const token = await accessToken();
   const res = await fetch(`https://${c.domain}/admin/api/${API_VERSION}${path}`, {
@@ -54,6 +55,12 @@ async function shopify(path, { method = 'GET', body } = {}) {
     headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json', Accept: 'application/json' },
     body: body ? JSON.stringify(body) : undefined
   });
+  // Respect Shopify's REST rate limit: back off on 429 and retry a few times.
+  if (res.status === 429 && _retry < 6) {
+    const ra = Number(res.headers.get('Retry-After')) || 1;
+    await sleep(ra * 1000 + 250);
+    return shopify(path, { method, body }, _retry + 1);
+  }
   const text = await res.text();
   let json = null; try { json = text ? JSON.parse(text) : null; } catch { /* non-JSON */ }
   if (!res.ok) { const e = new Error(`Shopify ${method} ${path} (${res.status}): ${text.slice(0, 300)}`); e.status = res.status; throw e; }

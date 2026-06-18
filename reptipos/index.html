@@ -1596,22 +1596,29 @@
     stReconciling = true;
     const body = document.getElementById('stock-body');
     const lineItems = items.map(p => ({ inventoryItemId: p.inventoryItemId, counted: Math.round(Number(s.counts[p.variantId])), variantId: p.variantId }));
-    let done = 0; const chunk = 10; const report = [];
+    let done = 0, failed = 0; const chunk = 8; const report = []; const stillFailed = {};
     try {
       for (let i = 0; i < lineItems.length; i += chunk) {
         const batch = lineItems.slice(i, i + chunk);
-        await callFn({ action: 'setStock', lineItems: batch.map(b => ({ inventoryItemId: b.inventoryItemId, counted: b.counted })) });
-        batch.forEach(b => { const p = findProduct(b.variantId); const exp = p ? Number(p.qty) || 0 : 0; report.push({ name: p ? p.name : b.variantId, sku: p ? p.sku : '', expected: exp, counted: b.counted }); if (p) p.qty = b.counted; });
+        try {
+          await callFn({ action: 'setStock', lineItems: batch.map(b => ({ inventoryItemId: b.inventoryItemId, counted: b.counted })) });
+          batch.forEach(b => { const p = findProduct(b.variantId); const exp = p ? Number(p.qty) || 0 : 0; report.push({ name: p ? p.name : b.variantId, sku: p ? p.sku : '', expected: exp, counted: b.counted }); if (p) p.qty = b.counted; delete s.counts[b.variantId]; });
+        } catch (e) {
+          failed += batch.length; batch.forEach(b => { stillFailed[b.variantId] = true; });
+        }
         done += batch.length;
-        body.innerHTML = `<div class="empty" style="padding:2rem">Reconciling… ${done}/${lineItems.length}</div>`;
+        body.innerHTML = `<div class="empty" style="padding:2rem">Reconciling… ${done}/${lineItems.length}${failed ? '<br><span style="color:var(--warn)">' + failed + ' need retry</span>' : ''}</div>`;
       }
       cacheCatalogue(); renderGrid();
-      const record = { id: s.id, startedAt: s.startedAt, finishedAt: new Date().toISOString(), by: currentStaff ? currentStaff.name : '', scope: s.scope, items: report, countedCount: report.length, varianceCount: report.filter(r => r.counted !== r.expected).length };
-      try { const arr = JSON.parse(localStorage.getItem('reptipos-stocktakes') || '[]'); arr.unshift(record); localStorage.setItem('reptipos-stocktakes', JSON.stringify(arr.slice(0, 50))); } catch (e) {}
-      try { if (window.fb && !isDemo()) { const { db, fns } = window.fb; await fns.addDoc(fns.collection(db, 'stocktakes'), record); } } catch (e) {}
-      saveStocktake(null);
-      printStocktake(record);
-      toast('Stock take reconciled — ' + report.length + ' items updated');
+      if (report.length) {
+        const record = { id: s.id, startedAt: s.startedAt, finishedAt: new Date().toISOString(), by: currentStaff ? currentStaff.name : '', scope: s.scope, items: report, countedCount: report.length, varianceCount: report.filter(r => r.counted !== r.expected).length };
+        try { const arr = JSON.parse(localStorage.getItem('reptipos-stocktakes') || '[]'); arr.unshift(record); localStorage.setItem('reptipos-stocktakes', JSON.stringify(arr.slice(0, 50))); } catch (e) {}
+        try { if (window.fb && !isDemo()) { const { db, fns } = window.fb; await fns.addDoc(fns.collection(db, 'stocktakes'), record); } } catch (e) {}
+        printStocktake(record);
+      }
+      // Keep only the items that failed, so you can hit Reconcile again to retry just those.
+      if (failed) { saveStocktake(s); toast(report.length + ' updated · ' + failed + ' failed — tap Reconcile again to retry'); }
+      else { saveStocktake(null); toast('Stock take reconciled — ' + report.length + ' items updated'); }
       renderStocktake();
     } catch (e) { toast('Reconcile failed: ' + (e.message || e)); renderStocktake(); }
     finally { stReconciling = false; }
