@@ -5178,9 +5178,12 @@
     }
     return data[biz].productionStages;
   }
-  // Rocking chairs are built in Bellville production regardless of which business owns the order
+  // Rocking chairs AND footstools are upholstered on the Bellville line, so they are built in
+  // Bellville production regardless of which business owns the order (e.g. PinkFoot rockers +
+  // their matching footstools). Matches "rocking"/"rocker" or "foot stool"/"footstool".
   function isRockingOrder(o) {
-    return /rocking|rocker/i.test(o.category || '') || /rocking|rocker/i.test(o.product || '');
+    const re = /rocking|rocker|foot\s*stool|footstool/i;
+    return re.test(o.category || '') || re.test(o.product || '');
   }
   function findOrderAnyBiz(id) {
     for (const b of ['bellville', 'pinkfoot', 'repticube']) {
