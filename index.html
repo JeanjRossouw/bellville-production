@@ -285,6 +285,9 @@
     <span id="save-status" style="font-size:11px; color:var(--text-muted)">— unsaved</span>
     <button class="btn" onclick="undo()" id="undo-btn" title="Ctrl+Z" style="font-size:10px">↶ UNDO</button>
     <button class="btn btn-primary" onclick="saveData()">SAVE</button>
+    <button class="btn" onclick="exportBackup()" title="Download a full backup file of all data" style="font-size:10px">⬇️ BACKUP</button>
+    <button class="btn" onclick="document.getElementById('backup-file').click()" title="Restore from a backup file" style="font-size:10px">⬆️ RESTORE</button>
+    <input type="file" id="backup-file" accept=".json,application/json" style="display:none" onchange="importBackupFile(this)">
     <button class="btn" onclick="doLogout()" style="font-size:10px">🚪 LOG OUT</button>
     <button class="btn" onclick="clearAllData()" style="font-size:10px">CLEAR ALL</button>
   </div>
@@ -8358,6 +8361,35 @@ ${totalsSection}
     });
   }
 
+  // Count orders per business in a serialized payload (0 if unparseable)
+  function _orderCounts(payload) {
+    const out = { bellville: 0, pinkfoot: 0, repticube: 0 };
+    try { const d = JSON.parse(payload); ['bellville', 'pinkfoot', 'repticube'].forEach(b => { out[b] = ((d[b] || {}).orders || []).length; }); } catch (e) {}
+    return out;
+  }
+  // True if saving `next` would drop a business from having orders to zero
+  function _wouldWipeOrders(prev, next) {
+    if (!prev) return false;
+    const a = _orderCounts(prev), b = _orderCounts(next);
+    return ['bellville', 'pinkfoot', 'repticube'].some(k => a[k] > 0 && b[k] === 0);
+  }
+  // Rolling cloud backups: keep the last 20 snapshots in the `backups` collection.
+  let _lastBackupTs = 0;
+  async function _writeRollingBackup(payload) {
+    if (!window.firebaseDb || !window.firebaseFns) return;
+    const now = Date.now();
+    if (now - _lastBackupTs < 90 * 1000) return;   // at most one backup every 90s (Spark-quota friendly)
+    _lastBackupTs = now;
+    try {
+      const ptr = (parseInt(localStorage.getItem('backup-ptr') || '0', 10) || 0) % 20;
+      await window.firebaseFns.setDoc(window.firebaseFns.doc(window.firebaseDb, 'backups', 'bk_' + ptr), {
+        data: payload, at: new Date().toISOString(),
+        by: (currentUser && currentUser.email) || '', orders: _orderCounts(payload)
+      });
+      localStorage.setItem('backup-ptr', String((ptr + 1) % 20));
+    } catch (e) { console.warn('Rolling backup failed:', e); }
+  }
+
   function cloudSave() {
     if (!currentUser || !firebaseReady) return;
     // Debounce: wait 500ms after last change before saving
@@ -8365,6 +8397,17 @@ ${totalsSection}
     updateSyncStatus('☁ Saving…', 'info');
     saveTimeout = setTimeout(async () => {
       const serialized = JSON.stringify(data);
+      // GUARD: never silently overwrite the cloud with an all-orders-gone copy.
+      if (_wouldWipeOrders(lastSyncedPayload, serialized)) {
+        const was = _orderCounts(lastSyncedPayload);
+        const ok = confirm('⚠️ DATA-LOSS WARNING\n\nThis change would remove ALL orders from one or more businesses ' +
+          '(was: Bellville ' + was.bellville + ', PinkFoot ' + was.pinkfoot + ', ReptiCube ' + was.repticube + ') ' +
+          'and overwrite the shared cloud copy.\n\nIf you did NOT intend to delete every order, click Cancel.\n\nSave anyway?');
+        if (!ok) {
+          updateSyncStatus('✋ Save blocked — orders protected (reload to restore)', 'warn');
+          return;
+        }
+      }
       try {
         const docRef = window.firebaseFns.doc(window.firebaseDb, 'shared-data', 'production');
         await window.firebaseFns.setDoc(docRef, {
@@ -8374,6 +8417,7 @@ ${totalsSection}
         });
         lastSyncedPayload = serialized;
         updateSyncStatus('☁ Synced', 'success');
+        _writeRollingBackup(serialized);
       } catch (err) {
         console.error('Cloud save failed:', err);
         // Likely offline — data is already in localStorage and Firestore's IndexedDB queue.
@@ -8382,6 +8426,77 @@ ${totalsSection}
       }
     }, 500);
   }
+
+  // --- Manual backup / restore + recovery helpers --------------------------
+  function _ensureBizStructure() {
+    ['bellville', 'pinkfoot', 'repticube'].forEach(biz => {
+      if (!data[biz]) data[biz] = { orders: [], products: {}, inventory: {}, staff: [] };
+      data[biz].orders = data[biz].orders || [];
+      data[biz].products = data[biz].products || {};
+      data[biz].inventory = data[biz].inventory || {};
+      data[biz].staff = data[biz].staff || [];
+    });
+  }
+  function exportBackup() {
+    const payload = JSON.stringify(data);
+    const blob = new Blob([payload], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    a.href = url; a.download = 'production-backup-' + stamp + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (typeof toast === 'function') toast('Backup downloaded', 'success');
+  }
+  window.exportBackup = exportBackup;
+
+  function importBackupFile(input) {
+    const f = input.files && input.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = e => {
+      try {
+        const parsed = JSON.parse(e.target.result);
+        const c = _orderCounts(e.target.result);
+        if (!confirm('Restore this backup? It will REPLACE all current data with:\n\nBellville ' + c.bellville + ' orders, PinkFoot ' + c.pinkfoot + ' orders, ReptiCube ' + c.repticube + ' orders.\n\nContinue?')) { input.value = ''; return; }
+        if (typeof snapshotState === 'function') snapshotState();
+        data = parsed;
+        _ensureBizStructure();
+        localStorage.setItem('production-data', JSON.stringify(data));
+        saveData();
+        render();
+        if (typeof toast === 'function') toast('Backup restored', 'success', 4000);
+      } catch (err) { alert('Could not read backup file: ' + err.message); }
+      input.value = '';
+    };
+    r.readAsText(f);
+  }
+  window.importBackupFile = importBackupFile;
+
+  // Console recovery helpers (for support): list and restore cloud backups
+  window.listBackups = async function () {
+    const f = window.firebaseFns, db = window.firebaseDb;
+    const found = [];
+    for (let i = 0; i < 20; i++) {
+      try { const s = await f.getDoc(f.doc(db, 'backups', 'bk_' + i)); if (s.exists()) { const d = s.data(); found.push({ id: 'bk_' + i, at: d.at, by: d.by, orders: d.orders }); } } catch (e) {}
+    }
+    found.sort((a, b) => (a.at || '').localeCompare(b.at || ''));
+    console.table(found);
+    return found;
+  };
+  window.restoreBackup = async function (id) {
+    const f = window.firebaseFns, db = window.firebaseDb;
+    const s = await f.getDoc(f.doc(db, 'backups', id));
+    if (!s.exists()) { console.log('No such backup:', id); return; }
+    const payload = s.data().data;
+    const c = _orderCounts(payload);
+    if (!confirm('Restore ' + id + ' (' + s.data().at + ')?\nBellville ' + c.bellville + ', PinkFoot ' + c.pinkfoot + ', ReptiCube ' + c.repticube + ' orders. Replace current data?')) return;
+    data = JSON.parse(payload);
+    _ensureBizStructure();
+    localStorage.setItem('production-data', JSON.stringify(data));
+    saveData();
+    render();
+    console.log('Restored', id);
+  };
 
   // POS docs (one per business) are saved/synced independently of the main doc.
   function cloudSavePosBiz(biz) {
