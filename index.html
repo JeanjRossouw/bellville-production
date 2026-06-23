@@ -2150,12 +2150,21 @@
       document.getElementById('order-status').innerHTML = '✗ Select a category';
       return;
     }
-    
+
+    // Bellville builds PinkFoot's rocking chairs, so a PinkFoot rocking-chair New
+    // Order is routed onto Bellville's production board — it "filters through" to
+    // Bellville's planner / Active Orders, while keeping PinkFoot's sale details.
+    const BELLVILLE_BUILT_CATEGORIES = ['Rocking Chair', 'Foot stool'];
+    const routeToBellville = activeBiz === 'pinkfoot' && BELLVILLE_BUILT_CATEGORIES.includes(category);
+    const targetData = routeToBellville ? data.bellville : currentData();
+
     // Build unique ID using invoice + product
     const productSlug = product.replace(/[^a-z0-9]/gi, '').toUpperCase().substring(0, 20);
     const orderId = 'INV-' + invoice + '-' + productSlug;
-    if (currentData().orders.find(o => o.id === orderId)) {
-      document.getElementById('order-status').innerHTML = '✗ This product is already on invoice ' + invoice;
+    if (targetData.orders.find(o => o.id === orderId)) {
+      document.getElementById('order-status').innerHTML = routeToBellville
+        ? '✗ This product is already on Bellville production for invoice ' + invoice
+        : '✗ This product is already on invoice ' + invoice;
       return;
     }
     
@@ -2178,10 +2187,17 @@
       paymentStatus,
       outstanding
     };
+    // Keep the sale attributed to the originating business when routed to Bellville.
+    if (routeToBellville) {
+      order.saleBiz = activeBiz;
+      order.source = 'pinkfoot-routed';
+    }
 
     snapshotState();
-    currentData().orders.push(order);
-    document.getElementById('order-status').innerHTML = `✓ Order added (Due: ${dueDate})`;
+    targetData.orders.push(order);
+    document.getElementById('order-status').innerHTML = routeToBellville
+      ? `✓ Routed to Bellville production (Due: ${dueDate})`
+      : `✓ Order added (Due: ${dueDate})`;
     
     document.getElementById('intake-invoice').value = '';
     document.getElementById('intake-customer').value = '';
