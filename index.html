@@ -1100,6 +1100,21 @@
   // place so this is easy to re-restrict later by adding tab names back.
   const REPTICUBE_ONLY_TABS = [];
 
+  // The POS ("till") UI is only ever surfaced on a dedicated POS site/context —
+  // a `pos.` subdomain, the /pos path, or ?pos=1. On the production-floor site
+  // (e.g. bellville-production.netlify.app) POS is hidden entirely. The shared
+  // POS code stays in place so the dedicated POS site keeps working off the same
+  // data. Declared as a hoisted function so it's safe to call before IS_POS_MODE.
+  function isPosContext() {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get('pos') === '1') return true;
+      if (/(^|\/)pos(\/|$)/i.test(window.location.pathname)) return true;
+      if (/^pos\./i.test(window.location.hostname)) return true;
+    } catch (e) {}
+    return false;
+  }
+
   // Combined tab/section visibility — driven by BOTH role permissions AND the
   // active biz's allowed feature set. Called from switchBiz AND applyRolePermissions.
   function applyTabVisibility() {
@@ -1107,14 +1122,21 @@
       ? ROLE_PERMISSIONS[currentRole]
       : TAB_NAMES; // pre-login or unknown role: assume all
     const isReptiCube = activeBiz === 'repticube';
+    const posContext = isPosContext();
 
     document.querySelectorAll('.tab').forEach((tab, i) => {
       const tabName = TAB_NAMES[i];
       if (!tabName) return;
       const roleAllows = roleTabs.includes(tabName);
       const bizAllows = isReptiCube || !REPTICUBE_ONLY_TABS.includes(tabName);
-      tab.style.display = (roleAllows && bizAllows) ? '' : 'none';
+      // POS tab only on a dedicated POS site/context — never on the production site.
+      const posAllows = tabName !== 'pos' || posContext;
+      tab.style.display = (roleAllows && bizAllows && posAllows) ? '' : 'none';
     });
+
+    // POS sales summary card on the dashboard — shown on POS sites only.
+    const posDashCard = document.getElementById('pos-dash-card');
+    if (posDashCard) posDashCard.style.display = posContext ? '' : 'none';
 
     // Low-stock card and Materials-by-Week button: shown on all biz (gracefully
     // display "no BOM data" when no BOMs are set up — useful once Bellville BOMs land).
@@ -5533,15 +5555,7 @@ ${_PRODUCTION_PRINT_STYLES}
   // Boots a clean, full-screen, cashier-only POS — for a separate site/domain
   // (e.g. pos.repticube.co.za) that shares this codebase + backend, or via /pos
   // or ?pos=1 on the main site. Same engine, just a focused view.
-  const IS_POS_MODE = (function () {
-    try {
-      const sp = new URLSearchParams(window.location.search);
-      if (sp.get('pos') === '1') return true;
-      if (/(^|\/)pos(\/|$)/i.test(window.location.pathname)) return true;
-      if (/^pos\./i.test(window.location.hostname)) return true;
-    } catch (e) {}
-    return false;
-  })();
+  const IS_POS_MODE = isPosContext();
   // Lock the till to one business via ?biz=… or a business-named host (pos.repticube.*).
   const POS_LOCK_BIZ = (function () {
     try {
