@@ -892,6 +892,7 @@
         <span>🗓️ PRODUCTION PLANNER</span>
         <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
           <span style="font-size:11px; color:var(--text-muted); margin-right:0.5rem">Drag cards between weeks · or tap <strong>⋮</strong> to schedule</span>
+          <button class="btn" id="pull-pf-builds-btn" style="display:none" onclick="sweepPinkfootBuildsToBellville()" title="Move existing PinkFoot rocking-chair / foot-stool orders onto Bellville's board">⤵ Pull PinkFoot rockers/stools</button>
           <button class="btn" id="planner-mat-btn" onclick="printWeeklyMaterialRequirements()" title="Per-week raw materials forecast based on each order's BOM">📊 Materials by Week</button>
           <button class="btn" onclick="printPlannerSheetByWeek()" title="One A4 portrait page per week — for handing to individual foremen">🖨️ Print Per Week</button>
           <button class="btn btn-primary" onclick="printPlannerSheet()" title="All 4 weeks on one A4 landscape page — overview">🖨️ Print Plan</button>
@@ -6472,8 +6473,61 @@ ${_PRODUCTION_PRINT_STYLES}
     `;
 
     grid.innerHTML = html;
+
+    // Show the "pull PinkFoot rockers/stools" button only on Bellville and only
+    // when there are matching PinkFoot orders still waiting to be moved over.
+    const pullBtn = document.getElementById('pull-pf-builds-btn');
+    if (pullBtn) {
+      const pending = activeBiz === 'bellville' ? _pinkfootBuildsToPull().length : 0;
+      pullBtn.style.display = pending > 0 ? '' : 'none';
+      if (pending > 0) pullBtn.textContent = `⤵ Pull ${pending} PinkFoot rocker${pending !== 1 ? 's' : ''}/stool${pending !== 1 ? 's' : ''}`;
+    }
   }
   window.renderPlanner = renderPlanner;
+
+  // A PinkFoot order that Bellville actually builds — matched by the routed
+  // categories or by a rocking-chair / foot-stool product name (so orders entered
+  // before the Foot stool category existed are caught too).
+  function _isBellvilleBuildOrder(o) {
+    const cat = o.category || '';
+    if (cat === 'Rocking Chair' || cat === 'Foot stool') return true;
+    return /rocking chair|foot\s?stool/i.test(o.product || '');
+  }
+
+  // Existing PinkFoot rocking-chair / foot-stool orders not yet on Bellville's board.
+  function _pinkfootBuildsToPull() {
+    const pf = (data.pinkfoot && data.pinkfoot.orders) || [];
+    const bvIds = new Set(((data.bellville && data.bellville.orders) || []).map(o => o.id));
+    return pf.filter(o => _isBellvilleBuildOrder(o) && !bvIds.has(o.id));
+  }
+
+  // One-time sweep: move existing PinkFoot rocking-chair / foot-stool orders onto
+  // Bellville's production board so they show in the planner. Keeps each order's
+  // PinkFoot sale details (tagged saleBiz/source). Snapshot + cloud backup protect it.
+  function sweepPinkfootBuildsToBellville() {
+    const moves = _pinkfootBuildsToPull();
+    if (moves.length === 0) {
+      toast('Nothing to pull — no PinkFoot rocking chairs / foot stools found.', 'info');
+      return;
+    }
+    if (!confirm(`Move ${moves.length} PinkFoot rocking-chair / foot-stool order(s) onto Bellville's production board?\n\nThey keep their PinkFoot sale details and will appear in Bellville's Planner / Active Orders.\n\nSnapshot saved (Ctrl+Z reverts).`)) return;
+
+    snapshotState();
+    data.bellville.orders = data.bellville.orders || [];
+    const moveIds = new Set(moves.map(o => o.id));
+    moves.forEach(o => {
+      if (!o.saleBiz) o.saleBiz = 'pinkfoot';
+      o.source = o.source || 'pinkfoot-routed';
+      data.bellville.orders.push(o);
+    });
+    data.pinkfoot.orders = (data.pinkfoot.orders || []).filter(o => !moveIds.has(o.id));
+
+    saveData();
+    render();
+    if (typeof renderPlanner === 'function') renderPlanner();
+    toast(`Moved ${moves.length} order(s) to Bellville production.`, 'success', 5000);
+  }
+  window.sweepPinkfootBuildsToBellville = sweepPinkfootBuildsToBellville;
 
   function planItemCard(o, showPlanDate) {
     const today = new Date(); today.setHours(0, 0, 0, 0);
