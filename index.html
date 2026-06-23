@@ -426,6 +426,7 @@
             <option value="Cot">Cot</option>
             <option value="Compactum">Compactum</option>
             <option value="Rocking Chair">Rocking Chair</option>
+            <option value="Foot stool">Foot stool</option>
             <option value="Other">Other</option>
           </select>
         </div>
@@ -3764,9 +3765,10 @@ ${_PRODUCTION_PRINT_STYLES}
     ['Bed', 'Salone Double,Salone Queen,Salone King,California Double,California Queen,California King,Trendy Double,Trendy Queen,Trendy King,Studio Double,Studio Queen,Studio King,Bold Double,Bold Queen,Bold King'],
     ['Headboard', 'Plain Single,Plain 3 Quarter,Plain Double,Plain Queen,Plain King,Panels Single,Panels 3 Quarter,Panels Double,Panels Queen,Panels King,Deep Button Single,Deep Button 3 Quarter,Deep Button Double,Deep Button Queen,Deep Button King,Framed Deep Button Single,Framed Deep Button 3 Quarter,Framed Deep Button Double,Framed Deep Button Queen,Framed Deep Button King,Wingback Single,Wingback 3 Quarter,Wingback Double,Wingback Queen,Wingback King,Limbo Single,Limbo 3 Quarter,Limbo Double,Limbo Queen,Limbo King,California Single,California 3 Quarter,California Double,California Queen,California King'],
     ['Bed Box', 'Fluted Double,Fluted Queen,Fluted King,Plain Double,Plain Queen,Plain King,Deep Button Fluted Double,Deep Button Fluted Queen,Deep Button Fluted King'],
-    // Rocking chairs are now built at Bellville too. Models mirror the PinkFoot
-    // rocking-chair lineup; BOMs start empty and are filled in via the BOM tab.
-    ['Rocking Chair', 'Feeding,Dream,Studio,Tufted,King,Rolanda,Donnalee,Lora,Swag']
+    // Rocking chairs and foot stools are now built at Bellville too. Models mirror
+    // the PinkFoot lineup; BOMs start empty and are filled in via the BOM tab.
+    ['Rocking Chair', 'Feeding,Dream,Studio,Tufted,King,Rolanda,Donnalee,Lora,Swag'],
+    ['Foot stool', 'Feeding,Dream,Studio,Tufted,King,Rolanda,Donnalee,Lora,Swag']
   ];
 
   // ReptiCube defaults — sourced from repticube_costing_input.xlsx (Finance / Documents)
@@ -3983,8 +3985,9 @@ ${_PRODUCTION_PRINT_STYLES}
 
     // Bellville now also builds rocking chairs. The seed above only runs when a
     // business has no productBoms yet, so existing live data needs this additive
-    // top-up to pick up the new Rocking Chair group without a full reseed.
+    // top-up to pick up the new groups without a full reseed.
     ensureBellvilleRockingChairs();
+    ensureBellvilleFootStools();
   }
 
   // Additive + idempotent: adds Bellville's rocking-chair products if they're
@@ -4004,6 +4007,22 @@ ${_PRODUCTION_PRINT_STYLES}
       if (!biz.productBoms[key]) biz.productBoms[key] = { category: 'Rocking Chair', materials: {} };
     });
     biz._rockingChairsSeeded = true;
+  }
+
+  // Same additive + idempotent top-up for Bellville's foot stools (separate flag
+  // so data already seeded with rocking chairs still picks up this new group).
+  function ensureBellvilleFootStools() {
+    const biz = data.bellville;
+    if (!biz || biz._footStoolsSeeded) return;
+    if (typeof DEFAULT_PRODUCT_GROUPS_BELLVILLE === 'undefined') return;
+    const group = DEFAULT_PRODUCT_GROUPS_BELLVILLE.find(([cat]) => cat === 'Foot stool');
+    if (!group) return;
+    biz.productBoms = biz.productBoms || {};
+    group[1].split(',').forEach(n => {
+      const key = 'Foot stool — ' + n.trim();
+      if (!biz.productBoms[key]) biz.productBoms[key] = { category: 'Foot stool', materials: {} };
+    });
+    biz._footStoolsSeeded = true;
   }
 
   // Merge the ReptiCube defaults into the live data without overwriting customizations.
