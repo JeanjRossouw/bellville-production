@@ -3747,7 +3747,10 @@ ${_PRODUCTION_PRINT_STYLES}
     ['Dining Chair', 'Elegant,Classic,Casual,Layla'],
     ['Bed', 'Salone Double,Salone Queen,Salone King,California Double,California Queen,California King,Trendy Double,Trendy Queen,Trendy King,Studio Double,Studio Queen,Studio King,Bold Double,Bold Queen,Bold King'],
     ['Headboard', 'Plain Single,Plain 3 Quarter,Plain Double,Plain Queen,Plain King,Panels Single,Panels 3 Quarter,Panels Double,Panels Queen,Panels King,Deep Button Single,Deep Button 3 Quarter,Deep Button Double,Deep Button Queen,Deep Button King,Framed Deep Button Single,Framed Deep Button 3 Quarter,Framed Deep Button Double,Framed Deep Button Queen,Framed Deep Button King,Wingback Single,Wingback 3 Quarter,Wingback Double,Wingback Queen,Wingback King,Limbo Single,Limbo 3 Quarter,Limbo Double,Limbo Queen,Limbo King,California Single,California 3 Quarter,California Double,California Queen,California King'],
-    ['Bed Box', 'Fluted Double,Fluted Queen,Fluted King,Plain Double,Plain Queen,Plain King,Deep Button Fluted Double,Deep Button Fluted Queen,Deep Button Fluted King']
+    ['Bed Box', 'Fluted Double,Fluted Queen,Fluted King,Plain Double,Plain Queen,Plain King,Deep Button Fluted Double,Deep Button Fluted Queen,Deep Button Fluted King'],
+    // Rocking chairs are now built at Bellville too. Models mirror the PinkFoot
+    // rocking-chair lineup; BOMs start empty and are filled in via the BOM tab.
+    ['Rocking Chair', 'Feeding,Dream,Studio,Tufted,King,Rolanda,Donnalee,Lora,Swag']
   ];
 
   // ReptiCube defaults — sourced from repticube_costing_input.xlsx (Finance / Documents)
@@ -3961,8 +3964,32 @@ ${_PRODUCTION_PRINT_STYLES}
         data[biz].bomTemplates = {}; // category -> { matId -> qty }
       }
     });
+
+    // Bellville now also builds rocking chairs. The seed above only runs when a
+    // business has no productBoms yet, so existing live data needs this additive
+    // top-up to pick up the new Rocking Chair group without a full reseed.
+    ensureBellvilleRockingChairs();
   }
-  
+
+  // Additive + idempotent: adds Bellville's rocking-chair products if they're
+  // missing. Never removes or overwrites an existing product or its BOM. Sourced
+  // from DEFAULT_PRODUCT_GROUPS_BELLVILLE so there's a single source of truth. A
+  // per-biz flag (persisted on the next normal save) stops a model a user later
+  // deletes from being resurrected on reload.
+  function ensureBellvilleRockingChairs() {
+    const biz = data.bellville;
+    if (!biz || biz._rockingChairsSeeded) return;
+    if (typeof DEFAULT_PRODUCT_GROUPS_BELLVILLE === 'undefined') return;
+    const group = DEFAULT_PRODUCT_GROUPS_BELLVILLE.find(([cat]) => cat === 'Rocking Chair');
+    if (!group) return;
+    biz.productBoms = biz.productBoms || {};
+    group[1].split(',').forEach(n => {
+      const key = 'Rocking Chair — ' + n.trim();
+      if (!biz.productBoms[key]) biz.productBoms[key] = { category: 'Rocking Chair', materials: {} };
+    });
+    biz._rockingChairsSeeded = true;
+  }
+
   // Merge the ReptiCube defaults into the live data without overwriting customizations.
   // Used by the "📥 Load ReptiCube Defaults" button on the BOM tab — needed when
   // the cloud doc already has something in it (so initBomDefaults' empty-only seed skipped).
