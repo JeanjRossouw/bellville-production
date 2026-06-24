@@ -893,7 +893,6 @@
         <span>🗓️ PRODUCTION PLANNER</span>
         <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
           <span style="font-size:11px; color:var(--text-muted); margin-right:0.5rem">Drag cards between weeks · or tap <strong>⋮</strong> to schedule</span>
-          <button class="btn" id="pull-pf-builds-btn" style="display:none" onclick="sweepPinkfootBuildsToBellville()" title="Move existing PinkFoot rocking-chair / foot-stool orders onto Bellville's board">⤵ Pull PinkFoot rockers/stools</button>
           <button class="btn" id="planner-mat-btn" onclick="printWeeklyMaterialRequirements()" title="Per-week raw materials forecast based on each order's BOM">📊 Materials by Week</button>
           <button class="btn" onclick="printPlannerSheetByWeek()" title="One A4 portrait page per week — for handing to individual foremen">🖨️ Print Per Week</button>
           <button class="btn btn-primary" onclick="printPlannerSheet()" title="All 4 weeks on one A4 landscape page — overview">🖨️ Print Plan</button>
@@ -2154,26 +2153,17 @@
       return;
     }
 
-    // Bellville builds PinkFoot's rocking chairs, so a PinkFoot rocking-chair New
-    // Order is routed onto Bellville's production board — it "filters through" to
-    // Bellville's planner / Active Orders, while keeping PinkFoot's sale details.
-    const BELLVILLE_BUILT_CATEGORIES = ['Rocking Chair', 'Foot stool'];
-    const routeToBellville = activeBiz === 'pinkfoot' && BELLVILLE_BUILT_CATEGORIES.includes(category);
-    const targetData = routeToBellville ? data.bellville : currentData();
-
     // Build unique ID using invoice + product
     const productSlug = product.replace(/[^a-z0-9]/gi, '').toUpperCase().substring(0, 20);
     const orderId = 'INV-' + invoice + '-' + productSlug;
-    if (targetData.orders.find(o => o.id === orderId)) {
-      document.getElementById('order-status').innerHTML = routeToBellville
-        ? '✗ This product is already on Bellville production for invoice ' + invoice
-        : '✗ This product is already on invoice ' + invoice;
+    if (currentData().orders.find(o => o.id === orderId)) {
+      document.getElementById('order-status').innerHTML = '✗ This product is already on invoice ' + invoice;
       return;
     }
-    
+
     const today = new Date().toISOString().split('T')[0];
     const dueDate = new Date(Date.now() + 28 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    
+
     const order = {
       id: orderId,
       invoice,
@@ -2190,17 +2180,10 @@
       paymentStatus,
       outstanding
     };
-    // Keep the sale attributed to the originating business when routed to Bellville.
-    if (routeToBellville) {
-      order.saleBiz = activeBiz;
-      order.source = 'pinkfoot-routed';
-    }
 
     snapshotState();
-    targetData.orders.push(order);
-    document.getElementById('order-status').innerHTML = routeToBellville
-      ? `✓ Routed to Bellville production (Due: ${dueDate})`
-      : `✓ Order added (Due: ${dueDate})`;
+    currentData().orders.push(order);
+    document.getElementById('order-status').innerHTML = `✓ Order added (Due: ${dueDate})`;
     
     document.getElementById('intake-invoice').value = '';
     document.getElementById('intake-customer').value = '';
@@ -6424,8 +6407,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const grid = document.getElementById('planner-grid');
     if (!grid) return; // section never mounted
 
-    const biz = currentData();
-    const orders = (biz.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done');
+    const orders = _plannerOrders().filter(o => o.status !== 'delivered' && o.status !== 'done');
 
     const todayMonday = getMondayOf(new Date());
     const weeks = [0, 1, 2, 3].map(i => _addDaysIso(todayMonday, i * 7));
@@ -6491,61 +6473,62 @@ ${_PRODUCTION_PRINT_STYLES}
     `;
 
     grid.innerHTML = html;
-
-    // Show the "pull PinkFoot rockers/stools" button only on Bellville and only
-    // when there are matching PinkFoot orders still waiting to be moved over.
-    const pullBtn = document.getElementById('pull-pf-builds-btn');
-    if (pullBtn) {
-      const pending = activeBiz === 'bellville' ? _pinkfootBuildsToPull().length : 0;
-      pullBtn.style.display = pending > 0 ? '' : 'none';
-      if (pending > 0) pullBtn.textContent = `⤵ Pull ${pending} PinkFoot rocker${pending !== 1 ? 's' : ''}/stool${pending !== 1 ? 's' : ''}`;
-    }
   }
   window.renderPlanner = renderPlanner;
 
-  // A PinkFoot order that Bellville actually builds — matched by the routed
-  // categories or by a rocking-chair / foot-stool product name (so orders entered
-  // before the Foot stool category existed are caught too).
+  // A PinkFoot order that Bellville actually builds — matched by category or by a
+  // rocking-chair / foot-stool product name (catches orders entered before the
+  // Foot stool category existed too).
   function _isBellvilleBuildOrder(o) {
     const cat = o.category || '';
     if (cat === 'Rocking Chair' || cat === 'Foot stool') return true;
     return /rocking chair|foot\s?stool/i.test(o.product || '');
   }
 
-  // Existing PinkFoot rocking-chair / foot-stool orders not yet on Bellville's board.
-  function _pinkfootBuildsToPull() {
-    const pf = (data.pinkfoot && data.pinkfoot.orders) || [];
-    const bvIds = new Set(((data.bellville && data.bellville.orders) || []).map(o => o.id));
-    return pf.filter(o => _isBellvilleBuildOrder(o) && !bvIds.has(o.id));
+  // Orders the planner shows for the active business. Bellville ALSO plans the
+  // rocking chairs / foot stools that PinkFoot sells — they stay PinkFoot orders
+  // (so PinkFoot's Active Orders still lists them); this is a planner view only and
+  // does not move them.
+  function _plannerOrders() {
+    const own = (currentData().orders || []);
+    if (activeBiz !== 'bellville') return own;
+    const pf = ((data.pinkfoot && data.pinkfoot.orders) || []).filter(_isBellvilleBuildOrder);
+    return own.concat(pf);
   }
+  window._plannerOrders = _plannerOrders;
 
-  // One-time sweep: move existing PinkFoot rocking-chair / foot-stool orders onto
-  // Bellville's production board so they show in the planner. Keeps each order's
-  // PinkFoot sale details (tagged saleBiz/source). Snapshot + cloud backup protect it.
-  function sweepPinkfootBuildsToBellville() {
-    const moves = _pinkfootBuildsToPull();
-    if (moves.length === 0) {
-      toast('Nothing to pull — no PinkFoot rocking chairs / foot stools found.', 'info');
-      return;
+  // Find a planner order by id across the active biz AND (on Bellville) the PinkFoot
+  // builds it plans. Returns the live object so scheduling persists in its home biz.
+  function _findPlannerOrder(id) {
+    let o = (currentData().orders || []).find(x => x.id === id);
+    if (!o && activeBiz === 'bellville') {
+      o = ((data.pinkfoot && data.pinkfoot.orders) || []).find(x => x.id === id && _isBellvilleBuildOrder(x));
     }
-    if (!confirm(`Move ${moves.length} PinkFoot rocking-chair / foot-stool order(s) onto Bellville's production board?\n\nThey keep their PinkFoot sale details and will appear in Bellville's Planner / Active Orders.\n\nSnapshot saved (Ctrl+Z reverts).`)) return;
-
-    snapshotState();
-    data.bellville.orders = data.bellville.orders || [];
-    const moveIds = new Set(moves.map(o => o.id));
-    moves.forEach(o => {
-      if (!o.saleBiz) o.saleBiz = 'pinkfoot';
-      o.source = o.source || 'pinkfoot-routed';
-      data.bellville.orders.push(o);
-    });
-    data.pinkfoot.orders = (data.pinkfoot.orders || []).filter(o => !moveIds.has(o.id));
-
-    saveData();
-    render();
-    if (typeof renderPlanner === 'function') renderPlanner();
-    toast(`Moved ${moves.length} order(s) to Bellville production.`, 'success', 5000);
+    return o || null;
   }
-  window.sweepPinkfootBuildsToBellville = sweepPinkfootBuildsToBellville;
+
+  // Cleanup for the old behaviour, which MOVED PinkFoot rocking-chair / foot-stool
+  // orders onto Bellville's board. They now stay PinkFoot orders (the planner shows
+  // them via _plannerOrders), so move any previously-routed ones back to PinkFoot.
+  // Idempotent: returns true only when it actually moved something.
+  function _restoreRoutedBuildsToPinkfoot() {
+    const bv = (data.bellville && data.bellville.orders) || [];
+    const routed = bv.filter(o => o && (o.source === 'pinkfoot-routed' || o.saleBiz === 'pinkfoot'));
+    if (!routed.length) return false;
+    data.pinkfoot = data.pinkfoot || { orders: [] };
+    data.pinkfoot.orders = data.pinkfoot.orders || [];
+    const pfIds = new Set(data.pinkfoot.orders.map(o => o.id));
+    const movedIds = new Set();
+    routed.forEach(o => {
+      delete o.source;
+      delete o.saleBiz;
+      if (!pfIds.has(o.id)) data.pinkfoot.orders.push(o);
+      movedIds.add(o.id);
+    });
+    data.bellville.orders = bv.filter(o => !movedIds.has(o.id));
+    return true;
+  }
+  window._restoreRoutedBuildsToPinkfoot = _restoreRoutedBuildsToPinkfoot;
 
   function planItemCard(o, showPlanDate) {
     const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -6665,7 +6648,7 @@ ${_PRODUCTION_PRINT_STYLES}
 
   // ----- Mutation: shared by drag handlers AND tap menu -----
   function setPlanWeek(orderId, mondayIso) {
-    const order = currentData().orders.find(o => o.id === orderId);
+    const order = _findPlannerOrder(orderId);
     if (!order) { closePlanMenu(); return; }
     // Normalize: null/'' = unschedule. Anything else gets snapped to Monday.
     let normalized = null;
@@ -6695,7 +6678,7 @@ ${_PRODUCTION_PRINT_STYLES}
 
   function openPlanMenu(orderId, anchorEl) {
     closePlanMenu();
-    const order = currentData().orders.find(o => o.id === orderId);
+    const order = _findPlannerOrder(orderId);
     if (!order) return;
 
     const w0 = getMondayOf(new Date());
@@ -6788,7 +6771,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const biz = activeBiz;
     const bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
 
-    let orders = (data[biz]?.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done');
+    let orders = _plannerOrders().filter(o => o.status !== 'delivered' && o.status !== 'done');
     if (orders.length === 0) {
       alert('No active orders to print.');
       return;
@@ -6910,7 +6893,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const biz = activeBiz;
     const bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
 
-    let orders = (data[biz]?.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done');
+    let orders = _plannerOrders().filter(o => o.status !== 'delivered' && o.status !== 'done');
     if (orders.length === 0) {
       alert('No active orders to print.');
       return;
@@ -7033,7 +7016,7 @@ ${pages.join('\n')}
     const biz = currentData();
     const bizName = ({ bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' })[activeBiz] || String(activeBiz).toUpperCase();
 
-    const orders = (biz.orders || []).filter(o => o.status !== 'delivered' && o.status !== 'done');
+    const orders = _plannerOrders().filter(o => o.status !== 'delivered' && o.status !== 'done');
     if (orders.length === 0) {
       alert('No active orders to forecast materials for.');
       return;
@@ -8495,6 +8478,11 @@ ${totalsSection}
         if (migratePosFromData()) {
           localStorage.setItem('pos-data', JSON.stringify(posStore));
           ['bellville', 'pinkfoot', 'repticube'].forEach(b => cloudSavePosBiz(b));
+          saveData();
+        }
+        // Migrate away from the old "route to Bellville" behaviour: rocking chairs /
+        // foot stools live with PinkFoot again (the planner shows them cross-biz).
+        if (typeof _restoreRoutedBuildsToPinkfoot === 'function' && _restoreRoutedBuildsToPinkfoot()) {
           saveData();
         }
         localStorage.setItem('production-data', JSON.stringify(data));
