@@ -6485,15 +6485,21 @@ ${_PRODUCTION_PRINT_STYLES}
     return /rocking chair|foot\s?stool/i.test(o.product || '');
   }
 
-  // Orders the planner shows for the active business. Bellville ALSO plans the
-  // rocking chairs / foot stools that PinkFoot sells — they stay PinkFoot orders
-  // (so PinkFoot's Active Orders still lists them); this is a planner view only and
-  // does not move them.
+  // Orders the planner shows for the active business. Rocking chairs / foot stools
+  // are planned at BELLVILLE only: Bellville's planner pulls in PinkFoot's (they
+  // stay PinkFoot orders — Active Orders still lists them — this is a view only and
+  // does not move them), and PinkFoot's own planner leaves them out.
   function _plannerOrders() {
     const own = (currentData().orders || []);
-    if (activeBiz !== 'bellville') return own;
-    const pf = ((data.pinkfoot && data.pinkfoot.orders) || []).filter(_isBellvilleBuildOrder);
-    return own.concat(pf);
+    if (activeBiz === 'bellville') {
+      const pf = ((data.pinkfoot && data.pinkfoot.orders) || []).filter(_isBellvilleBuildOrder);
+      return own.concat(pf);
+    }
+    if (activeBiz === 'pinkfoot') {
+      // Planned at Bellville, so keep them out of PinkFoot's planner.
+      return own.filter(o => !_isBellvilleBuildOrder(o));
+    }
+    return own;
   }
   window._plannerOrders = _plannerOrders;
 
