@@ -3320,7 +3320,11 @@ ${_PRODUCTION_PRINT_STYLES}
             <div style="font-size:16px; font-weight:700">${s.name}</div>
             <div style="font-size:11px; color:var(--text-muted)">${s.role || ''} ${s.phone ? '• 📱 ' + s.phone : ''}</div>
           </div>
-          <div style="display:flex; gap:0.5rem">
+          <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center">
+            <span style="font-size:11px; color:${s.tagCode ? 'var(--success,#166534)' : 'var(--text-muted)'}">${s.tagCode ? '🔖 tag registered' : '🔖 no tag'}</span>
+            <button class="btn btn-sm" onclick="registerStaffTag('${s.id}')" title="Scan a physical tag with the camera">📷 Register tag</button>
+            <button class="btn btn-sm" onclick="typeStaffTag('${s.id}')" title="Type or USB-scan the tag code">⌨️</button>
+            ${s.tagCode ? `<button class="btn btn-sm" onclick="clearStaffTag('${s.id}')" title="Remove this tag">✕ tag</button>` : ''}
             <button class="btn btn-sm" style="background:#25D366; color:#fff; border-color:#25D366" onclick="msgStaff('${s.id}')">📱 MESSAGE</button>
             <button class="btn btn-sm btn-danger" onclick="deleteStaff('${s.id}')">DEL</button>
           </div>
@@ -3338,6 +3342,53 @@ ${_PRODUCTION_PRINT_STYLES}
     const phone = formatPhone(s.phone);
     window.open(`https://wa.me/${phone}`, '_blank');
   }
+
+  // ---- Register a physical tag (its own QR) to a staff member ----
+  function _assignStaffTag(id, rawCode) {
+    const code = (rawCode || '').trim();
+    if (!code) return;
+    const staffList = currentData().staff || [];
+    const target = staffList.find(x => x.id === id);
+    if (!target) return;
+    const clash = staffList.find(x => x.id !== id && x.tagCode === code);
+    if (clash) {
+      if (!confirm('That tag is already registered to ' + clash.name + '.\n\nMove it to ' + target.name + '?')) return;
+      delete clash.tagCode;
+    }
+    snapshotState();
+    target.tagCode = code;
+    saveData();
+    render();
+    if (typeof toast === 'function') toast('🔖 Tag registered to ' + target.name, 'success', 2200);
+  }
+  function registerStaffTag(id) {
+    const s = (currentData().staff || []).find(x => x.id === id);
+    if (!s) return;
+    if (typeof startQrCamera !== 'function') { typeStaffTag(id); return; }
+    startQrCamera(function (code) {
+      if (typeof woodworkStopCamera === 'function') woodworkStopCamera();
+      _assignStaffTag(id, code);
+    });
+  }
+  window.registerStaffTag = registerStaffTag;
+  function typeStaffTag(id) {
+    const s = (currentData().staff || []).find(x => x.id === id);
+    if (!s) return;
+    const code = prompt('Scan or type the tag code for ' + s.name + ':', s.tagCode || '');
+    if (code == null) return;
+    _assignStaffTag(id, code);
+  }
+  window.typeStaffTag = typeStaffTag;
+  function clearStaffTag(id) {
+    const s = (currentData().staff || []).find(x => x.id === id);
+    if (!s || !s.tagCode) return;
+    if (!confirm('Remove the tag from ' + s.name + '?')) return;
+    snapshotState();
+    delete s.tagCode;
+    saveData();
+    render();
+  }
+  window.clearStaffTag = clearStaffTag;
   
   function broadcastStaff() {
     const msg = document.getElementById('broadcast-msg').value.trim();
@@ -6819,7 +6870,7 @@ ${_PRODUCTION_PRINT_STYLES}
     if (code === _wwLastScanCode && (now - _wwLastScanAt) < 2500) return; // ignore rapid repeats
     _wwLastScanCode = code; _wwLastScanAt = now;
 
-    const staff = ((data.pinkfoot && data.pinkfoot.staff) || []).find(s => s.id === code);
+    const staff = ((data.pinkfoot && data.pinkfoot.staff) || []).find(s => s.tagCode === code || s.id === code);
     if (staff) {
       woodworkSignIn(staff.id); // sign in + unlock the station
       return;
@@ -6855,8 +6906,9 @@ ${_PRODUCTION_PRINT_STYLES}
   }
 
   let _wwCam = null;
-  async function woodworkStartCamera() {
+  async function startQrCamera(onCode) {
     if (_wwCam) return;
+    const handler = (typeof onCode === 'function') ? onCode : woodworkScan;
     let jsQR;
     try { jsQR = await _ensureJsQR(); } catch (e) { alert(e && e.message ? e.message : 'QR scanner failed to load.'); return; }
     let stream;
@@ -6885,7 +6937,7 @@ ${_PRODUCTION_PRINT_STYLES}
     document.body.appendChild(overlay);
     video.srcObject = stream;
     try { await video.play(); } catch (e) {}
-    _wwCam = { stream, overlay, video, canvas, ctx, jsQR, status, timer: null, active: true };
+    _wwCam = { stream, overlay, video, canvas, ctx, jsQR, status, onCode: handler, timer: null, active: true };
     const tick = function () {
       if (!_wwCam || !_wwCam.active) return;
       const v = _wwCam.video;
@@ -6899,7 +6951,7 @@ ${_PRODUCTION_PRINT_STYLES}
           const code = _wwCam.jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
           if (code && code.data) {
             const val = code.data.trim();
-            if (val) { _wwCam.status.textContent = 'Scanned: ' + val; woodworkScan(val); }
+            if (val) { _wwCam.status.textContent = 'Scanned: ' + val; _wwCam.onCode(val); }
           }
         }
       }
@@ -6907,6 +6959,8 @@ ${_PRODUCTION_PRINT_STYLES}
     };
     tick();
   }
+  window.startQrCamera = startQrCamera;
+  function woodworkStartCamera() { startQrCamera(woodworkScan); }
   window.woodworkStartCamera = woodworkStartCamera;
   function woodworkStopCamera() {
     if (!_wwCam) return;
