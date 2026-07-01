@@ -6635,14 +6635,14 @@ ${_PRODUCTION_PRINT_STYLES}
     el.innerHTML = WOODWORK_STAGES.map((stage, i) => {
       const cards = byStage[stage].slice().sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
       const isLast = i === WOODWORK_STAGES.length - 1;
-      const nextLabel = isLast ? 'Finish ✓' : '✓ ' + _escape(WOODWORK_STAGES[i + 1]);
+      const doneLabel = isLast ? '✓ Done — finish' : '✓ Done';
       const cardsHtml = cards.map(o => `
         <div style="border:1px solid var(--border,#ddd); border-radius:6px; padding:6px; font-size:12px; background:#fff">
           <div style="font-weight:700">#${_escape(o.invoice || o.id)}</div>
           <div style="line-height:1.2">${_escape(o.product || '')}${o.qty > 1 ? ' × ' + o.qty : ''}</div>
           <div style="color:var(--text-muted,#888); font-size:11px">👤 ${_escape(o.customer || '')}</div>
           ${o.dueDate ? `<div style="color:var(--text-muted,#888); font-size:11px">Due ${_escape(o.dueDate)}</div>` : ''}
-          <button class="btn btn-sm btn-primary" style="margin-top:6px; width:100%; font-size:11px" onclick="woodworkAdvance('${_escape(o.id)}')">${nextLabel}</button>
+          <button class="btn btn-sm btn-primary" style="margin-top:6px; width:100%; font-size:11px" onclick="woodworkAdvance('${_escape(o.id)}')">${doneLabel}</button>
           <button class="btn btn-sm" style="margin-top:4px; width:100%; font-size:11px" onclick="woodworkPrintStickers('${_escape(o.id)}')" title="Print QR stickers for the parts of this order">🏷️ Stickers</button>
         </div>`).join('') || '<div class="empty" style="font-size:11px; padding:6px 0">—</div>';
       return `
