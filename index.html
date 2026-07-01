@@ -908,19 +908,33 @@
 
   <!-- WOODWORK production line (PinkFoot) -->
   <div id="section-woodwork" class="section">
-    <div class="card">
+    <!-- LOCKED sign-in station -->
+    <div class="card" id="woodwork-lock" style="text-align:center; padding:1.5rem 1rem">
+      <div style="font-size:44px; line-height:1">🔒</div>
+      <div style="font-size:20px; font-weight:900; margin:8px 0 4px">Scan your tag to start</div>
+      <div style="font-size:13px; color:var(--text-muted); margin-bottom:14px">The board is locked. Scan your badge to sign in — then pick your next item.</div>
+      <div style="display:flex; gap:0.5rem; align-items:center; justify-content:center; flex-wrap:wrap">
+        <input id="woodwork-scan" placeholder="Scan badge…" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault(); woodworkScan(this.value); this.value='';}" style="min-width:180px">
+        <button class="btn btn-primary" onclick="woodworkStartCamera()">📷 Scan with camera</button>
+      </div>
+      <div style="margin-top:14px; font-size:12px; color:var(--text-muted)">
+        No badge? <select id="woodwork-manual" onchange="if(this.value){woodworkSignIn(this.value)}" style="min-width:150px"><option value="">— pick your name —</option></select>
+        &nbsp;·&nbsp; <button class="btn btn-sm" onclick="woodworkPrintStaffTags()" title="Print a QR sign-in badge for each staff member">🔖 Staff tags</button>
+      </div>
+    </div>
+
+    <!-- BOARD (shown once signed in) -->
+    <div class="card" id="woodwork-board-card" style="display:none">
       <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
-        <span>🪵 WOODWORK — PRODUCTION LINE</span>
+        <span>🪵 WOODWORK — <span id="woodwork-whoami" style="color:var(--accent,#8b4513)"></span></span>
         <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
-          <label style="font-size:12px; color:var(--text-muted)">Working as:</label>
-          <select id="woodwork-worker" onchange="woodworkSetWorker(this.value)" style="min-width:150px"></select>
-          <input id="woodwork-scan" placeholder="Scan badge / item…" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault(); woodworkScan(this.value); this.value='';}" style="min-width:150px">
-          <button class="btn btn-sm" onclick="woodworkStartCamera()" title="Scan with the device camera">📷 Camera</button>
-          <button class="btn btn-sm" onclick="woodworkPrintStaffTags()" title="Print a QR sign-in badge for each staff member">🔖 Staff tags</button>
+          <input id="woodwork-scan2" placeholder="Scan item…" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault(); woodworkScan(this.value); this.value='';}" style="min-width:140px">
+          <button class="btn btn-sm" onclick="woodworkStartCamera()" title="Scan an item with the camera">📷 Camera</button>
+          <button class="btn btn-sm btn-danger" onclick="woodworkLock()" title="Sign out and lock for the next person">🔒 Sign out</button>
         </div>
       </div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:0.75rem">
-        <strong>Scan your badge</strong> (or pick your name) to sign in, then scan an item's sticker — or tap <strong>✓ Done</strong> on its card — as you finish each stage. The tallest column is where work is piling up.
+        Pick your next item: scan its sticker — or tap <strong>✓ Done</strong> on its card — as you finish each stage. The tallest column is where work is piling up.
       </p>
       <div id="woodwork-board" style="display:flex; gap:10px; overflow-x:auto; padding-bottom:8px"></div>
     </div>
@@ -6582,6 +6596,7 @@ ${_PRODUCTION_PRINT_STYLES}
   const WOODWORK_STAGES = ['Cut Wood', 'Assemble', 'Primer', 'Final Paint', 'Final Assemble', 'Spot Check', 'Pack'];
 
   let _woodworkWorkerId = localStorage.getItem('woodwork-worker') || '';
+  let _woodworkLocked = true;   // station starts locked — scan a badge to sign in
   let _woodworkRange = 'week';   // 'today' | 'week' | 'custom'
   let _woodworkFrom = '';
   let _woodworkTo = '';
@@ -6602,25 +6617,62 @@ ${_PRODUCTION_PRINT_STYLES}
   }
 
   function renderWoodwork() {
-    if (!document.getElementById('woodwork-board')) return; // section not mounted
-    renderWoodworkControls();
-    renderWoodworkBoard();
-    renderWoodworkReport();
+    const lock = document.getElementById('woodwork-lock');
+    if (!lock) return; // section not mounted
+    const boardCard = document.getElementById('woodwork-board-card');
+    const locked = _woodworkLocked || !_woodworkWorkerId;
+    _woodworkLocked = locked;
+    lock.style.display = locked ? '' : 'none';
+    if (boardCard) boardCard.style.display = locked ? 'none' : '';
+    if (locked) {
+      renderWoodworkManualOptions();
+    } else {
+      const who = document.getElementById('woodwork-whoami');
+      if (who) who.textContent = _woodworkWorkerName(_woodworkWorkerId);
+      renderWoodworkBoard();
+    }
+    renderWoodworkReport(); // manager view stays visible either way
   }
   window.renderWoodwork = renderWoodwork;
 
-  function renderWoodworkControls() {
-    const sel = document.getElementById('woodwork-worker');
+  function renderWoodworkManualOptions() {
+    const sel = document.getElementById('woodwork-manual');
     if (!sel) return;
     const staff = (data.pinkfoot && data.pinkfoot.staff) || [];
     sel.innerHTML = '<option value="">— pick your name —</option>' +
-      staff.map(s => `<option value="${_escape(s.id)}"${s.id === _woodworkWorkerId ? ' selected' : ''}>${_escape(s.name)}</option>`).join('');
+      staff.map(s => `<option value="${_escape(s.id)}">${_escape(s.name)}</option>`).join('');
   }
   function woodworkSetWorker(id) {
     _woodworkWorkerId = id || '';
     localStorage.setItem('woodwork-worker', _woodworkWorkerId);
   }
   window.woodworkSetWorker = woodworkSetWorker;
+
+  // Locked station: scanning a badge signs that worker in; idle or Sign out re-locks
+  // so the next person must scan. Everything they do is credited to the signed-in worker.
+  let _wwIdleTimer = null;
+  function _wwResetIdle() {
+    if (_wwIdleTimer) clearTimeout(_wwIdleTimer);
+    _wwIdleTimer = setTimeout(function () { if (!_woodworkLocked) woodworkLock(); }, 180000); // 3 min idle
+  }
+  function woodworkSignIn(staffId) {
+    const staff = ((data.pinkfoot && data.pinkfoot.staff) || []).find(s => s.id === staffId);
+    if (!staff) return;
+    woodworkSetWorker(staff.id);
+    _woodworkLocked = false;
+    renderWoodwork();
+    _wwResetIdle();
+    if (typeof toast === 'function') toast('👋 Signed in: ' + staff.name, 'success', 1600);
+  }
+  window.woodworkSignIn = woodworkSignIn;
+  function woodworkLock() {
+    _woodworkLocked = true;
+    woodworkSetWorker('');
+    if (_wwIdleTimer) { clearTimeout(_wwIdleTimer); _wwIdleTimer = null; }
+    try { if (typeof woodworkStopCamera === 'function') woodworkStopCamera(); } catch (e) {}
+    renderWoodwork();
+  }
+  window.woodworkLock = woodworkLock;
 
   function renderWoodworkBoard() {
     const el = document.getElementById('woodwork-board');
@@ -6660,7 +6712,8 @@ ${_PRODUCTION_PRINT_STYLES}
   }
 
   function woodworkAdvance(orderId) {
-    if (!_woodworkWorkerId) { alert('Pick your name at the top first ("Working as…").'); return; }
+    if (!_woodworkWorkerId) { alert('Scan your badge first to sign in.'); return; }
+    if (typeof _wwResetIdle === 'function') _wwResetIdle();
     const order = ((data.pinkfoot && data.pinkfoot.orders) || []).find(o => o.id === orderId);
     if (!order) return;
     const cur = _woodworkStageOf(order);
@@ -6769,16 +6822,15 @@ ${_PRODUCTION_PRINT_STYLES}
 
     const staff = ((data.pinkfoot && data.pinkfoot.staff) || []).find(s => s.id === code);
     if (staff) {
-      woodworkSetWorker(staff.id);
-      renderWoodworkControls();
-      if (typeof toast === 'function') toast('👋 Signed in: ' + staff.name, 'success', 1800);
+      woodworkSignIn(staff.id); // sign in + unlock the station
       return;
     }
     const order = ((data.pinkfoot && data.pinkfoot.orders) || []).find(o => o.id === code);
     if (order) {
-      if (!_woodworkWorkerId) { alert('Scan your name badge first, then the item.'); return; }
+      if (!_woodworkWorkerId) { alert('Scan your badge first to sign in, then the item.'); return; }
       if (_isBellvilleBuildOrder(order)) { if (typeof toast === 'function') toast('That item is built at Bellville.', 'warn', 2500); return; }
       if (order.status === 'done' || order.status === 'delivered') { if (typeof toast === 'function') toast('That order is already finished.', 'info', 2200); return; }
+      if (typeof _wwResetIdle === 'function') _wwResetIdle();
       woodworkAdvance(order.id); // logs current stage done + advances, credited to the signed-in worker
       return;
     }
