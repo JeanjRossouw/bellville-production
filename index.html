@@ -6643,6 +6643,7 @@ ${_PRODUCTION_PRINT_STYLES}
           <div style="color:var(--text-muted,#888); font-size:11px">👤 ${_escape(o.customer || '')}</div>
           ${o.dueDate ? `<div style="color:var(--text-muted,#888); font-size:11px">Due ${_escape(o.dueDate)}</div>` : ''}
           <button class="btn btn-sm btn-primary" style="margin-top:6px; width:100%; font-size:11px" onclick="woodworkAdvance('${_escape(o.id)}')">${nextLabel}</button>
+          <button class="btn btn-sm" style="margin-top:4px; width:100%; font-size:11px" onclick="woodworkPrintStickers('${_escape(o.id)}')" title="Print QR stickers for the parts of this order">🏷️ Stickers</button>
         </div>`).join('') || '<div class="empty" style="font-size:11px; padding:6px 0">—</div>';
       return `
         <div style="flex:0 0 165px; border:1px solid var(--border,#ddd); border-radius:8px; display:flex; flex-direction:column; background:var(--bg-alt,#fafafa)">
@@ -6681,6 +6682,75 @@ ${_PRODUCTION_PRINT_STYLES}
     }
   }
   window.woodworkAdvance = woodworkAdvance;
+
+  // Print a sheet of QR stickers for an order's parts. The cutter runs this when
+  // starting the job, sticks one on each part, so everything stays trackable. Each
+  // sticker shows the order number + item name and a QR encoding the order id.
+  function woodworkPrintStickers(orderId) {
+    const order = ((data.pinkfoot && data.pinkfoot.orders) || []).find(o => o.id === orderId);
+    if (!order) return;
+    let n = parseInt(prompt(`How many stickers for #${order.invoice || order.id} — ${order.product || ''}?`, '6'), 10);
+    if (!n || n < 1) return;
+    if (n > 60) n = 60;
+    const qrText = order.id;
+    const invoice = _escape(order.invoice || order.id);
+    const product = _escape(order.product || '');
+    const stickers = Array.from({ length: n }, (_, i) => `
+      <div class="sticker">
+        <div class="qr"></div>
+        <div class="sinfo">
+          <div class="sbiz">PINKFOOT</div>
+          <div class="sinv">#${invoice}</div>
+          <div class="sprod">${product}</div>
+          <div class="sidx">part ${i + 1} of ${n}</div>
+        </div>
+      </div>`).join('');
+    const html = `<!DOCTYPE html><html><head><title>Stickers #${invoice}</title>
+<style>
+  @page { size: A4; margin: 8mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; color: #000; }
+  body { background: #fff; }
+  .no-print { padding: 10px; text-align: right; background: #f0f0f0; }
+  .sheet { display: grid; grid-template-columns: 1fr 1fr; gap: 5mm; padding: 4mm; }
+  .sticker { display: flex; align-items: center; gap: 8px; border: 1px dashed #999; border-radius: 6px; padding: 6px; height: 34mm; break-inside: avoid; page-break-inside: avoid; }
+  .qr { width: 28mm; height: 28mm; flex: 0 0 28mm; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .qr img, .qr canvas { width: 28mm !important; height: 28mm !important; }
+  .sinfo { flex: 1; min-width: 0; }
+  .sbiz { font-size: 9px; letter-spacing: 0.12em; color: #666; }
+  .sinv { font-size: 24px; font-weight: 900; line-height: 1; }
+  .sprod { font-size: 13px; font-weight: 700; line-height: 1.15; margin-top: 3px; word-break: break-word; }
+  .sidx { font-size: 9px; color: #888; margin-top: 3px; }
+  @media print { .no-print { display: none; } }
+</style></head><body>
+  <div class="no-print">
+    <button onclick="window.print()" style="padding: 8px 16px; font-weight: bold; background: #000; color: #fff; border: none; cursor: pointer">🖨️ PRINT ${n} STICKERS</button>
+    <button onclick="window.close()" style="padding: 8px 16px; margin-left: 8px; cursor: pointer">CLOSE</button>
+  </div>
+  <div class="sheet">${stickers}</div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
+  <script>
+    (function () {
+      var text = ${JSON.stringify(qrText)};
+      function draw() {
+        var els = document.querySelectorAll('.qr');
+        if (typeof QRCode === 'undefined') {
+          els.forEach(function (el) { el.textContent = text; el.style.fontSize = '8px'; el.style.wordBreak = 'break-all'; });
+          return;
+        }
+        els.forEach(function (el) {
+          new QRCode(el, { text: text, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+        });
+      }
+      if (document.readyState === 'complete') draw(); else window.addEventListener('load', draw);
+    })();
+  <\/script>
+</body></html>`;
+    const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Allow pop-ups for this site, then tap Stickers again.'); return; }
+    win.document.write(html);
+    win.document.close();
+  }
+  window.woodworkPrintStickers = woodworkPrintStickers;
 
   function woodworkSetRange(r) { _woodworkRange = r; renderWoodworkReport(); }
   window.woodworkSetRange = woodworkSetRange;
