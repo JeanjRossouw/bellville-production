@@ -309,6 +309,7 @@
     <button class="tab" onclick="showSection('schedule')">Schedule</button>
     <button class="tab" onclick="showSection('planner')">🗓️ Planner</button>
     <button class="tab" onclick="showSection('woodwork')">🪵 Woodwork</button>
+    <button class="tab" onclick="showSection('clock')">🕐 Clock</button>
     <button class="tab" onclick="showSection('pos')">🛒 POS</button>
   </div>
   
@@ -940,6 +941,34 @@
     </div>
   </div>
 
+  <!-- TIME CLOCK (PinkFoot) -->
+  <div id="section-clock" class="section">
+    <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>🕐 TIME CLOCK</span>
+        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
+          <input id="clock-scan" placeholder="Scan badge…" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault(); clockScan(this.value); this.value='';}" style="min-width:150px">
+          <button class="btn btn-sm" onclick="openScanCamera(clockScan)" title="Scan with the device camera">📷 Camera</button>
+          <button class="btn btn-sm" onclick="woodworkPrintStaffTags()" title="Print QR sign-in badges">🔖 Staff tags</button>
+        </div>
+      </div>
+      <p style="font-size:13px; color:var(--text-muted); margin-bottom:0.75rem">
+        Staff <strong>scan their badge to clock in</strong>, and scan again to <strong>clock out</strong>. (Or use the buttons below.)
+      </p>
+      <div id="clock-status"></div>
+    </div>
+    <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>📊 HOURS</span>
+        <div style="display:flex; gap:0.4rem; flex-wrap:wrap">
+          <button class="btn btn-sm" onclick="clockSetRange('today')">Today</button>
+          <button class="btn btn-sm" onclick="clockSetRange('week')">This week</button>
+        </div>
+      </div>
+      <div id="clock-report"></div>
+    </div>
+  </div>
+
   <!-- POINT OF SALE (Lightspeed-style till) -->
   <div id="section-pos" class="section">
     <div class="card" style="padding:0; overflow:hidden">
@@ -1044,7 +1073,7 @@
   // Tab name array — order MUST match the order of .tab buttons in the DOM.
   // Used by showSection and applyRolePermissions. Declared at top so it's
   // initialized regardless of where in the script execution lands.
-  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'woodwork', 'pos'];
+  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'woodwork', 'clock', 'pos'];
   
   // Undo history (last 20 states)
   let history = [];
@@ -1140,7 +1169,7 @@
   // place so this is easy to re-restrict later by adding tab names back.
   const REPTICUBE_ONLY_TABS = [];
   // Tabs only relevant to a specific business.
-  const PINKFOOT_ONLY_TABS = ['woodwork'];
+  const PINKFOOT_ONLY_TABS = ['woodwork', 'clock'];
 
   // The POS ("till") UI is only ever surfaced on a dedicated POS site/context —
   // a `pos.` subdomain, the /pos path, or ?pos=1. On the production-floor site
@@ -1237,6 +1266,7 @@
     if (sec === 'done') renderDoneOrders();
     if (sec === 'planner') renderPlanner();
     if (sec === 'woodwork') renderWoodwork();
+    if (sec === 'clock') renderClock();
     if (sec === 'pos') renderPOS();
   }
   
@@ -3398,6 +3428,7 @@ ${_PRODUCTION_PRINT_STYLES}
     // if #planner-grid exists in the DOM (so it's free when the section is unmounted).
     if (typeof renderPlanner === 'function') renderPlanner();
     if (typeof renderWoodwork === 'function') renderWoodwork();
+    if (typeof renderClock === 'function') renderClock();
   }
   
   function renderDoneOrders() {
@@ -6899,6 +6930,182 @@ ${_PRODUCTION_PRINT_STYLES}
   }
   window.woodworkPrintStaffTags = woodworkPrintStaffTags;
 
+  // ===== Staff time clock (PinkFoot) — scan a badge to clock in / out =====
+  // Reuses the same staff QR badges. A scan (or the manual button) toggles an open
+  // session: first scan clocks in, next clocks out. Hours are summed per person.
+  function _clockData() {
+    const d = data.pinkfoot || (data.pinkfoot = { orders: [], staff: [], catalog: [], sales: [] });
+    if (!Array.isArray(d.clockSessions)) d.clockSessions = [];
+    return d;
+  }
+  function _clockOpenSession(staffId) {
+    return _clockData().clockSessions.find(s => s.staffId === staffId && !s.outAt);
+  }
+  function _fmtDur(mins) {
+    const h = Math.floor(mins / 60), m = mins % 60;
+    return (h ? h + 'h ' : '') + m + 'm';
+  }
+  function _clockTimeStr(iso) {
+    const d = new Date(iso);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+
+  function clockToggle(staffId) {
+    const staff = ((data.pinkfoot && data.pinkfoot.staff) || []).find(s => s.id === staffId);
+    if (!staff) return;
+    const d = _clockData();
+    const open = _clockOpenSession(staffId);
+    snapshotState();
+    const nowIso = new Date().toISOString();
+    if (open) {
+      open.outAt = nowIso;
+      const mins = Math.max(0, Math.round((new Date(open.outAt) - new Date(open.inAt)) / 60000));
+      saveData(); renderClock();
+      if (typeof toast === 'function') toast(`👋 ${staff.name} clocked OUT — ${_fmtDur(mins)}`, 'success', 2600);
+    } else {
+      d.clockSessions.push({ id: 'CLK-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6), staffId, name: staff.name, inAt: nowIso, outAt: null });
+      saveData(); renderClock();
+      if (typeof toast === 'function') toast(`✅ ${staff.name} clocked IN`, 'success', 2200);
+    }
+  }
+  window.clockToggle = clockToggle;
+
+  function clockScan(raw) {
+    const code = (raw || '').trim();
+    if (!code) return;
+    const staff = ((data.pinkfoot && data.pinkfoot.staff) || []).find(s => s.id === code);
+    if (!staff) { if (typeof toast === 'function') toast('Unrecognized badge: ' + code, 'warn', 2500); return; }
+    clockToggle(staff.id);
+  }
+  window.clockScan = clockScan;
+
+  // Generic QR camera scanner (independent of the woodwork one); calls onCode(value).
+  let _scanCam = null;
+  function openScanCamera(onCode) {
+    if (_scanCam) return;
+    if (!('BarcodeDetector' in window)) {
+      alert('Camera scanning is not supported on this browser (common on iPhone/iPad). Use a USB scanner into the Scan box, or the manual buttons.');
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then(function (stream) {
+      const detector = new BarcodeDetector({ formats: ['qr_code'] });
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:99999; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:16px';
+      const video = document.createElement('video');
+      video.setAttribute('playsinline', ''); video.muted = true;
+      video.style.cssText = 'width:min(92vw,420px); border-radius:12px; background:#000';
+      const status = document.createElement('div');
+      status.style.cssText = 'color:#fff; font-size:14px; text-align:center; max-width:420px; min-height:20px';
+      status.textContent = 'Point the camera at a QR badge…';
+      const closeBtn = document.createElement('button');
+      closeBtn.className = 'btn'; closeBtn.textContent = '✕ Close scanner';
+      closeBtn.onclick = closeScanCamera;
+      overlay.appendChild(video); overlay.appendChild(status); overlay.appendChild(closeBtn);
+      document.body.appendChild(overlay);
+      video.srcObject = stream;
+      video.play().catch(function () {});
+      _scanCam = { stream: stream, overlay: overlay, video: video, status: status, detector: detector, onCode: onCode, timer: null, active: true };
+      const tick = async () => {
+        if (!_scanCam || !_scanCam.active) return;
+        try {
+          const codes = await _scanCam.detector.detect(_scanCam.video);
+          if (codes && codes.length) {
+            const val = (codes[0].rawValue || '').trim();
+            if (val) { _scanCam.status.textContent = 'Scanned: ' + val; _scanCam.onCode(val); }
+          }
+        } catch (e) { /* transient detect errors are fine */ }
+        if (_scanCam && _scanCam.active) _scanCam.timer = setTimeout(tick, 500);
+      };
+      tick();
+    }).catch(function (e) {
+      alert('Could not open the camera: ' + (e && e.message ? e.message : e));
+    });
+  }
+  window.openScanCamera = openScanCamera;
+  function closeScanCamera() {
+    if (!_scanCam) return;
+    _scanCam.active = false;
+    if (_scanCam.timer) clearTimeout(_scanCam.timer);
+    try { (_scanCam.stream.getTracks() || []).forEach(t => t.stop()); } catch (e) {}
+    try { _scanCam.overlay.remove(); } catch (e) {}
+    _scanCam = null;
+  }
+  window.closeScanCamera = closeScanCamera;
+
+  let _clockRange = 'today';
+  function clockSetRange(r) { _clockRange = r; renderClock(); }
+  window.clockSetRange = clockSetRange;
+
+  function renderClock() {
+    if (!document.getElementById('clock-status')) return; // section not mounted
+    renderClockStatus();
+    renderClockReport();
+  }
+  window.renderClock = renderClock;
+
+  function renderClockStatus() {
+    const el = document.getElementById('clock-status');
+    if (!el) return;
+    const staff = (data.pinkfoot && data.pinkfoot.staff) || [];
+    if (!staff.length) { el.innerHTML = '<div class="empty" style="padding:0.75rem">Add staff on the Staff tab first, then print their badges (🔖 Staff tags).</div>'; return; }
+    const inCount = staff.filter(s => _clockOpenSession(s.id)).length;
+    el.innerHTML = `<div style="font-size:12px; color:var(--text-muted,#888); margin-bottom:8px">${inCount} of ${staff.length} clocked in now</div>` +
+      staff.map(s => {
+        const open = _clockOpenSession(s.id);
+        const inNow = !!open;
+        return `<div style="display:flex; align-items:center; justify-content:space-between; gap:8px; border:1px solid var(--border,#ddd); border-radius:8px; padding:8px 10px; margin-bottom:6px; background:${inNow ? '#ecfdf5' : '#fff'}">
+          <div>
+            <div style="font-weight:700">${_escape(s.name)}</div>
+            <div style="font-size:11px; color:var(--text-muted,#888)">${inNow ? '🟢 In since ' + _clockTimeStr(open.inAt) : '⚪ Out'}</div>
+          </div>
+          <button class="btn btn-sm ${inNow ? 'btn-danger' : 'btn-primary'}" onclick="clockToggle('${_escape(s.id)}')">${inNow ? 'Clock OUT' : 'Clock IN'}</button>
+        </div>`;
+      }).join('');
+  }
+
+  function renderClockReport() {
+    const el = document.getElementById('clock-report');
+    if (!el) return;
+    const todayStr = _wwLocalDate(new Date());
+    let from, to, label;
+    if (_clockRange === 'today') { from = todayStr; to = todayStr; label = 'Today'; }
+    else { from = getMondayOf(new Date()) || todayStr; to = todayStr; label = 'This week'; }
+
+    const sessions = _clockData().clockSessions;
+    const now = new Date();
+    const perStaff = {};
+    let anyOpen = false;
+    sessions.forEach(s => {
+      const inD = new Date(s.inAt);
+      const day = _wwLocalDate(inD);
+      if (day < from || day > to) return;
+      const outD = s.outAt ? new Date(s.outAt) : now;
+      if (!s.outAt) anyOpen = true;
+      const mins = Math.max(0, Math.round((outD - inD) / 60000));
+      perStaff[s.name] = (perStaff[s.name] || 0) + mins;
+    });
+    const rows = Object.entries(perStaff).sort((a, b) => b[1] - a[1]);
+    const totalMins = rows.reduce((t, r) => t + r[1], 0);
+
+    let body;
+    if (rows.length === 0) {
+      body = '<div class="empty" style="padding:0.75rem">No hours logged in this period yet.</div>';
+    } else {
+      body = `<div style="overflow-x:auto"><table style="width:100%; border-collapse:collapse; font-size:13px">
+        <thead><tr style="text-align:left; border-bottom:2px solid var(--border,#ddd)">
+          <th style="padding:6px 8px">Staff</th><th style="padding:6px 8px; text-align:right">Hours</th></tr></thead>
+        <tbody>
+          ${rows.map(([name, mins]) => `<tr style="border-bottom:1px solid var(--border,#eee)">
+            <td style="padding:6px 8px; font-weight:600">${_escape(name)}</td>
+            <td style="padding:6px 8px; text-align:right; font-weight:800">${_fmtDur(mins)}</td></tr>`).join('')}
+          <tr style="border-top:2px solid var(--border,#ddd)"><td style="padding:6px 8px; font-weight:700">Total</td>
+            <td style="padding:6px 8px; text-align:right; font-weight:900">${_fmtDur(totalMins)}</td></tr>
+        </tbody></table></div>
+        ${anyOpen ? '<div style="font-size:11px; color:var(--text-muted,#888); margin-top:6px">Open sessions are counted up to now.</div>' : ''}`;
+    }
+    el.innerHTML = `<div style="font-size:12px; color:var(--text-muted,#888); margin-bottom:8px">Showing: <strong>${_escape(label)}</strong></div>${body}`;
+  }
+
   function woodworkSetRange(r) { _woodworkRange = r; renderWoodworkReport(); }
   window.woodworkSetRange = woodworkSetRange;
   function woodworkSetCustom(which, val) {
@@ -8814,8 +9021,8 @@ ${totalsSection}
   // currentRole declared at top of script (TDZ safety)
   // Role permissions: which tabs each role can see
   const ROLE_PERMISSIONS = {
-    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'woodwork', 'pos'],
-    sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'woodwork', 'pos'],
+    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'woodwork', 'clock', 'pos'],
+    sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'woodwork', 'clock', 'pos'],
     factory: ['dashboard', 'orders', 'done', 'calendar', 'bom', 'schedule', 'planner'],
     dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'finished'],
     fabric: ['dashboard', 'calendar', 'fabric'],
