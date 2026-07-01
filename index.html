@@ -918,8 +918,7 @@
         <button class="btn btn-primary" onclick="woodworkStartCamera()">📷 Scan with camera</button>
       </div>
       <div style="margin-top:14px; font-size:12px; color:var(--text-muted)">
-        No badge? <select id="woodwork-manual" onchange="if(this.value){woodworkSignIn(this.value)}" style="min-width:150px"><option value="">— pick your name —</option></select>
-        &nbsp;·&nbsp; <button class="btn btn-sm" onclick="woodworkPrintStaffTags()" title="Print a QR sign-in badge for each staff member">🔖 Staff tags</button>
+        <button class="btn btn-sm" onclick="woodworkPrintStaffTags()" title="Print a QR sign-in badge for each staff member">🔖 Print staff badges</button>
       </div>
     </div>
 
@@ -6839,30 +6838,45 @@ ${_PRODUCTION_PRINT_STYLES}
   window.woodworkScan = woodworkScan;
 
   // Camera scanning via the built-in BarcodeDetector (Android Chrome etc.).
+  // Load jsQR once — a pure-JS QR decoder that works on ANY browser with a camera
+  // (unlike the native BarcodeDetector, which is missing on iPhone/Firefox/many desktops).
+  let _jsqrPromise = null;
+  function _ensureJsQR() {
+    if (window.jsQR) return Promise.resolve(window.jsQR);
+    if (_jsqrPromise) return _jsqrPromise;
+    _jsqrPromise = new Promise(function (resolve, reject) {
+      const sc = document.createElement('script');
+      sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js';
+      sc.onload = function () { resolve(window.jsQR); };
+      sc.onerror = function () { _jsqrPromise = null; reject(new Error('Could not load the QR scanner (no internet?)')); };
+      document.head.appendChild(sc);
+    });
+    return _jsqrPromise;
+  }
+
   let _wwCam = null;
   async function woodworkStartCamera() {
     if (_wwCam) return;
-    if (!('BarcodeDetector' in window)) {
-      alert('Camera scanning is not supported on this browser (common on iPhone/iPad). Use a USB scanner into the Scan box, or pick your name from the list.');
-      return;
-    }
+    let jsQR;
+    try { jsQR = await _ensureJsQR(); } catch (e) { alert(e && e.message ? e.message : 'QR scanner failed to load.'); return; }
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
     } catch (e) {
-      alert('Could not open the camera: ' + (e && e.message ? e.message : e));
+      alert('Could not open the camera. Allow camera access for this site, then try again.\n\n(' + (e && e.message ? e.message : e) + ')');
       return;
     }
-    const detector = new BarcodeDetector({ formats: ['qr_code'] });
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:99999; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:16px';
     const video = document.createElement('video');
     video.setAttribute('playsinline', '');
     video.muted = true;
     video.style.cssText = 'width:min(92vw,420px); border-radius:12px; background:#000';
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const status = document.createElement('div');
     status.style.cssText = 'color:#fff; font-size:14px; text-align:center; max-width:420px; min-height:20px';
-    status.textContent = 'Point the camera at a badge or item sticker…';
+    status.textContent = 'Point the camera at a QR badge / sticker…';
     const closeBtn = document.createElement('button');
     closeBtn.className = 'btn';
     closeBtn.textContent = '✕ Close scanner';
@@ -6871,17 +6885,25 @@ ${_PRODUCTION_PRINT_STYLES}
     document.body.appendChild(overlay);
     video.srcObject = stream;
     try { await video.play(); } catch (e) {}
-    _wwCam = { stream, overlay, video, status, detector, timer: null, active: true };
-    const tick = async () => {
+    _wwCam = { stream, overlay, video, canvas, ctx, jsQR, status, timer: null, active: true };
+    const tick = function () {
       if (!_wwCam || !_wwCam.active) return;
-      try {
-        const codes = await _wwCam.detector.detect(_wwCam.video);
-        if (codes && codes.length) {
-          const val = (codes[0].rawValue || '').trim();
-          if (val) { _wwCam.status.textContent = 'Scanned: ' + val; woodworkScan(val); }
+      const v = _wwCam.video;
+      if (v.readyState >= 2 && v.videoWidth) {
+        _wwCam.canvas.width = v.videoWidth;
+        _wwCam.canvas.height = v.videoHeight;
+        _wwCam.ctx.drawImage(v, 0, 0, v.videoWidth, v.videoHeight);
+        let img = null;
+        try { img = _wwCam.ctx.getImageData(0, 0, v.videoWidth, v.videoHeight); } catch (e) {}
+        if (img) {
+          const code = _wwCam.jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+          if (code && code.data) {
+            const val = code.data.trim();
+            if (val) { _wwCam.status.textContent = 'Scanned: ' + val; woodworkScan(val); }
+          }
         }
-      } catch (e) { /* transient detect errors are fine */ }
-      if (_wwCam && _wwCam.active) _wwCam.timer = setTimeout(tick, 500);
+      }
+      if (_wwCam && _wwCam.active) _wwCam.timer = setTimeout(tick, 250);
     };
     tick();
   }
