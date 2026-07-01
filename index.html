@@ -6576,7 +6576,7 @@ ${_PRODUCTION_PRINT_STYLES}
   // Each PinkFoot woodwork order moves through these stages. Advancing a card logs
   // WHO finished that stage and WHEN, giving a bottleneck board + a per-worker
   // report. Rocking chairs / foot stools are built at Bellville, so they're excluded.
-  const WOODWORK_STAGES = ['Cut Wood', 'Assemble', 'Sand', 'Primer', 'Sand 2nd', 'Final Paint', 'Final Assemble', 'Spot Check', 'Pack'];
+  const WOODWORK_STAGES = ['Cut Wood', 'Assemble', 'Primer', 'Final Paint', 'Final Assemble', 'Spot Check', 'Pack'];
 
   let _woodworkWorkerId = localStorage.getItem('woodwork-worker') || '';
   let _woodworkRange = 'week';   // 'today' | 'week' | 'custom'
