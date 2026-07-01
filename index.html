@@ -913,11 +913,14 @@
         <span>🪵 WOODWORK — PRODUCTION LINE</span>
         <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
           <label style="font-size:12px; color:var(--text-muted)">Working as:</label>
-          <select id="woodwork-worker" onchange="woodworkSetWorker(this.value)" style="min-width:160px"></select>
+          <select id="woodwork-worker" onchange="woodworkSetWorker(this.value)" style="min-width:150px"></select>
+          <input id="woodwork-scan" placeholder="Scan badge / item…" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault(); woodworkScan(this.value); this.value='';}" style="min-width:150px">
+          <button class="btn btn-sm" onclick="woodworkStartCamera()" title="Scan with the device camera">📷 Camera</button>
+          <button class="btn btn-sm" onclick="woodworkPrintStaffTags()" title="Print a QR sign-in badge for each staff member">🔖 Staff tags</button>
         </div>
       </div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:0.75rem">
-        Pick your name, then tap <strong>✓ next stage</strong> on a card when you finish that step. The tallest column is where work is piling up.
+        <strong>Scan your badge</strong> (or pick your name) to sign in, then scan an item's sticker — or tap <strong>✓ Done</strong> on its card — as you finish each stage. The tallest column is where work is piling up.
       </p>
       <div id="woodwork-board" style="display:flex; gap:10px; overflow-x:auto; padding-bottom:8px"></div>
     </div>
@@ -6751,6 +6754,150 @@ ${_PRODUCTION_PRINT_STYLES}
     win.document.close();
   }
   window.woodworkPrintStickers = woodworkPrintStickers;
+
+  // ---- Scan-driven floor workflow: staff badges + item stickers ----
+  // Scan a staff badge to sign in ("Working as"), then scan an item sticker to
+  // mark its current stage Done (credited to the signed-in worker). A USB scanner
+  // types into the Scan box (Enter), or use the device camera.
+  let _wwLastScanCode = '', _wwLastScanAt = 0;
+  function woodworkScan(raw) {
+    const code = (raw || '').trim();
+    if (!code) return;
+    const now = Date.now();
+    if (code === _wwLastScanCode && (now - _wwLastScanAt) < 2500) return; // ignore rapid repeats
+    _wwLastScanCode = code; _wwLastScanAt = now;
+
+    const staff = ((data.pinkfoot && data.pinkfoot.staff) || []).find(s => s.id === code);
+    if (staff) {
+      woodworkSetWorker(staff.id);
+      renderWoodworkControls();
+      if (typeof toast === 'function') toast('👋 Signed in: ' + staff.name, 'success', 1800);
+      return;
+    }
+    const order = ((data.pinkfoot && data.pinkfoot.orders) || []).find(o => o.id === code);
+    if (order) {
+      if (!_woodworkWorkerId) { alert('Scan your name badge first, then the item.'); return; }
+      if (_isBellvilleBuildOrder(order)) { if (typeof toast === 'function') toast('That item is built at Bellville.', 'warn', 2500); return; }
+      if (order.status === 'done' || order.status === 'delivered') { if (typeof toast === 'function') toast('That order is already finished.', 'info', 2200); return; }
+      woodworkAdvance(order.id); // logs current stage done + advances, credited to the signed-in worker
+      return;
+    }
+    if (typeof toast === 'function') toast('Unrecognized tag: ' + code, 'warn', 2600);
+  }
+  window.woodworkScan = woodworkScan;
+
+  // Camera scanning via the built-in BarcodeDetector (Android Chrome etc.).
+  let _wwCam = null;
+  async function woodworkStartCamera() {
+    if (_wwCam) return;
+    if (!('BarcodeDetector' in window)) {
+      alert('Camera scanning is not supported on this browser (common on iPhone/iPad). Use a USB scanner into the Scan box, or pick your name from the list.');
+      return;
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    } catch (e) {
+      alert('Could not open the camera: ' + (e && e.message ? e.message : e));
+      return;
+    }
+    const detector = new BarcodeDetector({ formats: ['qr_code'] });
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:99999; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:16px';
+    const video = document.createElement('video');
+    video.setAttribute('playsinline', '');
+    video.muted = true;
+    video.style.cssText = 'width:min(92vw,420px); border-radius:12px; background:#000';
+    const status = document.createElement('div');
+    status.style.cssText = 'color:#fff; font-size:14px; text-align:center; max-width:420px; min-height:20px';
+    status.textContent = 'Point the camera at a badge or item sticker…';
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'btn';
+    closeBtn.textContent = '✕ Close scanner';
+    closeBtn.onclick = woodworkStopCamera;
+    overlay.appendChild(video); overlay.appendChild(status); overlay.appendChild(closeBtn);
+    document.body.appendChild(overlay);
+    video.srcObject = stream;
+    try { await video.play(); } catch (e) {}
+    _wwCam = { stream, overlay, video, status, detector, timer: null, active: true };
+    const tick = async () => {
+      if (!_wwCam || !_wwCam.active) return;
+      try {
+        const codes = await _wwCam.detector.detect(_wwCam.video);
+        if (codes && codes.length) {
+          const val = (codes[0].rawValue || '').trim();
+          if (val) { _wwCam.status.textContent = 'Scanned: ' + val; woodworkScan(val); }
+        }
+      } catch (e) { /* transient detect errors are fine */ }
+      if (_wwCam && _wwCam.active) _wwCam.timer = setTimeout(tick, 500);
+    };
+    tick();
+  }
+  window.woodworkStartCamera = woodworkStartCamera;
+  function woodworkStopCamera() {
+    if (!_wwCam) return;
+    _wwCam.active = false;
+    if (_wwCam.timer) clearTimeout(_wwCam.timer);
+    try { (_wwCam.stream.getTracks() || []).forEach(t => t.stop()); } catch (e) {}
+    try { _wwCam.overlay.remove(); } catch (e) {}
+    _wwCam = null;
+  }
+  window.woodworkStopCamera = woodworkStopCamera;
+
+  // Print a QR badge per PinkFoot staff member (QR encodes the staff id).
+  function woodworkPrintStaffTags() {
+    const staff = (data.pinkfoot && data.pinkfoot.staff) || [];
+    if (!staff.length) { alert('Add staff on the Staff tab first, then print their badges here.'); return; }
+    const badges = staff.map(s => `
+      <div class="badge">
+        <div class="qr" data-qr="${_escape(s.id)}"></div>
+        <div class="binfo">
+          <div class="bbiz">PINKFOOT · WOODWORK</div>
+          <div class="bname">${_escape(s.name)}</div>
+          <div class="brole">${_escape(s.role || 'Staff')}</div>
+          <div class="bhint">Scan to sign in</div>
+        </div>
+      </div>`).join('');
+    const html = `<!DOCTYPE html><html><head><title>Staff tags</title>
+<style>
+  @page { size: A4; margin: 10mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; color: #000; }
+  body { background: #fff; }
+  .no-print { padding: 10px; text-align: right; background: #f0f0f0; }
+  .sheet { display: grid; grid-template-columns: 1fr 1fr; gap: 6mm; padding: 5mm; }
+  .badge { display: flex; align-items: center; gap: 10px; border: 2px solid #000; border-radius: 10px; padding: 10px; height: 45mm; break-inside: avoid; page-break-inside: avoid; }
+  .qr { width: 36mm; height: 36mm; flex: 0 0 36mm; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .qr img, .qr canvas { width: 36mm !important; height: 36mm !important; }
+  .binfo { flex: 1; min-width: 0; }
+  .bbiz { font-size: 9px; letter-spacing: 0.1em; color: #666; }
+  .bname { font-size: 24px; font-weight: 900; line-height: 1.05; margin-top: 2px; word-break: break-word; }
+  .brole { font-size: 13px; color: #333; margin-top: 2px; }
+  .bhint { font-size: 10px; color: #888; margin-top: 6px; }
+  @media print { .no-print { display: none; } }
+</style></head><body>
+  <div class="no-print">
+    <button onclick="window.print()" style="padding: 8px 16px; font-weight: bold; background: #000; color: #fff; border: none; cursor: pointer">🖨️ PRINT ${staff.length} TAGS</button>
+    <button onclick="window.close()" style="padding: 8px 16px; margin-left: 8px; cursor: pointer">CLOSE</button>
+  </div>
+  <div class="sheet">${badges}</div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
+  <script>
+    (function () {
+      function draw() {
+        var els = document.querySelectorAll('.qr');
+        if (typeof QRCode === 'undefined') { els.forEach(function (el) { el.textContent = el.getAttribute('data-qr'); el.style.fontSize = '9px'; el.style.wordBreak = 'break-all'; }); return; }
+        els.forEach(function (el) { new QRCode(el, { text: el.getAttribute('data-qr'), width: 220, height: 220, correctLevel: QRCode.CorrectLevel.M }); });
+      }
+      if (document.readyState === 'complete') draw(); else window.addEventListener('load', draw);
+    })();
+  <\/script>
+</body></html>`;
+    const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Allow pop-ups for this site, then tap Staff tags again.'); return; }
+    win.document.write(html);
+    win.document.close();
+  }
+  window.woodworkPrintStaffTags = woodworkPrintStaffTags;
 
   function woodworkSetRange(r) { _woodworkRange = r; renderWoodworkReport(); }
   window.woodworkSetRange = woodworkSetRange;
