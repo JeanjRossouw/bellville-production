@@ -6717,9 +6717,11 @@ ${_PRODUCTION_PRINT_STYLES}
       (o.stageLog || []).forEach(e => {
         if (!e || !e.at || !inRange(e.at)) return;
         const w = e.worker || _woodworkWorkerName(e.workerId) || '(unknown)';
-        perWorker[w] = perWorker[w] || { total: 0, byStage: {} };
+        perWorker[w] = perWorker[w] || { total: 0, byStage: {}, byOrder: {} };
         perWorker[w].total++;
         perWorker[w].byStage[e.stage] = (perWorker[w].byStage[e.stage] || 0) + 1;
+        const ref = '#' + (o.invoice || o.id) + (o.product ? ' ' + o.product : '');
+        (perWorker[w].byOrder[ref] = perWorker[w].byOrder[ref] || []).push(e.stage);
         perStage[e.stage] = (perStage[e.stage] || 0) + 1;
         if (e.stage === WOODWORK_STAGES[WOODWORK_STAGES.length - 1]) finished++;
       });
@@ -6758,16 +6760,21 @@ ${_PRODUCTION_PRINT_STYLES}
                 <th style="padding:6px 8px">Worker</th>
                 <th style="padding:6px 8px; text-align:right">Stages done</th>
                 <th style="padding:6px 8px">Breakdown</th>
+                <th style="padding:6px 8px">Orders worked on</th>
               </tr>
             </thead>
             <tbody>
               ${workerRows.map(([name, d]) => {
                 const bd = Object.entries(d.byStage).sort((a, b) => b[1] - a[1])
                   .map(([s, n]) => `${_escape(s)} ×${n}`).join(' · ');
-                return `<tr style="border-bottom:1px solid var(--border,#eee)">
+                const ordersList = Object.entries(d.byOrder)
+                  .map(([ref, stages]) => `<div style="margin:1px 0"><strong>${_escape(ref)}</strong> <span style="color:var(--text-muted,#888)">— ${_escape(stages.join(', '))}</span></div>`)
+                  .join('');
+                return `<tr style="border-bottom:1px solid var(--border,#eee); vertical-align:top">
                   <td style="padding:6px 8px; font-weight:600">${_escape(name)}</td>
                   <td style="padding:6px 8px; text-align:right; font-weight:800">${d.total}</td>
                   <td style="padding:6px 8px; color:var(--text-muted,#666); font-size:12px">${bd}</td>
+                  <td style="padding:6px 8px; font-size:12px">${ordersList}</td>
                 </tr>`;
               }).join('')}
             </tbody>
