@@ -309,6 +309,7 @@
     <button class="tab" onclick="showSection('schedule')">Schedule</button>
     <button class="tab" onclick="showSection('planner')">🗓️ Planner</button>
     <button class="tab" onclick="showSection('woodwork')">🪵 Woodwork</button>
+    <button class="tab" onclick="showSection('costing')">💰 Costing</button>
     <button class="tab" onclick="showSection('pos')">🛒 POS</button>
   </div>
   
@@ -953,6 +954,24 @@
     </div>
   </div>
 
+  <!-- COSTING & PROFIT -->
+  <div id="section-costing" class="section">
+    <div class="card">
+      <div class="card-title">💰 COSTING &amp; PROFIT — OVERHEADS &amp; LABOUR</div>
+      <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.75rem">Enter your monthly overheads &amp; salaries and a labour rate. The app spreads the overheads across your expected monthly output, so each product gets a true cost, profit and margin.</p>
+      <div class="row">
+        <div class="f1"><label>This shop's overhead share (%)</label><input id="costing-share" type="number" step="1" placeholder="0" onchange="costingSetField('allocPct', this.value)"></div>
+        <div class="f1"><label>Labour rate (R / hour)</label><input id="costing-rate" type="number" step="0.01" placeholder="0" onchange="costingSetField('labourRate', this.value)"></div>
+        <div class="f1"><label>Expected units / month (to split overheads)</label><input id="costing-units" type="number" step="1" placeholder="0" onchange="costingSetField('unitsPerMonth', this.value)"></div>
+      </div>
+      <div id="costing-overheads"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">📋 PRODUCT COSTING — true cost, profit &amp; margin</div>
+      <div id="costing-products" style="overflow-x:auto"></div>
+    </div>
+  </div>
+
   <!-- POINT OF SALE (Lightspeed-style till) -->
   <div id="section-pos" class="section">
     <div class="card" style="padding:0; overflow:hidden">
@@ -1057,7 +1076,7 @@
   // Tab name array — order MUST match the order of .tab buttons in the DOM.
   // Used by showSection and applyRolePermissions. Declared at top so it's
   // initialized regardless of where in the script execution lands.
-  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'woodwork', 'pos'];
+  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'woodwork', 'costing', 'pos'];
   
   // Undo history (last 20 states)
   let history = [];
@@ -1250,6 +1269,7 @@
     if (sec === 'done') renderDoneOrders();
     if (sec === 'planner') renderPlanner();
     if (sec === 'woodwork') renderWoodwork();
+    if (sec === 'costing') renderCosting();
     if (sec === 'pos') renderPOS();
   }
   
@@ -3462,6 +3482,7 @@ ${_PRODUCTION_PRINT_STYLES}
     // if #planner-grid exists in the DOM (so it's free when the section is unmounted).
     if (typeof renderPlanner === 'function') renderPlanner();
     if (typeof renderWoodwork === 'function') renderWoodwork();
+    if (typeof renderCosting === 'function') renderCosting();
   }
   
   function renderDoneOrders() {
@@ -4504,6 +4525,212 @@ ${_PRODUCTION_PRINT_STYLES}
     return total;
   }
   window._productCutListCost = _productCutListCost;
+
+  // ===== Costing & profit (per business) =====
+  // Material cost (from BOM) + labour (hrs × rate) + a share of monthly overheads
+  // → true cost per product → profit & margin vs selling price.
+  // Overheads are a SHARED monthly pool across the shops; each shop carries a
+  // share % of them (Bellville 60% / PinkFoot 40% by default). Labour rate and
+  // expected units are per shop. Seeded once with the real Bellville overhead lines.
+  const _COSTING_OVERHEAD_SEED = [
+    { name: 'Factory rent', monthly: 5800 },
+    { name: 'Electricity', monthly: 10000 },
+    { name: 'Internet / phone', monthly: 1800 },
+    { name: 'Vehicle finance / lease', monthly: 2500 },
+    { name: 'Fuel', monthly: 3000 },
+    { name: 'Vehicle insurance', monthly: 500 },
+    { name: 'Vehicle maintenance & service', monthly: 500 },
+    { name: 'Office / admin salaries', monthly: 9500 },
+    { name: 'Accounting / bookkeeping', monthly: 3000 },
+    { name: 'Bank charges', monthly: 1000 },
+    { name: 'Software & subscriptions', monthly: 1500 },
+    { name: 'Stationery', monthly: 500 },
+    { name: 'Equipment maintenance', monthly: 1000 }
+  ];
+  function _costingShared() {
+    if (!data.costingShared || typeof data.costingShared !== 'object') data.costingShared = {};
+    if (!Array.isArray(data.costingShared.overheads)) data.costingShared.overheads = [];
+    return data.costingShared;
+  }
+  function _costingDefaultShare(biz) {
+    return biz === 'bellville' ? 60 : biz === 'pinkfoot' ? 40 : 100;
+  }
+  function _costing() {
+    const d = currentData();
+    if (!d.costing || typeof d.costing !== 'object') d.costing = {};
+    if (typeof d.costing.labourRate !== 'number') d.costing.labourRate = 0;
+    if (typeof d.costing.unitsPerMonth !== 'number') d.costing.unitsPerMonth = 0;
+    if (typeof d.costing.allocPct !== 'number') d.costing.allocPct = _costingDefaultShare(activeBiz);
+    return d.costing;
+  }
+  // One-time seed of the real shared overheads + default 60/40 shares.
+  function _seedCostingDefaults() {
+    const sh = _costingShared();
+    if (sh._seeded) return false;
+    if (sh.overheads.length === 0) {
+      sh.overheads = _COSTING_OVERHEAD_SEED.map(o => ({ id: 'OH-' + Math.random().toString(36).slice(2, 8), name: o.name, monthly: o.monthly }));
+    }
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      if (data[b]) {
+        if (!data[b].costing || typeof data[b].costing !== 'object') data[b].costing = {};
+        if (typeof data[b].costing.allocPct !== 'number') data[b].costing.allocPct = _costingDefaultShare(b);
+      }
+    });
+    sh._seeded = true;
+    return true;
+  }
+  function _costingTotalOverhead() {
+    return _costingShared().overheads.reduce((s, o) => s + (parseFloat(o.monthly) || 0), 0);
+  }
+  function _costingOverheadPerUnit() {
+    const c = _costing();
+    const u = parseFloat(c.unitsPerMonth) || 0;
+    const share = (parseFloat(c.allocPct) || 0) / 100;
+    return u > 0 ? (_costingTotalOverhead() * share) / u : 0;
+  }
+  // Material cost for a product = materials map + cutting list (mirrors the BOM editor).
+  function _productMaterialsCost(prodName, biz) {
+    const prod = (biz.productBoms || {})[prodName];
+    if (!prod) return 0;
+    const matById = {};
+    (biz.materialsLibrary || []).forEach(m => { if (m && m.id) matById[m.id] = m; });
+    let s = 0;
+    Object.entries(prod.materials || {}).forEach(([matId, qty]) => {
+      const m = matById[matId];
+      if (m) s += (parseFloat(qty || 0) * parseFloat(m.cost || 0));
+    });
+    const cut = (typeof _productCutListCost === 'function') ? _productCutListCost(prodName, biz) : 0;
+    return s + cut;
+  }
+  // Escape a value for use inside a single-quoted JS string in an inline handler.
+  function _q(s) { return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+
+  function renderCosting() {
+    const ohHost = document.getElementById('costing-overheads');
+    const prHost = document.getElementById('costing-products');
+    if (!ohHost || !prHost) return;
+    if (_seedCostingDefaults()) saveData();
+    const biz = currentData();
+    const c = _costing();
+    const bizLabel = ({ bellville: 'Bellville', pinkfoot: 'PinkFoot', repticube: 'ReptiCube' })[activeBiz] || activeBiz;
+    const rateEl = document.getElementById('costing-rate');
+    if (rateEl && document.activeElement !== rateEl) rateEl.value = c.labourRate || '';
+    const unitsEl = document.getElementById('costing-units');
+    if (unitsEl && document.activeElement !== unitsEl) unitsEl.value = c.unitsPerMonth || '';
+    const shareEl = document.getElementById('costing-share');
+    if (shareEl && document.activeElement !== shareEl) shareEl.value = c.allocPct || '';
+
+    const totOh = _costingTotalOverhead();
+    const sharePct = parseFloat(c.allocPct) || 0;
+    const shopOh = totOh * sharePct / 100;
+    const ohUnit = _costingOverheadPerUnit();
+    const rate = parseFloat(c.labourRate) || 0;
+
+    const ohRows = _costingShared().overheads.map(o => `
+      <tr>
+        <td style="padding:3px 6px"><input value="${_escape(o.name || '')}" placeholder="e.g. Rent / Salaries / Power" onchange="costingUpdateOverhead('${_q(o.id)}','name',this.value)" style="width:100%; padding:4px"></td>
+        <td style="padding:3px 6px; text-align:right"><input type="number" step="0.01" value="${o.monthly || 0}" onchange="costingUpdateOverhead('${_q(o.id)}','monthly',this.value)" style="width:120px; padding:4px; text-align:right"></td>
+        <td style="padding:3px 6px; text-align:center"><button class="btn btn-sm btn-danger" onclick="costingDeleteOverhead('${_q(o.id)}')">✕</button></td>
+      </tr>`).join('');
+
+    ohHost.innerHTML = `
+      <div style="font-size:11px; color:var(--text-muted); margin-bottom:6px">Shared across the shops — split by each shop's share (Bellville 60% / PinkFoot 40%).</div>
+      <table style="width:100%; border-collapse:collapse; font-size:13px">
+        <thead><tr style="text-align:left; border-bottom:2px solid var(--border,#ddd)">
+          <th style="padding:5px 6px">Shared overhead / salary (monthly)</th>
+          <th style="padding:5px 6px; text-align:right">R / month</th><th></th></tr></thead>
+        <tbody>${ohRows || '<tr><td colspan="3" style="padding:8px; color:var(--text-muted)">No overheads yet — add rent, salaries, power, etc.</td></tr>'}</tbody>
+        <tfoot>
+          <tr style="border-top:2px solid var(--border,#ddd)"><td style="padding:6px; font-weight:700">Total monthly overhead (all shops)</td><td style="padding:6px; text-align:right; font-weight:900">R${totOh.toFixed(2)}</td><td></td></tr>
+          <tr><td style="padding:6px; font-weight:700">${_escape(bizLabel)} share (${sharePct}%)</td><td style="padding:6px; text-align:right; font-weight:800">R${shopOh.toFixed(2)}</td><td></td></tr>
+          <tr><td style="padding:6px; color:var(--text-muted)">Overhead per unit (÷ ${parseFloat(c.unitsPerMonth) || 0}/mo)</td><td style="padding:6px; text-align:right; font-weight:700">R${ohUnit.toFixed(2)}</td><td></td></tr>
+        </tfoot>
+      </table>
+      <button class="btn btn-sm" style="margin-top:8px" onclick="costingAddOverhead()">+ Add overhead line</button>`;
+
+    const products = Object.keys(biz.productBoms || {}).sort();
+    const prodRows = products.map(key => {
+      const p = biz.productBoms[key] || {};
+      const mat = _productMaterialsCost(key, biz);
+      const hrs = parseFloat(p.labourHours) || 0;
+      const labour = hrs * rate;
+      const trueCost = mat + labour + ohUnit;
+      const sell = parseFloat(p.sellingPrice) || 0;
+      const profit = sell - trueCost;
+      const margin = sell > 0 ? (profit / sell * 100) : 0;
+      const pcol = profit >= 0 ? 'var(--success,#166534)' : 'var(--danger,#991b1b)';
+      return `<tr style="border-bottom:1px solid var(--border,#eee)">
+        <td style="padding:5px 6px">${_escape(key)}</td>
+        <td style="padding:5px 6px; text-align:right">R${mat.toFixed(2)}</td>
+        <td style="padding:5px 6px; text-align:right"><input type="number" step="0.25" value="${hrs || ''}" placeholder="0" onchange="costingSetProduct('${_q(key)}','labourHours',this.value)" style="width:64px; padding:3px; text-align:right"></td>
+        <td style="padding:5px 6px; text-align:right">R${labour.toFixed(2)}</td>
+        <td style="padding:5px 6px; text-align:right">R${ohUnit.toFixed(2)}</td>
+        <td style="padding:5px 6px; text-align:right; font-weight:800">R${trueCost.toFixed(2)}</td>
+        <td style="padding:5px 6px; text-align:right"><input type="number" step="1" value="${sell || ''}" placeholder="0" onchange="costingSetProduct('${_q(key)}','sellingPrice',this.value)" style="width:88px; padding:3px; text-align:right"></td>
+        <td style="padding:5px 6px; text-align:right; font-weight:700; color:${pcol}">R${profit.toFixed(2)}</td>
+        <td style="padding:5px 6px; text-align:right; font-weight:700; color:${pcol}">${sell > 0 ? margin.toFixed(0) + '%' : '—'}</td>
+      </tr>`;
+    }).join('');
+
+    prHost.innerHTML = products.length === 0
+      ? '<div class="empty" style="padding:1rem">No products yet — set them up on the BOM tab first.</div>'
+      : `<table style="width:100%; border-collapse:collapse; font-size:12px; min-width:760px">
+          <thead><tr style="text-align:left; border-bottom:2px solid var(--border,#ddd)">
+            <th style="padding:6px">Product</th>
+            <th style="padding:6px; text-align:right">Material</th>
+            <th style="padding:6px; text-align:right">Labour hrs</th>
+            <th style="padding:6px; text-align:right">Labour</th>
+            <th style="padding:6px; text-align:right">Overhead</th>
+            <th style="padding:6px; text-align:right">True cost</th>
+            <th style="padding:6px; text-align:right">Selling price</th>
+            <th style="padding:6px; text-align:right">Profit</th>
+            <th style="padding:6px; text-align:right">Margin</th>
+          </tr></thead>
+          <tbody>${prodRows}</tbody>
+        </table>`;
+  }
+  window.renderCosting = renderCosting;
+
+  function costingSetField(field, val) {
+    snapshotState();
+    _costing()[field] = parseFloat(val) || 0;
+    saveData();
+    renderCosting();
+  }
+  window.costingSetField = costingSetField;
+  function costingAddOverhead() {
+    snapshotState();
+    _costingShared().overheads.push({ id: 'OH-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5), name: '', monthly: 0 });
+    saveData();
+    renderCosting();
+  }
+  window.costingAddOverhead = costingAddOverhead;
+  function costingUpdateOverhead(id, field, val) {
+    const o = _costingShared().overheads.find(x => x.id === id);
+    if (!o) return;
+    snapshotState();
+    o[field] = (field === 'monthly') ? (parseFloat(val) || 0) : val;
+    saveData();
+    renderCosting();
+  }
+  window.costingUpdateOverhead = costingUpdateOverhead;
+  function costingDeleteOverhead(id) {
+    snapshotState();
+    const sh = _costingShared();
+    sh.overheads = sh.overheads.filter(x => x.id !== id);
+    saveData();
+    renderCosting();
+  }
+  window.costingDeleteOverhead = costingDeleteOverhead;
+  function costingSetProduct(key, field, val) {
+    const biz = currentData();
+    if (!biz.productBoms || !biz.productBoms[key]) return;
+    snapshotState();
+    biz.productBoms[key][field] = parseFloat(val) || 0;
+    saveData();
+    renderCosting();
+  }
+  window.costingSetProduct = costingSetProduct;
 
   // Material consumption (qty per ONE unit of the product) implied by the cut list.
   // Returns { matId: qty }. Used by the weekly material forecasts so that timber/sheets
@@ -8942,7 +9169,7 @@ ${totalsSection}
   // currentRole declared at top of script (TDZ safety)
   // Role permissions: which tabs each role can see
   const ROLE_PERMISSIONS = {
-    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'woodwork', 'pos'],
+    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'woodwork', 'costing', 'pos'],
     sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'woodwork', 'pos'],
     factory: ['dashboard', 'orders', 'done', 'calendar', 'bom', 'schedule', 'planner'],
     dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'finished'],
