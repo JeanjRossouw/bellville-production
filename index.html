@@ -2219,11 +2219,8 @@
   // Lead time (weeks) by product type → due date. Cots/compactums 8, rocking chairs
   // and couches/chairs 6, everything else 4. Matches on category and product name.
   function _leadWeeksFor(category, product) {
-    const hay = ((category || '') + ' ' + (product || '')).toLowerCase();
-    if (/\bcot\b|compactum/.test(hay)) return 8;
-    if (/rocking chair|rocker|foot\s?stool/.test(hay)) return 6;
-    if (/sofa|seater|corner|daybed|couch|\bchair\b/.test(hay)) return 6;
-    return 4;
+    // All products: 6-week lead time.
+    return 6;
   }
   function _dueFromLead(category, product) {
     return new Date(Date.now() + _leadWeeksFor(category, product) * 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
