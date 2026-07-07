@@ -1523,7 +1523,6 @@
     
     let added = 0, skipped = 0;
     const today = new Date().toISOString().split('T')[0];
-    const dueDate = new Date(Date.now() + 28 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     
     queue.forEach(p => {
       // Each line item becomes a separate order
@@ -1546,7 +1545,7 @@
           fabric: li.fabric || '',
           qty: li.qty,
           orderDate: p.orderDate || today,
-          dueDate,
+          dueDate: _dueFromLead('', li.product),
           status: 'pending',
           startDate: null,
           paymentStatus: p.paymentStatus || 'deposit',
@@ -2212,6 +2211,19 @@
   window.confirmStockIn = confirmStockIn;
   window.showMaterialReport = showMaterialReport;
   
+  // Lead time (weeks) by product type → due date. Cots/compactums 8, rocking chairs
+  // and couches/chairs 6, everything else 4. Matches on category and product name.
+  function _leadWeeksFor(category, product) {
+    const hay = ((category || '') + ' ' + (product || '')).toLowerCase();
+    if (/\bcot\b|compactum/.test(hay)) return 8;
+    if (/rocking chair|rocker/.test(hay)) return 6;
+    if (/sofa|seater|corner|daybed|couch|\bchair\b/.test(hay)) return 6;
+    return 4;
+  }
+  function _dueFromLead(category, product) {
+    return new Date(Date.now() + _leadWeeksFor(category, product) * 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  }
+
   function addOrder() {
     const invoice = document.getElementById('intake-invoice').value.trim();
     const customer = document.getElementById('intake-customer').value.trim();
@@ -2243,7 +2255,6 @@
     }
 
     const today = new Date().toISOString().split('T')[0];
-    const dueDate = new Date(Date.now() + 28 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
     const order = {
       id: orderId,
@@ -2255,7 +2266,7 @@
       fabric,
       qty,
       orderDate: today,
-      dueDate,
+      dueDate: _dueFromLead(category, product),
       status: 'pending',
       startDate: null,
       paymentStatus,
@@ -2366,7 +2377,6 @@
           }
           
           const today = new Date().toISOString().split('T')[0];
-          const dueDate = new Date(Date.now() + 28 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
           
           const newOrder = {
             id: orderId,
@@ -2379,7 +2389,7 @@
             fabricStatus,
             qty,
             orderDate: dateStr || today,
-            dueDate,
+            dueDate: _dueFromLead(category, product),
             status: status.includes('progress') ? 'in-production' : 'pending',
             startDate: status.includes('progress') ? today : null
           };
@@ -8800,7 +8810,6 @@ ${totalsSection}
     const mtoLines = saleLines.filter(li => li.isSpecialOrder);
     if (mtoLines.length === 0) return 0;
     const today = new Date().toISOString().split('T')[0];
-    const dueDate = new Date(Date.now() + 28 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     const d = currentData();
     if (!Array.isArray(d.orders)) d.orders = [];
     const orders = d.orders;
@@ -8819,7 +8828,7 @@ ${totalsSection}
         fabric: '',
         qty: Number(li.unitQuantity) || 1,
         orderDate: today,
-        dueDate,
+        dueDate: _dueFromLead('', li._description || li._sku || ''),
         status: 'pending',
         startDate: null,
         paymentStatus: 'paid',     // settled at the till
