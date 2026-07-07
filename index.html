@@ -657,7 +657,7 @@
       <div class="card-title">🧵 RESERVE FABRIC (for a sales order)</div>
       <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.75rem">Reserve fabric against a sales order number, then email it to admin. It also appears under "Reserved fabric" below and syncs to admin live.</p>
       <div class="row">
-        <div class="f1"><label>Sales order #</label><input id="fr-order" placeholder="e.g. 2875"></div>
+        <div class="f1"><label>Open sales order</label><select id="fr-order" onchange="onReserveOrderPick()"><option value="">— pick an open order —</option></select></div>
         <div class="f1"><label>Fabric</label><input id="fr-fabric" list="fr-fabric-list" placeholder="e.g. Sienna"><datalist id="fr-fabric-list"></datalist></div>
         <div class="f1"><label>Colour (optional)</label><input id="fr-colour" placeholder="e.g. Light Grey"></div>
         <div class="f2" style="min-width:90px"><label>Meters</label><input id="fr-meters" type="number" step="0.1" placeholder="0"></div>
@@ -3094,27 +3094,43 @@ ${_PRODUCTION_PRINT_STYLES}
     _openMailto('mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body));
   }
 
+  // Prefill the fabric box from the picked order (if it already has a fabric).
+  function onReserveOrderPick() {
+    const sel = document.getElementById('fr-order');
+    if (!sel || !sel.value) return;
+    const order = (currentData().orders || []).find(o => o.id === sel.value);
+    if (!order) return;
+    const f = document.getElementById('fr-fabric');
+    if (f && !f.value && order.fabric) f.value = order.fabric;
+  }
+  window.onReserveOrderPick = onReserveOrderPick;
+
   function reserveFabric() {
-    const orderNo = (document.getElementById('fr-order').value || '').trim();
+    const sel = document.getElementById('fr-order');
+    const orderId = sel ? sel.value : '';
     const fabric = (document.getElementById('fr-fabric').value || '').trim();
     const colour = (document.getElementById('fr-colour').value || '').trim();
     const meters = parseFloat(document.getElementById('fr-meters').value) || 0;
     const note = (document.getElementById('fr-note').value || '').trim();
     const st = document.getElementById('fr-status');
-    if (!orderNo || !fabric) { if (st) st.textContent = '✗ Enter at least a sales order # and a fabric.'; return; }
+    const order = orderId ? (currentData().orders || []).find(o => o.id === orderId) : null;
+    if (!order) { if (st) st.textContent = '✗ Pick an open sales order first.'; return; }
+    if (!fabric) { if (st) st.textContent = '✗ Enter the fabric to reserve.'; return; }
     snapshotState();
     const r = {
       id: 'FR-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5),
-      orderNo, fabric, colour, meters, note,
+      orderId: order.id, orderNo: order.invoice || order.id, customer: order.customer || '', product: order.product || '',
+      fabric, colour, meters, note,
       by: (typeof currentUser !== 'undefined' && currentUser && currentUser.email) ? currentUser.email.split('@')[0] : 'staff',
       at: new Date().toISOString(), status: 'reserved'
     };
     _fabricReservations().unshift(r);
     saveData();
-    ['fr-order', 'fr-fabric', 'fr-colour', 'fr-meters', 'fr-note'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    ['fr-fabric', 'fr-colour', 'fr-meters', 'fr-note'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    if (sel) sel.value = '';
     renderFabricReservations();
-    if (st) st.textContent = '✓ Reserved #' + orderNo + ' — ' + fabric + '. Opening email…';
-    _reserveMailto([r], ' — order #' + orderNo);
+    if (st) st.textContent = '✓ Reserved for #' + r.orderNo + ' — ' + fabric + '. Opening email…';
+    _reserveMailto([r], ' — order #' + r.orderNo);
   }
   window.reserveFabric = reserveFabric;
 
@@ -3155,6 +3171,17 @@ ${_PRODUCTION_PRINT_STYLES}
       const names = [...new Set(((currentData().orders) || []).map(o => o.fabric).filter(Boolean))].sort();
       dl.innerHTML = names.map(n => `<option value="${_escape(n)}"></option>`).join('');
     }
+    // Open sales orders to reserve against (active; cots/compactums excluded — no fabric).
+    const os = document.getElementById('fr-order');
+    if (os && document.activeElement !== os) {
+      const cur = os.value;
+      const open = ((currentData().orders) || [])
+        .filter(o => o.status !== 'delivered' && o.status !== 'done' && !_isNoFabricCategory(o))
+        .sort((a, b) => String(a.invoice || a.id).localeCompare(String(b.invoice || b.id)));
+      os.innerHTML = '<option value="">— pick an open order —</option>' +
+        open.map(o => `<option value="${_escape(o.id)}">#${_escape(o.invoice || o.id)} — ${_escape(o.customer || '')}${o.product ? ' — ' + _escape(o.product) : ''}</option>`).join('');
+      if (cur) os.value = cur;
+    }
     const items = _fabricReservations();
     if (items.length === 0) { list.innerHTML = '<div class="empty">No fabric reserved yet</div>'; return; }
     const rank = { reserved: 0, ordered: 1, received: 2 };
@@ -3167,7 +3194,7 @@ ${_PRODUCTION_PRINT_STYLES}
         <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px">
           <div>
             <div style="font-weight:700">#${_escape(r.orderNo)} — ${_escape(r.fabric)}${r.colour ? ' <span style="color:var(--text-muted,#888); font-weight:400">(' + _escape(r.colour) + ')</span>' : ''}</div>
-            <div style="font-size:11px; color:var(--text-muted,#888)">${r.meters || 0} m${r.note ? ' · ' + _escape(r.note) : ''} · by ${_escape(r.by || '')} · ${badge(r.status)}</div>
+            <div style="font-size:11px; color:var(--text-muted,#888)">${r.customer ? _escape(r.customer) + ' · ' : ''}${r.product ? _escape(r.product) + ' · ' : ''}${r.meters || 0} m${r.note ? ' · ' + _escape(r.note) : ''} · by ${_escape(r.by || '')} · ${badge(r.status)}</div>
           </div>
           <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center">
             <button class="btn btn-sm" onclick="emailFabricReservation('${r.id}')" title="Email this reservation to admin">📧</button>
