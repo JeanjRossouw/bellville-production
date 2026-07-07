@@ -398,7 +398,7 @@
           <label>Customer Phone (for WhatsApp)</label>
           <input id="intake-phone" placeholder="e.g., 0821234567">
         </div>
-        <div class="f1">
+        <div class="f1" id="fabric-row">
           <label>Fabric / Color (optional)</label>
           <input id="intake-fabric" placeholder="e.g., Full Grain Wild - Tobacco">
         </div>
@@ -422,7 +422,7 @@
       <div class="row">
         <div class="f1" id="category-row" style="display:none">
           <label>Category</label>
-          <select id="intake-category">
+          <select id="intake-category" onchange="onIntakeCategoryChange()">
             <option value="">Select category...</option>
             <option value="Cot">Cot</option>
             <option value="Compactum">Compactum</option>
@@ -653,6 +653,33 @@
       <div id="suppliers-list" style="margin-top:1rem"></div>
     </div>
     
+    <div class="card">
+      <div class="card-title">🧵 RESERVE FABRIC (for a sales order)</div>
+      <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.75rem">Reserve fabric against a sales order number, then email it to admin. It also appears under "Reserved fabric" below and syncs to admin live.</p>
+      <div class="row">
+        <div class="f1"><label>Sales order #</label><input id="fr-order" placeholder="e.g. 2875"></div>
+        <div class="f1"><label>Fabric</label><input id="fr-fabric" list="fr-fabric-list" placeholder="e.g. Sienna"><datalist id="fr-fabric-list"></datalist></div>
+        <div class="f1"><label>Colour (optional)</label><input id="fr-colour" placeholder="e.g. Light Grey"></div>
+        <div class="f2" style="min-width:90px"><label>Meters</label><input id="fr-meters" type="number" step="0.1" placeholder="0"></div>
+      </div>
+      <div class="row">
+        <div class="f1"><label>Note (optional)</label><input id="fr-note" placeholder="e.g. urgent · customer name"></div>
+        <div class="f2" style="min-width:120px"><label>&nbsp;</label><button class="btn btn-primary" onclick="reserveFabric()">RESERVE &amp; EMAIL</button></div>
+      </div>
+      <div id="fr-status" style="font-size:11px; color:var(--text-muted); margin-top:0.25rem"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>🧵 RESERVED FABRIC (to order)</span>
+        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
+          <label style="font-size:12px; color:var(--text-muted); margin:0">Email to:</label>
+          <input id="fr-admin-email" placeholder="admin@bellvillefurniture.co.za" style="min-width:200px; margin:0" onchange="setFabricReserveEmail(this.value)">
+        </div>
+      </div>
+      <div id="fr-list"><div class="empty">No fabric reserved yet</div></div>
+    </div>
+
     <div class="card">
       <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
         <span>📋 FABRICS NEEDED (CONSOLIDATED)</span>
@@ -1226,6 +1253,8 @@
     if (categoryRow) {
       categoryRow.style.display = biz === 'pinkfoot' ? 'block' : 'none';
     }
+    // Cots / compactums don't use fabric — hide the fabric field for them.
+    if (typeof onIntakeCategoryChange === 'function') onIntakeCategoryChange();
 
     // Tabs and BOM-related UI depend on the active biz
     applyTabVisibility();
@@ -2187,10 +2216,11 @@
     const invoice = document.getElementById('intake-invoice').value.trim();
     const customer = document.getElementById('intake-customer').value.trim();
     const phone = document.getElementById('intake-phone').value.trim();
-    const fabric = document.getElementById('intake-fabric').value.trim();
     const product = document.getElementById('intake-product').value.trim();
     const qty = parseInt(document.getElementById('intake-qty').value) || 1;
     const category = activeBiz === 'pinkfoot' ? document.getElementById('intake-category').value : '';
+    // Cots / compactums don't use fabric — never store fabric on them.
+    const fabric = NO_FABRIC_CATEGORIES.includes(category) ? '' : document.getElementById('intake-fabric').value.trim();
     const paymentStatus = document.getElementById('intake-payment')?.value || 'deposit';
     const outstanding = parseFloat(document.getElementById('intake-outstanding')?.value) || 0;
     
@@ -2470,7 +2500,7 @@
     // Fabric status display (colour-coded — green=received, yellow=ordered, red=waiting/OOS)
     let fabricStatusText = '—';
     let fabricBg = '';
-    if (o.fabric) {
+    if (o.fabric && !_isNoFabricCategory(o)) {
       const fs = o.fabricStatus || 'waiting';
       if (o.fabricOOS) { fabricStatusText = '🔴 OUT OF STOCK' + (o.fabricStockETA ? ' (ETA ' + o.fabricStockETA + ')' : ''); fabricBg = 'background:#fee2e2;'; }
       else if (fs === 'received') { fabricStatusText = '✅ RECEIVED'; fabricBg = 'background:#d1fae5;'; }
@@ -2971,6 +3001,7 @@ ${_PRODUCTION_PRINT_STYLES}
     
     saveData();
     renderFabricOrders();
+    if (typeof renderFabricReservations === 'function') renderFabricReservations();
   }
   
   function deleteSupplier(id) {
@@ -2993,15 +3024,150 @@ ${_PRODUCTION_PRINT_STYLES}
     }
   }
   
+  // Categories that never need fabric (wood products).
+  const NO_FABRIC_CATEGORIES = ['Cot', 'Compactum'];
+  function _isNoFabricCategory(o) {
+    return NO_FABRIC_CATEGORIES.includes((o && o.category) || '');
+  }
+  // Hide the intake fabric field for cot/compactum orders (PinkFoot).
+  function onIntakeCategoryChange() {
+    const row = document.getElementById('fabric-row');
+    if (!row) return;
+    const catEl = document.getElementById('intake-category');
+    const cat = (activeBiz === 'pinkfoot' && catEl) ? catEl.value : '';
+    const hide = NO_FABRIC_CATEGORIES.includes(cat);
+    row.style.display = hide ? 'none' : '';
+    if (hide) { const f = document.getElementById('intake-fabric'); if (f) f.value = ''; }
+  }
+  window.onIntakeCategoryChange = onIntakeCategoryChange;
+
   function getFabricOrders() {
-    // Return each individual order (not consolidated)
-    return currentData().orders.filter(o => 
-      o.fabric && 
-      o.status !== 'delivered' && 
+    // Return each individual order (not consolidated). Cots/compactums never need fabric.
+    return currentData().orders.filter(o =>
+      o.fabric &&
+      !_isNoFabricCategory(o) &&
+      o.status !== 'delivered' &&
       (o.fabricStatus || 'waiting') !== 'received'
     );
   }
   
+  // ===== Fabric reservations (staff reserve against a sales order → email admin) =====
+  function _fabricReservations() {
+    const d = currentData();
+    if (!Array.isArray(d.fabricReservations)) d.fabricReservations = [];
+    return d.fabricReservations;
+  }
+  function _fabricReserveEmail() { return (currentData().fabricReserveEmail || '').trim(); }
+  function setFabricReserveEmail(v) {
+    snapshotState();
+    currentData().fabricReserveEmail = (v || '').trim();
+    saveData();
+  }
+  window.setFabricReserveEmail = setFabricReserveEmail;
+
+  function _openMailto(url) {
+    const a = document.createElement('a');
+    a.href = url; a.style.display = 'none';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { try { a.remove(); } catch (e) {} }, 200);
+  }
+  function _reserveMailto(items, subjectExtra) {
+    const to = _fabricReserveEmail();
+    if (!to) { alert('Set the admin email (the "Email to" box under Reserved fabric) first, then email.'); return; }
+    const lines = items.map(r => `• Order #${r.orderNo}: ${r.fabric}${r.colour ? ' (' + r.colour + ')' : ''} — ${r.meters || 0} m${r.note ? ' — ' + r.note : ''}`);
+    const who = (typeof currentUser !== 'undefined' && currentUser && currentUser.email) ? currentUser.email : 'staff';
+    const subject = 'Fabric reservation' + (subjectExtra || '');
+    const body = 'Please order the reserved fabric below:\n\n' + lines.join('\n') + '\n\nReserved by ' + who;
+    _openMailto('mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body));
+  }
+
+  function reserveFabric() {
+    const orderNo = (document.getElementById('fr-order').value || '').trim();
+    const fabric = (document.getElementById('fr-fabric').value || '').trim();
+    const colour = (document.getElementById('fr-colour').value || '').trim();
+    const meters = parseFloat(document.getElementById('fr-meters').value) || 0;
+    const note = (document.getElementById('fr-note').value || '').trim();
+    const st = document.getElementById('fr-status');
+    if (!orderNo || !fabric) { if (st) st.textContent = '✗ Enter at least a sales order # and a fabric.'; return; }
+    snapshotState();
+    const r = {
+      id: 'FR-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5),
+      orderNo, fabric, colour, meters, note,
+      by: (typeof currentUser !== 'undefined' && currentUser && currentUser.email) ? currentUser.email.split('@')[0] : 'staff',
+      at: new Date().toISOString(), status: 'reserved'
+    };
+    _fabricReservations().unshift(r);
+    saveData();
+    ['fr-order', 'fr-fabric', 'fr-colour', 'fr-meters', 'fr-note'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    renderFabricReservations();
+    if (st) st.textContent = '✓ Reserved #' + orderNo + ' — ' + fabric + '. Opening email…';
+    _reserveMailto([r], ' — order #' + orderNo);
+  }
+  window.reserveFabric = reserveFabric;
+
+  function emailFabricReservation(id) {
+    const r = _fabricReservations().find(x => x.id === id);
+    if (!r) return;
+    _reserveMailto([r], ' — order #' + r.orderNo);
+  }
+  window.emailFabricReservation = emailFabricReservation;
+
+  function setFabricReservationStatus(id, status) {
+    const r = _fabricReservations().find(x => x.id === id);
+    if (!r) return;
+    snapshotState();
+    r.status = status;
+    saveData();
+    renderFabricReservations();
+  }
+  window.setFabricReservationStatus = setFabricReservationStatus;
+  function deleteFabricReservation(id) {
+    if (!confirm('Remove this fabric reservation?')) return;
+    snapshotState();
+    const d = currentData();
+    d.fabricReservations = _fabricReservations().filter(x => x.id !== id);
+    saveData();
+    renderFabricReservations();
+  }
+  window.deleteFabricReservation = deleteFabricReservation;
+
+  function renderFabricReservations() {
+    const list = document.getElementById('fr-list');
+    if (!list) return;
+    const emailEl = document.getElementById('fr-admin-email');
+    if (emailEl && document.activeElement !== emailEl) emailEl.value = _fabricReserveEmail();
+    // Fabric suggestions from existing orders
+    const dl = document.getElementById('fr-fabric-list');
+    if (dl) {
+      const names = [...new Set(((currentData().orders) || []).map(o => o.fabric).filter(Boolean))].sort();
+      dl.innerHTML = names.map(n => `<option value="${_escape(n)}"></option>`).join('');
+    }
+    const items = _fabricReservations();
+    if (items.length === 0) { list.innerHTML = '<div class="empty">No fabric reserved yet</div>'; return; }
+    const rank = { reserved: 0, ordered: 1, received: 2 };
+    const sorted = items.slice().sort((a, b) => (rank[a.status] - rank[b.status]) || (b.at || '').localeCompare(a.at || ''));
+    const badge = s => s === 'received' ? '<span style="color:var(--success,#166534); font-weight:700">✅ RECEIVED</span>'
+      : s === 'ordered' ? '<span style="color:#92400e; font-weight:700">📦 ORDERED</span>'
+        : '<span style="color:#991b1b; font-weight:700">🧵 RESERVED</span>';
+    list.innerHTML = sorted.map(r => `
+      <div style="border:1px solid var(--border,#ddd); border-radius:8px; padding:8px 10px; margin-bottom:6px; background:${r.status === 'received' ? '#f0fdf4' : r.status === 'ordered' ? '#fffbeb' : '#fff'}">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px">
+          <div>
+            <div style="font-weight:700">#${_escape(r.orderNo)} — ${_escape(r.fabric)}${r.colour ? ' <span style="color:var(--text-muted,#888); font-weight:400">(' + _escape(r.colour) + ')</span>' : ''}</div>
+            <div style="font-size:11px; color:var(--text-muted,#888)">${r.meters || 0} m${r.note ? ' · ' + _escape(r.note) : ''} · by ${_escape(r.by || '')} · ${badge(r.status)}</div>
+          </div>
+          <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center">
+            <button class="btn btn-sm" onclick="emailFabricReservation('${r.id}')" title="Email this reservation to admin">📧</button>
+            ${r.status === 'reserved' ? `<button class="btn btn-sm" onclick="setFabricReservationStatus('${r.id}','ordered')">Mark ordered</button>` : ''}
+            ${r.status === 'ordered' ? `<button class="btn btn-sm" style="background:var(--success,#16a34a); color:#fff; border-color:var(--success,#16a34a)" onclick="setFabricReservationStatus('${r.id}','received')">Mark received</button>` : ''}
+            ${r.status === 'received' ? `<button class="btn btn-sm" onclick="setFabricReservationStatus('${r.id}','reserved')">Reopen</button>` : ''}
+            <button class="btn btn-sm btn-danger" onclick="deleteFabricReservation('${r.id}')">✕</button>
+          </div>
+        </div>
+      </div>`).join('');
+  }
+  window.renderFabricReservations = renderFabricReservations;
+
   function renderFabricOrders() {
     initDefaultSuppliers();
     
@@ -5969,7 +6135,7 @@ ${_PRODUCTION_PRINT_STYLES}
             if (daysAway === 0) totals.deliveriesToday++;
           }
         }
-        if (o.fabric) {
+        if (o.fabric && !_isNoFabricCategory(o)) {
           const fs = o.fabricStatus || 'waiting';
           if (o.fabricOOS) oosFabricsTotal++;
           else if (fs === 'waiting') fabricWaiting++;
@@ -7163,7 +7329,7 @@ ${_PRODUCTION_PRINT_STYLES}
     // Order of precedence — OOS overrides status (OOS is worse news than waiting/ordered).
     let fabricRowHtml = '';
     let bgStyle = '';
-    if (o.fabric) {
+    if (o.fabric && !_isNoFabricCategory(o)) {
       let badge;
       if (o.fabricOOS) {
         const etaText = o.fabricStockETA ? ' · ETA ' + _escape(o.fabricStockETA) : '';
