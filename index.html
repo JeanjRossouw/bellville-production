@@ -490,7 +490,10 @@
     <div class="card">
       <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
         <span>SEARCH ORDERS</span>
-        <button class="btn btn-primary" onclick="printProductionList()">🖨️ Print Production List</button>
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap">
+          <button class="btn" onclick="resetDueDates6wk()" title="Set every active order's due date to 6 weeks after its order date">📅 Reset due dates → 6 weeks</button>
+          <button class="btn btn-primary" onclick="printProductionList()">🖨️ Print Production List</button>
+        </div>
       </div>
       <input id="order-search" placeholder="Search by invoice #, customer name, or product..." oninput="renderOrders()" style="font-size:14px; padding:1rem">
     </div>
@@ -2536,6 +2539,30 @@
         </tr>
       `;
   }
+
+  // Recompute every active order's due date to 6 weeks after its order date (all
+  // businesses). One-off cleanup for existing orders when the lead time changed.
+  function resetDueDates6wk() {
+    const bizs = ['bellville', 'pinkfoot', 'repticube'];
+    const active = o => o && o.status !== 'delivered' && o.status !== 'done';
+    let n = 0;
+    bizs.forEach(b => ((data[b] && data[b].orders) || []).forEach(o => { if (active(o)) n++; }));
+    if (n === 0) { alert('No active orders to update.'); return; }
+    if (!confirm('Set the due date of all ' + n + ' active order(s), across all shops, to 6 weeks after each order\'s order date?\n\nThis overwrites existing due dates (a snapshot is saved — Ctrl+Z reverts).')) return;
+    snapshotState();
+    let changed = 0;
+    bizs.forEach(b => ((data[b] && data[b].orders) || []).forEach(o => {
+      if (!active(o)) return;
+      const base = o.orderDate ? new Date(o.orderDate + 'T00:00:00') : new Date();
+      if (isNaN(base.getTime())) return;
+      const due = new Date(base.getTime() + 6 * 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      if (o.dueDate !== due) { o.dueDate = due; changed++; }
+    }));
+    saveData();
+    render();
+    if (typeof toast === 'function') toast('Updated ' + changed + ' order due date(s) to a 6-week lead.', 'success', 3500);
+  }
+  window.resetDueDates6wk = resetDueDates6wk;
 
   function printProductionList() {
     const biz = activeBiz;
