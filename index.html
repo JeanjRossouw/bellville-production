@@ -398,7 +398,7 @@
           <label>Customer Phone (for WhatsApp)</label>
           <input id="intake-phone" placeholder="e.g., 0821234567">
         </div>
-        <div class="f1">
+        <div class="f1" id="fabric-row">
           <label>Fabric / Color (optional)</label>
           <input id="intake-fabric" placeholder="e.g., Full Grain Wild - Tobacco">
         </div>
@@ -422,7 +422,7 @@
       <div class="row">
         <div class="f1" id="category-row" style="display:none">
           <label>Category</label>
-          <select id="intake-category">
+          <select id="intake-category" onchange="onIntakeCategoryChange()">
             <option value="">Select category...</option>
             <option value="Cot">Cot</option>
             <option value="Compactum">Compactum</option>
@@ -1253,6 +1253,8 @@
     if (categoryRow) {
       categoryRow.style.display = biz === 'pinkfoot' ? 'block' : 'none';
     }
+    // Cots / compactums don't use fabric — hide the fabric field for them.
+    if (typeof onIntakeCategoryChange === 'function') onIntakeCategoryChange();
 
     // Tabs and BOM-related UI depend on the active biz
     applyTabVisibility();
@@ -2214,10 +2216,11 @@
     const invoice = document.getElementById('intake-invoice').value.trim();
     const customer = document.getElementById('intake-customer').value.trim();
     const phone = document.getElementById('intake-phone').value.trim();
-    const fabric = document.getElementById('intake-fabric').value.trim();
     const product = document.getElementById('intake-product').value.trim();
     const qty = parseInt(document.getElementById('intake-qty').value) || 1;
     const category = activeBiz === 'pinkfoot' ? document.getElementById('intake-category').value : '';
+    // Cots / compactums don't use fabric — never store fabric on them.
+    const fabric = NO_FABRIC_CATEGORIES.includes(category) ? '' : document.getElementById('intake-fabric').value.trim();
     const paymentStatus = document.getElementById('intake-payment')?.value || 'deposit';
     const outstanding = parseFloat(document.getElementById('intake-outstanding')?.value) || 0;
     
@@ -2497,7 +2500,7 @@
     // Fabric status display (colour-coded — green=received, yellow=ordered, red=waiting/OOS)
     let fabricStatusText = '—';
     let fabricBg = '';
-    if (o.fabric) {
+    if (o.fabric && !_isNoFabricCategory(o)) {
       const fs = o.fabricStatus || 'waiting';
       if (o.fabricOOS) { fabricStatusText = '🔴 OUT OF STOCK' + (o.fabricStockETA ? ' (ETA ' + o.fabricStockETA + ')' : ''); fabricBg = 'background:#fee2e2;'; }
       else if (fs === 'received') { fabricStatusText = '✅ RECEIVED'; fabricBg = 'background:#d1fae5;'; }
@@ -3021,11 +3024,29 @@ ${_PRODUCTION_PRINT_STYLES}
     }
   }
   
+  // Categories that never need fabric (wood products).
+  const NO_FABRIC_CATEGORIES = ['Cot', 'Compactum'];
+  function _isNoFabricCategory(o) {
+    return NO_FABRIC_CATEGORIES.includes((o && o.category) || '');
+  }
+  // Hide the intake fabric field for cot/compactum orders (PinkFoot).
+  function onIntakeCategoryChange() {
+    const row = document.getElementById('fabric-row');
+    if (!row) return;
+    const catEl = document.getElementById('intake-category');
+    const cat = (activeBiz === 'pinkfoot' && catEl) ? catEl.value : '';
+    const hide = NO_FABRIC_CATEGORIES.includes(cat);
+    row.style.display = hide ? 'none' : '';
+    if (hide) { const f = document.getElementById('intake-fabric'); if (f) f.value = ''; }
+  }
+  window.onIntakeCategoryChange = onIntakeCategoryChange;
+
   function getFabricOrders() {
-    // Return each individual order (not consolidated)
-    return currentData().orders.filter(o => 
-      o.fabric && 
-      o.status !== 'delivered' && 
+    // Return each individual order (not consolidated). Cots/compactums never need fabric.
+    return currentData().orders.filter(o =>
+      o.fabric &&
+      !_isNoFabricCategory(o) &&
+      o.status !== 'delivered' &&
       (o.fabricStatus || 'waiting') !== 'received'
     );
   }
@@ -6114,7 +6135,7 @@ ${_PRODUCTION_PRINT_STYLES}
             if (daysAway === 0) totals.deliveriesToday++;
           }
         }
-        if (o.fabric) {
+        if (o.fabric && !_isNoFabricCategory(o)) {
           const fs = o.fabricStatus || 'waiting';
           if (o.fabricOOS) oosFabricsTotal++;
           else if (fs === 'waiting') fabricWaiting++;
@@ -7308,7 +7329,7 @@ ${_PRODUCTION_PRINT_STYLES}
     // Order of precedence — OOS overrides status (OOS is worse news than waiting/ordered).
     let fabricRowHtml = '';
     let bgStyle = '';
-    if (o.fabric) {
+    if (o.fabric && !_isNoFabricCategory(o)) {
       let badge;
       if (o.fabricOOS) {
         const etaText = o.fabricStockETA ? ' · ETA ' + _escape(o.fabricStockETA) : '';
