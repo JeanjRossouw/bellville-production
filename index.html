@@ -2221,7 +2221,7 @@
   function _leadWeeksFor(category, product) {
     const hay = ((category || '') + ' ' + (product || '')).toLowerCase();
     if (/\bcot\b|compactum/.test(hay)) return 8;
-    if (/rocking chair|rocker/.test(hay)) return 6;
+    if (/rocking chair|rocker|foot\s?stool/.test(hay)) return 6;
     if (/sofa|seater|corner|daybed|couch|\bchair\b/.test(hay)) return 6;
     return 4;
   }
