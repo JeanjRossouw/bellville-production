@@ -660,7 +660,7 @@
       <div class="card-title">🧵 RESERVE FABRIC (for a sales order)</div>
       <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.75rem">Reserve fabric against a sales order number, then email it to admin. It also appears under "Reserved fabric" below and syncs to admin live.</p>
       <div class="row">
-        <div class="f1"><label>Open sales order</label><select id="fr-order" onchange="onReserveOrderPick()"><option value="">— pick an open order —</option></select></div>
+        <div class="f1"><label>Open sales order (type # or customer)</label><input id="fr-order" list="fr-order-list" autocomplete="off" placeholder="Type order # or customer…" oninput="onReserveOrderPick()"><datalist id="fr-order-list"></datalist></div>
         <div class="f1"><label>Fabric</label><input id="fr-fabric" list="fr-fabric-list" placeholder="e.g. Sienna"><datalist id="fr-fabric-list"></datalist></div>
         <div class="f1"><label>Colour (optional)</label><input id="fr-colour" placeholder="e.g. Light Grey"></div>
         <div class="f2" style="min-width:90px"><label>Meters</label><input id="fr-meters" type="number" step="0.1" placeholder="0"></div>
@@ -3119,10 +3119,24 @@ ${_PRODUCTION_PRINT_STYLES}
   }
 
   // Prefill the fabric box from the picked order (if it already has a fabric).
+  // Maps the datalist label the user picks/types back to an order id.
+  let _frOrderIndex = {};
+  function _resolveReserveOrder() {
+    const el = document.getElementById('fr-order');
+    const val = (el ? el.value : '').trim();
+    if (!val) return null;
+    const orders = currentData().orders || [];
+    // Exact pick from the list
+    if (_frOrderIndex[val]) return orders.find(o => o.id === _frOrderIndex[val]) || null;
+    // Typed just an order number (strip a leading #): match an active order by invoice
+    const num = val.replace(/^#/, '').trim();
+    const matches = orders.filter(o => String(o.invoice || o.id) === num && o.status !== 'delivered' && o.status !== 'done' && !_isNoFabricCategory(o));
+    if (matches.length === 1) return matches[0];
+    return null; // ambiguous (multiple products on that invoice) or not found → pick from the list
+  }
+
   function onReserveOrderPick() {
-    const sel = document.getElementById('fr-order');
-    if (!sel || !sel.value) return;
-    const order = (currentData().orders || []).find(o => o.id === sel.value);
+    const order = _resolveReserveOrder();
     if (!order) return;
     const f = document.getElementById('fr-fabric');
     if (f && !f.value && order.fabric) f.value = order.fabric;
@@ -3130,15 +3144,13 @@ ${_PRODUCTION_PRINT_STYLES}
   window.onReserveOrderPick = onReserveOrderPick;
 
   function reserveFabric() {
-    const sel = document.getElementById('fr-order');
-    const orderId = sel ? sel.value : '';
     const fabric = (document.getElementById('fr-fabric').value || '').trim();
     const colour = (document.getElementById('fr-colour').value || '').trim();
     const meters = parseFloat(document.getElementById('fr-meters').value) || 0;
     const note = (document.getElementById('fr-note').value || '').trim();
     const st = document.getElementById('fr-status');
-    const order = orderId ? (currentData().orders || []).find(o => o.id === orderId) : null;
-    if (!order) { if (st) st.textContent = '✗ Pick an open sales order first.'; return; }
+    const order = _resolveReserveOrder();
+    if (!order) { if (st) st.textContent = '✗ Type an order # and pick it from the list.'; return; }
     if (!fabric) { if (st) st.textContent = '✗ Enter the fabric to reserve.'; return; }
     snapshotState();
     const r = {
@@ -3150,8 +3162,7 @@ ${_PRODUCTION_PRINT_STYLES}
     };
     _fabricReservations().unshift(r);
     saveData();
-    ['fr-fabric', 'fr-colour', 'fr-meters', 'fr-note'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-    if (sel) sel.value = '';
+    ['fr-order', 'fr-fabric', 'fr-colour', 'fr-meters', 'fr-note'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
     renderFabricReservations();
     if (st) st.textContent = '✓ Reserved for #' + r.orderNo + ' — ' + fabric + '. Opening email…';
     _reserveMailto([r], ' — order #' + r.orderNo);
@@ -3195,16 +3206,18 @@ ${_PRODUCTION_PRINT_STYLES}
       const names = [...new Set(((currentData().orders) || []).map(o => o.fabric).filter(Boolean))].sort();
       dl.innerHTML = names.map(n => `<option value="${_escape(n)}"></option>`).join('');
     }
-    // Open sales orders to reserve against (active; cots/compactums excluded — no fabric).
-    const os = document.getElementById('fr-order');
-    if (os && document.activeElement !== os) {
-      const cur = os.value;
+    // Type-to-search picker of open sales orders (active; cots/compactums excluded).
+    const odl = document.getElementById('fr-order-list');
+    if (odl) {
       const open = ((currentData().orders) || [])
         .filter(o => o.status !== 'delivered' && o.status !== 'done' && !_isNoFabricCategory(o))
         .sort((a, b) => String(a.invoice || a.id).localeCompare(String(b.invoice || b.id)));
-      os.innerHTML = '<option value="">— pick an open order —</option>' +
-        open.map(o => `<option value="${_escape(o.id)}">#${_escape(o.invoice || o.id)} — ${_escape(o.customer || '')}${o.product ? ' — ' + _escape(o.product) : ''}</option>`).join('');
-      if (cur) os.value = cur;
+      _frOrderIndex = {};
+      odl.innerHTML = open.map(o => {
+        const label = '#' + (o.invoice || o.id) + ' — ' + (o.customer || '') + (o.product ? ' — ' + o.product : '');
+        _frOrderIndex[label] = o.id;
+        return `<option value="${_escape(label)}"></option>`;
+      }).join('');
     }
     const items = _fabricReservations();
     if (items.length === 0) { list.innerHTML = '<div class="empty">No fabric reserved yet</div>'; return; }
