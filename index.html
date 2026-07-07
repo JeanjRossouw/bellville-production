@@ -1085,6 +1085,11 @@
   // Used by showSection and applyRolePermissions. Declared at top so it's
   // initialized regardless of where in the script execution lands.
   const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'woodwork', 'pos'];
+
+  // Categories that never need fabric (wood products). Declared up here so it's
+  // initialized BEFORE switchBiz('bellville') → onIntakeCategoryChange() runs at
+  // init — otherwise a TDZ ReferenceError aborts the whole script (blank screen).
+  const NO_FABRIC_CATEGORIES = ['Cot', 'Compactum'];
   
   // Undo history (last 20 states)
   let history = [];
@@ -3034,8 +3039,6 @@ ${_PRODUCTION_PRINT_STYLES}
     }
   }
   
-  // Categories that never need fabric (wood products).
-  const NO_FABRIC_CATEGORIES = ['Cot', 'Compactum'];
   function _isNoFabricCategory(o) {
     return NO_FABRIC_CATEGORIES.includes((o && o.category) || '');
   }
