@@ -6540,6 +6540,28 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof renderPOSDashboard === 'function') renderPOSDashboard();
   }
 
+  // Most recent fabric reservation linked to an order (for showing the res date).
+  function _orderReservation(orderId) {
+    const list = (currentData().fabricReservations) || [];
+    const matches = list.filter(r => r && r.orderId === orderId);
+    if (!matches.length) return null;
+    return matches.slice().sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')))[0];
+  }
+  function _resDateStr(iso) {
+    const d = iso ? new Date(iso) : null;
+    if (!d || isNaN(d.getTime())) return '';
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  }
+  function _orderReservationLine(orderId) {
+    const rr = _orderReservation(orderId);
+    if (!rr) return '';
+    return `<div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.75rem; padding:0.5rem; background:rgba(0,0,0,0.3); border-left:3px solid #16a34a">
+      <span style="font-size:10px; color:var(--text-muted); text-transform:uppercase; font-weight:700">🧵 Fabric reserved:</span>
+      <span style="font-size:12px; font-weight:700">${_escape(_resDateStr(rr.at))}</span>${rr.fabric ? `<span style="font-size:11px; color:var(--text-muted)">— ${_escape(rr.fabric)}${rr.status && rr.status !== 'reserved' ? ' (' + _escape(rr.status) + ')' : ''}</span>` : ''}
+    </div>`;
+  }
+
   function renderOrders() {
     let orders = currentData().orders.filter(o => o.status !== 'delivered' && o.status !== 'done');
     const today = new Date();
@@ -6647,6 +6669,7 @@ ${_PRODUCTION_PRINT_STYLES}
             </select>
           </div>
           ` : ''}
+          ${!HIDE_FABRIC_FROM.includes(currentRole) ? _orderReservationLine(o.id) : ''}
           <div style="display:flex; gap:0.5rem; flex-wrap:wrap">
             <button class="btn btn-sm btn-primary" onclick="printJobCard('${o.id}')">🖨️ PRINT JOB CARD</button>
             ${o.phone ? `<button class="btn btn-sm" style="background:#25D366; color:#fff; border-color:#25D366" onclick="notifyClient('${o.id}')">📱 NOTIFY CLIENT</button>` : ''}
