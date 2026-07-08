@@ -3218,23 +3218,15 @@ ${_PRODUCTION_PRINT_STYLES}
   // Unified "fabric still to order" across all shops: reserve-form entries that are
   // still 'reserved', PLUS any order whose fabric is set and still 'waiting' (typed
   // at intake) that isn't already covered by a reservation. Ordered/received drop off.
+  // ONLY fabric that was explicitly reserved (via the Reserve Fabric form) — not
+  // every order that happens to have a fabric typed at intake.
   function _reservedFabricEntries() {
     const entries = [];
     ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
-      const bd = data[b] || {};
-      const covered = new Set();
-      ((bd.fabricReservations) || []).forEach(r => {
+      ((data[b] && data[b].fabricReservations) || []).forEach(r => {
         if (r && (r.status || 'reserved') === 'reserved') {
           entries.push({ id: r.id, kind: 'res', biz: b, orderNo: r.orderNo || '', customer: r.customer || '', product: r.product || '', fabric: r.fabric || '', colour: r.colour || '', meters: r.meters || 0, note: r.note || '', at: r.at || '' });
-          if (r.orderId) covered.add(r.orderId);
         }
-      });
-      ((bd.orders) || []).forEach(o => {
-        if (!o || !o.fabric || _isNoFabricCategory(o)) return;
-        if (o.status === 'delivered' || o.status === 'done') return;
-        if ((o.fabricStatus || 'waiting') !== 'waiting') return;
-        if (covered.has(o.id)) return;
-        entries.push({ id: 'ORD-' + o.id, kind: 'order', biz: b, orderId: o.id, orderNo: o.invoice || o.id, customer: o.customer || '', product: o.product || '', fabric: o.fabric || '', colour: '', meters: (o.fabricQty || o.qty || 0), note: '', at: o.orderDate || '' });
       });
     });
     entries.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
