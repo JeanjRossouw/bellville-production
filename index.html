@@ -3870,6 +3870,9 @@ ${_PRODUCTION_PRINT_STYLES}
     renderFinished();
     renderStaff();
     renderFabricOrders();
+    // Reserved-fabric list must repaint on load and on every Firestore sync — not
+    // only after a reserve action — so it shows existing reservations when the app opens.
+    if (typeof renderFabricReservations === 'function') renderFabricReservations();
     // renderMaterials() removed — was a stub that wrote 'coming soon' into a
     // non-existent element. Inventory rendering happens via renderInventory()
     // which is called from showSection('materials'). BOM rendering similarly.
