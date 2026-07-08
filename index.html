@@ -3235,6 +3235,56 @@ ${_PRODUCTION_PRINT_STYLES}
   }
   window.deleteFabricReservation = deleteFabricReservation;
 
+  function _jsq(s) { return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+  // Unified "fabric still to order" across all shops: reserve-form entries that are
+  // still 'reserved', PLUS any order whose fabric is set and still 'waiting' (typed
+  // at intake) that isn't already covered by a reservation. Ordered/received drop off.
+  function _reservedFabricEntries() {
+    const entries = [];
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      const bd = data[b] || {};
+      const covered = new Set();
+      ((bd.fabricReservations) || []).forEach(r => {
+        if (r && (r.status || 'reserved') === 'reserved') {
+          entries.push({ id: r.id, kind: 'res', biz: b, orderNo: r.orderNo || '', customer: r.customer || '', product: r.product || '', fabric: r.fabric || '', colour: r.colour || '', meters: r.meters || 0, note: r.note || '', at: r.at || '' });
+          if (r.orderId) covered.add(r.orderId);
+        }
+      });
+      ((bd.orders) || []).forEach(o => {
+        if (!o || !o.fabric || _isNoFabricCategory(o)) return;
+        if (o.status === 'delivered' || o.status === 'done') return;
+        if ((o.fabricStatus || 'waiting') !== 'waiting') return;
+        if (covered.has(o.id)) return;
+        entries.push({ id: 'ORD-' + o.id, kind: 'order', biz: b, orderId: o.id, orderNo: o.invoice || o.id, customer: o.customer || '', product: o.product || '', fabric: o.fabric || '', colour: '', meters: (o.fabricQty || o.qty || 0), note: '', at: o.orderDate || '' });
+      });
+    });
+    entries.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
+    return entries;
+  }
+  function _reservedEntryById(id) { return _reservedFabricEntries().find(e => e.id === id) || null; }
+  function emailReservedEntry(id) {
+    const e = _reservedEntryById(id);
+    if (!e) return;
+    _reserveMailto([{ orderNo: e.orderNo, fabric: e.fabric, colour: e.colour, meters: e.meters, note: e.note }], ' — order #' + e.orderNo);
+  }
+  window.emailReservedEntry = emailReservedEntry;
+  function markReservedEntryOrdered(id) {
+    if (id.indexOf('ORD-') === 0) {
+      const oid = id.slice(4);
+      let target = null;
+      ['bellville', 'pinkfoot', 'repticube'].forEach(b => { const o = ((data[b] && data[b].orders) || []).find(x => x.id === oid); if (o) target = o; });
+      if (!target) return;
+      snapshotState();
+      target.fabricStatus = 'ordered';
+      saveData();
+      if (typeof render === 'function') render();
+      renderFabricReservations();
+    } else {
+      setFabricReservationStatus(id, 'ordered');
+    }
+  }
+  window.markReservedEntryOrdered = markReservedEntryOrdered;
+
   function renderFabricReservations() {
     const list = document.getElementById('fr-list');
     if (!list) return;
@@ -3259,26 +3309,20 @@ ${_PRODUCTION_PRINT_STYLES}
         return `<option value="${_escape(label)}"></option>`;
       }).join('');
     }
-    const items = _allReservations();
-    if (items.length === 0) { list.innerHTML = '<div class="empty">No fabric reserved yet</div>'; return; }
-    const rank = { reserved: 0, ordered: 1, received: 2 };
-    const sorted = items.slice().sort((a, b) => (rank[a.status] - rank[b.status]) || (b.at || '').localeCompare(a.at || ''));
-    const badge = s => s === 'received' ? '<span style="color:var(--success,#166534); font-weight:700">✅ RECEIVED</span>'
-      : s === 'ordered' ? '<span style="color:#92400e; font-weight:700">📦 ORDERED</span>'
-        : '<span style="color:#991b1b; font-weight:700">🧵 RESERVED</span>';
-    list.innerHTML = sorted.map(r => `
-      <div style="border:1px solid var(--border,#ddd); border-radius:8px; padding:8px 10px; margin-bottom:6px; background:${r.status === 'received' ? '#f0fdf4' : r.status === 'ordered' ? '#fffbeb' : '#fff'}">
+    const items = _reservedFabricEntries();
+    if (items.length === 0) { list.innerHTML = '<div class="empty">No fabric to order right now</div>'; return; }
+    const dstr = e => (typeof _resDateStr === 'function') ? _resDateStr(e.at) : String(e.at || '').slice(0, 10);
+    list.innerHTML = items.map(e => `
+      <div style="border:1px solid var(--border,#ddd); border-radius:8px; padding:8px 10px; margin-bottom:6px; background:#fff">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px">
           <div>
-            <div style="font-weight:700">#${_escape(r.orderNo)} — ${_escape(r.fabric)}${r.colour ? ' <span style="color:var(--text-muted,#888); font-weight:400">(' + _escape(r.colour) + ')</span>' : ''}</div>
-            <div style="font-size:11px; color:var(--text-muted,#888)">${r.customer ? _escape(r.customer) + ' · ' : ''}${r.product ? _escape(r.product) + ' · ' : ''}${r.meters || 0} m${r.note ? ' · ' + _escape(r.note) : ''} · by ${_escape(r.by || '')} · ${badge(r.status)}</div>
+            <div style="font-weight:700">#${_escape(e.orderNo)} — ${_escape(e.fabric)}${e.colour ? ' <span style="color:var(--text-muted,#888); font-weight:400">(' + _escape(e.colour) + ')</span>' : ''}</div>
+            <div style="font-size:11px; color:var(--text-muted,#888)">${e.customer ? _escape(e.customer) + ' · ' : ''}${e.product ? _escape(e.product) + ' · ' : ''}${e.meters || 0} m${e.note ? ' · ' + _escape(e.note) : ''}${e.at ? ' · reserved ' + _escape(dstr(e)) : ''}${e.kind === 'order' ? ' · <span style="color:#92400e">from order</span>' : ''}</div>
           </div>
           <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center">
-            <button class="btn btn-sm" onclick="emailFabricReservation('${r.id}')" title="Email this reservation to admin">📧</button>
-            ${r.status === 'reserved' ? `<button class="btn btn-sm" onclick="setFabricReservationStatus('${r.id}','ordered')">Mark ordered</button>` : ''}
-            ${r.status === 'ordered' ? `<button class="btn btn-sm" style="background:var(--success,#16a34a); color:#fff; border-color:var(--success,#16a34a)" onclick="setFabricReservationStatus('${r.id}','received')">Mark received</button>` : ''}
-            ${r.status === 'received' ? `<button class="btn btn-sm" onclick="setFabricReservationStatus('${r.id}','reserved')">Reopen</button>` : ''}
-            <button class="btn btn-sm btn-danger" onclick="deleteFabricReservation('${r.id}')">✕</button>
+            <button class="btn btn-sm" onclick="emailReservedEntry('${_jsq(e.id)}')" title="Email this fabric to admin">📧</button>
+            <button class="btn btn-sm" onclick="markReservedEntryOrdered('${_jsq(e.id)}')">Mark ordered</button>
+            ${e.kind === 'res' ? `<button class="btn btn-sm btn-danger" onclick="deleteFabricReservation('${_jsq(e.id)}')">✕</button>` : ''}
           </div>
         </div>
       </div>`).join('');
@@ -6028,16 +6072,10 @@ ${_PRODUCTION_PRINT_STYLES}
   function renderReservedSheet() {
     const host = document.getElementById('reserved-only-content');
     if (!host) return;
-    const rows = [];
-    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
-      ((data[b] && data[b].fabricReservations) || []).forEach(r => {
-        if (r && (r.status || 'reserved') === 'reserved') rows.push(r);
-      });
-    });
-    rows.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
+    const rows = (typeof _reservedFabricEntries === 'function') ? _reservedFabricEntries() : [];
     const cnt = document.getElementById('reserved-only-count');
-    if (cnt) cnt.textContent = rows.length + ' fabric line' + (rows.length !== 1 ? 's' : '') + ' reserved';
-    if (rows.length === 0) { host.innerHTML = '<div style="padding:2.5rem; text-align:center; color:#888; font-size:15px">No fabric currently reserved.</div>'; return; }
+    if (cnt) cnt.textContent = rows.length + ' fabric line' + (rows.length !== 1 ? 's' : '') + ' to order';
+    if (rows.length === 0) { host.innerHTML = '<div style="padding:2.5rem; text-align:center; color:#888; font-size:15px">No fabric to order right now.</div>'; return; }
     const dstr = r => (typeof _resDateStr === 'function') ? _resDateStr(r.at) : String(r.at || '').slice(0, 10);
     host.innerHTML = '<div style="overflow-x:auto"><table style="width:100%; border-collapse:collapse; font-size:14px">' +
       '<thead><tr style="text-align:left; border-bottom:2px solid #111">' +
