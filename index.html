@@ -3115,6 +3115,24 @@ ${_PRODUCTION_PRINT_STYLES}
     if (!Array.isArray(d.fabricReservations)) d.fabricReservations = [];
     return d.fabricReservations;
   }
+  // Reservations across ALL shops (they're stored per-business, but the reserved
+  // list + emails should show them all regardless of which shop is active).
+  function _allReservations() {
+    const out = [];
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      ((data[b] && data[b].fabricReservations) || []).forEach(r => { if (r) out.push(r); });
+    });
+    return out;
+  }
+  function _findReservation(id) {
+    const bizs = ['bellville', 'pinkfoot', 'repticube'];
+    for (let i = 0; i < bizs.length; i++) {
+      const list = (data[bizs[i]] && data[bizs[i]].fabricReservations) || [];
+      const r = list.find(x => x && x.id === id);
+      if (r) return { r: r, biz: bizs[i] };
+    }
+    return null;
+  }
   function _fabricReserveEmail() { return (currentData().fabricReserveEmail || 'admin@ugfabrics.co.za').trim(); }
   function setFabricReserveEmail(v) {
     snapshotState();
@@ -3191,26 +3209,27 @@ ${_PRODUCTION_PRINT_STYLES}
   window.reserveFabric = reserveFabric;
 
   function emailFabricReservation(id) {
-    const r = _fabricReservations().find(x => x.id === id);
-    if (!r) return;
-    _reserveMailto([r], ' — order #' + r.orderNo);
+    const found = _findReservation(id);
+    if (!found) return;
+    _reserveMailto([found.r], ' — order #' + found.r.orderNo);
   }
   window.emailFabricReservation = emailFabricReservation;
 
   function setFabricReservationStatus(id, status) {
-    const r = _fabricReservations().find(x => x.id === id);
-    if (!r) return;
+    const found = _findReservation(id);
+    if (!found) return;
     snapshotState();
-    r.status = status;
+    found.r.status = status;
     saveData();
     renderFabricReservations();
   }
   window.setFabricReservationStatus = setFabricReservationStatus;
   function deleteFabricReservation(id) {
     if (!confirm('Remove this fabric reservation?')) return;
+    const found = _findReservation(id);
+    if (!found) return;
     snapshotState();
-    const d = currentData();
-    d.fabricReservations = _fabricReservations().filter(x => x.id !== id);
+    data[found.biz].fabricReservations = ((data[found.biz] && data[found.biz].fabricReservations) || []).filter(x => x.id !== id);
     saveData();
     renderFabricReservations();
   }
@@ -3240,7 +3259,7 @@ ${_PRODUCTION_PRINT_STYLES}
         return `<option value="${_escape(label)}"></option>`;
       }).join('');
     }
-    const items = _fabricReservations();
+    const items = _allReservations();
     if (items.length === 0) { list.innerHTML = '<div class="empty">No fabric reserved yet</div>'; return; }
     const rank = { reserved: 0, ordered: 1, received: 2 };
     const sorted = items.slice().sort((a, b) => (rank[a.status] - rank[b.status]) || (b.at || '').localeCompare(a.at || ''));
