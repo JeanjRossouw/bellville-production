@@ -1247,10 +1247,12 @@
     const posDashCard = document.getElementById('pos-dash-card');
     if (posDashCard) posDashCard.style.display = posContext ? '' : 'none';
 
-    // Low-stock card and Materials-by-Week button: shown on all biz (gracefully
-    // display "no BOM data" when no BOMs are set up — useful once Bellville BOMs land).
+    // Low-stock card: admin only. Staff logins (sales, factory, dispatch, fabric,
+    // cashier, manager) don't see the LOW STOCK MATERIALS card. Pre-login currentRole
+    // is null, so it stays hidden until an admin is confirmed. Materials-by-Week button
+    // stays available on all biz (gracefully shows "no BOM data" when no BOMs exist).
     const lowStockCard = document.getElementById('dash-low-stock-card');
-    if (lowStockCard) lowStockCard.style.display = '';
+    if (lowStockCard) lowStockCard.style.display = (currentRole === 'admin') ? '' : 'none';
     const matWeekBtn = document.getElementById('planner-mat-btn');
     if (matWeekBtn) matWeekBtn.style.display = '';
     // Load ReptiCube Defaults helper stays ReptiCube-only — it's specifically
@@ -9392,11 +9394,11 @@ ${totalsSection}
   // Role permissions: which tabs each role can see
   const ROLE_PERMISSIONS = {
     admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'woodwork', 'pos'],
-    sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'woodwork', 'pos'],
-    factory: ['dashboard', 'orders', 'done', 'calendar', 'bom', 'schedule', 'planner'],
-    dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'finished'],
+    sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'woodwork', 'pos'],
+    factory: ['dashboard', 'orders', 'done', 'calendar', 'fabric', 'bom', 'schedule', 'planner'],
+    dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'finished', 'fabric'],
     fabric: ['dashboard', 'calendar', 'fabric'],
-    cashier: ['dashboard', 'pos'],
+    cashier: ['dashboard', 'fabric', 'pos'],
     manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'pos']
   };
   
