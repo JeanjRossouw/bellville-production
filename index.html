@@ -281,7 +281,10 @@
     </div>
   </div>
   <div id="reserved-only-content"></div>
-  <div style="margin-top:1.5rem; text-align:center; font-size:11px; color:#aaa">Once you order a fabric and mark it ordered, it drops off this sheet.</div>
+  <div style="margin-top:1.5rem; text-align:center; font-size:11px; color:#aaa">
+    Once you order a fabric and mark it ordered, it drops off this sheet.
+    <div style="margin-top:0.9rem"><button onclick="doLogout()" style="padding:0.45rem 1.1rem; background:transparent; color:#555; border:1px solid #ccc; border-radius:6px; cursor:pointer; font-size:13px">🚪 Log out</button></div>
+  </div>
 </div>
 
 <div id="main-app" style="display:none">
@@ -9382,6 +9385,7 @@ ${totalsSection}
         currentRole = null;
         document.getElementById('login-overlay').style.display = 'flex';
         document.getElementById('main-app').style.display = 'none';
+        const _rv = document.getElementById('reserved-only-view'); if (_rv) _rv.style.display = 'none';
         if (unsubscribe) { unsubscribe(); unsubscribe = null; }
         Object.keys(unsubscribePos).forEach(b => { try { unsubscribePos[b](); } catch (e) {} });
         unsubscribePos = {};
