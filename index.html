@@ -236,6 +236,7 @@
         <option value="factory">Factory Floor</option>
         <option value="dispatch">Dispatch / Driver</option>
         <option value="fabric">Fabric Buyer</option>
+        <option value="fabricrep">Fabric Rep (reserved sheet only)</option>
         <option value="manager">Manager (view only)</option>
       </select>
       <button class="btn btn-primary" onclick="doSignup()" style="width:100%; margin-bottom:0.5rem">CREATE ACCOUNT</button>
@@ -265,6 +266,22 @@
     <button onclick="window.close()" style="padding:0.4rem 1rem; background:transparent; color:#888; border:1px solid #444; border-radius:4px; cursor:pointer; font-size:11px">✕ CLOSE</button>
     <span style="margin-left:1rem">Live data via Firestore · Updates automatically</span>
   </div>
+</div>
+
+<!-- LIVE RESERVED-FABRIC SHEET (rep view) — shown for ?reserved=1 or a fabricrep login -->
+<div id="reserved-only-view" style="display:none; position:fixed; inset:0; background:#fff; color:#111; z-index:9000; overflow:auto; padding:1.25rem 1.5rem; font-family:Arial,sans-serif">
+  <div style="display:flex; justify-content:space-between; align-items:flex-end; border-bottom:2px solid #111; padding-bottom:0.75rem; margin-bottom:1rem; flex-wrap:wrap; gap:0.5rem">
+    <div>
+      <div style="font-size:11px; color:#888; letter-spacing:0.12em; text-transform:uppercase">Bellville Group &middot; U&amp;G Fabrics</div>
+      <div style="font-size:24px; font-weight:900">🧵 RESERVED FABRIC — TO ORDER</div>
+    </div>
+    <div style="text-align:right; font-size:12px; color:#666">
+      <div id="reserved-only-count" style="font-weight:700">—</div>
+      <div>Live &middot; updates automatically</div>
+    </div>
+  </div>
+  <div id="reserved-only-content"></div>
+  <div style="margin-top:1.5rem; text-align:center; font-size:11px; color:#aaa">Once you order a fabric and mark it ordered, it drops off this sheet.</div>
 </div>
 
 <div id="main-app" style="display:none">
@@ -676,6 +693,7 @@
       <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
         <span>🧵 RESERVED FABRIC (to order)</span>
         <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
+          <button class="btn btn-sm" onclick="copyReservedLink()" title="Copy the live reserved-fabric link to share with the U&G rep">🔗 Rep link</button>
           <label style="font-size:12px; color:var(--text-muted); margin:0">Email to:</label>
           <input id="fr-admin-email" placeholder="admin@bellvillefurniture.co.za" style="min-width:200px; margin:0" onchange="setFabricReserveEmail(this.value)">
         </div>
@@ -3684,6 +3702,11 @@ ${_PRODUCTION_PRINT_STYLES}
   }
 
   function renderImmediate() {
+    // Reserved-fabric sheet mode (rep view): render only the live reserved list.
+    if (typeof IS_RESERVED_MODE !== 'undefined' && (IS_RESERVED_MODE || currentRole === 'fabricrep')) {
+      if (typeof renderReservedSheet === 'function') renderReservedSheet();
+      return;
+    }
     // If we're in second-screen dashboard mode, only the standalone dashboard renders.
     // Skip every other per-section renderer — none of their DOM exists in this mode.
     if (typeof IS_DASHBOARD_MODE !== 'undefined' && IS_DASHBOARD_MODE) {
@@ -5963,6 +5986,60 @@ ${_PRODUCTION_PRINT_STYLES}
     }
   }
   window.openDashboardWindow = openDashboardWindow;
+
+  // ---- Reserved-fabric live sheet (shareable with the U&G rep) ----------------
+  // ?reserved=1 (or a 'fabricrep' login) boots a clean, read-only, LIVE list of all
+  // reserved fabric across the shops. Ordered/received lines drop off automatically.
+  const IS_RESERVED_MODE = (function () {
+    try { return new URLSearchParams(window.location.search).get('reserved') === '1'; }
+    catch (e) { return false; }
+  })();
+  function enterReservedOnlyMode() {
+    const main = document.getElementById('main-app'); if (main) main.style.display = 'none';
+    const lo = document.getElementById('login-overlay'); if (lo) lo.style.display = 'none';
+    const v = document.getElementById('reserved-only-view'); if (v) v.style.display = 'block';
+    document.title = 'Reserved Fabric \u00b7 U&G';
+    renderReservedSheet();
+  }
+  window.enterReservedOnlyMode = enterReservedOnlyMode;
+  function renderReservedSheet() {
+    const host = document.getElementById('reserved-only-content');
+    if (!host) return;
+    const rows = [];
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      ((data[b] && data[b].fabricReservations) || []).forEach(r => {
+        if (r && (r.status || 'reserved') === 'reserved') rows.push(r);
+      });
+    });
+    rows.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
+    const cnt = document.getElementById('reserved-only-count');
+    if (cnt) cnt.textContent = rows.length + ' fabric line' + (rows.length !== 1 ? 's' : '') + ' reserved';
+    if (rows.length === 0) { host.innerHTML = '<div style="padding:2.5rem; text-align:center; color:#888; font-size:15px">No fabric currently reserved.</div>'; return; }
+    const dstr = r => (typeof _resDateStr === 'function') ? _resDateStr(r.at) : String(r.at || '').slice(0, 10);
+    host.innerHTML = '<div style="overflow-x:auto"><table style="width:100%; border-collapse:collapse; font-size:14px">' +
+      '<thead><tr style="text-align:left; border-bottom:2px solid #111">' +
+      '<th style="padding:8px">Order #</th><th style="padding:8px">Customer</th><th style="padding:8px">Product</th>' +
+      '<th style="padding:8px">Fabric</th><th style="padding:8px">Colour</th>' +
+      '<th style="padding:8px; text-align:right">Meters</th><th style="padding:8px">Reserved</th></tr></thead><tbody>' +
+      rows.map(r => '<tr style="border-bottom:1px solid #eee">' +
+        '<td style="padding:8px; font-weight:700">#' + _escape(r.orderNo || '') + '</td>' +
+        '<td style="padding:8px">' + _escape(r.customer || '') + '</td>' +
+        '<td style="padding:8px">' + _escape(r.product || '') + '</td>' +
+        '<td style="padding:8px; font-weight:600">' + _escape(r.fabric || '') + '</td>' +
+        '<td style="padding:8px">' + _escape(r.colour || '') + '</td>' +
+        '<td style="padding:8px; text-align:right">' + (r.meters || 0) + '</td>' +
+        '<td style="padding:8px; color:#666">' + _escape(dstr(r)) + '</td></tr>').join('') +
+      '</tbody></table></div>';
+  }
+  window.renderReservedSheet = renderReservedSheet;
+  function copyReservedLink() {
+    const url = window.location.origin + '/?reserved=1';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(function () { if (typeof toast === 'function') toast('Rep link copied \u2014 share with U&G: ' + url, 'success', 5000); }).catch(function () { prompt('Copy this link for the rep:', url); });
+    } else { prompt('Copy this link for the rep:', url); }
+  }
+  window.copyReservedLink = copyReservedLink;
+
 
   // ---- Dedicated POS ("till") mode ------------------------------------
   // Boots a clean, full-screen, cashier-only POS — for a separate site/domain
@@ -9284,7 +9361,10 @@ ${totalsSection}
         }
         
         document.getElementById('login-overlay').style.display = 'none';
-        if (IS_DASHBOARD_MODE) {
+        if (IS_RESERVED_MODE || currentRole === 'fabricrep') {
+          // Shareable live reserved-fabric sheet (for the U&G rep) — nothing else.
+          enterReservedOnlyMode();
+        } else if (IS_DASHBOARD_MODE) {
           // Second-screen / wall-mount mode — skip the normal app UI entirely
           enterDashboardOnlyMode();
         } else if (IS_POS_MODE) {
