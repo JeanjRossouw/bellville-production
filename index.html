@@ -237,6 +237,7 @@
         <option value="dispatch">Dispatch / Driver</option>
         <option value="fabric">Fabric Buyer</option>
         <option value="manager">Manager (view only)</option>
+        <option value="fabricrep">Fabric Rep (reserved sheet only)</option>
       </select>
       <button class="btn btn-primary" onclick="doSignup()" style="width:100%; margin-bottom:0.5rem">CREATE ACCOUNT</button>
       <button class="btn" onclick="toggleLoginMode()" style="width:100%; font-size:10px">Already have an account? SIGN IN</button>
@@ -265,6 +266,23 @@
     <button onclick="window.close()" style="padding:0.4rem 1rem; background:transparent; color:#888; border:1px solid #444; border-radius:4px; cursor:pointer; font-size:11px">✕ CLOSE</button>
     <span style="margin-left:1rem">Live data via Firestore · Updates automatically</span>
   </div>
+</div>
+
+<!-- FABRIC-REP RESERVED SHEET — only shown when URL has ?reserved=1 or the signed-in role is fabricrep -->
+<div id="reserved-only-view" style="display:none; position:fixed; inset:0; background:#0f0f0f; color:#fff; z-index:9000; overflow:auto; padding:1.5rem 2rem; font-family:Arial,sans-serif">
+  <div style="display:flex; justify-content:space-between; align-items:flex-end; border-bottom:2px solid #444; padding-bottom:1rem; margin-bottom:1.5rem; flex-wrap:wrap; gap:1rem">
+    <div>
+      <div style="font-size:11px; color:#888; letter-spacing:0.15em; text-transform:uppercase">U&amp;G Fabrics · Rep Portal</div>
+      <div style="font-size:30px; font-weight:900; letter-spacing:0.04em; margin-top:0.25rem">🧵 RESERVED FABRIC</div>
+      <div style="font-size:12px; color:#888; margin-top:0.4rem; max-width:520px">Tick <strong style="color:#f59e0b">Out of stock</strong> and set an <strong>ETA</strong> for any line — the staff see it instantly next to the fabric on their order.</div>
+    </div>
+    <div style="text-align:right">
+      <div id="reserved-only-count" style="font-size:22px; font-weight:900">—</div>
+      <button onclick="doLogout()" style="margin-top:0.6rem; padding:0.4rem 1rem; background:transparent; color:#bbb; border:1px solid #555; border-radius:4px; cursor:pointer; font-size:12px">Log out</button>
+    </div>
+  </div>
+  <div id="reserved-only-content"></div>
+  <div style="margin-top:2rem; text-align:center; font-size:11px; color:#555">Live data via Firestore · Updates automatically</div>
 </div>
 
 <div id="main-app" style="display:none">
@@ -676,6 +694,7 @@
       <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
         <span>🧵 RESERVED FABRIC (to order)</span>
         <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
+          <button class="btn btn-sm" onclick="copyReservedLink()" title="Copy the view-only link to share with the U&amp;G rep">🔗 Rep link</button>
           <label style="font-size:12px; color:var(--text-muted); margin:0">Email to:</label>
           <input id="fr-admin-email" placeholder="admin@bellvillefurniture.co.za" style="min-width:200px; margin:0" onchange="setFabricReserveEmail(this.value)">
         </div>
@@ -3223,9 +3242,11 @@ ${_PRODUCTION_PRINT_STYLES}
   function _reservedFabricEntries() {
     const entries = [];
     ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      const orders = (data[b] && data[b].orders) || [];
       ((data[b] && data[b].fabricReservations) || []).forEach(r => {
         if (r && (r.status || 'reserved') === 'reserved') {
-          entries.push({ id: r.id, kind: 'res', biz: b, orderNo: r.orderNo || '', customer: r.customer || '', product: r.product || '', fabric: r.fabric || '', colour: r.colour || '', meters: r.meters || 0, note: r.note || '', at: r.at || '' });
+          const o = r.orderId ? orders.find(x => x.id === r.orderId) : null;
+          entries.push({ id: r.id, kind: 'res', biz: b, orderNo: r.orderNo || '', customer: r.customer || '', product: r.product || '', fabric: r.fabric || '', colour: r.colour || '', meters: r.meters || 0, note: r.note || '', at: r.at || '', oos: !!(o && o.fabricOOS), eta: (o && o.fabricStockETA) || '' });
         }
       });
     });
@@ -3255,6 +3276,96 @@ ${_PRODUCTION_PRINT_STYLES}
     }
   }
   window.markReservedEntryOrdered = markReservedEntryOrdered;
+
+  // ---- Rep portal: out-of-stock + ETA per reserved line -----------------
+  // The U&G rep flags a reserved line out-of-stock and sets an arrival date.
+  // That writes onto the linked sales order (fabricOOS / fabricStockETA) so the
+  // staff see "⚠️ FABRIC OUT OF STOCK — Expected back: <date>" on the order card.
+  function _reservedOrderFor(id) {
+    const found = _findReservation(id);
+    if (!found) return null;
+    const biz = data[found.biz];
+    if (!biz || !Array.isArray(biz.orders)) return null;
+    const o = biz.orders.find(x => x.id === found.r.orderId);
+    return o ? { o: o, biz: found.biz } : null;
+  }
+  function _rerenderReserved() {
+    if (typeof renderReservedSheet === 'function') renderReservedSheet();
+    if (typeof renderFabricReservations === 'function') renderFabricReservations();
+    const inPortal = (typeof IS_RESERVED_MODE !== 'undefined' && IS_RESERVED_MODE) || currentRole === 'fabricrep';
+    if (!inPortal && typeof render === 'function') render();
+  }
+  function setReservedOOS(id, isOOS) {
+    const link = _reservedOrderFor(id);
+    if (!link) { alert('Could not find the order this fabric is reserved against.'); return; }
+    snapshotState();
+    link.o.fabricOOS = !!isOOS;
+    if (!isOOS) link.o.fabricStockETA = '';
+    saveData();
+    _rerenderReserved();
+  }
+  window.setReservedOOS = setReservedOOS;
+  function setReservedEta(id, dateStr) {
+    const link = _reservedOrderFor(id);
+    if (!link) { alert('Could not find the order this fabric is reserved against.'); return; }
+    snapshotState();
+    link.o.fabricStockETA = dateStr || '';
+    if (dateStr) link.o.fabricOOS = true; // an ETA implies it is currently out of stock
+    saveData();
+    _rerenderReserved();
+  }
+  window.setReservedEta = setReservedEta;
+
+  function copyReservedLink() {
+    const url = window.location.origin + '/?reserved=1';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(
+        () => { if (typeof toast === 'function') toast('🔗 Rep link copied — send it to the U&G rep', 'success', 3200); else alert('Rep link copied:\n' + url); },
+        () => { prompt('Copy this view-only rep link:', url); }
+      );
+    } else { prompt('Copy this view-only rep link:', url); }
+  }
+  window.copyReservedLink = copyReservedLink;
+
+  function enterReservedOnlyMode() {
+    const m = document.getElementById('main-app'); if (m) m.style.display = 'none';
+    const lo = document.getElementById('login-overlay'); if (lo) lo.style.display = 'none';
+    const dv = document.getElementById('dashboard-only-view'); if (dv) dv.style.display = 'none';
+    const view = document.getElementById('reserved-only-view');
+    if (view) view.style.display = 'block';
+    document.title = 'Reserved Fabric · U&G Rep';
+    renderReservedSheet();
+  }
+  window.enterReservedOnlyMode = enterReservedOnlyMode;
+
+  function renderReservedSheet() {
+    const content = document.getElementById('reserved-only-content');
+    if (!content) return;
+    const items = _reservedFabricEntries();
+    const cnt = document.getElementById('reserved-only-count');
+    if (cnt) cnt.textContent = items.length + (items.length === 1 ? ' item' : ' items');
+    if (items.length === 0) { content.innerHTML = '<div style="padding:2rem; text-align:center; color:#888">No fabric reserved right now.</div>'; return; }
+    const dstr = e => (typeof _resDateStr === 'function') ? _resDateStr(e.at) : String(e.at || '').slice(0, 10);
+    content.innerHTML = items.map(e => `
+      <div style="border:1px solid ${e.oos ? '#7f1d1d' : '#333'}; border-radius:10px; padding:14px 16px; margin-bottom:10px; background:${e.oos ? '#2a1414' : '#1a1a1a'}">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:14px">
+          <div style="min-width:220px; flex:1">
+            <div style="font-size:17px; font-weight:800">#${_escape(e.orderNo)} — ${_escape(e.fabric)}${e.colour ? ' <span style="color:#999; font-weight:400">(' + _escape(e.colour) + ')</span>' : ''}</div>
+            <div style="font-size:12px; color:#999; margin-top:4px">${e.customer ? _escape(e.customer) + ' · ' : ''}${e.product ? _escape(e.product) + ' · ' : ''}${e.meters || 0} m${e.at ? ' · reserved ' + _escape(dstr(e)) : ''}</div>
+            ${e.oos ? `<div style="margin-top:7px; font-size:13px; font-weight:700; color:#f59e0b">⚠️ OUT OF STOCK${e.eta ? ' — arriving ' + _escape(e.eta) : ' — set an ETA →'}</div>` : ''}
+          </div>
+          <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap">
+            <label style="display:flex; align-items:center; gap:7px; font-size:13px; font-weight:700; color:#f59e0b; margin:0; cursor:pointer; white-space:nowrap">
+              <input type="checkbox" ${e.oos ? 'checked' : ''} onchange="setReservedOOS('${_jsq(e.id)}', this.checked)" style="width:20px; height:20px; cursor:pointer"> Out of stock
+            </label>
+            <label style="display:flex; align-items:center; gap:7px; font-size:12px; color:#ccc; margin:0; white-space:nowrap">
+              ETA <input type="date" value="${_escape(e.eta)}" onchange="setReservedEta('${_jsq(e.id)}', this.value)" style="padding:6px 8px; border-radius:4px; border:1px solid #555; background:#111; color:#fff">
+            </label>
+          </div>
+        </div>
+      </div>`).join('');
+  }
+  window.renderReservedSheet = renderReservedSheet;
 
   function renderFabricReservations() {
     const list = document.getElementById('fr-list');
@@ -3289,6 +3400,7 @@ ${_PRODUCTION_PRINT_STYLES}
           <div>
             <div style="font-weight:700">#${_escape(e.orderNo)} — ${_escape(e.fabric)}${e.colour ? ' <span style="color:var(--text-muted,#888); font-weight:400">(' + _escape(e.colour) + ')</span>' : ''}</div>
             <div style="font-size:11px; color:var(--text-muted,#888)">${e.customer ? _escape(e.customer) + ' · ' : ''}${e.product ? _escape(e.product) + ' · ' : ''}${e.meters || 0} m${e.note ? ' · ' + _escape(e.note) : ''}${e.at ? ' · reserved ' + _escape(dstr(e)) : ''}${e.kind === 'order' ? ' · <span style="color:#92400e">from order</span>' : ''}</div>
+            ${e.oos ? `<div style="font-size:11px; font-weight:700; color:#b45309; margin-top:2px">⚠️ OUT OF STOCK${e.eta ? ' — arriving ' + _escape(e.eta) : ' (no ETA yet)'}</div>` : ''}
           </div>
           <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center">
             <button class="btn btn-sm" onclick="emailReservedEntry('${_jsq(e.id)}')" title="Email this fabric to admin">📧</button>
@@ -3742,6 +3854,11 @@ ${_PRODUCTION_PRINT_STYLES}
   function renderImmediate() {
     // If we're in second-screen dashboard mode, only the standalone dashboard renders.
     // Skip every other per-section renderer — none of their DOM exists in this mode.
+    if (((typeof IS_RESERVED_MODE !== 'undefined' && IS_RESERVED_MODE) || currentRole === 'fabricrep')) {
+      // Fabric-rep reserved-sheet portal — only the reserved sheet renders.
+      if (typeof renderReservedSheet === 'function') renderReservedSheet();
+      return;
+    }
     if (typeof IS_DASHBOARD_MODE !== 'undefined' && IS_DASHBOARD_MODE) {
       if (typeof renderDashboardOnlyView === 'function') renderDashboardOnlyView();
       return;
@@ -3753,6 +3870,9 @@ ${_PRODUCTION_PRINT_STYLES}
     renderFinished();
     renderStaff();
     renderFabricOrders();
+    // Reserved-fabric list must repaint on load and on every Firestore sync — not
+    // only after a reserve action — so it shows existing reservations when the app opens.
+    if (typeof renderFabricReservations === 'function') renderFabricReservations();
     // renderMaterials() removed — was a stub that wrote 'coming soon' into a
     // non-existent element. Inventory rendering happens via renderInventory()
     // which is called from showSection('materials'). BOM rendering similarly.
@@ -6004,6 +6124,13 @@ ${_PRODUCTION_PRINT_STYLES}
   // dashboard renders. The Firestore listener still pushes updates so numbers stay live.
   const IS_DASHBOARD_MODE = (function () {
     try { return new URLSearchParams(window.location.search).get('dashboard') === '1'; }
+    catch (e) { return false; }
+  })();
+
+  // Fabric-rep reserved-sheet mode (?reserved=1) — view-only portal where the U&G
+  // rep flags reserved lines out-of-stock and sets an ETA. Same live Firestore data.
+  const IS_RESERVED_MODE = (function () {
+    try { return new URLSearchParams(window.location.search).get('reserved') === '1'; }
     catch (e) { return false; }
   })();
 
@@ -9325,7 +9452,9 @@ ${totalsSection}
       if (user) {
         currentUser = user;
         
-        // Load user role
+        // Load user role. Cache the last good role per user so a failed read can
+        // never silently escalate a limited account (e.g. a fabric rep) to admin.
+        const _roleKey = 'bellville-role:' + user.uid;
         try {
           const userDocRef = window.firebaseFns.doc(window.firebaseDb, 'users', user.uid);
           const userSnap = await window.firebaseFns.getDoc(userDocRef);
@@ -9335,13 +9464,21 @@ ${totalsSection}
             // No role record — treat as admin (legacy user)
             currentRole = 'admin';
           }
+          try { localStorage.setItem(_roleKey, currentRole); } catch (e) {}
         } catch (err) {
           console.warn('Could not load user role:', err);
-          currentRole = 'admin';
+          // Read failed — reuse this user's last known role rather than defaulting
+          // to admin, so a fabric rep (or other limited account) is never elevated.
+          let cachedRole = null;
+          try { cachedRole = localStorage.getItem(_roleKey); } catch (e) {}
+          currentRole = cachedRole || 'admin';
         }
         
         document.getElementById('login-overlay').style.display = 'none';
-        if (IS_DASHBOARD_MODE) {
+        if (IS_RESERVED_MODE || currentRole === 'fabricrep') {
+          // Fabric-rep portal — view-only reserved sheet with out-of-stock + ETA
+          enterReservedOnlyMode();
+        } else if (IS_DASHBOARD_MODE) {
           // Second-screen / wall-mount mode — skip the normal app UI entirely
           enterDashboardOnlyMode();
         } else if (IS_POS_MODE) {
@@ -9359,6 +9496,7 @@ ${totalsSection}
         currentRole = null;
         document.getElementById('login-overlay').style.display = 'flex';
         document.getElementById('main-app').style.display = 'none';
+        const _rv = document.getElementById('reserved-only-view'); if (_rv) _rv.style.display = 'none';
         if (unsubscribe) { unsubscribe(); unsubscribe = null; }
         Object.keys(unsubscribePos).forEach(b => { try { unsubscribePos[b](); } catch (e) {} });
         unsubscribePos = {};
