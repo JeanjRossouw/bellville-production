@@ -9449,7 +9449,9 @@ ${totalsSection}
       if (user) {
         currentUser = user;
         
-        // Load user role
+        // Load user role. Cache the last good role per user so a failed read can
+        // never silently escalate a limited account (e.g. a fabric rep) to admin.
+        const _roleKey = 'bellville-role:' + user.uid;
         try {
           const userDocRef = window.firebaseFns.doc(window.firebaseDb, 'users', user.uid);
           const userSnap = await window.firebaseFns.getDoc(userDocRef);
@@ -9459,9 +9461,14 @@ ${totalsSection}
             // No role record — treat as admin (legacy user)
             currentRole = 'admin';
           }
+          try { localStorage.setItem(_roleKey, currentRole); } catch (e) {}
         } catch (err) {
           console.warn('Could not load user role:', err);
-          currentRole = 'admin';
+          // Read failed — reuse this user's last known role rather than defaulting
+          // to admin, so a fabric rep (or other limited account) is never elevated.
+          let cachedRole = null;
+          try { cachedRole = localStorage.getItem(_roleKey); } catch (e) {}
+          currentRole = cachedRole || 'admin';
         }
         
         document.getElementById('login-overlay').style.display = 'none';
