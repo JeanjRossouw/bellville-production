@@ -3304,6 +3304,7 @@ ${_PRODUCTION_PRINT_STYLES}
             <div style="font-size:11px; color:var(--text-muted); margin-top:0.25rem">
               👤 ${o.customer} • ${o.product}${o.category ? ' [' + o.category + ']' : ''}
             </div>
+            ${(() => { const rr = (typeof _orderReservation === 'function') ? _orderReservation(o.id) : null; return rr ? `<div style="font-size:11px; color:#166534; font-weight:600; margin-top:0.15rem">🧵 Reserved: ${_escape(_resDateStr(rr.at))}</div>` : ''; })()}
           </div>
           <div style="display:flex; align-items:center; gap:0.5rem; flex-shrink:0">
             <label style="margin:0; font-size:10px">Qty (m):</label>
