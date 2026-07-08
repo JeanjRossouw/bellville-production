@@ -3246,7 +3246,7 @@ ${_PRODUCTION_PRINT_STYLES}
       const covered = new Set();
       ((bd.fabricReservations) || []).forEach(r => {
         if (r && (r.status || 'reserved') === 'reserved') {
-          entries.push({ id: r.id, kind: 'res', biz: b, orderNo: r.orderNo || '', customer: r.customer || '', product: r.product || '', fabric: r.fabric || '', colour: r.colour || '', meters: r.meters || 0, note: r.note || '', at: r.at || '' });
+          entries.push({ id: r.id, kind: 'res', biz: b, orderNo: r.orderNo || '', customer: r.customer || '', product: r.product || '', fabric: r.fabric || '', colour: r.colour || '', meters: r.meters || 0, note: r.note || '', at: r.at || '', eta: r.eta || '' });
           if (r.orderId) covered.add(r.orderId);
         }
       });
@@ -3255,7 +3255,7 @@ ${_PRODUCTION_PRINT_STYLES}
         if (o.status === 'delivered' || o.status === 'done') return;
         if ((o.fabricStatus || 'waiting') !== 'waiting') return;
         if (covered.has(o.id)) return;
-        entries.push({ id: 'ORD-' + o.id, kind: 'order', biz: b, orderId: o.id, orderNo: o.invoice || o.id, customer: o.customer || '', product: o.product || '', fabric: o.fabric || '', colour: '', meters: (o.fabricQty || o.qty || 0), note: '', at: o.orderDate || '' });
+        entries.push({ id: 'ORD-' + o.id, kind: 'order', biz: b, orderId: o.id, orderNo: o.invoice || o.id, customer: o.customer || '', product: o.product || '', fabric: o.fabric || '', colour: '', meters: (o.fabricQty || o.qty || 0), note: '', at: o.orderDate || '', eta: o.fabricEta || '' });
       });
     });
     entries.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
@@ -3284,6 +3284,36 @@ ${_PRODUCTION_PRINT_STYLES}
     }
   }
   window.markReservedEntryOrdered = markReservedEntryOrdered;
+
+  // The rep (or staff) sets an ETA on a reserved fabric line; stored on the order
+  // (fabricEta) or the reservation (eta), so staff see when the fabric will arrive.
+  function setReservedEta(id, dateStr) {
+    const v = (dateStr || '').trim();
+    if (id.indexOf('ORD-') === 0) {
+      const oid = id.slice(4);
+      let target = null;
+      ['bellville', 'pinkfoot', 'repticube'].forEach(b => { const o = ((data[b] && data[b].orders) || []).find(x => x.id === oid); if (o) target = o; });
+      if (!target) return;
+      snapshotState();
+      target.fabricEta = v;
+    } else {
+      const found = _findReservation(id);
+      if (!found) return;
+      snapshotState();
+      found.r.eta = v;
+    }
+    saveData();
+    if (typeof renderReservedSheet === 'function') renderReservedSheet();
+    if (typeof render === 'function') render();
+  }
+  window.setReservedEta = setReservedEta;
+  // ETA to show on a staff order card (from its reservation or the order itself).
+  function _orderFabricEta(o) {
+    if (!o) return '';
+    const rr = (typeof _orderReservation === 'function') ? _orderReservation(o.id) : null;
+    if (rr && rr.eta) return rr.eta;
+    return o.fabricEta || '';
+  }
 
   function renderFabricReservations() {
     const list = document.getElementById('fr-list');
@@ -3317,9 +3347,11 @@ ${_PRODUCTION_PRINT_STYLES}
         <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px">
           <div>
             <div style="font-weight:700">#${_escape(e.orderNo)} — ${_escape(e.fabric)}${e.colour ? ' <span style="color:var(--text-muted,#888); font-weight:400">(' + _escape(e.colour) + ')</span>' : ''}</div>
-            <div style="font-size:11px; color:var(--text-muted,#888)">${e.customer ? _escape(e.customer) + ' · ' : ''}${e.product ? _escape(e.product) + ' · ' : ''}${e.meters || 0} m${e.note ? ' · ' + _escape(e.note) : ''}${e.at ? ' · reserved ' + _escape(dstr(e)) : ''}${e.kind === 'order' ? ' · <span style="color:#92400e">from order</span>' : ''}</div>
+            <div style="font-size:11px; color:var(--text-muted,#888)">${e.customer ? _escape(e.customer) + ' · ' : ''}${e.product ? _escape(e.product) + ' · ' : ''}${e.meters || 0} m${e.note ? ' · ' + _escape(e.note) : ''}${e.at ? ' · reserved ' + _escape(dstr(e)) : ''}${e.eta ? ' · <span style="color:#166534; font-weight:600">🚚 ETA ' + _escape(e.eta) + '</span>' : ''}${e.kind === 'order' ? ' · <span style="color:#92400e">from order</span>' : ''}</div>
           </div>
           <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center">
+            <label style="margin:0; font-size:10px; color:var(--text-muted)">ETA</label>
+            <input type="date" value="${_escape(e.eta || '')}" onchange="setReservedEta('${_jsq(e.id)}', this.value)" title="Fabric ETA" style="padding:3px 6px; font-size:11px; margin:0; width:135px">
             <button class="btn btn-sm" onclick="emailReservedEntry('${_jsq(e.id)}')" title="Email this fabric to admin">📧</button>
             <button class="btn btn-sm" onclick="markReservedEntryOrdered('${_jsq(e.id)}')">Mark ordered</button>
             ${e.kind === 'res' ? `<button class="btn btn-sm btn-danger" onclick="deleteFabricReservation('${_jsq(e.id)}')">✕</button>` : ''}
@@ -6081,7 +6113,8 @@ ${_PRODUCTION_PRINT_STYLES}
       '<thead><tr style="text-align:left; border-bottom:2px solid #111">' +
       '<th style="padding:8px">Order #</th><th style="padding:8px">Customer</th><th style="padding:8px">Product</th>' +
       '<th style="padding:8px">Fabric</th><th style="padding:8px">Colour</th>' +
-      '<th style="padding:8px; text-align:right">Meters</th><th style="padding:8px">Reserved</th></tr></thead><tbody>' +
+      '<th style="padding:8px; text-align:right">Meters</th><th style="padding:8px">Reserved</th>' +
+      '<th style="padding:8px">ETA (enter here)</th></tr></thead><tbody>' +
       rows.map(r => '<tr style="border-bottom:1px solid #eee">' +
         '<td style="padding:8px; font-weight:700">#' + _escape(r.orderNo || '') + '</td>' +
         '<td style="padding:8px">' + _escape(r.customer || '') + '</td>' +
@@ -6089,7 +6122,8 @@ ${_PRODUCTION_PRINT_STYLES}
         '<td style="padding:8px; font-weight:600">' + _escape(r.fabric || '') + '</td>' +
         '<td style="padding:8px">' + _escape(r.colour || '') + '</td>' +
         '<td style="padding:8px; text-align:right">' + (r.meters || 0) + '</td>' +
-        '<td style="padding:8px; color:#666">' + _escape(dstr(r)) + '</td></tr>').join('') +
+        '<td style="padding:8px; color:#666">' + _escape(dstr(r)) + '</td>' +
+        '<td style="padding:8px"><input type="date" value="' + _escape(r.eta || '') + '" onchange="setReservedEta(\'' + r.id + '\', this.value)" style="padding:5px; font-size:14px; border:1px solid #ccc; border-radius:5px"></td></tr>').join('') +
       '</tbody></table></div>';
   }
   window.renderReservedSheet = renderReservedSheet;
@@ -6808,6 +6842,7 @@ ${_PRODUCTION_PRINT_STYLES}
           </div>
           ` : ''}
           ${!HIDE_FABRIC_FROM.includes(currentRole) ? _orderReservationLine(o.id) : ''}
+          ${(!HIDE_FABRIC_FROM.includes(currentRole) && _orderFabricEta(o)) ? `<div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.75rem; padding:0.5rem; background:rgba(0,0,0,0.3); border-left:3px solid #2563eb"><span style="font-size:10px; color:var(--text-muted); text-transform:uppercase; font-weight:700">🚚 Fabric ETA:</span><span style="font-size:12px; font-weight:700">${_escape(_orderFabricEta(o))}</span></div>` : ''}
           <div style="display:flex; gap:0.5rem; flex-wrap:wrap">
             <button class="btn btn-sm btn-primary" onclick="printJobCard('${o.id}')">🖨️ PRINT JOB CARD</button>
             ${o.phone ? `<button class="btn btn-sm" style="background:#25D366; color:#fff; border-color:#25D366" onclick="notifyClient('${o.id}')">📱 NOTIFY CLIENT</button>` : ''}
