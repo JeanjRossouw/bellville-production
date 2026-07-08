@@ -3094,7 +3094,7 @@ ${_PRODUCTION_PRINT_STYLES}
     if (!Array.isArray(d.fabricReservations)) d.fabricReservations = [];
     return d.fabricReservations;
   }
-  function _fabricReserveEmail() { return (currentData().fabricReserveEmail || '').trim(); }
+  function _fabricReserveEmail() { return (currentData().fabricReserveEmail || 'admin@ugfabrics.co.za').trim(); }
   function setFabricReserveEmail(v) {
     snapshotState();
     currentData().fabricReserveEmail = (v || '').trim();
