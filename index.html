@@ -324,6 +324,7 @@
     <button class="tab" onclick="showSection('bom')">🔧 BOM</button>
     <button class="tab" onclick="showSection('staff')">Staff</button>
     <button class="tab" onclick="showSection('materials')">Materials</button>
+    <button class="tab" onclick="showSection('costing')">💰 Costing</button>
     <button class="tab" onclick="showSection('schedule')">Schedule</button>
     <button class="tab" onclick="showSection('planner')">🗓️ Planner</button>
     <button class="tab" onclick="showSection('woodwork')">🪵 Woodwork</button>
@@ -928,6 +929,42 @@
     </div>
   </div>
   
+  <!-- COSTING & PROFIT -->
+  <div id="section-costing" class="section">
+    <div class="card">
+      <div class="card-title">💰 COSTING &amp; PROFIT</div>
+      <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.75rem">
+        True cost per product = materials (from the BOM) + labour (R per piece) + a share of monthly overheads.
+        Set your overheads and expected units/month below, then each product's labour cost per piece and selling price to see profit &amp; margin.
+        A labour rate is optional — only if you'd rather work labour out from hours.
+      </p>
+      <div style="display:flex; gap:1.5rem; flex-wrap:wrap; margin-bottom:1rem">
+        <div><label style="display:block; font-size:11px; color:var(--text-muted)">Expected units / month</label>
+          <input id="costing-units" type="number" step="1" placeholder="0" onchange="costingSetField('unitsPerMonth', this.value)" style="width:150px; padding:6px"></div>
+        <div><label style="display:block; font-size:11px; color:var(--text-muted)">Labour rate (R / hr) — optional</label>
+          <input id="costing-rate" type="number" step="0.01" placeholder="0" onchange="costingSetField('labourRate', this.value)" style="width:170px; padding:6px"></div>
+      </div>
+      <div id="costing-overheads"></div>
+    </div>
+    <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>PRODUCT COSTING</span>
+        <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap">
+          <span style="font-size:11px; color:var(--text-muted)">Spreadsheet:</span>
+          <select id="costing-csv-type" style="font-size:12px; padding:5px">
+            <option value="products">Product costing (labour per piece + selling price)</option>
+            <option value="materials">Material unit costs</option>
+            <option value="overheads">Overheads</option>
+          </select>
+          <button class="btn btn-sm" onclick="exportCostingCSV()" title="Download a CSV to edit in Excel / Google Sheets">⬇️ Export CSV</button>
+          <label class="btn btn-sm" style="cursor:pointer; margin:0" title="Import an edited CSV back in">⬆️ Import CSV<input type="file" id="costing-csv-upload" accept=".csv,text/csv" style="display:none" onchange="importCostingCSV(this)"></label>
+        </div>
+      </div>
+      <div id="costing-csv-status" style="font-size:11px; color:var(--text-muted); margin-bottom:0.5rem"></div>
+      <div id="costing-products"></div>
+    </div>
+  </div>
+
   <!-- SCHEDULE -->
   <div id="section-schedule" class="section">
     <div class="card">
@@ -1106,7 +1143,7 @@
   // Tab name array — order MUST match the order of .tab buttons in the DOM.
   // Used by showSection and applyRolePermissions. Declared at top so it's
   // initialized regardless of where in the script execution lands.
-  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'woodwork', 'pos'];
+  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'woodwork', 'pos'];
 
   // Categories that never need fabric (wood products). Declared up here so it's
   // initialized BEFORE switchBiz('bellville') → onIntakeCategoryChange() runs at
@@ -1304,6 +1341,7 @@
     if (sec === 'calendar') renderCalendar();
     if (sec === 'bom') renderBomSection();
     if (sec === 'materials') renderInventory();
+    if (sec === 'costing' && typeof renderCosting === 'function') renderCosting();
     if (sec === 'intake') populateProductDatalist();
     if (sec === 'done') renderDoneOrders();
     if (sec === 'planner') renderPlanner();
@@ -3883,6 +3921,8 @@ ${_PRODUCTION_PRINT_STYLES}
     // if #planner-grid exists in the DOM (so it's free when the section is unmounted).
     if (typeof renderPlanner === 'function') renderPlanner();
     if (typeof renderWoodwork === 'function') renderWoodwork();
+    // Costing self-guards (no-op unless the Costing tab is mounted) — keeps it live on sync.
+    if (typeof renderCosting === 'function') renderCosting();
   }
   
   function renderDoneOrders() {
@@ -4925,6 +4965,312 @@ ${_PRODUCTION_PRINT_STYLES}
     return total;
   }
   window._productCutListCost = _productCutListCost;
+
+  // ===== Costing & profit (per business) =====
+  // Material cost (from BOM) + labour (hrs × rate) + a share of monthly overheads
+  // → true cost per product → profit & margin vs selling price.
+  function _costingForBiz(bizData) {
+    if (!bizData.costing || typeof bizData.costing !== 'object') bizData.costing = {};
+    if (!Array.isArray(bizData.costing.overheads)) bizData.costing.overheads = [];
+    if (typeof bizData.costing.labourRate !== 'number') bizData.costing.labourRate = 0;
+    if (typeof bizData.costing.unitsPerMonth !== 'number') bizData.costing.unitsPerMonth = 0;
+    return bizData.costing;
+  }
+  function _costing() { return _costingForBiz(currentData()); }
+  function _costingTotalOverhead(c) {
+    return (c || _costing()).overheads.reduce((s, o) => s + (parseFloat(o.monthly) || 0), 0);
+  }
+  function _costingOverheadPerUnit(c) {
+    c = c || _costing();
+    const u = parseFloat(c.unitsPerMonth) || 0;
+    return u > 0 ? _costingTotalOverhead(c) / u : 0;
+  }
+  // Material cost for a product = materials map + cutting list (mirrors the BOM editor).
+  function _productMaterialsCost(prodName, biz) {
+    const prod = (biz.productBoms || {})[prodName];
+    if (!prod) return 0;
+    const matById = {};
+    (biz.materialsLibrary || []).forEach(m => { if (m && m.id) matById[m.id] = m; });
+    let s = 0;
+    Object.entries(prod.materials || {}).forEach(([matId, qty]) => {
+      const m = matById[matId];
+      if (m) s += (parseFloat(qty || 0) * parseFloat(m.cost || 0));
+    });
+    const cut = (typeof _productCutListCost === 'function') ? _productCutListCost(prodName, biz) : 0;
+    return s + cut;
+  }
+  // Escape a value for use inside a single-quoted JS string in an inline handler.
+  function _q(s) { return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+
+  function renderCosting() {
+    const ohHost = document.getElementById('costing-overheads');
+    const prHost = document.getElementById('costing-products');
+    if (!ohHost || !prHost) return;
+    const biz = currentData();
+    const c = _costing();
+    const rateEl = document.getElementById('costing-rate');
+    if (rateEl && document.activeElement !== rateEl) rateEl.value = c.labourRate || '';
+    const unitsEl = document.getElementById('costing-units');
+    if (unitsEl && document.activeElement !== unitsEl) unitsEl.value = c.unitsPerMonth || '';
+
+    const totOh = _costingTotalOverhead(c);
+    const ohUnit = _costingOverheadPerUnit(c);
+    const rate = parseFloat(c.labourRate) || 0;
+
+    const ohRows = c.overheads.map(o => `
+      <tr>
+        <td style="padding:3px 6px"><input value="${_escape(o.name || '')}" placeholder="e.g. Rent / Salaries / Power" onchange="costingUpdateOverhead('${_q(o.id)}','name',this.value)" style="width:100%; padding:4px"></td>
+        <td style="padding:3px 6px; text-align:right"><input type="number" step="0.01" value="${o.monthly || 0}" onchange="costingUpdateOverhead('${_q(o.id)}','monthly',this.value)" style="width:120px; padding:4px; text-align:right"></td>
+        <td style="padding:3px 6px; text-align:center"><button class="btn btn-sm btn-danger" onclick="costingDeleteOverhead('${_q(o.id)}')">✕</button></td>
+      </tr>`).join('');
+
+    ohHost.innerHTML = `
+      <table style="width:100%; border-collapse:collapse; font-size:13px">
+        <thead><tr style="text-align:left; border-bottom:2px solid var(--border,#ddd)">
+          <th style="padding:5px 6px">Overhead / salary (monthly)</th>
+          <th style="padding:5px 6px; text-align:right">R / month</th><th></th></tr></thead>
+        <tbody>${ohRows || '<tr><td colspan="3" style="padding:8px; color:var(--text-muted)">No overheads yet — add rent, salaries, power, etc.</td></tr>'}</tbody>
+        <tfoot>
+          <tr style="border-top:2px solid var(--border,#ddd)"><td style="padding:6px; font-weight:700">Total monthly overhead</td><td style="padding:6px; text-align:right; font-weight:900">R${totOh.toFixed(2)}</td><td></td></tr>
+          <tr><td style="padding:6px; color:var(--text-muted)">Overhead per unit (÷ ${parseFloat(c.unitsPerMonth) || 0}/mo)</td><td style="padding:6px; text-align:right; font-weight:700">R${ohUnit.toFixed(2)}</td><td></td></tr>
+        </tfoot>
+      </table>
+      <button class="btn btn-sm" style="margin-top:8px" onclick="costingAddOverhead()">+ Add overhead line</button>`;
+
+    const products = Object.keys(biz.productBoms || {}).sort();
+    const prodRows = products.map(key => {
+      const p = biz.productBoms[key] || {};
+      const mat = _productMaterialsCost(key, biz);
+      const hrs = parseFloat(p.labourHours) || 0;
+      // Labour is costed per piece (a direct rand amount). If a product was set up
+      // the old way (hours) and has no per-piece figure, fall back to hours × rate.
+      const directLabour = parseFloat(p.labourCost);
+      const labour = !isNaN(directLabour) ? directLabour : (hrs * rate);
+      const trueCost = mat + labour + ohUnit;
+      const sell = parseFloat(p.sellingPrice) || 0;
+      const profit = sell - trueCost;
+      const margin = sell > 0 ? (profit / sell * 100) : 0;
+      const pcol = profit >= 0 ? 'var(--success,#166534)' : 'var(--danger,#991b1b)';
+      return `<tr style="border-bottom:1px solid var(--border,#eee)">
+        <td style="padding:5px 6px">${_escape(key)}</td>
+        <td style="padding:5px 6px; text-align:right">R${mat.toFixed(2)}</td>
+        <td style="padding:5px 6px; text-align:right"><input type="number" step="1" value="${!isNaN(directLabour) ? directLabour : ''}" placeholder="${(hrs * rate) ? (hrs * rate).toFixed(0) : '0'}" onchange="costingSetProduct('${_q(key)}','labourCost',this.value)" style="width:96px; padding:3px; text-align:right" title="Labour cost per piece (Rand)"></td>
+        <td style="padding:5px 6px; text-align:right">R${ohUnit.toFixed(2)}</td>
+        <td style="padding:5px 6px; text-align:right; font-weight:800">R${trueCost.toFixed(2)}</td>
+        <td style="padding:5px 6px; text-align:right"><input type="number" step="1" value="${sell || ''}" placeholder="0" onchange="costingSetProduct('${_q(key)}','sellingPrice',this.value)" style="width:88px; padding:3px; text-align:right"></td>
+        <td style="padding:5px 6px; text-align:right; font-weight:700; color:${pcol}">R${profit.toFixed(2)}</td>
+        <td style="padding:5px 6px; text-align:right; font-weight:700; color:${pcol}">${sell > 0 ? margin.toFixed(0) + '%' : '—'}</td>
+      </tr>`;
+    }).join('');
+
+    prHost.innerHTML = products.length === 0
+      ? '<div class="empty" style="padding:1rem">No products yet — set them up on the BOM tab first.</div>'
+      : `<div style="overflow-x:auto"><table style="width:100%; border-collapse:collapse; font-size:12px; min-width:760px">
+          <thead><tr style="text-align:left; border-bottom:2px solid var(--border,#ddd)">
+            <th style="padding:6px">Product</th>
+            <th style="padding:6px; text-align:right">Material</th>
+            <th style="padding:6px; text-align:right">Labour (R/piece)</th>
+            <th style="padding:6px; text-align:right">Overhead</th>
+            <th style="padding:6px; text-align:right">True cost</th>
+            <th style="padding:6px; text-align:right">Selling price</th>
+            <th style="padding:6px; text-align:right">Profit</th>
+            <th style="padding:6px; text-align:right">Margin</th>
+          </tr></thead>
+          <tbody>${prodRows}</tbody>
+        </table></div>`;
+  }
+  window.renderCosting = renderCosting;
+
+  function costingSetField(field, val) {
+    snapshotState();
+    _costing()[field] = parseFloat(val) || 0;
+    saveData();
+    renderCosting();
+  }
+  window.costingSetField = costingSetField;
+  function costingAddOverhead() {
+    snapshotState();
+    _costing().overheads.push({ id: 'OH-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5), name: '', monthly: 0 });
+    saveData();
+    renderCosting();
+  }
+  window.costingAddOverhead = costingAddOverhead;
+  function costingUpdateOverhead(id, field, val) {
+    const o = _costing().overheads.find(x => x.id === id);
+    if (!o) return;
+    snapshotState();
+    o[field] = (field === 'monthly') ? (parseFloat(val) || 0) : val;
+    saveData();
+    renderCosting();
+  }
+  window.costingUpdateOverhead = costingUpdateOverhead;
+  function costingDeleteOverhead(id) {
+    snapshotState();
+    const c = _costing();
+    c.overheads = c.overheads.filter(x => x.id !== id);
+    saveData();
+    renderCosting();
+  }
+  window.costingDeleteOverhead = costingDeleteOverhead;
+  function costingSetProduct(key, field, val) {
+    const biz = currentData();
+    if (!biz.productBoms || !biz.productBoms[key]) return;
+    snapshotState();
+    biz.productBoms[key][field] = parseFloat(val) || 0;
+    saveData();
+    renderCosting();
+  }
+  window.costingSetProduct = costingSetProduct;
+
+  // ---- Costing spreadsheet round-trip (export → edit in Excel/Sheets → import) ----
+  // Covers all three businesses in one CSV, keyed by a Business column. Import is
+  // additive and safe: it snapshots for undo, matches rows by name/id, updates ONLY
+  // the numeric cells that were filled in, and never deletes existing records.
+  const COSTING_BIZ = ['bellville', 'pinkfoot', 'repticube'];
+  function _csvCell(v) {
+    const s = String(v == null ? '' : v);
+    return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function _downloadCsvRows(filename, rows) {
+    const csv = rows.map(r => r.map(_csvCell).join(',')).join('\r\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { try { a.remove(); URL.revokeObjectURL(url); } catch (e) {} }, 200);
+  }
+  function _parseCsv(text) {
+    text = String(text || '').replace(/^﻿/, '');
+    const rows = []; let row = []; let field = ''; let inQ = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (inQ) {
+        if (ch === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
+        else field += ch;
+      } else {
+        if (ch === '"') inQ = true;
+        else if (ch === ',') { row.push(field); field = ''; }
+        else if (ch === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+        else if (ch === '\r') { /* ignore CR */ }
+        else field += ch;
+      }
+    }
+    if (field !== '' || row.length) { row.push(field); rows.push(row); }
+    return rows.filter(r => r.some(c => String(c).trim() !== ''));
+  }
+  function _costingCsvStatus(msg, isErr) {
+    const el = document.getElementById('costing-csv-status');
+    if (el) { el.textContent = msg; el.style.color = isErr ? 'var(--danger,#991b1b)' : 'var(--success,#166534)'; }
+  }
+  function exportCostingCSV() {
+    const type = (document.getElementById('costing-csv-type') || {}).value || 'products';
+    const stamp = new Date().toISOString().slice(0, 10);
+    const rows = [];
+    if (type === 'materials') {
+      rows.push(['Business', 'Material Id', 'Material', 'Unit', 'Unit Cost']);
+      COSTING_BIZ.forEach(b => {
+        ((data[b] && data[b].materialsLibrary) || []).forEach(m => {
+          if (m) rows.push([b, m.id || '', m.name || '', m.unit || '', (m.cost != null ? m.cost : '')]);
+        });
+      });
+    } else if (type === 'overheads') {
+      rows.push(['Business', 'Overhead', 'Monthly']);
+      COSTING_BIZ.forEach(b => {
+        (((data[b] && data[b].costing) || {}).overheads || []).forEach(o => {
+          if (o) rows.push([b, o.name || '', (o.monthly != null ? o.monthly : '')]);
+        });
+      });
+    } else {
+      rows.push(['Business', 'Product', 'Material Cost (auto)', 'Labour Per Piece', 'Selling Price']);
+      COSTING_BIZ.forEach(b => {
+        const biz = data[b];
+        if (!biz) return;
+        Object.keys(biz.productBoms || {}).sort().forEach(key => {
+          const p = biz.productBoms[key] || {};
+          rows.push([b, key, _productMaterialsCost(key, biz).toFixed(2), (p.labourCost != null ? p.labourCost : ''), (p.sellingPrice != null ? p.sellingPrice : '')]);
+        });
+      });
+    }
+    _downloadCsvRows('costing-' + type + '-' + stamp + '.csv', rows);
+    _costingCsvStatus('⬇️ Exported ' + (rows.length - 1) + ' ' + type + ' rows. Edit in Excel/Sheets, then Import CSV.', false);
+  }
+  window.exportCostingCSV = exportCostingCSV;
+
+  function _normBiz(v) {
+    const s = String(v || '').trim().toLowerCase();
+    return COSTING_BIZ.indexOf(s) >= 0 ? s : null;
+  }
+  function importCostingCSV(input) {
+    const file = input && input.files && input.files[0];
+    if (!file) return;
+    const type = (document.getElementById('costing-csv-type') || {}).value || 'products';
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const rows = _parseCsv(e.target.result);
+        if (rows.length < 2) { _costingCsvStatus('✗ Empty or header-only CSV.', true); input.value = ''; return; }
+        const header = rows[0].map(h => String(h).trim().toLowerCase());
+        const col = (names) => header.findIndex(h => names.some(n => h.indexOf(n) >= 0));
+        const bizIdx = col(['business']);
+        let updated = 0, added = 0, skipped = 0;
+        const num = (v) => { const n = parseFloat(String(v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? null : n; };
+        snapshotState();
+        for (let i = 1; i < rows.length; i++) {
+          const cells = rows[i];
+          const b = bizIdx >= 0 ? _normBiz(cells[bizIdx]) : activeBiz;
+          if (!b || !data[b]) { skipped++; continue; }
+          const biz = data[b];
+          if (type === 'materials') {
+            const idIdx = col(['material id', 'id']);
+            const nameIdx = col(['material', 'name']);
+            const costIdx = col(['unit cost', 'cost']);
+            const lib = biz.materialsLibrary || (biz.materialsLibrary = []);
+            const id = idIdx >= 0 ? String(cells[idIdx] || '').trim() : '';
+            const nm = nameIdx >= 0 ? String(cells[nameIdx] || '').trim() : '';
+            let m = id ? lib.find(x => x && x.id === id) : null;
+            if (!m && nm) m = lib.find(x => x && String(x.name || '').toLowerCase() === nm.toLowerCase());
+            if (!m) { skipped++; continue; }
+            const cv = costIdx >= 0 ? num(cells[costIdx]) : null;
+            if (cv != null) { m.cost = cv; updated++; } else skipped++;
+          } else if (type === 'overheads') {
+            const nameIdx = col(['overhead', 'name']);
+            const monIdx = col(['monthly', 'amount', 'month']);
+            const nm = nameIdx >= 0 ? String(cells[nameIdx] || '').trim() : '';
+            if (!nm) { skipped++; continue; }
+            const c = _costingForBiz(biz);
+            const mv = monIdx >= 0 ? num(cells[monIdx]) : null;
+            let o = c.overheads.find(x => x && String(x.name || '').toLowerCase() === nm.toLowerCase());
+            if (o) { if (mv != null) { o.monthly = mv; updated++; } else skipped++; }
+            else { c.overheads.push({ id: 'OH-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5), name: nm, monthly: mv || 0 }); added++; }
+          } else {
+            const prodIdx = col(['product']);
+            const lcIdx = col(['labour per piece', 'per piece', 'labour cost', 'labour price', 'r/piece']);
+            const hrsIdx = col(['labour hour', 'labour hrs', 'hours', 'hrs']);
+            const sellIdx = col(['selling']);
+            const key = prodIdx >= 0 ? String(cells[prodIdx] || '').trim() : '';
+            if (!key || !biz.productBoms) { skipped++; continue; }
+            let realKey = biz.productBoms[key] ? key : Object.keys(biz.productBoms).find(k => k.toLowerCase() === key.toLowerCase());
+            if (!realKey) { skipped++; continue; }
+            const p = biz.productBoms[realKey];
+            let touched = false;
+            if (lcIdx >= 0) { const lv = num(cells[lcIdx]); if (lv != null) { p.labourCost = lv; touched = true; } }
+            else if (hrsIdx >= 0) { const hv = num(cells[hrsIdx]); if (hv != null) { p.labourHours = hv; touched = true; } }
+            if (sellIdx >= 0) { const sv = num(cells[sellIdx]); if (sv != null) { p.sellingPrice = sv; touched = true; } }
+            if (touched) updated++; else skipped++;
+          }
+        }
+        saveData();
+        renderCosting();
+        _costingCsvStatus('✓ ' + type + ': updated ' + updated + (added ? ', added ' + added : '') + ', skipped ' + skipped + '. (A backup snapshot was taken — use Undo if needed.)', false);
+      } catch (err) {
+        _costingCsvStatus('✗ Import failed: ' + (err && err.message ? err.message : err), true);
+      }
+      input.value = '';
+    };
+    reader.readAsText(file);
+  }
+  window.importCostingCSV = importCostingCSV;
 
   // Material consumption (qty per ONE unit of the product) implied by the cut list.
   // Returns { matId: qty }. Used by the weekly material forecasts so that timber/sheets
@@ -9393,13 +9739,13 @@ ${totalsSection}
   // currentRole declared at top of script (TDZ safety)
   // Role permissions: which tabs each role can see
   const ROLE_PERMISSIONS = {
-    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'woodwork', 'pos'],
+    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'woodwork', 'pos'],
     sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'woodwork', 'pos'],
     factory: ['dashboard', 'orders', 'done', 'calendar', 'fabric', 'bom', 'schedule', 'planner'],
     dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'finished', 'fabric'],
     fabric: ['dashboard', 'calendar', 'fabric'],
     cashier: ['dashboard', 'fabric', 'pos'],
-    manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'schedule', 'planner', 'pos']
+    manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'pos']
   };
   
   // Roles that should NOT see fabric ordering info on dashboard or order cards
