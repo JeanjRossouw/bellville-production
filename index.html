@@ -955,6 +955,7 @@
             <option value="products">Product costing (labour per piece + selling price)</option>
             <option value="materials">Material unit costs</option>
             <option value="overheads">Overheads</option>
+            <option value="bom">BOM lines (materials per product)</option>
           </select>
           <button class="btn btn-sm" onclick="exportCostingCSV()" title="Download a CSV to edit in Excel / Google Sheets">⬇️ Export CSV</button>
           <label class="btn btn-sm" style="cursor:pointer; margin:0" title="Import an edited CSV back in">⬆️ Import CSV<input type="file" id="costing-csv-upload" accept=".csv,text/csv" style="display:none" onchange="importCostingCSV(this)"></label>
@@ -5181,6 +5182,28 @@ ${_PRODUCTION_PRINT_STYLES}
           if (o) rows.push([b, o.name || '', (o.monthly != null ? o.monthly : '')]);
         });
       });
+    } else if (type === 'bom') {
+      // One row per product-material line. Products with no BOM lines still get a
+      // row (blank material columns) so the full product list is visible in the sheet.
+      rows.push(['Business', 'Product', 'Material Id', 'Material', 'Qty', 'Unit', 'Unit Cost', 'Line Cost']);
+      COSTING_BIZ.forEach(b => {
+        const biz = data[b];
+        if (!biz) return;
+        const matById = {};
+        (biz.materialsLibrary || []).forEach(m => { if (m && m.id) matById[m.id] = m; });
+        Object.keys(biz.productBoms || {}).sort().forEach(key => {
+          const p = biz.productBoms[key] || {};
+          const entries = Object.entries(p.materials || {}).filter(([, q]) => parseFloat(q) > 0);
+          if (entries.length === 0) { rows.push([b, key, '', '', '', '', '', '']); return; }
+          entries
+            .map(([matId, qty]) => ({ matId, qty, m: matById[matId] }))
+            .sort((x, y) => String((x.m && x.m.name) || x.matId).localeCompare(String((y.m && y.m.name) || y.matId)))
+            .forEach(({ matId, qty, m }) => {
+              const cost = m ? (parseFloat(m.cost) || 0) : 0;
+              rows.push([b, key, matId, (m && m.name) || '', qty, (m && m.unit) || '', cost, (parseFloat(qty) * cost).toFixed(2)]);
+            });
+        });
+      });
     } else {
       rows.push(['Business', 'Product', 'Material Cost (auto)', 'Labour Per Piece', 'Selling Price']);
       COSTING_BIZ.forEach(b => {
@@ -5233,6 +5256,30 @@ ${_PRODUCTION_PRINT_STYLES}
             if (!m) { skipped++; continue; }
             const cv = costIdx >= 0 ? num(cells[costIdx]) : null;
             if (cv != null) { m.cost = cv; updated++; } else skipped++;
+          } else if (type === 'bom') {
+            // Header names overlap ("Material Id" contains "Material"), so match exactly.
+            const exact = (name) => header.findIndex(h => h === name);
+            const prodIdx = exact('product');
+            const matIdIdx = exact('material id');
+            const matNameIdx = exact('material');
+            const qtyIdx = col(['qty', 'quantity']);
+            const key = prodIdx >= 0 ? String(cells[prodIdx] || '').trim() : '';
+            if (!key || !biz.productBoms) { skipped++; continue; }
+            const realKey = biz.productBoms[key] ? key : Object.keys(biz.productBoms).find(k => k.toLowerCase() === key.toLowerCase());
+            if (!realKey) { skipped++; continue; }
+            const mid = matIdIdx >= 0 ? String(cells[matIdIdx] || '').trim() : '';
+            const mnm = matNameIdx >= 0 ? String(cells[matNameIdx] || '').trim() : '';
+            if (!mid && !mnm) { skipped++; continue; } // placeholder row for a product with no BOM yet
+            const lib = biz.materialsLibrary || [];
+            let m = mid ? lib.find(x => x && x.id === mid) : null;
+            if (!m && mnm) m = lib.find(x => x && String(x.name || '').toLowerCase() === mnm.toLowerCase());
+            if (!m) { skipped++; continue; }
+            const qv = qtyIdx >= 0 ? num(cells[qtyIdx]) : null;
+            if (qv == null) { skipped++; continue; }
+            const p = biz.productBoms[realKey];
+            if (!p.materials || typeof p.materials !== 'object') p.materials = {};
+            if (qv <= 0) { if (p.materials[m.id] != null) { delete p.materials[m.id]; updated++; } else skipped++; }
+            else { if (p.materials[m.id] == null) added++; else updated++; p.materials[m.id] = qv; }
           } else if (type === 'overheads') {
             const nameIdx = col(['overhead', 'name']);
             const monIdx = col(['monthly', 'amount', 'month']);
