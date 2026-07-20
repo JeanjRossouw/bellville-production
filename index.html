@@ -934,14 +934,15 @@
     <div class="card">
       <div class="card-title">💰 COSTING &amp; PROFIT</div>
       <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.75rem">
-        True cost per product = materials (from the BOM) + labour (hours × rate) + a share of monthly overheads.
-        Set your overheads, labour rate and expected units/month below, then each product's labour hours and selling price to see profit &amp; margin.
+        True cost per product = materials (from the BOM) + labour (R per piece) + a share of monthly overheads.
+        Set your overheads and expected units/month below, then each product's labour cost per piece and selling price to see profit &amp; margin.
+        A labour rate is optional — only if you'd rather work labour out from hours.
       </p>
       <div style="display:flex; gap:1.5rem; flex-wrap:wrap; margin-bottom:1rem">
-        <div><label style="display:block; font-size:11px; color:var(--text-muted)">Labour rate (R / hr)</label>
-          <input id="costing-rate" type="number" step="0.01" placeholder="0" onchange="costingSetField('labourRate', this.value)" style="width:150px; padding:6px"></div>
         <div><label style="display:block; font-size:11px; color:var(--text-muted)">Expected units / month</label>
           <input id="costing-units" type="number" step="1" placeholder="0" onchange="costingSetField('unitsPerMonth', this.value)" style="width:150px; padding:6px"></div>
+        <div><label style="display:block; font-size:11px; color:var(--text-muted)">Labour rate (R / hr) — optional</label>
+          <input id="costing-rate" type="number" step="0.01" placeholder="0" onchange="costingSetField('labourRate', this.value)" style="width:170px; padding:6px"></div>
       </div>
       <div id="costing-overheads"></div>
     </div>
@@ -5041,7 +5042,10 @@ ${_PRODUCTION_PRINT_STYLES}
       const p = biz.productBoms[key] || {};
       const mat = _productMaterialsCost(key, biz);
       const hrs = parseFloat(p.labourHours) || 0;
-      const labour = hrs * rate;
+      // Labour is costed per piece (a direct rand amount). If a product was set up
+      // the old way (hours) and has no per-piece figure, fall back to hours × rate.
+      const directLabour = parseFloat(p.labourCost);
+      const labour = !isNaN(directLabour) ? directLabour : (hrs * rate);
       const trueCost = mat + labour + ohUnit;
       const sell = parseFloat(p.sellingPrice) || 0;
       const profit = sell - trueCost;
@@ -5050,8 +5054,7 @@ ${_PRODUCTION_PRINT_STYLES}
       return `<tr style="border-bottom:1px solid var(--border,#eee)">
         <td style="padding:5px 6px">${_escape(key)}</td>
         <td style="padding:5px 6px; text-align:right">R${mat.toFixed(2)}</td>
-        <td style="padding:5px 6px; text-align:right"><input type="number" step="0.25" value="${hrs || ''}" placeholder="0" onchange="costingSetProduct('${_q(key)}','labourHours',this.value)" style="width:64px; padding:3px; text-align:right"></td>
-        <td style="padding:5px 6px; text-align:right">R${labour.toFixed(2)}</td>
+        <td style="padding:5px 6px; text-align:right"><input type="number" step="1" value="${!isNaN(directLabour) ? directLabour : ''}" placeholder="${(hrs * rate) ? (hrs * rate).toFixed(0) : '0'}" onchange="costingSetProduct('${_q(key)}','labourCost',this.value)" style="width:96px; padding:3px; text-align:right" title="Labour cost per piece (Rand)"></td>
         <td style="padding:5px 6px; text-align:right">R${ohUnit.toFixed(2)}</td>
         <td style="padding:5px 6px; text-align:right; font-weight:800">R${trueCost.toFixed(2)}</td>
         <td style="padding:5px 6px; text-align:right"><input type="number" step="1" value="${sell || ''}" placeholder="0" onchange="costingSetProduct('${_q(key)}','sellingPrice',this.value)" style="width:88px; padding:3px; text-align:right"></td>
@@ -5066,8 +5069,7 @@ ${_PRODUCTION_PRINT_STYLES}
           <thead><tr style="text-align:left; border-bottom:2px solid var(--border,#ddd)">
             <th style="padding:6px">Product</th>
             <th style="padding:6px; text-align:right">Material</th>
-            <th style="padding:6px; text-align:right">Labour hrs</th>
-            <th style="padding:6px; text-align:right">Labour</th>
+            <th style="padding:6px; text-align:right">Labour (R/piece)</th>
             <th style="padding:6px; text-align:right">Overhead</th>
             <th style="padding:6px; text-align:right">True cost</th>
             <th style="padding:6px; text-align:right">Selling price</th>
@@ -5180,13 +5182,13 @@ ${_PRODUCTION_PRINT_STYLES}
         });
       });
     } else {
-      rows.push(['Business', 'Product', 'Material Cost (auto)', 'Labour Hours', 'Selling Price']);
+      rows.push(['Business', 'Product', 'Material Cost (auto)', 'Labour Per Piece', 'Selling Price']);
       COSTING_BIZ.forEach(b => {
         const biz = data[b];
         if (!biz) return;
         Object.keys(biz.productBoms || {}).sort().forEach(key => {
           const p = biz.productBoms[key] || {};
-          rows.push([b, key, _productMaterialsCost(key, biz).toFixed(2), (p.labourHours != null ? p.labourHours : ''), (p.sellingPrice != null ? p.sellingPrice : '')]);
+          rows.push([b, key, _productMaterialsCost(key, biz).toFixed(2), (p.labourCost != null ? p.labourCost : ''), (p.sellingPrice != null ? p.sellingPrice : '')]);
         });
       });
     }
@@ -5243,15 +5245,17 @@ ${_PRODUCTION_PRINT_STYLES}
             else { c.overheads.push({ id: 'OH-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5), name: nm, monthly: mv || 0 }); added++; }
           } else {
             const prodIdx = col(['product']);
+            const lcIdx = col(['labour per piece', 'per piece', 'labour cost', 'labour price', 'r/piece']);
             const hrsIdx = col(['labour hour', 'labour hrs', 'hours', 'hrs']);
-            const sellIdx = col(['selling', 'price']);
+            const sellIdx = col(['selling']);
             const key = prodIdx >= 0 ? String(cells[prodIdx] || '').trim() : '';
             if (!key || !biz.productBoms) { skipped++; continue; }
             let realKey = biz.productBoms[key] ? key : Object.keys(biz.productBoms).find(k => k.toLowerCase() === key.toLowerCase());
             if (!realKey) { skipped++; continue; }
             const p = biz.productBoms[realKey];
             let touched = false;
-            if (hrsIdx >= 0) { const hv = num(cells[hrsIdx]); if (hv != null) { p.labourHours = hv; touched = true; } }
+            if (lcIdx >= 0) { const lv = num(cells[lcIdx]); if (lv != null) { p.labourCost = lv; touched = true; } }
+            else if (hrsIdx >= 0) { const hv = num(cells[hrsIdx]); if (hv != null) { p.labourHours = hv; touched = true; } }
             if (sellIdx >= 0) { const sv = num(cells[sellIdx]); if (sv != null) { p.sellingPrice = sv; touched = true; } }
             if (touched) updated++; else skipped++;
           }
