@@ -10139,6 +10139,10 @@ ${totalsSection}
   // number of jobs created (0 if already imported or not a sales order).
   function importSalesOrderToFactory(soId, so) {
     if (!so || (so.type && so.type !== 'salesorder')) return 0;   // ignore quotes etc.
+    // Only orders the cashier explicitly flagged as "made in our factory" become
+    // production jobs. An ordinary out-of-stock reorder (restocked from a
+    // supplier) is also a sales order, and must NOT land on the factory board.
+    if (so.factory !== true) return 0;
     const ledger = _rcImportLedger();
     if (ledger[soId]) return 0;                                   // imported once already
 
