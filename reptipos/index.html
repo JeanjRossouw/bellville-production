@@ -1366,6 +1366,9 @@
       <div class="change" id="so-balance">Balance owing: ${money(total)}</div>
       <div class="field"><label>Expected stock date (optional)</label><input id="so-date" type="date"></div>
       <div class="field"><label>Note (optional)</label><input id="so-note" placeholder="e.g. 60×45 terrarium, custom build"></div>
+      <label style="display:flex;align-items:center;gap:0.5rem;margin:0.2rem 0 0.5rem;font-size:0.9rem;cursor:pointer">
+        <input id="so-factory" type="checkbox" style="width:auto;margin:0"> Made in our factory (send to the production board)
+      </label>
       <button class="btn btn-pay" style="margin-top:0.6rem" onclick="confirmSalesOrder(${total})">Create sales order</button>`;
   }
   function closeSalesOrder() { document.getElementById('so-modal').classList.remove('show'); }
@@ -1375,6 +1378,7 @@
     if (deposit > total) { toast('Deposit is more than the total'); return; }
     const date = document.getElementById('so-date').value || '';
     const note = (document.getElementById('so-note').value || '').trim();
+    const factory = !!(document.getElementById('so-factory') && document.getElementById('so-factory').checked);
     const c = computeCart();
     const items = c.lines.map(x => ({ variantId: x.variantId, name: x.p ? x.p.name : x.variantId, sku: x.p ? x.p.sku : '', priceCents: x.finalUnit, qty: x.qty, lineTotalCents: x.finalLine }));
     const cust = customer;
@@ -1387,7 +1391,7 @@
     const doc = { type: 'salesorder', status: 'awaiting_stock', cart, cartDiscount, items, totalCents: total,
       depositCents: payment ? payment.amountCents : 0,
       payments: payment ? [{ ...payment, kind: 'deposit', at: new Date().toISOString() }] : [],
-      expectedDate: date, note, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
+      expectedDate: date, note, factory, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
     try {
       const out = await api('docSave', { tags: 'pos,sales-order', customerId: cust.id, lineItems: cart.map(l => ({ variantId: l.variantId, qty: l.qty })), doc });
       if (payment) shiftRecordDeposit(payment.method, payment.amountCents);
@@ -1437,7 +1441,7 @@
     const statusLabel = { awaiting_stock: '⏳ awaiting stock', ready: '✅ ready' }[m.status] || (m.status || '');
     return `<div class="cust-result" style="cursor:default; flex-direction:column; align-items:stretch; gap:0.35rem">
       <div style="display:flex;justify-content:space-between"><div style="font-weight:600">${esc(d.name)} · ${esc(cust)}</div><div style="font-weight:700">${money(total)}</div></div>
-      <div style="font-size:0.72rem;color:var(--muted)">${when} · deposit ${money(dep)} · balance ${money(bal)} · ${esc(statusLabel)}${m.expectedDate ? ' · exp ' + esc(m.expectedDate) : ''}${m.note ? ' · ' + esc(m.note) : ''}</div>
+      <div style="font-size:0.72rem;color:var(--muted)">${when} · deposit ${money(dep)} · balance ${money(bal)} · ${esc(statusLabel)}${m.expectedDate ? ' · exp ' + esc(m.expectedDate) : ''}${m.note ? ' · ' + esc(m.note) : ''}${m.factory ? ' · 🏭 factory' : ''}</div>
       <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
         ${bal > 0 ? `<button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="soAddPayment('${d.id}')">+ Deposit</button>` : ''}
         ${m.status !== 'ready' ? `<button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="soMarkReady('${d.id}')">Mark ready</button>` : ''}
