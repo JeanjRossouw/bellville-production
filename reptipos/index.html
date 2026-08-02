@@ -199,6 +199,7 @@
     <div style="display:flex; gap:0.5rem">
       <input id="scan" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="🔍 Scan barcode or search by name / SKU…" style="flex:1">
       <button class="qbtn" title="Scan with camera" onclick="openCamScan()" style="width:56px; border-radius:12px; font-size:1.3rem">📷</button>
+      <button class="qbtn" id="qk-btn" title="Edit quick keys (pin favourites)" onclick="toggleQkEdit()" style="width:56px; border-radius:12px; font-size:1.3rem">⭐</button>
     </div>
     <div id="cat-bar" class="cat-bar"></div>
     <div id="grid"></div>
@@ -214,6 +215,7 @@
       <div style="display:flex; gap:0.5rem; margin-top:0.5rem">
         <button class="btn btn-ghost" style="padding:0.6rem" onclick="openSalesOrder()" title="Order an out-of-stock item; invoice when it arrives">📋 Sales order</button>
         <button class="btn btn-ghost" style="padding:0.6rem" onclick="saveQuote()" title="Save a price quote for the customer">📝 Quote</button>
+        <button class="btn btn-ghost" style="padding:0.6rem" onclick="openGiftCard()" title="Sell a gift card (any amount)">🎁 Gift card</button>
       </div>
     </div>
   </div>
@@ -233,6 +235,9 @@
       <button onclick="payPick('card')">💳 Card — paid</button>
       <button onclick="payPick('eft')">🏦 EFT — paid</button>
       <button onclick="payPick('split')">↔ Split</button>
+      <button onclick="payPick('giftcard')">🎁 Gift card</button>
+      <button onclick="payPick('storecredit')">🪙 Store credit</button>
+      <button onclick="payPick('account')">📒 On account</button>
     </div>
     <div id="pay-detail"></div>
   </div>
@@ -287,6 +292,13 @@
   <div class="modal-card">
     <h2><span>New sales order</span><button class="rm" onclick="closeSalesOrder()">✕</button></h2>
     <div id="so-body"></div>
+  </div>
+</div>
+
+<div class="modal" id="gc-modal">
+  <div class="modal-card">
+    <h2><span>🎁 Sell gift card</span><button class="rm" onclick="closeGiftCard()">✕</button></h2>
+    <div id="gc-body"></div>
   </div>
 </div>
 
@@ -511,6 +523,47 @@
         });
         return { orderCount, salesCents, itemCount, items: Object.values(byV), points };
       }
+      // Gift cards + store credit — simulated with local balances.
+      case 'gcCreate': {
+        const list = demoGet('reptipos-demo-giftcards');
+        const gc = { id: 'demo-gc-' + demoSeq('reptipos-demo-gcseq'), code: p.code || ('DEMO' + Date.now()), balanceCents: p.amountCents };
+        list.push(gc); demoPut('reptipos-demo-giftcards', list);
+        return { id: gc.id, last4: gc.code.slice(-4), balanceCents: gc.balanceCents };
+      }
+      case 'gcBalance': {
+        const gc = demoGet('reptipos-demo-giftcards').find(g => g.id === p.id);
+        if (!gc) return { error: 'Gift card not found' };
+        return { id: gc.id, last4: gc.code.slice(-4), enabled: true, balanceCents: gc.balanceCents };
+      }
+      case 'gcFind': {
+        const cards = demoGet('reptipos-demo-giftcards').filter(g => g.code.toUpperCase().endsWith(String(p.last4 || '').toUpperCase()) && g.balanceCents > 0);
+        return { cards: cards.map(g => ({ id: g.id, last4: g.code.slice(-4), enabled: true, balanceCents: g.balanceCents })) };
+      }
+      case 'gcDebit': {
+        const list = demoGet('reptipos-demo-giftcards');
+        const gc = list.find(g => g.id === p.id);
+        if (!gc || gc.balanceCents < p.amountCents) return { error: 'Insufficient gift card balance' };
+        gc.balanceCents -= p.amountCents; demoPut('reptipos-demo-giftcards', list);
+        return { balanceCents: gc.balanceCents };
+      }
+      case 'scBalance': {
+        const sc = demoGet('reptipos-demo-storecredit').find(a => String(a.customerId) === String(p.customerId));
+        return { accountId: sc ? 'demo-sc-' + p.customerId : null, balanceCents: sc ? sc.balanceCents : 0 };
+      }
+      case 'scCredit': {
+        const list = demoGet('reptipos-demo-storecredit');
+        let sc = list.find(a => String(a.customerId) === String(p.customerId));
+        if (!sc) { sc = { customerId: String(p.customerId), balanceCents: 0 }; list.push(sc); }
+        sc.balanceCents += p.amountCents; demoPut('reptipos-demo-storecredit', list);
+        return { balanceCents: sc.balanceCents };
+      }
+      case 'scDebit': {
+        const list = demoGet('reptipos-demo-storecredit');
+        const sc = list.find(a => 'demo-sc-' + a.customerId === p.accountId);
+        if (!sc || sc.balanceCents < p.amountCents) return { error: 'Insufficient store credit' };
+        sc.balanceCents -= p.amountCents; demoPut('reptipos-demo-storecredit', list);
+        return { balanceCents: sc.balanceCents };
+      }
       default:
         return { error: 'demo: unknown action ' + p.action };
     }
@@ -588,11 +641,55 @@
   }
   // The category landing: one big picture tile per Shopify category. Tapping a
   // tile drills into that category (e.g. tap "Substrate" → see all substrate).
+  // ---- Quick keys (pinned favourites) ------------------------------------
+  // Shared across tills via the Firestore settings doc; localStorage keeps them
+  // working offline. Toggle edit mode with the ⭐ button, then star tiles.
+  let quickKeys = [];
+  let qkEdit = false;
+  try { quickKeys = JSON.parse(localStorage.getItem('reptipos-quickkeys') || '[]'); } catch (e) {}
+  // Cloud copy loads once Firebase is up (the module script runs after this one).
+  window.addEventListener('fb-ready', async () => {
+    try { const s = await fbGet('settings', 'quickkeys'); if (s && Array.isArray(s.variantIds)) { quickKeys = s.variantIds; localStorage.setItem('reptipos-quickkeys', JSON.stringify(quickKeys)); renderGrid(); } } catch (e) {}
+  });
+  function toggleQkEdit() {
+    qkEdit = !qkEdit;
+    const b = document.getElementById('qk-btn');
+    if (b) { b.style.background = qkEdit ? 'var(--accent)' : ''; }
+    toast(qkEdit ? 'Quick keys: tap the ☆ on a product to pin it, ⭐ again to finish' : 'Quick keys saved', undefined);
+    renderGrid();
+  }
+  function toggleQuickKey(variantId) {
+    const i = quickKeys.indexOf(variantId);
+    if (i >= 0) quickKeys.splice(i, 1); else quickKeys.push(variantId);
+    localStorage.setItem('reptipos-quickkeys', JSON.stringify(quickKeys));
+    try { fbSet('settings', 'quickkeys', { variantIds: quickKeys, updatedAt: new Date().toISOString() }); } catch (e) {}
+    renderGrid();
+  }
+  function productTile(p, withStar) {
+    const oos = (Number(p.qty) || 0) <= 0;
+    const thumb = p.imageUrl ? `<div class="thumb" style="background-image:url('${esc(p.imageUrl)}')"></div>` : `<div class="thumb">📦</div>`;
+    const pinned = quickKeys.includes(p.variantId);
+    const star = withStar ? `<div onclick="event.stopPropagation();toggleQuickKey('${p.variantId}')" style="position:absolute;top:4px;right:4px;font-size:1.2rem;padding:2px 6px;cursor:pointer">${pinned ? '⭐' : '☆'}</div>` : '';
+    return `<button class="tile" style="position:relative" ${oos && !withStar ? 'disabled' : ''} onclick="${withStar ? '' : `addToCart('${p.variantId}')`}">
+      ${star}${thumb}
+      <div class="nm">${esc(p.name)}</div>
+      <div class="pr">${money(p.priceCents)}</div>
+      <div class="st">${oos ? '<span style="color:var(--danger)">out of stock</span>' : 'stock ' + (Number(p.qty) || 0)}</div>
+    </button>`;
+  }
+  function quickKeyStrip() {
+    const pins = quickKeys.map(v => findProduct(v)).filter(Boolean);
+    if (!pins.length) return '';
+    return `<div style="grid-column:1/-1;font-size:0.8rem;font-weight:700;margin:0.2rem 0 0">⭐ Quick keys</div>`
+      + pins.map(p => productTile(p, false)).join('')
+      + `<div style="grid-column:1/-1;border-bottom:1px solid var(--border);margin:0.3rem 0"></div>`;
+  }
+
   function renderCategoryTiles() {
     const grid = document.getElementById('grid');
     const cats = catList();
     if (!cats.length) { currentCat = ''; renderGrid(); return; }
-    grid.innerHTML = cats.map(c => {
+    grid.innerHTML = quickKeyStrip() + cats.map(c => {
       const inCat = catalogue.filter(p => p.category === c);
       const withImg = inCat.find(p => p.imageUrl);
       const count = inCat.length;
@@ -611,6 +708,13 @@
     const q = document.getElementById('scan').value.trim().toLowerCase();
     // Rebuild the category bar only when the set of categories changes (keeps scroll position).
     if (catList().join('|') !== catBarSig) renderCatBar();
+    // Quick-key edit mode: every product shows a ☆/⭐ to pin/unpin.
+    if (qkEdit) {
+      let ed = catalogue;
+      if (q) ed = ed.filter(p => (p.name || '').toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q) || (p.barcode || '').toLowerCase().includes(q));
+      grid.innerHTML = `<div style="grid-column:1/-1;font-size:0.85rem;color:var(--warn)">Quick-key edit — tap ☆ to pin, ⭐ button to finish</div>` + ed.slice(0, 300).map(p => productTile(p, true)).join('');
+      return;
+    }
     // Category landing page (no active search): show the picture tiles.
     if (currentCat === '__home__' && !q) { renderCategoryTiles(); return; }
     let items = catalogue;
@@ -687,12 +791,21 @@
     const l = cart.find(x => x.variantId === variantId); if (!l) return;
     const v = prompt('Line discount — e.g. "10%" or "50" (R off). Blank to clear:', l.disc ? (l.disc.type === 'pct' ? l.disc.value + '%' : (l.disc.value / 100).toFixed(2)) : '');
     if (v === null) return;
-    l.disc = parseDiscount(v); renderCart();
+    const d = parseDiscount(v);
+    const p = findProduct(variantId);
+    const base = p ? p.priceCents * l.qty : 0;
+    const pct = discPctOf(d, base);
+    if (pct > staffMaxDiscPct() && !adminOverride(`${Math.round(pct)}% discount is over ${currentStaff ? currentStaff.name : 'this till'}'s ${staffMaxDiscPct()}% limit`)) return;
+    l.disc = d; renderCart();
   }
   function setCartDiscount() {
     const v = prompt('Cart discount — e.g. "10%" or "50" (R off). Blank to clear:', cartDiscount ? (cartDiscount.type === 'pct' ? cartDiscount.value + '%' : (cartDiscount.value / 100).toFixed(2)) : '');
     if (v === null) return;
-    cartDiscount = parseDiscount(v); renderCart();
+    const d = parseDiscount(v);
+    const base = cart.reduce((t, l) => { const p = findProduct(l.variantId); return t + (p ? p.priceCents * l.qty : 0); }, 0);
+    const pct = discPctOf(d, base);
+    if (pct > staffMaxDiscPct() && !adminOverride(`${Math.round(pct)}% cart discount is over ${currentStaff ? currentStaff.name : 'this till'}'s ${staffMaxDiscPct()}% limit`)) return;
+    cartDiscount = d; renderCart();
   }
 
   // Compute the whole cart in integer cents, applying line then cart discounts.
@@ -889,6 +1002,29 @@
   function ensureStaffSeed() { if (staffList().length === 0) saveStaff([{ id: 'admin', name: 'Admin', pin: '0000', role: 'admin' }]); }
   function renderStaffBadge() { const b = document.getElementById('staff-badge'); if (b) b.textContent = currentStaff ? '👤 ' + currentStaff.name : ''; }
 
+  // ---- Per-staff limits ---------------------------------------------------
+  // Admin: no limits. Others: maxDiscPct caps discounts (default 10%), and
+  // refunds / pay-outs need canRefund or an admin PIN override.
+  function staffMaxDiscPct() {
+    if (!currentStaff) return 0;
+    if (currentStaff.role === 'admin') return 100;
+    return Math.max(0, Number(currentStaff.maxDiscPct != null ? currentStaff.maxDiscPct : 10));
+  }
+  function adminOverride(what) {
+    const pin = prompt('Admin PIN needed — ' + what);
+    if (pin === null) return false;
+    const s = staffList().find(x => x.pin === String(pin).trim() && x.role === 'admin');
+    if (!s) { toast('Not an admin PIN'); return false; }
+    toast('Approved by ' + s.name);
+    return true;
+  }
+  // Effective % of a discount against a base amount (for limit checks).
+  function discPctOf(disc, baseCents) {
+    if (!disc) return 0;
+    if (disc.type === 'pct') return disc.value;
+    return baseCents > 0 ? (disc.value / baseCents) * 100 : 100;
+  }
+
   function lockPOS() { currentStaff = null; pinBuffer = ''; renderStaffBadge(); renderLockPad(); renderLockDemo(); document.getElementById('lock').style.display = 'flex'; }
   function renderLockPad() {
     document.getElementById('lock-dots').textContent = '••••'.slice(0, pinBuffer.length).padEnd(4, '·');
@@ -918,6 +1054,17 @@
     else if (p.method === 'card') s.cardSalesCents += sale.totalCents;
     else if (p.method === 'eft') s.eftSalesCents += sale.totalCents;
     else if (p.method === 'split') { s.cashSalesCents += (p.cashAmountCents || 0); s.cardSalesCents += (p.cardAmountCents || 0); }
+    else if (p.method === 'giftcard') {
+      // Redemption moves no money (it arrived when the card was sold); any
+      // remainder collected by a normal tender does.
+      s.giftCardRedeemedCents = (s.giftCardRedeemedCents || 0) + (p.giftCardCents || 0);
+      if (p.otherMethod) { if (p.otherMethod === 'cash') s.cashSalesCents += (p.otherCents || 0); else if (p.otherMethod === 'card') s.cardSalesCents += (p.otherCents || 0); else if (p.otherMethod === 'eft') s.eftSalesCents += (p.otherCents || 0); }
+    }
+    else if (p.method === 'storecredit') {
+      s.storeCreditRedeemedCents = (s.storeCreditRedeemedCents || 0) + (p.storeCreditCents || 0);
+      if (p.otherMethod) { if (p.otherMethod === 'cash') s.cashSalesCents += (p.otherCents || 0); else if (p.otherMethod === 'card') s.cardSalesCents += (p.otherCents || 0); else if (p.otherMethod === 'eft') s.eftSalesCents += (p.otherCents || 0); }
+    }
+    // 'account': no tender now — the charge is tracked via accountChargesCents.
     s.salesCount += 1;
     s.byStaff = s.byStaff || {};
     const who = sale.staff || '—';
@@ -960,9 +1107,10 @@
     if (!currentStaff || currentStaff.role !== 'admin') return '';
     const list = staffList();
     return `<div style="font-size:0.8rem; font-weight:700; margin-bottom:0.4rem">Staff</div>
-      ${list.map(s => `<div style="display:flex; justify-content:space-between; padding:0.25rem 0; font-size:0.85rem"><span>${esc(s.name)} <span style="color:var(--muted)">(${s.role})</span></span>${s.id !== 'admin' ? `<button class="rm" onclick="removeStaff('${s.id}')">✕</button>` : ''}</div>`).join('')}
-      <div style="display:flex; gap:0.4rem; margin-top:0.4rem"><input id="st-name" placeholder="Name" style="flex:1"><input id="st-pin" placeholder="PIN" style="width:80px"></div>
+      ${list.map(s => `<div style="display:flex; justify-content:space-between; padding:0.25rem 0; font-size:0.85rem"><span>${esc(s.name)} <span style="color:var(--muted)">(${s.role}${s.role === 'admin' ? '' : ' · disc ≤' + (s.maxDiscPct != null ? s.maxDiscPct : 10) + '% · ' + (s.canRefund ? 'refunds ✓' : 'no refunds')})</span></span>${s.id !== 'admin' ? `<button class="rm" onclick="removeStaff('${s.id}')">✕</button>` : ''}</div>`).join('')}
+      <div style="display:flex; gap:0.4rem; margin-top:0.4rem; flex-wrap:wrap"><input id="st-name" placeholder="Name" style="flex:1; min-width:100px"><input id="st-pin" placeholder="PIN" style="width:80px"><input id="st-disc" type="number" min="0" max="100" placeholder="disc %" title="Max discount % without admin approval" style="width:80px"><label style="display:flex;align-items:center;gap:0.3rem;font-size:0.8rem;cursor:pointer"><input id="st-refund" type="checkbox" style="width:auto">refunds</label></div>
       <button class="qbtn" style="width:auto; padding:0 0.7rem; margin-top:0.4rem" onclick="addStaff()">+ Add staff</button>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.2rem">Over-limit discounts, refunds and pay-outs ask for an admin PIN.</div>
       <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">Tax (default off — not VAT-registered)</div>
       <div style="display:flex; gap:0.4rem; align-items:center">
         <input id="tax-label" value="${esc(settings().taxLabel)}" placeholder="Label" style="flex:1">
@@ -987,7 +1135,9 @@
     if (!name || !/^\d{4,6}$/.test(pin)) { toast('Name + 4–6 digit PIN'); return; }
     const list = staffList();
     if (list.some(s => s.pin === pin)) { toast('PIN already in use'); return; }
-    list.push({ id: 'st-' + Date.now(), name, pin, role: 'cashier' });
+    const maxDiscPct = Math.min(100, Math.max(0, parseFloat(document.getElementById('st-disc').value) || 10));
+    const canRefund = !!(document.getElementById('st-refund') && document.getElementById('st-refund').checked);
+    list.push({ id: 'st-' + Date.now(), name, pin, role: 'cashier', maxDiscPct, canRefund });
     saveStaff(list); renderReg(); toast('Staff added');
   }
   function removeStaff(id) { if (!confirm('Remove this staff member?')) return; saveStaff(staffList().filter(s => s.id !== id)); renderReg(); }
@@ -1011,6 +1161,8 @@
   }
   function payInOut(dir) {
     const s = getShift(); if (!s) return;
+    // Taking cash OUT of the drawer needs permission (pay-ins stay open).
+    if (dir === 'out' && !(currentStaff && (currentStaff.role === 'admin' || currentStaff.canRefund)) && !adminOverride('pay-out from the drawer')) return;
     const v = toCents(prompt((dir === 'in' ? 'Pay-IN' : 'Pay-OUT') + ' amount (R):', '0'));
     if (v <= 0) return;
     if (dir === 'in') s.payInsCents += v; else s.payOutsCents += v;
@@ -1034,6 +1186,11 @@
         <tr><td>Sales count</td><td style="text-align:right">${s.salesCount}</td></tr>
         <tr><td>Refunds count</td><td style="text-align:right">${s.refundsCount || 0}</td></tr>
         ${s.depositsCents ? `<tr><td>Deposits taken (incl. above)</td><td style="text-align:right">${money(s.depositsCents)}</td></tr>` : ''}
+        ${s.giftCardSoldCents ? `<tr><td>Gift cards sold (incl. above)</td><td style="text-align:right">${money(s.giftCardSoldCents)}</td></tr>` : ''}
+        ${s.giftCardRedeemedCents ? `<tr><td>Gift card redemptions (no drawer)</td><td style="text-align:right">${money(s.giftCardRedeemedCents)}</td></tr>` : ''}
+        ${s.storeCreditRedeemedCents ? `<tr><td>Store credit redemptions (no drawer)</td><td style="text-align:right">${money(s.storeCreditRedeemedCents)}</td></tr>` : ''}
+        ${s.accountChargesCents ? `<tr><td>On-account charges (not banked)</td><td style="text-align:right">${money(s.accountChargesCents)}</td></tr>` : ''}
+        ${s.accountPaymentsCents ? `<tr><td>Account payments (incl. above)</td><td style="text-align:right">${money(s.accountPaymentsCents)}</td></tr>` : ''}
         <tr class="tot"><td>Expected cash</td><td style="text-align:right">${money(exp)}</td></tr>
         ${countedCents != null ? `<tr><td>Counted</td><td style="text-align:right">${money(countedCents)}</td></tr><tr class="tot"><td>Variance</td><td style="text-align:right">${money(variance)}</td></tr>` : ''}
       </table>
@@ -1091,13 +1248,29 @@
     const inRange = iso => { const t = new Date(iso); return t >= since && (!until || t <= until); };
     const events = [];
     loadSales().filter(s => inRange(s.datetime)).forEach(s => {
-      const net = (s.totalCents || 0) - (s.depositAppliedCents || 0);   // fulfilled SO: only the balance arrived today
-      events.push({ at: s.datetime, kind: 'sale', amountCents: net, method: (s.payment && s.payment.method) || '', sale: s });
+      // Money that actually ARRIVED with this sale:
+      //   fulfilled SO   → only the balance (deposit counted on its own day)
+      //   gift card      → only the non-gift-card remainder (money came in when the card was sold)
+      //   store credit   → only the remainder (credit was funded by an earlier refund)
+      //   on account     → nothing now; the account payment counts when received
+      const p = s.payment || {};
+      let net = (s.totalCents || 0) - (s.depositAppliedCents || 0);
+      let method = p.method || '';
+      if (p.method === 'giftcard' || p.method === 'storecredit') { net = p.otherCents || 0; method = p.otherMethod || p.method; }
+      else if (p.method === 'account') net = 0;
+      events.push({ at: s.datetime, kind: 'sale', amountCents: net, method, sale: s });
     });
     loadDeposits().filter(d => inRange(d.at)).forEach(d =>
       events.push({ at: d.at, kind: 'deposit', amountCents: d.amountCents || 0, method: d.method || '', ref: d.ref }));
-    loadRefundsLog().filter(r => inRange(r.datetime)).forEach(r =>
-      events.push({ at: r.datetime, kind: 'refund', amountCents: -(r.totalCents || 0), method: r.method || '', ref: r.orderName }));
+    loadGiftcardsSold().filter(g => inRange(g.at)).forEach(g =>
+      events.push({ at: g.at, kind: 'giftcard', amountCents: g.amountCents || 0, method: g.method || '', ref: '…' + (g.last4 || '') }));
+    loadAcctPayments().filter(a => inRange(a.at)).forEach(a =>
+      events.push({ at: a.at, kind: 'acctpay', amountCents: a.amountCents || 0, method: a.method || '', ref: a.customer }));
+    loadRefundsLog().filter(r => inRange(r.datetime)).forEach(r => {
+      // A refund issued as store credit moves no money out of the till.
+      if (r.method === 'storecredit') return;
+      events.push({ at: r.datetime, kind: 'refund', amountCents: -(r.totalCents || 0), method: r.method || '', ref: r.orderName });
+    });
     events.sort((a, b) => new Date(b.at) - new Date(a.at));
     return events;
   }
@@ -1137,7 +1310,11 @@
     const rows = events.slice(0, 150).map(e => {
       if (e.kind === 'sale') {
         const s = e.sale;
-        const depNote = s.depositAppliedCents ? ` · deposit ${money(s.depositAppliedCents)} counted earlier` : '';
+        let depNote = s.depositAppliedCents ? ` · deposit ${money(s.depositAppliedCents)} counted earlier` : '';
+        const sp = s.payment || {};
+        if (sp.method === 'giftcard') depNote += ` · gift card ${money(sp.giftCardCents || 0)} (counted when sold)`;
+        else if (sp.method === 'storecredit') depNote += ` · store credit ${money(sp.storeCreditCents || 0)}`;
+        else if (sp.method === 'account') depNote += ' · ON ACCOUNT — money counts when the account is paid';
         return `<div class="cust-result" style="cursor:default">
           <div><div style="font-weight:600">${esc(s.saleNumber)}${s.synced ? '' : ' <span style="color:var(--warn)">⏳</span>'}${s.salesOrder ? ' <span style="font-size:0.68rem;color:var(--muted)">SO ' + esc(s.salesOrder) + '</span>' : ''}</div>
             <div style="font-size:0.72rem;color:var(--muted)">${new Date(s.datetime).toLocaleString('en-ZA')} · ${(s.items || []).reduce((n, i) => n + i.qty, 0)} item(s) · ${esc((s.payment && s.payment.method) || '')}${s.customer ? ' · ' + esc(s.customer.name) : ''}${depNote}</div></div>
@@ -1149,6 +1326,18 @@
       if (e.kind === 'deposit') {
         return `<div class="cust-result" style="cursor:default">
           <div><div style="font-weight:600">💰 Deposit${e.ref ? ' · ' + esc(e.ref) : ''}</div>
+            <div style="font-size:0.72rem;color:var(--muted)">${new Date(e.at).toLocaleString('en-ZA')} · ${esc(e.method)}</div></div>
+          <span style="font-weight:700;color:var(--accent2)">${money(e.amountCents)}</span></div>`;
+      }
+      if (e.kind === 'giftcard') {
+        return `<div class="cust-result" style="cursor:default">
+          <div><div style="font-weight:600">🎁 Gift card sold${e.ref ? ' · ' + esc(e.ref) : ''}</div>
+            <div style="font-size:0.72rem;color:var(--muted)">${new Date(e.at).toLocaleString('en-ZA')} · ${esc(e.method)}</div></div>
+          <span style="font-weight:700;color:var(--accent2)">${money(e.amountCents)}</span></div>`;
+      }
+      if (e.kind === 'acctpay') {
+        return `<div class="cust-result" style="cursor:default">
+          <div><div style="font-weight:600">📒 Account payment${e.ref ? ' · ' + esc(e.ref) : ''}</div>
             <div style="font-size:0.72rem;color:var(--muted)">${new Date(e.at).toLocaleString('en-ZA')} · ${esc(e.method)}</div></div>
           <span style="font-weight:700;color:var(--accent2)">${money(e.amountCents)}</span></div>`;
       }
@@ -1307,6 +1496,7 @@
           <option value="cash">💵 Cash (from drawer)</option>
           <option value="card">💳 Card (reverse on speedpoint)</option>
           <option value="eft">🏦 EFT (send back)</option>
+          <option value="storecredit">🪙 Store credit (attach the customer first)</option>
         </select></div>
       <div class="field"><label>Reason (optional)</label><input id="rf-reason" placeholder="e.g. faulty, wrong item"></div>
       <div class="total" style="font-size:1.3rem; margin-top:0.7rem"><span>REFUND</span><span class="accent" id="rf-total">${money(refundTotalCents())}</span></div>
@@ -1323,12 +1513,21 @@
     const reason = (document.getElementById('rf-reason').value || '').trim();
     const lines = refundOrder.lineItems.filter(li => (refundQty[li.lineItemId] || 0) > 0)
       .map(li => ({ lineItemId: li.lineItemId, qty: refundQty[li.lineItemId], name: li.name, unitPriceCents: li.unitPriceCents }));
-    if (!confirm(`Refund ${money(total)} via ${method} for ${refundOrder.name}?`)) return;
+    // Store-credit refunds credit the attached customer instead of moving money.
+    if (method === 'storecredit' && !customer) { toast('Attach the customer first (👥) — the credit goes onto their account'); return; }
+    // Refunds need permission (or a one-off admin approval).
+    if (!(currentStaff && (currentStaff.role === 'admin' || currentStaff.canRefund)) && !adminOverride('refund ' + money(total))) return;
+    if (!confirm(`Refund ${money(total)} via ${method === 'storecredit' ? 'store credit to ' + customer.name : method} for ${refundOrder.name}?`)) return;
     refundInFlight = true;
     const idemKey = uuid();
     try {
       const out = await api('refundCreate', { orderId: refundOrder.orderId, idemKey, restock: refundRestock, reason,
         refundLineItems: lines.map(l => ({ lineItemId: l.lineItemId, qty: l.qty })) });
+      // Only after the Shopify refund succeeds does the credit land on the account.
+      if (method === 'storecredit') {
+        try { await apiX('scCredit', { customerId: customer.id, amountCents: out.amountCents || total }); }
+        catch (e) { toast('Refund done but store credit failed: ' + (e.message || e) + ' — credit it manually in Shopify admin.'); }
+      }
       const refund = {
         type: 'refund', refundNumber: 'RF-' + refundOrder.name.replace(/^#/, ''), idemKey,
         datetime: new Date().toISOString(), orderName: refundOrder.name,
@@ -1421,6 +1620,215 @@
   function shiftRecordDeposit(method, amount) {
     const s = getShift(); if (s) { s.depositsCents = (s.depositsCents || 0) + amount; saveShift(s); }
     shiftAddTender(method, amount);
+  }
+
+  // ---- Gift cards, store credit & customer accounts ---------------------
+  // api() returns {error} without throwing (demo path); this wrapper throws so
+  // the new flows can use one try/catch for both live and demo.
+  async function apiX(action, extra) {
+    const out = await api(action, extra);
+    if (out && out.error) throw new Error(out.error);
+    return out;
+  }
+  async function sha256Hex(s) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(s).trim().toUpperCase()));
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  // Unambiguous alphabet (no 0/O/1/I) — 14 chars + RC prefix = 16, within
+  // Shopify's 8–20 limit. Typed or scanned at redemption.
+  function genGiftCode() {
+    const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let c = 'RC';
+    const r = new Uint8Array(14); crypto.getRandomValues(r);
+    r.forEach(x => { c += A[x % A.length]; });
+    return c;
+  }
+
+  // Durable logs (money-in + Z-report): gift cards sold, account payments.
+  function loadGiftcardsSold() { try { return JSON.parse(localStorage.getItem('reptipos-giftcards-sold') || '[]'); } catch (e) { return []; } }
+  function recordGiftcardSold(method, amountCents, last4) {
+    const entry = { at: new Date().toISOString(), method, amountCents, last4, staff: currentStaff ? currentStaff.name : null };
+    try { const arr = loadGiftcardsSold(); arr.unshift(entry); localStorage.setItem('reptipos-giftcards-sold', JSON.stringify(arr.slice(0, 500))); } catch (e) {}
+    try { if (window.fb && !isDemo()) { const { db, fns } = window.fb; fns.addDoc(fns.collection(db, 'payments'), { kind: 'giftcard_sale', ...entry }); } } catch (e) {}
+    const s = getShift(); if (s) { s.giftCardSoldCents = (s.giftCardSoldCents || 0) + amountCents; saveShift(s); }
+    shiftAddTender(method, amountCents);
+  }
+  function loadAcctPayments() { try { return JSON.parse(localStorage.getItem('reptipos-acct-payments') || '[]'); } catch (e) { return []; } }
+
+  // Customer account ledger (on-account charges & payments). Firestore is the
+  // shared source; a local mirror keeps profile balances working offline.
+  function loadAcctLocal() { try { return JSON.parse(localStorage.getItem('reptipos-accounts') || '[]'); } catch (e) { return []; } }
+  async function recordAcctEntry(entry) {
+    const e2 = { at: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null, ...entry };
+    try { const arr = loadAcctLocal(); arr.unshift(e2); localStorage.setItem('reptipos-accounts', JSON.stringify(arr.slice(0, 1000))); } catch (e) {}
+    try { await fbAdd('accounts', e2); } catch (e) { console.warn('Account ledger cloud write failed:', e); }
+    if (e2.kind === 'payment') {
+      const p = { at: e2.at, method: e2.method, amountCents: e2.amountCents, customer: e2.name, staff: e2.staff };
+      try { const arr = loadAcctPayments(); arr.unshift(p); localStorage.setItem('reptipos-acct-payments', JSON.stringify(arr.slice(0, 500))); } catch (e) {}
+      try { if (window.fb && !isDemo()) { const { db, fns } = window.fb; fns.addDoc(fns.collection(db, 'payments'), { kind: 'account_payment', ...p }); } } catch (e) {}
+      const s = getShift(); if (s) { s.accountPaymentsCents = (s.accountPaymentsCents || 0) + e2.amountCents; saveShift(s); }
+      shiftAddTender(e2.method, e2.amountCents);
+    } else if (e2.kind === 'charge') {
+      const s = getShift(); if (s) { s.accountChargesCents = (s.accountChargesCents || 0) + e2.amountCents; saveShift(s); }
+    }
+  }
+  async function acctBalanceCents(customerId) {
+    let entries = [];
+    try { entries = (await fbList('accounts')).filter(a => String(a.customerId) === String(customerId)); }
+    catch (e) { entries = loadAcctLocal().filter(a => String(a.customerId) === String(customerId)); }
+    return entries.reduce((t, a) => t + (a.kind === 'charge' ? (a.amountCents || 0) : -(a.amountCents || 0)), 0);
+  }
+
+  // ---- Sell a gift card --------------------------------------------------
+  function openGiftCard() {
+    document.getElementById('gc-modal').classList.add('show');
+    document.getElementById('gc-body').innerHTML = `
+      <div class="field"><label>Gift card amount (R)</label>
+        <input id="gc-amount" type="number" inputmode="decimal" step="0.01" placeholder="e.g. 500"></div>
+      ${customer ? `<div style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">Will be linked to ${esc(customer.name)}</div>` : '<div style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">Tip: attach a customer (👥) to link the card to them.</div>'}
+      <button class="btn btn-pay" onclick="confirmGiftCardSale()">Take payment &amp; issue card</button>`;
+    setTimeout(() => { const i = document.getElementById('gc-amount'); if (i) i.focus(); }, 60);
+  }
+  function closeGiftCard() { document.getElementById('gc-modal').classList.remove('show'); }
+  let gcSaleInFlight = false;
+  async function confirmGiftCardSale() {
+    if (gcSaleInFlight) return;
+    const amountCents = toCents(document.getElementById('gc-amount').value);
+    if (amountCents <= 0) { toast('Enter the gift card amount'); return; }
+    closeGiftCard();
+    const payment = await takeTender({ title: 'Gift card ' + money(amountCents), amountCents, editable: false });
+    if (!payment) { openGiftCard(); return; }
+    gcSaleInFlight = true;
+    const code = genGiftCode();
+    try {
+      const out = await apiX('gcCreate', { amountCents, code, customerId: customer ? customer.id : undefined });
+      // Hashed code → gift card id map (Shopify never returns the code again).
+      try { if (!isDemo()) await fbSet('giftcards', await sha256Hex(code), { gcId: out.id, last4: out.last4, at: new Date().toISOString(), soldBy: currentStaff ? currentStaff.name : null }); } catch (e) { console.warn('Gift card map write failed:', e); }
+      recordGiftcardSold(payment.method, amountCents, out.last4);
+      toast('Gift card issued — ' + money(amountCents));
+      printGiftCardSlip(code, amountCents);
+    } catch (e) {
+      toast('Gift card failed: ' + (e.message || e) + ' — the payment was NOT banked; hand it back or retry.');
+    } finally { gcSaleInFlight = false; }
+  }
+  function printGiftCardSlip(code, amountCents) {
+    printReport(`<h2 style="text-align:center;margin:.2rem 0">ReptiCube — GIFT CARD</h2>
+      <div class="c">${new Date().toLocaleString('en-ZA')}</div>
+      <div style="text-align:center;font-size:26px;font-weight:bold;margin:12px 0;letter-spacing:2px">${esc(code)}</div>
+      <table><tr class="tot"><td>Value</td><td style="text-align:right">${money(amountCents)}</td></tr></table>
+      <div class="c">Treat this slip like cash. The code is needed to redeem — it cannot be recovered if lost.</div>`);
+  }
+
+  // ---- Redeem tenders (gift card / store credit / on account) ------------
+  // Shared: apply up to the balance; any remainder is collected via a normal
+  // tender FIRST, and only then is the gift card / credit debited — so a
+  // cancelled remainder never leaves a half-debited card.
+  async function payGiftcardStart() {
+    const total = cartTotal();
+    const d = document.getElementById('pay-detail');
+    d.innerHTML = `<div class="field"><label>Gift card code (scan or type)</label>
+      <input id="gc-code" autocomplete="off" placeholder="RC…">
+      <button class="btn btn-pay" style="margin-top:0.6rem" onclick="payGiftcardCheck()">Check balance</button>
+      <div id="gc-check" style="margin-top:0.5rem;font-size:0.9rem"></div></div>`;
+    const i = document.getElementById('gc-code'); i.focus();
+  }
+  let _gcResolved = null;
+  async function payGiftcardCheck() {
+    const code = (document.getElementById('gc-code').value || '').trim();
+    const box = document.getElementById('gc-check');
+    if (code.length < 4) { box.textContent = 'Enter the code (or at least its last 4 characters)'; return; }
+    box.textContent = 'Checking…';
+    _gcResolved = null;
+    try {
+      let gc = null;
+      if (isDemo()) {
+        const hit = demoGet('reptipos-demo-giftcards').find(g => g.code.toUpperCase() === code.toUpperCase());
+        if (hit) gc = { id: hit.id, last4: hit.code.slice(-4), balanceCents: hit.balanceCents };
+      } else {
+        // Exact: hashed-code map (cards we sold). Fallback: last-4 search
+        // (cards sold online — Shopify can't verify the full code, so staff
+        // must eyeball that the last 4 match the customer's card).
+        try {
+          const map = await fbGet('giftcards', await sha256Hex(code));
+          if (map) { const b = await apiX('gcBalance', { id: map.gcId }); gc = b; }
+        } catch (e) {}
+        if (!gc) {
+          const found = await apiX('gcFind', { last4: code.slice(-4) });
+          if ((found.cards || []).length === 1) gc = found.cards[0];
+          else if ((found.cards || []).length > 1) { box.textContent = 'More than one card matches those characters — enter the full code.'; return; }
+        }
+      }
+      if (!gc) { box.textContent = 'Gift card not found.'; return; }
+      if (gc.balanceCents <= 0) { box.textContent = 'This gift card has no balance left.'; return; }
+      const total = cartTotal();
+      const use = Math.min(gc.balanceCents, total);
+      _gcResolved = { ...gc, useCents: use };
+      box.innerHTML = `Balance <b>${money(gc.balanceCents)}</b> (…${esc(gc.last4)}) — will cover <b>${money(use)}</b>${use < total ? `, remainder ${money(total - use)} by another method` : ''}.<br>
+        <button class="btn btn-pay" style="margin-top:0.5rem" onclick="payGiftcardConfirm()">✓ Use gift card${use < total ? ' + collect remainder' : ''}</button>`;
+    } catch (e) { box.textContent = 'Check failed: ' + (e.message || e); }
+  }
+  async function payGiftcardConfirm() {
+    const gc = _gcResolved; if (!gc) return;
+    const total = cartTotal();
+    const remainder = total - gc.useCents;
+    let other = null;
+    if (remainder > 0) {
+      payClose();
+      other = await takeTender({ title: 'Remainder ' + money(remainder), amountCents: remainder, editable: false });
+      if (!other) { payOpen(); return; }
+    }
+    try {
+      const out = await apiX('gcDebit', { id: gc.id, amountCents: gc.useCents });
+      completeSale({ method: 'giftcard', giftCardCents: gc.useCents, gcLast4: gc.last4, gcBalanceAfterCents: out.balanceCents,
+        ...(other ? { otherMethod: other.method, otherCents: other.amountCents, otherDetail: other } : {}) });
+    } catch (e) { toast('Gift card debit failed: ' + (e.message || e) + (other ? ' — hand back the remainder payment.' : '')); }
+  }
+
+  async function payStoreCreditStart() {
+    const d = document.getElementById('pay-detail');
+    if (!customer) { d.innerHTML = '<div style="font-size:0.9rem;color:var(--warn)">Attach the customer first (👥) — store credit lives on their account.</div>'; return; }
+    d.innerHTML = '<div style="font-size:0.9rem;color:var(--muted)">Checking ' + esc(customer.name) + '’s store credit…</div>';
+    try {
+      const sc = await apiX('scBalance', { customerId: customer.id });
+      const total = cartTotal();
+      const use = Math.min(sc.balanceCents, total);
+      if (use <= 0) { d.innerHTML = '<div style="font-size:0.9rem;color:var(--warn)">' + esc(customer.name) + ' has no store credit.</div>'; return; }
+      d.innerHTML = `<div style="font-size:0.9rem">Store credit balance <b>${money(sc.balanceCents)}</b> — will cover <b>${money(use)}</b>${use < total ? `, remainder ${money(total - use)} by another method` : ''}.</div>
+        <button class="btn btn-pay" style="margin-top:0.6rem" onclick='payStoreCreditConfirm(${JSON.stringify(sc.accountId)},${use})'>✓ Use store credit${use < total ? ' + collect remainder' : ''}</button>`;
+    } catch (e) { d.innerHTML = '<div style="font-size:0.9rem;color:var(--warn)">Store credit check failed: ' + esc(String(e.message || e)) + '</div>'; }
+  }
+  async function payStoreCreditConfirm(accountId, useCents) {
+    const total = cartTotal();
+    const remainder = total - useCents;
+    let other = null;
+    if (remainder > 0) {
+      payClose();
+      other = await takeTender({ title: 'Remainder ' + money(remainder), amountCents: remainder, editable: false });
+      if (!other) { payOpen(); return; }
+    }
+    try {
+      const out = await apiX('scDebit', { accountId, amountCents: useCents });
+      completeSale({ method: 'storecredit', storeCreditCents: useCents, scBalanceAfterCents: out.balanceCents,
+        ...(other ? { otherMethod: other.method, otherCents: other.amountCents, otherDetail: other } : {}) });
+    } catch (e) { toast('Store credit debit failed: ' + (e.message || e) + (other ? ' — hand back the remainder payment.' : '')); }
+  }
+
+  function payAccountStart() {
+    const d = document.getElementById('pay-detail');
+    if (!customer) { d.innerHTML = '<div style="font-size:0.9rem;color:var(--warn)">Attach the customer first (👥) — an account sale needs to know whose account.</div>'; return; }
+    const total = cartTotal();
+    d.innerHTML = `<div style="font-size:0.9rem">Charge <b>${money(total)}</b> to <b>${esc(customer.name)}</b>'s account. No money changes hands now; collect it later via their profile.</div>
+      <button class="btn btn-pay" style="margin-top:0.6rem" onclick="completeSale({method:'account'})">✓ Charge to account</button>`;
+  }
+
+  // Receive a payment against a customer's account (from the client profile).
+  async function acctReceivePayment(customerId, name) {
+    const bal = await acctBalanceCents(customerId);
+    const payment = await takeTender({ title: 'Account payment — ' + name + ' (owes ' + money(Math.max(0, bal)) + ')', amountCents: Math.max(0, bal), editable: true });
+    if (!payment) return;
+    await recordAcctEntry({ customerId: String(customerId), name, kind: 'payment', method: payment.method, amountCents: payment.amountCents });
+    toast('Account payment ' + money(payment.amountCents) + ' received');
+    if (profileClient && String(profileClient.id) === String(customerId)) openProfile(profileClient);
   }
 
   // ---- Quotes & Sales orders (Shopify draft orders) ----
@@ -1759,13 +2167,26 @@
           <div style="flex:1;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.6rem;text-align:center"><div style="font-size:0.72rem;color:var(--muted)">Balance owing</div><div style="font-weight:800;color:var(--warn)">${money(balanceOwing)}</div></div>
           <div style="flex:1;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.6rem;text-align:center"><div style="font-size:0.72rem;color:var(--muted)">⭐ Points</div><div style="font-weight:800">${pts} <span style="font-size:0.72rem;color:var(--muted)">(${money(pts * 100)})</span></div></div>
         </div>
+        <div style="display:flex;gap:0.6rem;margin-bottom:0.3rem">
+          <div style="flex:1;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.6rem;text-align:center"><div style="font-size:0.72rem;color:var(--muted)">🪙 Store credit</div><div style="font-weight:800;color:var(--accent2)" id="prof-sc">…</div></div>
+          <div style="flex:1;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.6rem;text-align:center"><div style="font-size:0.72rem;color:var(--muted)">📒 Account owes</div><div style="font-weight:800;color:var(--warn)" id="prof-acct-bal">…</div></div>
+          <div style="flex:1;display:flex;align-items:center"><button class="qbtn" style="width:100%;height:100%;min-height:52px" onclick='acctReceivePayment(${JSON.stringify(String(pc.id))},${JSON.stringify(pc.name)})'>💵 Receive account payment</button></div>
+        </div>
         ${sectionList('Open sales orders', sos.map(d => `${esc(d.name)} · ${money(d.doc.totalCents || 0)} · bal ${money((d.doc.totalCents || 0) - (d.doc.depositCents || 0))} · ${esc(d.doc.status || '')}`))}
+        ${sectionList('Account activity', loadAcctLocal().filter(a => String(a.customerId) === String(pc.id)).slice(0, 8).map(a => `${new Date(a.at).toLocaleDateString('en-ZA')} · ${a.kind === 'charge' ? 'Charge ' + esc(a.ref || '') : 'Payment (' + esc(a.method || '') + ')'} · ${a.kind === 'charge' ? '' : '−'}${money(a.amountCents || 0)}`))}
         ${sectionList('Open quotes', quotes.map(d => `${esc(d.name)} · ${money(d.doc.totalCents || 0)}`))}
         ${sectionList('Recent purchases', orders.map(o => `${esc(o.name)} · ${new Date(o.createdAt).toLocaleDateString('en-ZA')} · ${o.items} item(s) · ${money(o.totalCents)}`))}
         <div style="display:flex;gap:0.5rem;margin-top:0.9rem">
           ${attached ? '' : `<button class="btn btn-pay" onclick='profileAttach()'>Attach to sale</button>`}
           <button class="btn btn-ghost" onclick="closeProfile();openDocs('salesorder')">Manage orders</button>
         </div>`;
+      // Store-credit + account balances load after paint (each is best-effort).
+      apiX('scBalance', { customerId: pc.id })
+        .then(sc => { const el = document.getElementById('prof-sc'); if (el) el.textContent = money(sc.balanceCents || 0); })
+        .catch(() => { const el = document.getElementById('prof-sc'); if (el) el.textContent = '—'; });
+      acctBalanceCents(pc.id)
+        .then(bal => { const el = document.getElementById('prof-acct-bal'); if (el) el.textContent = money(Math.max(0, bal)); })
+        .catch(() => { const el = document.getElementById('prof-acct-bal'); if (el) el.textContent = '—'; });
     } catch (e) { const el = document.getElementById('prof-acct'); if (el) el.textContent = 'Could not load account: ' + (e.message || e); }
   }
   function profileAttach() { if (profileClient) { customer = { id: profileClient.id, name: profileClient.name, phone: profileClient.phone || '', email: profileClient.email || '' }; renderCustomer(); refreshCustomerPoints(); } closeProfile(); toast('Customer attached to sale'); }
@@ -2654,6 +3075,12 @@
         <div class="change" id="cash-change">Change: R0.00</div>
         <button class="btn btn-pay" style="margin-top:0.7rem" onclick="confirmCash()">✓ Complete cash sale</button></div>`;
       const inp = document.getElementById('cash-in'); inp.focus(); inp.select(); cashChange();
+    } else if (method === 'giftcard') {
+      payGiftcardStart();
+    } else if (method === 'storecredit') {
+      payStoreCreditStart();
+    } else if (method === 'account') {
+      payAccountStart();
     } else {
       d.innerHTML = `<div class="field"><label>Cash portion</label>
         <input id="split-cash" type="number" inputmode="decimal" step="0.01" value="0.00" oninput="splitCalc()">
@@ -2704,6 +3131,9 @@
     if (p.method === 'card') return 'Card (Capitec — paid)';
     if (p.method === 'eft') return 'EFT (paid)';
     if (p.method === 'paid' || p.method === 'deposit') return 'Paid by deposit';
+    if (p.method === 'giftcard') return `Gift card …${p.gcLast4 || ''} ${money(p.giftCardCents || 0)}${p.otherMethod ? ' + ' + p.otherMethod + ' ' + money(p.otherCents || 0) : ''}`;
+    if (p.method === 'storecredit') return `Store credit ${money(p.storeCreditCents || 0)}${p.otherMethod ? ' + ' + p.otherMethod + ' ' + money(p.otherCents || 0) : ''}`;
+    if (p.method === 'account') return 'ON ACCOUNT — balance owing';
     return `Split: cash ${money(p.cashAmountCents)} + card ${money(p.cardAmountCents)}`;
   }
 
@@ -2740,7 +3170,7 @@
     // Write the sale back to Shopify (paid → stock decrements). idemKey makes a
     // retry return the SAME order instead of creating a duplicate.
     try {
-      const out = await callFn({ action: 'createOrder', idemKey: sale.idemKey, customerId: customer ? customer.id : undefined, lineItems: items.map(i => ({ variantId: i.variantId, qty: i.qty, priceCents: i.priceCents })), note: sale.saleNumber + ' · ' + paymentSummary(payment) });
+      const out = await callFn({ action: 'createOrder', idemKey: sale.idemKey, customerId: customer ? customer.id : undefined, lineItems: items.map(i => ({ variantId: i.variantId, qty: i.qty, priceCents: i.priceCents })), note: sale.saleNumber + ' · ' + paymentSummary(payment), ...(payment.method === 'account' ? { onAccount: true } : {}) });
       sale.shopifyOrder = out.orderName || null; sale.synced = true;
       updateLocalSale(sale);
       toast('Sale ' + sale.saleNumber + ' · Shopify ' + (out.orderName || 'created'));
@@ -2753,6 +3183,10 @@
 
     // Record against the open register shift (cash-up).
     shiftRecordSale(sale);
+    // On-account: post the charge to the customer's account ledger.
+    if (payment.method === 'account' && sale.customer) {
+      recordAcctEntry({ customerId: String(sale.customer.id), name: sale.customer.name, kind: 'charge', amountCents: total, ref: sale.saleNumber });
+    }
     // Loyalty: update the balance (subtract redeemed, add earned).
     if (loyaltyCust && (redeemedCents > 0 || earnedPoints > 0)) {
       const newBal = Math.max(0, customerPoints - Math.round(redeemedCents / 100) + earnedPoints);
@@ -2784,7 +3218,8 @@
     const q = loadQueue();
     q.push({ idemKey: sale.idemKey, saleNumber: sale.saleNumber, customerId: sale.customer ? sale.customer.id : undefined,
       lineItems: items.map(i => ({ variantId: i.variantId, qty: i.qty, priceCents: i.priceCents })),
-      note: sale.saleNumber + ' · ' + paymentSummary(payment) });
+      note: sale.saleNumber + ' · ' + paymentSummary(payment),
+      ...(payment.method === 'account' ? { onAccount: true } : {}) });
     saveQueue(q);
   }
   function markSaleSynced(saleNumber, orderName) {

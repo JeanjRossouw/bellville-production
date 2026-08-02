@@ -65,6 +65,9 @@ dashboard alone does nothing until you re-install):
 | `read_customers`, `write_customers` | Customer search + create + attach |
 | `read_draft_orders`, `write_draft_orders` | Park / retrieve sales |
 | `read_locations` | Resolve the location for inventory + restock (optional — degrades gracefully) |
+| `read_gift_cards`, `write_gift_cards` | Sell + redeem gift cards. **Shopify Support must enable these two** — request them via a support ticket; adding them in the dashboard alone is not enough. |
+| `read_store_credit_accounts`, `write_store_credit_account_transactions` | Store credit: balance, refund-to-credit, redeem as tender |
+| `read_customers`, `write_customers` | (already listed) also used to link gift cards / store credit to a customer |
 
 If a feature errors with a Shopify permission message, it's almost always a
 missing scope that hasn't been re-installed yet. The till surfaces the real
