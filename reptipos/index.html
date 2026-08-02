@@ -1062,24 +1062,106 @@
   function loadSales() { try { return JSON.parse(localStorage.getItem('reptipos-sales') || '[]'); } catch (e) { return []; } }
   function openSales() { document.getElementById('sales-modal').classList.add('show'); renderSales(); }
   function closeSales() { document.getElementById('sales-modal').classList.remove('show'); }
+
+  // ---- Money-in (takings) ------------------------------------------------
+  // "Money in" = what actually arrived in the period: walk-in sales, sales-order
+  // DEPOSITS on the day they're paid, the BALANCE when an order is fulfilled
+  // (sale total minus the deposit already counted), minus refunds. Deposits are
+  // the one thing with no durable log of their own, so they get one here; sales
+  // and refunds reuse their existing logs so nothing double-counts.
+  function loadDeposits() { try { return JSON.parse(localStorage.getItem('reptipos-deposits') || '[]'); } catch (e) { return []; } }
+  function recordDeposit(method, amountCents, ref) {
+    if (!amountCents) return;
+    const entry = { at: new Date().toISOString(), method, amountCents, ref: ref || '', staff: currentStaff ? currentStaff.name : null };
+    try { const arr = loadDeposits(); arr.unshift(entry); localStorage.setItem('reptipos-deposits', JSON.stringify(arr.slice(0, 500))); } catch (e) {}
+    // Best-effort cloud copy (skipped in demo so play data never pollutes reports).
+    try { if (window.fb && !isDemo()) { const { db, fns } = window.fb; fns.addDoc(fns.collection(db, 'payments'), { kind: 'deposit', ...entry }); } } catch (e) {}
+  }
+  function loadRefundsLog() { try { return JSON.parse(localStorage.getItem('reptipos-refunds-log') || '[]'); } catch (e) { return []; } }
+
+  // All money events between two Dates (until=null → now). Newest first.
+  function moneyInEvents(since, until) {
+    const inRange = iso => { const t = new Date(iso); return t >= since && (!until || t <= until); };
+    const events = [];
+    loadSales().filter(s => inRange(s.datetime)).forEach(s => {
+      const net = (s.totalCents || 0) - (s.depositAppliedCents || 0);   // fulfilled SO: only the balance arrived today
+      events.push({ at: s.datetime, kind: 'sale', amountCents: net, method: (s.payment && s.payment.method) || '', sale: s });
+    });
+    loadDeposits().filter(d => inRange(d.at)).forEach(d =>
+      events.push({ at: d.at, kind: 'deposit', amountCents: d.amountCents || 0, method: d.method || '', ref: d.ref }));
+    loadRefundsLog().filter(r => inRange(r.datetime)).forEach(r =>
+      events.push({ at: r.datetime, kind: 'refund', amountCents: -(r.totalCents || 0), method: r.method || '', ref: r.orderName }));
+    events.sort((a, b) => new Date(b.at) - new Date(a.at));
+    return events;
+  }
+
+  let salesPeriod = 'today';
+  let salesDate = '';
+  function setSalesPeriod(p) { salesPeriod = p; if (p !== 'date') salesDate = ''; renderSales(); }
+  function setSalesDate(v) { if (!v) return; salesDate = v; salesPeriod = 'date'; renderSales(); }
+  function salesRange() {
+    const now = new Date(); let since = new Date(now); let until = null;
+    if (salesPeriod === 'week') { since.setDate(now.getDate() - 6); since.setHours(0, 0, 0, 0); }
+    else if (salesPeriod === 'month') { since.setDate(1); since.setHours(0, 0, 0, 0); }
+    else if (salesPeriod === 'date' && salesDate) { since = new Date(salesDate + 'T00:00:00'); until = new Date(salesDate + 'T23:59:59.999'); }
+    else { since.setHours(0, 0, 0, 0); }
+    return { since, until };
+  }
+
   function renderSales() {
-    const all = loadSales();
-    const today = new Date().toDateString();
-    const todays = all.filter(s => new Date(s.datetime).toDateString() === today);
-    const todayTotal = todays.reduce((t, s) => t + (s.totalCents || 0), 0);
     const body = document.getElementById('sales-body');
-    if (!all.length) { body.innerHTML = '<div class="empty" style="padding:1.5rem">No sales yet</div>'; return; }
-    body.innerHTML = `
-      <div style="display:flex; justify-content:space-between; font-size:0.85rem; color:var(--muted); margin-bottom:0.5rem">
-        <span>Today: ${todays.length} sale${todays.length === 1 ? '' : 's'}</span><span style="font-weight:700; color:var(--accent2)">${money(todayTotal)}</span></div>
-      <div style="max-height:50vh; overflow:auto">${all.slice(0, 100).map(s => `
-        <div class="cust-result" style="cursor:default">
-          <div><div style="font-weight:600">${esc(s.saleNumber)}${s.synced ? '' : ' <span style="color:var(--warn)">⏳</span>'}</div>
-            <div style="font-size:0.72rem;color:var(--muted)">${new Date(s.datetime).toLocaleString('en-ZA')} · ${(s.items || []).reduce((n, i) => n + i.qty, 0)} item(s) · ${esc((s.payment && s.payment.method) || '')}${s.customer ? ' · ' + esc(s.customer.name) : ''}</div></div>
+    const { since, until } = salesRange();
+    const events = moneyInEvents(since, until);
+    const total = events.reduce((t, e) => t + e.amountCents, 0);
+    const by = { cash: 0, card: 0, eft: 0 };
+    events.forEach(e => {
+      if (e.kind === 'sale' && e.method === 'split' && e.sale && e.sale.payment) {
+        by.cash += e.sale.payment.cashAmountCents || 0; by.card += e.sale.payment.cardAmountCents || 0;
+      } else if (by[e.method] != null) by[e.method] += e.amountCents;
+    });
+    const deps = events.filter(e => e.kind === 'deposit');
+    const depTotal = deps.reduce((t, e) => t + e.amountCents, 0);
+
+    const tabs = [['today', 'Today'], ['week', 'This week'], ['month', 'This month']].map(([p, l]) =>
+      `<button class="qbtn" style="width:auto;padding:0 0.8rem;background:${salesPeriod === p ? 'var(--accent)' : 'var(--panel2)'};${salesPeriod === p ? 'color:#04210f' : ''}" onclick="setSalesPeriod('${p}')">${l}</button>`).join('');
+    const stat = (label, val, accent) => `<div style="background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.45rem 0.6rem;min-width:90px">
+      <div style="font-size:0.68rem;color:var(--muted)">${label}</div><div style="font-weight:800;${accent ? 'color:var(--accent2)' : ''}">${val}</div></div>`;
+
+    const rows = events.slice(0, 150).map(e => {
+      if (e.kind === 'sale') {
+        const s = e.sale;
+        const depNote = s.depositAppliedCents ? ` · deposit ${money(s.depositAppliedCents)} counted earlier` : '';
+        return `<div class="cust-result" style="cursor:default">
+          <div><div style="font-weight:600">${esc(s.saleNumber)}${s.synced ? '' : ' <span style="color:var(--warn)">⏳</span>'}${s.salesOrder ? ' <span style="font-size:0.68rem;color:var(--muted)">SO ' + esc(s.salesOrder) + '</span>' : ''}</div>
+            <div style="font-size:0.72rem;color:var(--muted)">${new Date(s.datetime).toLocaleString('en-ZA')} · ${(s.items || []).reduce((n, i) => n + i.qty, 0)} item(s) · ${esc((s.payment && s.payment.method) || '')}${s.customer ? ' · ' + esc(s.customer.name) : ''}${depNote}</div></div>
           <div style="display:flex; align-items:center; gap:0.5rem">
-            <span style="font-weight:700">${money(s.totalCents)}</span>
+            <span style="font-weight:700">${money(e.amountCents)}</span>
             <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick='reprintSale(${JSON.stringify(s.saleNumber)})'>🖨️</button>
-          </div></div>`).join('')}</div>`;
+          </div></div>`;
+      }
+      if (e.kind === 'deposit') {
+        return `<div class="cust-result" style="cursor:default">
+          <div><div style="font-weight:600">💰 Deposit${e.ref ? ' · ' + esc(e.ref) : ''}</div>
+            <div style="font-size:0.72rem;color:var(--muted)">${new Date(e.at).toLocaleString('en-ZA')} · ${esc(e.method)}</div></div>
+          <span style="font-weight:700;color:var(--accent2)">${money(e.amountCents)}</span></div>`;
+      }
+      return `<div class="cust-result" style="cursor:default">
+        <div><div style="font-weight:600">↩ Refund${e.ref ? ' · ' + esc(e.ref) : ''}</div>
+          <div style="font-size:0.72rem;color:var(--muted)">${new Date(e.at).toLocaleString('en-ZA')} · ${esc(e.method)}</div></div>
+        <span style="font-weight:700;color:var(--danger)">−${money(-e.amountCents)}</span></div>`;
+    }).join('');
+
+    body.innerHTML = `
+      <div style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem">${tabs}
+        <input type="date" value="${salesDate}" onchange="setSalesDate(this.value)" style="width:auto;padding:0.3rem 0.5rem;background:${salesPeriod === 'date' ? 'var(--accent)' : 'var(--panel2)'};border:1px solid var(--border);border-radius:8px;color:${salesPeriod === 'date' ? '#04210f' : 'var(--text)'};font-size:0.8rem"></div>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem">
+        ${stat('Money in', money(total), true)}
+        ${stat('💵 Cash', money(by.cash))}
+        ${stat('💳 Card', money(by.card))}
+        ${stat('🏦 EFT', money(by.eft))}
+        ${stat('💰 Deposits', deps.length ? deps.length + ' · ' + money(depTotal) : '—')}
+      </div>
+      ${events.length ? `<div style="max-height:46vh; overflow:auto">${rows}</div>` : '<div class="empty" style="padding:1.5rem">No money in for this period</div>'}`;
   }
   function reprintSale(saleNumber) {
     const s = loadSales().find(x => x.saleNumber === saleNumber);
@@ -1394,8 +1476,10 @@
       expectedDate: date, note, factory, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
     try {
       const out = await api('docSave', { tags: 'pos,sales-order', customerId: cust.id, lineItems: cart.map(l => ({ variantId: l.variantId, qty: l.qty })), doc });
-      if (payment) shiftRecordDeposit(payment.method, payment.amountCents);
-      try { if (window.fb) { const { db, fns } = window.fb; await fns.addDoc(fns.collection(db, 'salesorders'), { ...doc, name: out.name, draftId: out.id, customer: { id: cust.id, name: cust.name } }); } } catch (e) {}
+      if (payment) { shiftRecordDeposit(payment.method, payment.amountCents); recordDeposit(payment.method, payment.amountCents, out.name); }
+      // Never in demo: a demo sales order must not reach the shared salesorders
+      // collection (the Production Manager would turn it into a REAL factory job).
+      try { if (window.fb && !isDemo()) { const { db, fns } = window.fb; await fns.addDoc(fns.collection(db, 'salesorders'), { ...doc, name: out.name, draftId: out.id, customer: { id: cust.id, name: cust.name } }); } } catch (e) {}
       closeSalesOrder();
       printDoc({ ...doc, name: out.name, customer: { name: cust.name } }, 'SALES ORDER');
       toast('Sales order ' + (out.name || '') + ' created');
@@ -1473,7 +1557,7 @@
     if (!payment) { openDocs('salesorder'); return; }
     if (payment.amountCents > bal) { toast('More than the balance owing'); openDocs('salesorder'); return; }
     const doc = { ...m, depositCents: (m.depositCents || 0) + payment.amountCents, payments: [...(m.payments || []), { ...payment, kind: 'deposit', at: new Date().toISOString() }] };
-    try { await saveSO(d, doc); shiftRecordDeposit(payment.method, payment.amountCents); toast('Deposit added'); } catch (e) { toast('Failed: ' + (e.message || e)); }
+    try { await saveSO(d, doc); shiftRecordDeposit(payment.method, payment.amountCents); recordDeposit(payment.method, payment.amountCents, d.name); toast('Deposit added'); } catch (e) { toast('Failed: ' + (e.message || e)); }
     openDocs('salesorder');
   }
   async function soMarkReady(id) {
@@ -1577,10 +1661,15 @@
     const profit = sales - cost;
     const byQty = [...(rep.items || [])].sort((a, b) => b.qty - a.qty).slice(0, 5);
     const byRev = [...(rep.items || [])].sort((a, b) => b.revenueCents - a.revenueCents).slice(0, 5);
+    // Money in at THIS till for the period (incl. sales-order deposits, net of
+    // refunds) — differs from "Sales" (Shopify revenue) by design: a deposit
+    // counts when paid, a fulfilled order only adds its balance.
+    const moneyIn = moneyInEvents(new Date(since), new Date(until)).reduce((t, e) => t + e.amountCents, 0);
     let poWaiting = 0; try { if (fbReady()) { const pos = await fbList('purchase_orders'); poWaiting = pos.filter(x => x.status === 'sent' || x.status === 'partial').length; } } catch (e) {}
     document.getElementById('dash-content').innerHTML = `
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:0.6rem">
         ${dashCard('Sales', money(sales))}
+        ${dashCard('Money in (till)', money(moneyIn), true)}
         ${dashCard('Sales count', count)}
         ${dashCard('Avg sale', money(avg))}
         ${dashCard('Avg items/sale', avgItems.toFixed(1))}
