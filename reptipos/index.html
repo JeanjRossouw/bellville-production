@@ -296,6 +296,13 @@
   </div>
 </div>
 
+<div class="modal" id="quote-modal">
+  <div class="modal-card">
+    <h2><span>📝 New quote</span><button class="rm" onclick="closeQuoteModal()">✕</button></h2>
+    <div id="quote-body"></div>
+  </div>
+</div>
+
 <div class="modal" id="gc-modal">
   <div class="modal-card">
     <h2><span>🎁 Sell gift card</span><button class="rm" onclick="closeGiftCard()">✕</button></h2>
@@ -398,7 +405,7 @@
   // Plumbed so a rate can be switched on later without code changes. Prices are
   // treated as tax-INCLUSIVE (the Shopify price is final), so a non-zero rate
   // just surfaces the tax portion already inside the price — it never adds on top.
-  const DEFAULT_SETTINGS = { taxRatePct: 0, taxLabel: 'VAT', loyaltyPct: 5, bankName: '', bankAccountHolder: '', bankAccountNo: '', bankBranchCode: '' };
+  const DEFAULT_SETTINGS = { taxRatePct: 0, taxLabel: 'VAT', loyaltyPct: 5, bankName: '', bankAccountHolder: '', bankAccountNo: '', bankBranchCode: '', bankAccountType: '', logoUrl: '', shopName: 'ReptiCube' };
   function settings() { try { return { ...DEFAULT_SETTINGS, ...(JSON.parse(localStorage.getItem('reptipos-settings') || '{}')) }; } catch (e) { return { ...DEFAULT_SETTINGS }; } }
   function saveSettings(s) { localStorage.setItem('reptipos-settings', JSON.stringify({ ...settings(), ...s })); }
   // Tax portion (cents) already contained in a tax-inclusive total.
@@ -1170,9 +1177,17 @@
         <input id="bk-holder" value="${esc(settings().bankAccountHolder)}" placeholder="Account holder" style="flex:1; min-width:130px">
         <input id="bk-acct" value="${esc(settings().bankAccountNo)}" placeholder="Account number" style="width:140px">
         <input id="bk-branch" value="${esc(settings().bankBranchCode)}" placeholder="Branch code" style="width:100px">
+        <input id="bk-type" value="${esc(settings().bankAccountType)}" placeholder="Acc type (e.g. Transact)" style="width:150px">
         <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveBankSettings()">Save</button>
       </div>
       <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Shown with the order number as payment reference. Leave blank to print nothing.</div>
+      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">🖼 Document branding (quotes &amp; sales orders)</div>
+      <div style="display:flex; gap:0.4rem; flex-wrap:wrap">
+        <input id="doc-shop" value="${esc(settings().shopName)}" placeholder="Business name" style="flex:1; min-width:120px">
+        <input id="doc-logo" value="${esc(settings().logoUrl)}" placeholder="Logo image URL (https://…)" style="flex:2; min-width:180px">
+        <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveDocSettings()">Save</button>
+      </div>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">The logo prints at the top of quotes &amp; sales orders. Any public image URL (e.g. your logo on repticube.com).</div>
       ${isDemo() ? `<div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.3rem">Demo mode</div>
       <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="toggleDemo()">Turn demo OFF (use real Shopify)</button>
       <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Demo only ever starts from an explicit ?demo=1 link — the till is real by default.</div>` : ''}`;
@@ -1194,17 +1209,28 @@
       bankName: (document.getElementById('bk-name').value || '').trim(),
       bankAccountHolder: (document.getElementById('bk-holder').value || '').trim(),
       bankAccountNo: (document.getElementById('bk-acct').value || '').trim(),
-      bankBranchCode: (document.getElementById('bk-branch').value || '').trim()
+      bankBranchCode: (document.getElementById('bk-branch').value || '').trim(),
+      bankAccountType: (document.getElementById('bk-type').value || '').trim()
     };
     saveSettings(s);
     // Shared across tills via the settings doc (best-effort).
     try { fbSet('settings', 'banking', { ...s, updatedAt: new Date().toISOString() }); } catch (e) {}
     toast(s.bankAccountNo ? 'Banking details saved' : 'Banking details cleared');
   }
+  function saveDocSettings() {
+    const s = {
+      shopName: (document.getElementById('doc-shop').value || '').trim() || 'ReptiCube',
+      logoUrl: (document.getElementById('doc-logo').value || '').trim()
+    };
+    saveSettings(s);
+    try { fbSet('settings', 'branding', { ...s, updatedAt: new Date().toISOString() }); } catch (e) {}
+    toast('Document branding saved');
+  }
   // Pull the shared banking details once Firebase is up, so every till prints
   // the same account without retyping.
   window.addEventListener('fb-ready', async () => {
-    try { const b = await fbGet('settings', 'banking'); if (b && b.bankAccountNo != null) saveSettings({ bankName: b.bankName || '', bankAccountHolder: b.bankAccountHolder || '', bankAccountNo: b.bankAccountNo || '', bankBranchCode: b.bankBranchCode || '' }); } catch (e) {}
+    try { const b = await fbGet('settings', 'banking'); if (b && b.bankAccountNo != null) saveSettings({ bankName: b.bankName || '', bankAccountHolder: b.bankAccountHolder || '', bankAccountNo: b.bankAccountNo || '', bankBranchCode: b.bankBranchCode || '', bankAccountType: b.bankAccountType || '' }); } catch (e) {}
+    try { const g = await fbGet('settings', 'branding'); if (g && (g.logoUrl != null || g.shopName)) saveSettings({ logoUrl: g.logoUrl || '', shopName: g.shopName || 'ReptiCube' }); } catch (e) {}
   });
   function saveTaxSettings() {
     const rate = Math.max(0, parseFloat(document.getElementById('tax-rate').value) || 0);
@@ -1953,11 +1979,26 @@
   let docsCache = [];
   function findDoc(id) { return docsCache.find(d => d.id === id); }
 
-  async function saveQuote() {
+  // Quote: opens a modal for an optional multi-line note (it prints on the
+  // document, e.g. "Please see attached… Kind regards, Amoré").
+  function saveQuote() {
     if (cart.length === 0) { toast('Cart is empty'); return; }
+    document.getElementById('quote-modal').classList.add('show');
+    document.getElementById('quote-body').innerHTML = `
+      <div class="pay-total">${money(cartTotal())}</div>
+      <div style="font-size:0.85rem;color:var(--muted);text-align:center;margin-bottom:0.6rem">${customer ? 'For ' + esc(customer.name) : 'No customer attached (optional)'}</div>
+      <div class="field"><label>Note (optional — prints on the quote)</label>
+        <textarea id="q-note" rows="4" placeholder="e.g. Please see attached. The pricing did go up…&#10;&#10;Kind regards&#10;Amoré" style="width:100%;padding:0.6rem;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font:inherit;resize:vertical"></textarea></div>
+      <button class="btn btn-pay" onclick="confirmQuote()">Create quote</button>`;
+    setTimeout(() => { const t = document.getElementById('q-note'); if (t) t.focus(); }, 60);
+  }
+  function closeQuoteModal() { document.getElementById('quote-modal').classList.remove('show'); }
+  async function confirmQuote() {
+    const note = (document.getElementById('q-note').value || '').trim();
+    closeQuoteModal();
     const c = computeCart();
     const items = c.lines.map(x => ({ variantId: x.variantId, name: x.p ? x.p.name : x.variantId, sku: x.p ? x.p.sku : '', priceCents: x.finalUnit, qty: x.qty, lineTotalCents: x.finalLine, custom: !!(x.p && x.p.custom) || undefined }));
-    const doc = { type: 'quote', cart, cartDiscount, items, totalCents: c.total, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
+    const doc = { type: 'quote', cart, cartDiscount, items, totalCents: c.total, note, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
     toast('Saving quote…');
     try {
       const out = await api('docSave', { tags: 'pos,quote', customerId: customer ? customer.id : undefined, lineItems: cart.map(l => l.custom ? { custom: true, title: l.name, qty: l.qty, priceCents: l.priceCents } : { variantId: l.variantId, qty: l.qty }), doc });
@@ -1979,7 +2020,7 @@
         <input id="so-deposit" type="number" step="0.01" value="0.00" oninput="soBalancePreview(${total})"></div>
       <div class="change" id="so-balance">Balance owing: ${money(total)}</div>
       <div class="field"><label>Expected stock date (optional)</label><input id="so-date" type="date"></div>
-      <div class="field"><label>Note (optional)</label><input id="so-note" placeholder="e.g. 60×45 terrarium, custom build"></div>
+      <div class="field"><label>Note (optional — prints on the document)</label><textarea id="so-note" rows="3" placeholder="e.g. 60×45 terrarium, custom build&#10;&#10;Kind regards" style="width:100%;padding:0.6rem;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font:inherit;resize:vertical"></textarea></div>
       <div class="field"><label>Delivery address (optional)</label><input id="so-address" placeholder="Street, suburb — blank = collection"></div>
       <label style="display:flex;align-items:center;gap:0.5rem;margin:0.2rem 0 0.5rem;font-size:0.9rem;cursor:pointer">
         <input id="so-factory" type="checkbox" style="width:auto;margin:0"> Made in our factory (send to the production board)
@@ -2152,7 +2193,109 @@
   }
 
   function printDocById(id, kind) { const d = findDoc(id); if (d) printDoc({ ...d.doc, name: d.name, customer: d.customer }, kind); }
+  // ---- Code 128-B barcode as inline SVG (no library, print-safe) ---------
+  const C128 = '212222,222122,222221,121223,121322,131222,122213,122312,132212,221213,221312,231212,112232,122132,122231,113222,123122,123221,223211,221132,221231,213212,223112,312131,311222,321122,321221,312212,322112,322211,212123,212321,232121,111323,131123,131321,112313,132113,132311,211313,231113,231311,112133,112331,132131,113123,113321,133121,313121,211331,231131,213113,213311,213131,311123,311321,331121,312113,312311,332111,314111,221411,431111,111224,111422,121124,121421,141122,141221,112214,112412,122114,122411,142112,142211,241211,221114,413111,241112,134111,111242,121142,121241,114212,124112,124211,411212,421112,421211,212141,214121,412121,111143,111341,131141,114113,114311,411113,411311,113141,114131,311141,411131,211412,211214,211232,2331112'.split(',');
+  function barcodeSvg(text, h) {
+    const s = String(text || '').replace(/[^\x20-\x7e]/g, '');
+    if (!s) return '';
+    const codes = [104];                                  // Start B
+    for (const ch of s) codes.push(ch.charCodeAt(0) - 32);
+    let sum = 104; codes.slice(1).forEach((v, i) => { sum += v * (i + 1); });
+    codes.push(sum % 103, 106);                           // checksum + Stop
+    let x = 0, bars = '';
+    codes.forEach(c => {
+      const pat = C128[c] || '';
+      for (let i = 0; i < pat.length; i++) {
+        const w = Number(pat[i]);
+        if (i % 2 === 0) bars += `<rect x="${x}" y="0" width="${w}" height="${h || 40}"/>`;
+        x += w;
+      }
+    });
+    return `<svg viewBox="0 0 ${x} ${h || 40}" width="${Math.min(360, x * 1.6)}" height="${h || 40}" preserveAspectRatio="none" shape-rendering="crispEdges">${bars}</svg>`;
+  }
+
+  // ---- A4 document (quotes & sales orders) ------------------------------
+  // A proper branded document — logo, priced lines, note, totals, barcode and
+  // banking footer. (Till receipts stay on the 80mm slip.)
+  function printDocA4(doc, kind) {
+    const st = settings();
+    const items = doc.items || [];
+    const dep = doc.depositCents || 0, bal = (doc.totalCents || 0) - dep;
+    const nItems = items.reduce((n, i) => n + (Number(i.qty) || 0), 0);
+    const rows = items.map(i => {
+      const unit = i.priceCents != null ? i.priceCents : 0;
+      const line = i.lineTotalCents != null ? i.lineTotalCents : unit * i.qty;
+      return `<tr>
+        <td class="q">${esc(i.qty)}</td>
+        <td class="n"><b>${esc(i.name)}</b>${i.sku ? `<div class="sub">${esc(i.sku)}</div>` : ''}</td>
+        <td class="u">@ ${money(unit)}</td>
+        <td class="t">${money(line)}</td></tr>`;
+    }).join('');
+    const noteBlock = [
+      doc.note ? `<p>${esc(doc.note).replace(/\n/g, '<br>')}</p>` : '',
+      doc.deliveryAddress ? `<p><b>🚚 Deliver to:</b> ${esc(doc.deliveryAddress)}</p>` : '',
+      doc.expectedDate ? `<p>Expected: ${esc(doc.expectedDate)}</p>` : '',
+      ...(doc.notes || []).map(n => `<p class="sub">${new Date(n.at).toLocaleDateString('en-ZA')}${n.by ? ' · ' + esc(n.by) : ''}: ${esc(n.text)}</p>`)
+    ].filter(Boolean).join('');
+    const bankBlock = st.bankAccountNo ? `<div class="bank">
+      <div>${esc(st.bankAccountHolder || st.shopName || 'ReptiCube')}</div>
+      ${st.bankName ? `<div>${esc(st.bankName)}</div>` : ''}
+      <div>Account Number: ${esc(st.bankAccountNo)}</div>
+      ${st.bankBranchCode ? `<div>Branch code: ${esc(st.bankBranchCode)}</div>` : ''}
+      ${st.bankAccountType ? `<div>Acc type: ${esc(st.bankAccountType)}</div>` : ''}
+      ${doc.name ? `<div style="margin-top:4px"><b>Reference: ${esc(doc.name)}</b></div>` : ''}
+    </div>` : '';
+    const title = kind === 'QUOTE' ? 'Quote' : 'Sales order';
+    const w = window.open('', '_blank', 'width=820,height=900');
+    if (!w) { toast('Allow pop-ups to print'); return; }
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} ${esc(doc.name || '')}</title>
+      <style>
+        @media print { @page { size: A4; margin: 14mm } .noprint { display:none } }
+        body { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; color:#111; max-width:760px; margin:0 auto; padding:24px; }
+        .logo { text-align:center; margin-bottom:6px }
+        .logo img { max-height:120px; max-width:260px }
+        .biz { text-align:center; font-weight:700; font-size:17px; margin-bottom:22px }
+        h1 { font-size:20px; margin:0 0 2px }
+        .when { font-weight:700; font-size:13px; margin-bottom:2px }
+        .sub { color:#666; font-size:11.5px }
+        table { width:100%; border-collapse:collapse; margin:16px 0 0 }
+        thead td { border-bottom:1px solid #ddd }
+        tbody tr td { padding:7px 0; border-bottom:1px solid #f0f0f0; vertical-align:top; font-size:13.5px }
+        td.q { width:36px } td.u { text-align:right; color:#555; white-space:nowrap; padding-right:14px }
+        td.t { text-align:right; font-weight:700; white-space:nowrap }
+        .note { margin:16px 0; font-size:13px; line-height:1.5 } .note p { margin:0 0 8px }
+        .totals { border-top:1px solid #ddd; margin-top:8px; padding-top:10px }
+        .totals div { display:flex; justify-content:space-between; font-size:15px; margin-bottom:6px }
+        .totals .big { font-weight:800; font-size:17px }
+        .bc { text-align:center; margin:22px 0 8px }
+        .bank { text-align:center; font-size:12px; color:#333; line-height:1.7 }
+        .btns { margin-top:22px; text-align:center }
+        .btns button { padding:10px 22px; font-size:15px; border:1px solid #111; border-radius:8px; background:#fff; cursor:pointer }
+      </style></head><body>
+      ${st.logoUrl ? `<div class="logo"><img src="${esc(st.logoUrl)}" alt=""></div>` : ''}
+      <div class="biz">${esc(st.shopName || 'ReptiCube')}</div>
+      <h1>${esc(title)} ${esc(doc.name || '')}</h1>
+      <div class="when">${new Date(doc.createdAt || Date.now()).toLocaleString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}</div>
+      ${doc.customer ? `<div class="sub">Customer: ${esc(doc.customer.name)}</div>` : ''}
+      <div class="sub">Served by: ${esc(doc.staff || '—')}</div>
+      <table><tbody>${rows}</tbody></table>
+      ${noteBlock ? `<div class="note">${noteBlock}</div>` : ''}
+      <div class="totals">
+        <div class="big"><span>TOTAL <span class="sub">${nItems} item${nItems === 1 ? '' : 's'}</span></span><span>${money(doc.totalCents || 0)}</span></div>
+        ${kind === 'SALES ORDER' ? `<div><span>Deposit paid</span><span>${money(dep)}</span></div>
+        <div class="big"><span>TO PAY</span><span>${money(bal)}</span></div>` : `<div class="big"><span>TO PAY</span><span>${money(doc.totalCents || 0)}</span></div>`}
+      </div>
+      <div class="bc">${barcodeSvg(doc.name || '', 46)}</div>
+      ${bankBlock}
+      <div class="btns noprint"><button onclick="window.print()">🖨️ Print / Save as PDF</button></div>
+      </body></html>`);
+    w.document.close();
+  }
+
   function printDoc(doc, kind) {
+    // Quotes and sales orders print as a proper A4 document; everything else
+    // (receipts, reports) stays on the 80mm slip.
+    if (kind === 'QUOTE' || kind === 'SALES ORDER') return printDocA4(doc, kind);
     const items = doc.items || [];
     const rows = items.map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">${money(i.lineTotalCents != null ? i.lineTotalCents : i.priceCents * i.qty)}</td></tr>`).join('');
     const dep = doc.depositCents || 0; const bal = (doc.totalCents || 0) - dep;
