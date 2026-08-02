@@ -1954,6 +1954,7 @@
       <div class="change" id="so-balance">Balance owing: ${money(total)}</div>
       <div class="field"><label>Expected stock date (optional)</label><input id="so-date" type="date"></div>
       <div class="field"><label>Note (optional)</label><input id="so-note" placeholder="e.g. 60×45 terrarium, custom build"></div>
+      <div class="field"><label>Delivery address (optional)</label><input id="so-address" placeholder="Street, suburb — blank = collection"></div>
       <label style="display:flex;align-items:center;gap:0.5rem;margin:0.2rem 0 0.5rem;font-size:0.9rem;cursor:pointer">
         <input id="so-factory" type="checkbox" style="width:auto;margin:0"> Made in our factory (send to the production board)
       </label>
@@ -1966,6 +1967,7 @@
     if (deposit > total) { toast('Deposit is more than the total'); return; }
     const date = document.getElementById('so-date').value || '';
     const note = (document.getElementById('so-note').value || '').trim();
+    const deliveryAddress = (document.getElementById('so-address').value || '').trim();
     const factory = !!(document.getElementById('so-factory') && document.getElementById('so-factory').checked);
     const c = computeCart();
     const items = c.lines.map(x => ({ variantId: x.variantId, name: x.p ? x.p.name : x.variantId, sku: x.p ? x.p.sku : '', priceCents: x.finalUnit, qty: x.qty, lineTotalCents: x.finalLine, custom: !!(x.p && x.p.custom) || undefined }));
@@ -1979,7 +1981,7 @@
     const doc = { type: 'salesorder', status: 'awaiting_stock', cart, cartDiscount, items, totalCents: total,
       depositCents: payment ? payment.amountCents : 0,
       payments: payment ? [{ ...payment, kind: 'deposit', at: new Date().toISOString() }] : [],
-      expectedDate: date, note, factory, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
+      expectedDate: date, note, deliveryAddress, factory, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
     try {
       const out = await api('docSave', { tags: 'pos,sales-order', customerId: cust.id, lineItems: cart.map(l => l.custom ? { custom: true, title: l.name, qty: l.qty, priceCents: l.priceCents } : { variantId: l.variantId, qty: l.qty }), doc });
       if (payment) { shiftRecordDeposit(payment.method, payment.amountCents); recordDeposit(payment.method, payment.amountCents, out.name); }
@@ -2031,10 +2033,12 @@
     const statusLabel = { awaiting_stock: '⏳ awaiting stock', ready: '✅ ready' }[m.status] || (m.status || '');
     return `<div class="cust-result" style="cursor:default; flex-direction:column; align-items:stretch; gap:0.35rem">
       <div style="display:flex;justify-content:space-between"><div style="font-weight:600">${esc(d.name)} · ${esc(cust)}</div><div style="font-weight:700">${money(total)}</div></div>
-      <div style="font-size:0.72rem;color:var(--muted)">${when} · deposit ${money(dep)} · balance ${money(bal)} · ${esc(statusLabel)}${m.expectedDate ? ' · exp ' + esc(m.expectedDate) : ''}${m.note ? ' · ' + esc(m.note) : ''}${m.factory ? ' · 🏭 factory' : ''}</div>
+      <div style="font-size:0.72rem;color:var(--muted)">${when} · deposit ${money(dep)} · balance ${money(bal)} · ${esc(statusLabel)}${m.expectedDate ? ' · exp ' + esc(m.expectedDate) : ''}${m.note ? ' · ' + esc(m.note) : ''}${m.factory ? ' · 🏭 factory' : ''}${m.deliveryAddress ? ' · 🚚 ' + esc(m.deliveryAddress) : ''}${(m.notes && m.notes.length) ? ' · 📝 ' + esc(m.notes[m.notes.length - 1].text) + (m.notes.length > 1 ? ' (+' + (m.notes.length - 1) + ' more)' : '') : ''}</div>
       <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
         ${bal > 0 ? `<button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="soAddPayment('${d.id}')">+ Deposit</button>` : ''}
         ${m.status !== 'ready' ? `<button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="soMarkReady('${d.id}')">Mark ready</button>` : ''}
+        <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="soAddNote('${d.id}')" title="Add a timestamped note">📝 Note</button>
+        <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="soSetAddress('${d.id}')" title="Set / change the delivery address">🚚</button>
         <button class="qbtn" style="width:auto;padding:0 0.6rem;background:var(--accent);color:#04210f" onclick="soFulfil('${d.id}')">Fulfil &amp; invoice</button>
         <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="printDocById('${d.id}','SALES ORDER')">🖨️</button>
         <button class="rm" onclick="soCancel('${d.id}')">✕</button>
@@ -2065,6 +2069,21 @@
     const doc = { ...m, depositCents: (m.depositCents || 0) + payment.amountCents, payments: [...(m.payments || []), { ...payment, kind: 'deposit', at: new Date().toISOString() }] };
     try { await saveSO(d, doc); shiftRecordDeposit(payment.method, payment.amountCents); recordDeposit(payment.method, payment.amountCents, d.name); toast('Deposit added'); } catch (e) { toast('Failed: ' + (e.message || e)); }
     openDocs('salesorder');
+  }
+  // Append a timestamped note to an existing sales order (kept forever on the
+  // order — e.g. "customer called, wants black trim").
+  async function soAddNote(id) {
+    const d = findDoc(id); if (!d) return;
+    const text = (prompt('Add a note to ' + d.name + ':') || '').trim();
+    if (!text) return;
+    const notes = [...(d.doc.notes || []), { at: new Date().toISOString(), by: currentStaff ? currentStaff.name : null, text }];
+    try { await saveSO(d, { ...d.doc, notes }); toast('Note added'); renderDocs(); } catch (e) { toast('Failed: ' + (e.message || e)); }
+  }
+  async function soSetAddress(id) {
+    const d = findDoc(id); if (!d) return;
+    const v = prompt('Delivery address for ' + d.name + ' (blank = collection):', d.doc.deliveryAddress || '');
+    if (v === null) return;
+    try { await saveSO(d, { ...d.doc, deliveryAddress: v.trim() }); toast(v.trim() ? 'Delivery address saved' : 'Set to collection'); renderDocs(); } catch (e) { toast('Failed: ' + (e.message || e)); }
   }
   async function soMarkReady(id) {
     const d = findDoc(id); if (!d) return;
@@ -2120,6 +2139,8 @@
     html += `</table>`;
     if (doc.expectedDate) html += `<div class="c">Expected stock: ${esc(doc.expectedDate)}</div>`;
     if (doc.note) html += `<div class="c">${esc(doc.note)}</div>`;
+    if (doc.deliveryAddress) html += `<div class="c" style="font-weight:bold">🚚 Deliver to: ${esc(doc.deliveryAddress)}</div>`;
+    if (doc.notes && doc.notes.length) html += doc.notes.map(n => `<div class="c">📝 ${new Date(n.at).toLocaleDateString('en-ZA')}${n.by ? ' ' + esc(n.by) : ''}: ${esc(n.text)}</div>`).join('');
     html += `<div class="c" style="margin-top:6px">${kind === 'QUOTE' ? 'Quote — subject to availability' : 'Thank you!'}</div>`;
     printReport(html);
   }

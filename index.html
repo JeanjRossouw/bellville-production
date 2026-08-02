@@ -10184,7 +10184,7 @@ ${totalsSection}
         source: 'reptipos',                     // marks till-originated jobs
         rcSalesOrderId: soId,
         rcDraftId: so.draftId || '',
-        notes: note
+        notes: [note, so.deliveryAddress ? '🚚 Deliver: ' + so.deliveryAddress : ''].filter(Boolean).join(' · ')
       });
       created++;
     });
