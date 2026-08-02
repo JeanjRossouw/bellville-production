@@ -263,6 +263,9 @@ async function createOrder({ lineItems, note, idemKey, customerId, onAccount }) 
   const payload = {
     order: {
       line_items: lineItems.map(li => {
+        // Custom (open) line: title + price only — no product exists, so no
+        // variant and no stock movement. Everything else sells by variant.
+        if (li.custom) return { title: String(li.title || 'Custom item').slice(0, 255), quantity: Number(li.qty) || 1, price: (Number(li.priceCents) / 100).toFixed(2) };
         const li2 = { variant_id: Number(li.variantId), quantity: Number(li.qty) || 1 };
         // Discounted unit price (cents) overrides the variant price so the order
         // total matches what the customer actually paid. Inventory still
@@ -454,7 +457,9 @@ function parseDocNote(note) {
 }
 async function docSave({ id, lineItems, customerId, tags, doc }) {
   const draft = {
-    line_items: (lineItems || []).map(li => ({ variant_id: Number(li.variantId), quantity: Number(li.qty) || 1 })),
+    line_items: (lineItems || []).map(li => li.custom
+      ? { title: String(li.title || 'Custom item').slice(0, 255), quantity: Number(li.qty) || 1, price: (Number(li.priceCents) / 100).toFixed(2) }
+      : { variant_id: Number(li.variantId), quantity: Number(li.qty) || 1 }),
     tags: tags || 'pos',
     note: buildDocNote(doc),
     ...(customerId ? { customer: { id: Number(customerId) } } : {})

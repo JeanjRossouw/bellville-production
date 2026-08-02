@@ -216,6 +216,7 @@
         <button class="btn btn-ghost" style="padding:0.6rem" onclick="openSalesOrder()" title="Order an out-of-stock item; invoice when it arrives">📋 Sales order</button>
         <button class="btn btn-ghost" style="padding:0.6rem" onclick="saveQuote()" title="Save a price quote for the customer">📝 Quote</button>
         <button class="btn btn-ghost" style="padding:0.6rem" onclick="openGiftCard()" title="Sell a gift card (any amount)">🎁 Gift card</button>
+        <button class="btn btn-ghost" style="padding:0.6rem" onclick="addCustomItem()" title="One-off item: type a description + price — no product is created">➕ Custom item</button>
       </div>
     </div>
   </div>
@@ -776,7 +777,25 @@
   }
 
   // ---- Cart ----
-  function findProduct(variantId) { return catalogue.find(p => p.variantId === variantId) || null; }
+  function findProduct(variantId) {
+    const p = catalogue.find(x => x.variantId === variantId);
+    if (p) return p;
+    // Custom (open) line: the cart line itself carries the name + price, so a
+    // one-off job never needs a Shopify product. Effectively unlimited stock.
+    const l = cart.find(x => x.variantId === variantId && x.custom);
+    return l ? { variantId, name: l.name, priceCents: l.priceCents, price: l.priceCents / 100, qty: 9999, sku: '', barcode: '', category: 'Custom', custom: true, inventoryItemId: '' } : null;
+  }
+  // One-off item: description + price typed at the till; sold as a Shopify
+  // CUSTOM line item (no product created, no stock touched).
+  function addCustomItem() {
+    const name = (prompt('Custom item — description (shows on the slip & Shopify order):') || '').trim();
+    if (!name) return;
+    const priceCents = toCents(prompt('Price (R):', ''));
+    if (priceCents <= 0) { toast('Enter a price'); return; }
+    cart.push({ variantId: 'custom-' + Date.now(), qty: 1, custom: true, name, priceCents });
+    renderCart();
+    toast(name);
+  }
   function addToCart(variantId) {
     const p = findProduct(variantId);
     if (!p) return;
@@ -1911,11 +1930,11 @@
   async function saveQuote() {
     if (cart.length === 0) { toast('Cart is empty'); return; }
     const c = computeCart();
-    const items = c.lines.map(x => ({ variantId: x.variantId, name: x.p ? x.p.name : x.variantId, sku: x.p ? x.p.sku : '', priceCents: x.finalUnit, qty: x.qty, lineTotalCents: x.finalLine }));
+    const items = c.lines.map(x => ({ variantId: x.variantId, name: x.p ? x.p.name : x.variantId, sku: x.p ? x.p.sku : '', priceCents: x.finalUnit, qty: x.qty, lineTotalCents: x.finalLine, custom: !!(x.p && x.p.custom) || undefined }));
     const doc = { type: 'quote', cart, cartDiscount, items, totalCents: c.total, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
     toast('Saving quote…');
     try {
-      const out = await api('docSave', { tags: 'pos,quote', customerId: customer ? customer.id : undefined, lineItems: cart.map(l => ({ variantId: l.variantId, qty: l.qty })), doc });
+      const out = await api('docSave', { tags: 'pos,quote', customerId: customer ? customer.id : undefined, lineItems: cart.map(l => l.custom ? { custom: true, title: l.name, qty: l.qty, priceCents: l.priceCents } : { variantId: l.variantId, qty: l.qty }), doc });
       printDoc({ ...doc, name: out.name, customer: customer ? { name: customer.name } : null }, 'QUOTE');
       toast('Quote ' + (out.name || '') + ' saved');
       cart = []; cartDiscount = null; renderCart(); renderGrid();
@@ -1949,7 +1968,7 @@
     const note = (document.getElementById('so-note').value || '').trim();
     const factory = !!(document.getElementById('so-factory') && document.getElementById('so-factory').checked);
     const c = computeCart();
-    const items = c.lines.map(x => ({ variantId: x.variantId, name: x.p ? x.p.name : x.variantId, sku: x.p ? x.p.sku : '', priceCents: x.finalUnit, qty: x.qty, lineTotalCents: x.finalLine }));
+    const items = c.lines.map(x => ({ variantId: x.variantId, name: x.p ? x.p.name : x.variantId, sku: x.p ? x.p.sku : '', priceCents: x.finalUnit, qty: x.qty, lineTotalCents: x.finalLine, custom: !!(x.p && x.p.custom) || undefined }));
     const cust = customer;
     let payment = null;
     if (deposit > 0) {
@@ -1962,7 +1981,7 @@
       payments: payment ? [{ ...payment, kind: 'deposit', at: new Date().toISOString() }] : [],
       expectedDate: date, note, factory, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
     try {
-      const out = await api('docSave', { tags: 'pos,sales-order', customerId: cust.id, lineItems: cart.map(l => ({ variantId: l.variantId, qty: l.qty })), doc });
+      const out = await api('docSave', { tags: 'pos,sales-order', customerId: cust.id, lineItems: cart.map(l => l.custom ? { custom: true, title: l.name, qty: l.qty, priceCents: l.priceCents } : { variantId: l.variantId, qty: l.qty }), doc });
       if (payment) { shiftRecordDeposit(payment.method, payment.amountCents); recordDeposit(payment.method, payment.amountCents, out.name); }
       // Never in demo: a demo sales order must not reach the shared salesorders
       // collection (the Production Manager would turn it into a REAL factory job).
@@ -2063,7 +2082,7 @@
     const items = (m.items || []).map(i => ({ ...i, lineTotalCents: i.lineTotalCents != null ? i.lineTotalCents : i.priceCents * i.qty }));
     const note = saleNumber + ' · SO ' + d.name + ' · deposit ' + money(dep) + (balPayment ? ' · balance ' + paymentSummary(balPayment) : ' · paid in full on deposit');
     try {
-      const out = await callFn({ action: 'createOrder', idemKey, customerId: d.customer ? d.customer.id : undefined, lineItems: items.map(i => ({ variantId: i.variantId, qty: i.qty, priceCents: i.priceCents })), note });
+      const out = await callFn({ action: 'createOrder', idemKey, customerId: d.customer ? d.customer.id : undefined, lineItems: items.map(orderLineOf), note });
       try { await api('docDelete', { id: d.id }); } catch (e) {}
       if (balPayment) shiftAddTender(balPayment.method, balPayment.amountCents);
       const s = getShift(); if (s) { s.salesCount += 1; saveShift(s); }
@@ -3202,6 +3221,12 @@
     const ymd = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
     return 'RC-' + ymd + '-' + String(seq).padStart(4, '0');
   }
+  // A cart/doc item → the proxy's order-line shape. Custom (open) items carry
+  // their own title + price and become Shopify custom line items.
+  function orderLineOf(i) {
+    return i.custom ? { custom: true, title: i.name, qty: i.qty, priceCents: i.priceCents }
+      : { variantId: i.variantId, qty: i.qty, priceCents: i.priceCents };
+  }
   function paymentSummary(p) {
     if (p.method === 'cash') return `Cash (tendered ${money(p.cashTenderedCents)}, change ${money(p.changeCents)})`;
     if (p.method === 'card') return 'Card (Capitec — paid)';
@@ -3219,7 +3244,7 @@
     saleInFlight = true;
     const c = computeCart();
     const total = c.total; // cents (after discounts + points)
-    const items = c.lines.map(x => ({ variantId: x.variantId, name: x.p.name, sku: x.p.sku, listPriceCents: x.p.priceCents, priceCents: x.finalUnit, qty: x.qty, lineTotalCents: x.finalLine }));
+    const items = c.lines.map(x => ({ variantId: x.variantId, name: x.p.name, sku: x.p.sku, listPriceCents: x.p.priceCents, priceCents: x.finalUnit, qty: x.qty, lineTotalCents: x.finalLine, custom: !!(x.p && x.p.custom) || undefined }));
     // Loyalty: redeem what was applied, earn on what's paid (1 pt = R1).
     const loyaltyCust = customer;
     const redeemedCents = pointsRedeemCents;
@@ -3246,7 +3271,7 @@
     // Write the sale back to Shopify (paid → stock decrements). idemKey makes a
     // retry return the SAME order instead of creating a duplicate.
     try {
-      const out = await callFn({ action: 'createOrder', idemKey: sale.idemKey, customerId: customer ? customer.id : undefined, lineItems: items.map(i => ({ variantId: i.variantId, qty: i.qty, priceCents: i.priceCents })), note: sale.saleNumber + ' · ' + paymentSummary(payment), ...(payment.method === 'account' ? { onAccount: true } : {}) });
+      const out = await callFn({ action: 'createOrder', idemKey: sale.idemKey, customerId: customer ? customer.id : undefined, lineItems: items.map(orderLineOf), note: sale.saleNumber + ' · ' + paymentSummary(payment), ...(payment.method === 'account' ? { onAccount: true } : {}) });
       sale.shopifyOrder = out.orderName || null; sale.synced = true;
       updateLocalSale(sale);
       toast('Sale ' + sale.saleNumber + ' · Shopify ' + (out.orderName || 'created'));
@@ -3293,7 +3318,7 @@
   function enqueueSale(sale, items, payment) {
     const q = loadQueue();
     q.push({ idemKey: sale.idemKey, saleNumber: sale.saleNumber, customerId: sale.customer ? sale.customer.id : undefined,
-      lineItems: items.map(i => ({ variantId: i.variantId, qty: i.qty, priceCents: i.priceCents })),
+      lineItems: items.map(orderLineOf),
       note: sale.saleNumber + ' · ' + paymentSummary(payment),
       ...(payment.method === 'account' ? { onAccount: true } : {}) });
     saveQueue(q);
