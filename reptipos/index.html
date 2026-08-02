@@ -1046,13 +1046,20 @@
     w.document.close();
   }
   function printXZ(kind) { const s = getShift(); if (!s) return; printReport(zReportHtml(s, null, kind)); }
+  // Reprint a past Z-report from the dashboard's cash-up list.
+  function reprintCashup(i) {
+    const r = dashCashups[i]; if (!r) return;
+    printReport(zReportHtml(r, r.countedCents != null ? r.countedCents : null, 'Z'));
+  }
   function closeRegister() {
     const s = getShift(); if (!s) return;
     const counted = toCents(document.getElementById('reg-count').value);
     if (!confirm('Close the register and print the Z-report?')) return;
     const record = { ...s, closedAt: new Date().toISOString(), closedBy: currentStaff ? currentStaff.name : '', countedCents: counted, varianceCents: counted - expectedCashCents(s) };
     try { const arr = JSON.parse(localStorage.getItem('reptipos-shifts') || '[]'); arr.unshift(record); localStorage.setItem('reptipos-shifts', JSON.stringify(arr.slice(0, 200))); } catch (e) {}
-    try { if (window.fb) { const { db, fns } = window.fb; fns.addDoc(fns.collection(db, 'cashups'), record); } } catch (e) {}
+    // fbAdd routes demo cash-ups to demo storage — play data must not appear on
+    // the real dashboard's cash-up report.
+    try { fbAdd('cashups', record).catch(() => {}); } catch (e) {}
     printReport(zReportHtml(s, counted, 'Z'));
     saveShift(null);
     closeReg(); renderReg(); toast('Register closed');
@@ -1620,6 +1627,7 @@
 
   // ---- Dashboard ----
   let dashPeriod = 'today';
+  let dashCashups = [];   // cash-ups shown on the dashboard, kept for reprint
   function openDashboard() { document.getElementById('dash-modal').classList.add('show'); renderDashboard(); }
   function closeDashboard() { document.getElementById('dash-modal').classList.remove('show'); }
   function setDashPeriod(p) { dashPeriod = p; renderDashboard(); }
@@ -1666,6 +1674,33 @@
     // counts when paid, a fulfilled order only adds its balance.
     const moneyIn = moneyInEvents(new Date(since), new Date(until)).reduce((t, e) => t + e.amountCents, 0);
     let poWaiting = 0; try { if (fbReady()) { const pos = await fbList('purchase_orders'); poWaiting = pos.filter(x => x.status === 'sent' || x.status === 'partial').length; } } catch (e) {}
+    // Cash-ups (register closes) in this period: cloud copy merged with this
+    // device's local log, deduped on closedAt, so every till's Z-reports appear.
+    dashCashups = [];
+    try {
+      let cloud = []; try { if (fbReady()) cloud = await fbList('cashups'); } catch (e) {}
+      let local = []; try { local = JSON.parse(localStorage.getItem('reptipos-shifts') || '[]'); } catch (e) {}
+      const seen = new Set();
+      [...cloud, ...local].forEach(r => {
+        if (r && r.closedAt && !seen.has(r.closedAt)) { seen.add(r.closedAt); dashCashups.push(r); }
+      });
+      dashCashups = dashCashups.filter(r => r.closedAt >= since && r.closedAt <= until)
+        .sort((a, b) => (a.closedAt < b.closedAt ? 1 : -1));
+    } catch (e) {}
+    const cashupRows = dashCashups.map((r, i) => {
+      const salesTot = (r.cashSalesCents || 0) + (r.cardSalesCents || 0) + (r.eftSalesCents || 0);
+      const v = r.varianceCents;
+      const vStr = v == null ? '—'
+        : v === 0 ? '<span style="color:var(--accent2)">balanced ✓</span>'
+        : `<span style="color:var(--warn)">${v > 0 ? 'over +' : 'short −'}${money(Math.abs(v))}</span>`;
+      return `<div class="cust-result" style="cursor:default">
+        <div><div style="font-weight:600">${new Date(r.closedAt).toLocaleString('en-ZA')}${r.closedBy ? ' · ' + esc(r.closedBy) : ''}</div>
+          <div style="font-size:0.72rem;color:var(--muted)">💵 ${money(r.cashSalesCents || 0)} · 💳 ${money(r.cardSalesCents || 0)} · 🏦 ${money(r.eftSalesCents || 0)}${r.countedCents != null ? ' · counted ' + money(r.countedCents) : ''} · ${vStr}</div></div>
+        <div style="display:flex;align-items:center;gap:0.5rem">
+          <span style="font-weight:700">${money(salesTot)}</span>
+          <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="reprintCashup(${i})">🖨️</button>
+        </div></div>`;
+    }).join('');
     document.getElementById('dash-content').innerHTML = `
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:0.6rem">
         ${dashCard('Sales', money(sales))}
@@ -1683,6 +1718,11 @@
       <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;margin-top:0.8rem;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.6rem 0.7rem">
         <div style="font-size:0.9rem"><b>${poWaiting}</b> purchase order${poWaiting === 1 ? '' : 's'} waiting to be received</div>
         <button class="qbtn" style="width:auto;padding:0 0.7rem" onclick="closeDashboard();openGrv();setTimeout(()=>grvTab('po'),60)">View</button>
+      </div>
+      <div style="margin-top:0.8rem">
+        <div style="font-size:0.8rem;font-weight:700;margin-bottom:0.3rem">Cash-ups (register closes)</div>
+        ${dashCashups.length ? `<div style="max-height:30vh;overflow:auto">${cashupRows}</div>`
+          : '<div class="empty" style="padding:0.6rem">No cash-ups in this period — closing the register (🧾 Register) files its Z-report here.</div>'}
       </div>
       ${cost === 0 && sales > 0 ? '<div style="font-size:0.72rem;color:var(--muted);margin-top:0.4rem">Tip: gross profit needs cost prices — import them (📦 Count → 💰 Import cost prices) for accurate profit.</div>' : ''}`;
   }
