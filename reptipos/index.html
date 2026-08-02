@@ -398,7 +398,7 @@
   // Plumbed so a rate can be switched on later without code changes. Prices are
   // treated as tax-INCLUSIVE (the Shopify price is final), so a non-zero rate
   // just surfaces the tax portion already inside the price — it never adds on top.
-  const DEFAULT_SETTINGS = { taxRatePct: 0, taxLabel: 'VAT', loyaltyPct: 5 };
+  const DEFAULT_SETTINGS = { taxRatePct: 0, taxLabel: 'VAT', loyaltyPct: 5, bankName: '', bankAccountHolder: '', bankAccountNo: '', bankBranchCode: '' };
   function settings() { try { return { ...DEFAULT_SETTINGS, ...(JSON.parse(localStorage.getItem('reptipos-settings') || '{}')) }; } catch (e) { return { ...DEFAULT_SETTINGS }; } }
   function saveSettings(s) { localStorage.setItem('reptipos-settings', JSON.stringify({ ...settings(), ...s })); }
   // Tax portion (cents) already contained in a tax-inclusive total.
@@ -1164,6 +1164,15 @@
         <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveLoyaltySettings()">Save</button>
       </div>
       <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">1 point = R1 off a future sale. Account is keyed on the customer's cellphone number. Set 0 to turn earning off. (e.g. 5% = R100 spent earns 5 points = R5.)</div>
+      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">🏦 Banking details (printed on quotes &amp; sales orders for EFT)</div>
+      <div style="display:flex; gap:0.4rem; flex-wrap:wrap">
+        <input id="bk-name" value="${esc(settings().bankName)}" placeholder="Bank (e.g. Capitec)" style="flex:1; min-width:110px">
+        <input id="bk-holder" value="${esc(settings().bankAccountHolder)}" placeholder="Account holder" style="flex:1; min-width:130px">
+        <input id="bk-acct" value="${esc(settings().bankAccountNo)}" placeholder="Account number" style="width:140px">
+        <input id="bk-branch" value="${esc(settings().bankBranchCode)}" placeholder="Branch code" style="width:100px">
+        <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveBankSettings()">Save</button>
+      </div>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Shown with the order number as payment reference. Leave blank to print nothing.</div>
       ${isDemo() ? `<div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.3rem">Demo mode</div>
       <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="toggleDemo()">Turn demo OFF (use real Shopify)</button>
       <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Demo only ever starts from an explicit ?demo=1 link — the till is real by default.</div>` : ''}`;
@@ -1180,6 +1189,23 @@
     saveStaff(list); renderReg(); toast('Staff added');
   }
   function removeStaff(id) { if (!confirm('Remove this staff member?')) return; saveStaff(staffList().filter(s => s.id !== id)); renderReg(); }
+  function saveBankSettings() {
+    const s = {
+      bankName: (document.getElementById('bk-name').value || '').trim(),
+      bankAccountHolder: (document.getElementById('bk-holder').value || '').trim(),
+      bankAccountNo: (document.getElementById('bk-acct').value || '').trim(),
+      bankBranchCode: (document.getElementById('bk-branch').value || '').trim()
+    };
+    saveSettings(s);
+    // Shared across tills via the settings doc (best-effort).
+    try { fbSet('settings', 'banking', { ...s, updatedAt: new Date().toISOString() }); } catch (e) {}
+    toast(s.bankAccountNo ? 'Banking details saved' : 'Banking details cleared');
+  }
+  // Pull the shared banking details once Firebase is up, so every till prints
+  // the same account without retyping.
+  window.addEventListener('fb-ready', async () => {
+    try { const b = await fbGet('settings', 'banking'); if (b && b.bankAccountNo != null) saveSettings({ bankName: b.bankName || '', bankAccountHolder: b.bankAccountHolder || '', bankAccountNo: b.bankAccountNo || '', bankBranchCode: b.bankBranchCode || '' }); } catch (e) {}
+  });
   function saveTaxSettings() {
     const rate = Math.max(0, parseFloat(document.getElementById('tax-rate').value) || 0);
     const label = (document.getElementById('tax-label').value || 'VAT').trim() || 'VAT';
@@ -2141,6 +2167,17 @@
     if (doc.note) html += `<div class="c">${esc(doc.note)}</div>`;
     if (doc.deliveryAddress) html += `<div class="c" style="font-weight:bold">🚚 Deliver to: ${esc(doc.deliveryAddress)}</div>`;
     if (doc.notes && doc.notes.length) html += doc.notes.map(n => `<div class="c">📝 ${new Date(n.at).toLocaleDateString('en-ZA')}${n.by ? ' ' + esc(n.by) : ''}: ${esc(n.text)}</div>`).join('');
+    // EFT banking block — quotes + sales orders (that's where a balance is owed).
+    const bk = settings();
+    if (bk.bankAccountNo && (kind === 'QUOTE' || kind === 'SALES ORDER')) {
+      html += `<div style="border-top:1px dashed #000; margin-top:8px; padding-top:6px">
+        <div class="c" style="font-weight:bold">Pay by EFT</div>
+        ${bk.bankName ? `<div class="c">${esc(bk.bankName)}</div>` : ''}
+        ${bk.bankAccountHolder ? `<div class="c">${esc(bk.bankAccountHolder)}</div>` : ''}
+        <div class="c">Acc: ${esc(bk.bankAccountNo)}${bk.bankBranchCode ? ' · Branch: ' + esc(bk.bankBranchCode) : ''}</div>
+        ${doc.name ? `<div class="c" style="font-weight:bold">Reference: ${esc(doc.name)}</div>` : ''}
+      </div>`;
+    }
     html += `<div class="c" style="margin-top:6px">${kind === 'QUOTE' ? 'Quote — subject to availability' : 'Thank you!'}</div>`;
     printReport(html);
   }
