@@ -632,7 +632,14 @@
            catalogue.find(p => (p.sku || '').toLowerCase() === c) || null;
   }
   // Distinct Shopify categories (product_type) present in the catalogue, sorted.
-  function catList() { return [...new Set(catalogue.map(p => p.category).filter(Boolean))].sort((a, b) => a.localeCompare(b)); }
+  // Categories mirror the Shopify storefront: a product's COLLECTIONS (it can
+  // sit in several, exactly like online). Falls back to product_type for
+  // products in no collection (or if the collections fetch ever fails).
+  function catsOf(p) {
+    if (Array.isArray(p.collections) && p.collections.length) return p.collections;
+    return p.category ? [p.category] : [];
+  }
+  function catList() { return [...new Set(catalogue.flatMap(catsOf))].sort((a, b) => a.localeCompare(b)); }
   function setCat(c) { currentCat = (c == null ? '__home__' : c); renderCatBar(); renderGrid(); }
   function renderCatBar() {
     const bar = document.getElementById('cat-bar'); if (!bar) return;
@@ -694,7 +701,7 @@
     const cats = catList();
     if (!cats.length) { currentCat = ''; renderGrid(); return; }
     grid.innerHTML = quickKeyStrip() + cats.map(c => {
-      const inCat = catalogue.filter(p => p.category === c);
+      const inCat = catalogue.filter(p => catsOf(p).includes(c));
       const withImg = inCat.find(p => p.imageUrl);
       const count = inCat.length;
       const thumb = withImg
@@ -727,7 +734,7 @@
       (p.name || '').toLowerCase().includes(q) ||
       (p.sku || '').toLowerCase().includes(q) ||
       (p.barcode || '').toLowerCase().includes(q));
-    else if (currentCat && currentCat !== '__home__') items = items.filter(p => p.category === currentCat);
+    else if (currentCat && currentCat !== '__home__') items = items.filter(p => catsOf(p).includes(currentCat));
     if (items.length === 0) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1">${catalogue.length ? 'No matches' + (currentCat && currentCat !== '__home__' ? ' in ' + esc(currentCat) : '') : 'Catalogue loading…'}</div>`; return; }
     grid.innerHTML = items.slice(0, 300).map(p => {
       const oos = (Number(p.qty) || 0) <= 0;
@@ -2248,9 +2255,9 @@
   function noCountSet() { try { return new Set(JSON.parse(localStorage.getItem('reptipos-nocount') || '[]')); } catch (e) { return new Set(); } }
   function addNoCount(ids) { if (!ids || !ids.length) return; const s = noCountSet(); ids.forEach(i => s.add(i)); localStorage.setItem('reptipos-nocount', JSON.stringify([...s])); }
   function isBundleish(p) { return /starter kit|\bbundle\b/i.test((p.category || '') + ' ' + (p.name || '')) || noCountSet().has(p.variantId); }
-  function stCategories() { return [...new Set(catalogue.map(p => p.category).filter(Boolean))].sort(); }
+  function stCategories() { return [...new Set(catalogue.flatMap(catsOf))].sort(); }
   function stItems(s) {
-    const base = s.mode === 'selected' ? catalogue.filter(p => s.counts[p.variantId] != null) : catalogue.filter(p => !s.scope || p.category === s.scope);
+    const base = s.mode === 'selected' ? catalogue.filter(p => s.counts[p.variantId] != null) : catalogue.filter(p => !s.scope || catsOf(p).includes(s.scope));
     // Hide bundles / un-settable items, unless they're already counted in this session.
     return base.filter(p => s.counts[p.variantId] != null || !isBundleish(p));
   }

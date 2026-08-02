@@ -212,6 +212,23 @@ async function getProducts() {
     const m = link.match(/<([^>]+)>;\s*rel="next"/);
     url = m ? m[1].replace(/^https?:\/\/[^/]+\/admin\/api\/[^/]+/, '') : null;
   }
+
+  // Attach each product's Shopify COLLECTIONS so the till can show the same
+  // catalogue structure as the online store (a product can sit in several).
+  // Best-effort: if this fails the till falls back to product_type.
+  try {
+    const collMap = {};
+    let after = null;
+    for (let page = 0; page < 30; page++) {
+      const d = await gql(`query($after: String) { products(first: 50, after: $after, query: "status:active") {
+        nodes { legacyResourceId collections(first: 15) { nodes { title } } }
+        pageInfo { hasNextPage endCursor } } }`, { after });
+      d.products.nodes.forEach(n => { collMap[String(n.legacyResourceId)] = n.collections.nodes.map(c => c.title); });
+      if (!d.products.pageInfo.hasNextPage) break;
+      after = d.products.pageInfo.endCursor;
+    }
+    out.forEach(r => { r.collections = collMap[r.productId] || []; });
+  } catch (e) { /* collections are an enhancement — the catalogue still works without them */ }
   // Best-effort: pull each variant's unit cost (Shopify "Cost per item") so the
   // POS can show margins. Batched; never blocks the catalogue if it fails.
   try {
