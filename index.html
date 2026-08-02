@@ -17,7 +17,7 @@
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
     import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
-    import { getFirestore, doc, setDoc, getDoc, onSnapshot, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+    import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
     
     const firebaseConfig = {
       apiKey: "AIzaSyB5QfSiuwjDGwZOZMHzN3BhziK_AKVeBNg",
@@ -45,7 +45,7 @@
       createUser: createUserWithEmailAndPassword,
       signOut,
       onAuthStateChanged,
-      doc, setDoc, getDoc, onSnapshot
+      doc, setDoc, getDoc, onSnapshot, collection
     };
     
     // Trigger app init once Firebase is ready
@@ -1132,6 +1132,13 @@
   let unsubscribePos = {};
   let posSaveTimeouts = {};
   let lastSyncedPosPayload = {};
+  // ReptiCube till → factory bridge (salesorders collection listener).
+  // productionLoaded gates importing until the main doc (with its ledger) has
+  // loaded at least once; _rcPendingSOs holds the latest salesorders snapshot so
+  // we can re-evaluate it whenever the production doc reloads.
+  let unsubscribeSalesOrders = null;
+  let productionLoaded = false;
+  let _rcPendingSOs = [];
 
   // Render-pipeline state — MUST be declared before switchBiz('bellville') runs
   // at the bottom of this section, because switchBiz calls render() which reads
@@ -9839,6 +9846,7 @@ ${totalsSection}
         }
         startSync();
         startSyncPos();
+        startSyncSalesOrders();
       } else {
         currentUser = null;
         currentRole = null;
@@ -9848,6 +9856,9 @@ ${totalsSection}
         if (unsubscribe) { unsubscribe(); unsubscribe = null; }
         Object.keys(unsubscribePos).forEach(b => { try { unsubscribePos[b](); } catch (e) {} });
         unsubscribePos = {};
+        if (unsubscribeSalesOrders) { try { unsubscribeSalesOrders(); } catch (e) {} unsubscribeSalesOrders = null; }
+        productionLoaded = false;
+        _rcPendingSOs = [];
       }
     });
   }
@@ -9911,6 +9922,11 @@ ${totalsSection}
         lastSyncedPayload = payload;
         render();
         if (typeof populateProductDatalist === 'function') populateProductDatalist();
+        // The main doc (with its import ledger) is now loaded — safe to turn any
+        // pending ReptiCube sales orders into factory jobs. Re-running here also
+        // self-heals if an external write reverted an in-memory import.
+        productionLoaded = true;
+        processSalesOrders();
       }
       updateSyncStatus(fromCache ? '⚠️ Offline (cached)' : '☁ Synced', fromCache ? 'warn' : 'success');
     }, (err) => {
@@ -10100,6 +10116,110 @@ ${totalsSection}
         render(); // refresh dashboard POS card (all-business totals)
       }, (err) => console.error('POS sync error (' + biz + '):', err));
     });
+  }
+
+  // ---- ReptiCube till → factory bridge ----------------------------------
+  // The ReptiCube POS (reptipos/) writes each back-order / custom build to the
+  // Firestore `salesorders` collection on creation. That collection is an
+  // append-only log — the authoritative sales order lives in a Shopify draft
+  // order, and ready/fulfil/cancel operate on Shopify, not on these docs — so
+  // each doc represents one thing: "a customer ordered a custom build". We turn
+  // each into a ReptiCube production job so it lands on the factory board.
+  //
+  // Only the Production Manager ever writes shared-data/production, so the till
+  // can never clobber factory data. Idempotency uses a PERSISTENT ledger
+  // (data.rcImportedSO) rather than the live orders array, so deleting a finished
+  // job from the board does NOT resurrect it on the next snapshot.
+  function _rcImportLedger() {
+    if (!data.rcImportedSO || typeof data.rcImportedSO !== 'object') data.rcImportedSO = {};
+    return data.rcImportedSO;
+  }
+
+  // Turn one ReptiCube sales order into ReptiCube factory job(s). Returns the
+  // number of jobs created (0 if already imported or not a sales order).
+  function importSalesOrderToFactory(soId, so) {
+    if (!so || (so.type && so.type !== 'salesorder')) return 0;   // ignore quotes etc.
+    // Only orders the cashier explicitly flagged as "made in our factory" become
+    // production jobs. An ordinary out-of-stock reorder (restocked from a
+    // supplier) is also a sales order, and must NOT land on the factory board.
+    if (so.factory !== true) return 0;
+    const ledger = _rcImportLedger();
+    if (ledger[soId]) return 0;                                   // imported once already
+
+    if (!data.repticube) data.repticube = { orders: [], products: {}, inventory: {}, staff: [] };
+    const orders = data.repticube.orders = data.repticube.orders || [];
+    const note = (so.note || '').trim();
+    const items = (Array.isArray(so.items) && so.items.length)
+      ? so.items
+      : [{ name: note || 'Custom order', qty: 1 }];
+    const custName = (so.customer && so.customer.name) || 'ReptiCube Sale';
+    const invoice = so.name || ('SO-' + String(soId).slice(-6));
+    const orderDate = ((so.createdAt || '').split('T')[0]) || new Date().toISOString().split('T')[0];
+    const balance = Math.max(0, ((Number(so.totalCents) || 0) - (Number(so.depositCents) || 0)) / 100);
+
+    let created = 0;
+    items.forEach((li, i) => {
+      const baseName = li.name || li.sku || 'Item';
+      // Single-line orders fold the free-text note into the product so the
+      // factory sees the spec (e.g. "60×45 terrarium, custom build").
+      const product = (note && items.length === 1) ? (baseName + ' — ' + note) : baseName;
+      const slug = String(baseName).replace(/[^a-z0-9]/gi, '').toUpperCase().substring(0, 20);
+      let id = ('RC-' + invoice + '-' + slug).replace(/\s+/g, '');
+      if (orders.find(o => o.id === id)) id += '-' + i;
+      orders.push({
+        id,
+        invoice,
+        customer: custName,
+        phone: '',
+        product,
+        category: '',
+        fabric: '',
+        qty: Number(li.qty) || 1,
+        orderDate,
+        dueDate: so.expectedDate || _dueFromLead('', baseName),
+        status: 'pending',
+        startDate: null,
+        paymentStatus: (Number(so.depositCents) || 0) > 0 ? 'deposit' : 'unpaid',
+        outstanding: i === 0 ? balance : 0,     // whole balance sits on the first line
+        source: 'reptipos',                     // marks till-originated jobs
+        rcSalesOrderId: soId,
+        rcDraftId: so.draftId || '',
+        notes: note
+      });
+      created++;
+    });
+    ledger[soId] = new Date().toISOString();
+    return created;
+  }
+
+  // Re-evaluate the latest salesorders snapshot against the (now-loaded) ledger
+  // and import anything new. Safe to call repeatedly — the ledger de-dupes.
+  function processSalesOrders() {
+    if (!productionLoaded || !currentUser) return;
+    let created = 0;
+    _rcPendingSOs.forEach(({ id, data: so }) => {
+      try { created += importSalesOrderToFactory(id, so); }
+      catch (e) { console.warn('Sales-order import failed for ' + id + ':', e); }
+    });
+    if (created > 0) {
+      saveData();   // persists ledger + new jobs and pushes to the cloud doc
+      render();
+      if (typeof toast === 'function') {
+        toast(created + ' ReptiCube order' + (created === 1 ? '' : 's') + ' added to the factory board', 'success');
+      }
+    }
+  }
+
+  function startSyncSalesOrders() {
+    const fns = window.firebaseFns;
+    if (!fns || !fns.collection || !fns.onSnapshot) return;   // older SDK exposure — skip
+    if (unsubscribeSalesOrders) { try { unsubscribeSalesOrders(); } catch (e) {} }
+    const ref = fns.collection(window.firebaseDb, 'salesorders');
+    unsubscribeSalesOrders = fns.onSnapshot(ref, (snap) => {
+      _rcPendingSOs = [];
+      snap.forEach((docSnap) => _rcPendingSOs.push({ id: docSnap.id, data: docSnap.data() }));
+      processSalesOrders();
+    }, (err) => console.warn('Sales-order sync error:', err));
   }
 
   function updateSyncStatus(msg, level) {
