@@ -593,6 +593,35 @@ async function customerOrders(customerId) {
   }));
 }
 
+// Compact order list for a date range — the till's "Shopify" sales view.
+// Includes ALL orders (till + online web orders), newest first, capped at 500.
+async function listOrders({ since, until }) {
+  if (!since) { const e = new Error('No date range'); e.status = 400; throw e; }
+  let url = `/orders.json?status=any&created_at_min=${encodeURIComponent(since)}${until ? `&created_at_max=${encodeURIComponent(until)}` : ''}&limit=250&fields=id,name,created_at,total_price,financial_status,cancelled_at,source_name,customer,line_items`;
+  const orders = [];
+  let guard = 0;
+  while (url && guard < 2) {   // 2 pages = 500 orders, plenty for a period view
+    guard++;
+    const { json, headers } = await shopify(url);
+    for (const o of json.orders || []) {
+      orders.push({
+        id: String(o.id), name: o.name, createdAt: o.created_at,
+        totalCents: Math.round((Number(o.total_price) || 0) * 100),
+        financialStatus: o.financial_status || '',
+        cancelled: !!o.cancelled_at,
+        source: o.source_name || '',
+        customerName: o.customer ? [o.customer.first_name, o.customer.last_name].filter(Boolean).join(' ') : '',
+        itemCount: (o.line_items || []).reduce((n, li) => n + (Number(li.quantity) || 0), 0)
+      });
+    }
+    const link = (headers.get('link') || headers.get('Link') || '');
+    const m = link.match(/<([^>]+)>;\s*rel="next"/);
+    url = m ? m[1].replace(/^https?:\/\/[^/]+\/admin\/api\/[^/]+/, '') : null;
+  }
+  orders.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return { orders };
+}
+
 // Sales report for a date range: totals + per-variant breakdown + points for a chart.
 async function salesReport({ since, until }) {
   if (!since) { const e = new Error('No date range'); e.status = 400; throw e; }
@@ -645,6 +674,7 @@ export const handler = async (event) => {
     if (body.action === 'createCustomer') return json(200, { customer: await createCustomer(body) });
     if (body.action === 'customerOrders') return json(200, { orders: await customerOrders(body.customerId) });
     if (body.action === 'salesReport') return json(200, await salesReport(body));
+    if (body.action === 'listOrders') return json(200, await listOrders(body));
     if (body.action === 'receiveStock') return json(200, await receiveStock(body));
     if (body.action === 'setStock') return json(200, await setStock(body));
     if (body.action === 'setCosts') return json(200, await setCosts(body));

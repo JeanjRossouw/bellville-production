@@ -527,6 +527,15 @@
         });
         return { orderCount, salesCents, itemCount, items: Object.values(byV), points };
       }
+      case 'listOrders': {
+        const since = new Date(p.since).getTime(); const until = p.until ? new Date(p.until).getTime() : Date.now();
+        const orders = (JSON.parse(localStorage.getItem('reptipos-sales') || '[]'))
+          .filter(s => { const t = new Date(s.datetime).getTime(); return t >= since && t <= until; })
+          .map(s => ({ id: s.saleNumber, name: s.shopifyOrder || s.saleNumber, createdAt: s.datetime, totalCents: s.totalCents || 0,
+            financialStatus: (s.payment && s.payment.method === 'account') ? 'pending' : 'paid', cancelled: false, source: 'reptipos',
+            customerName: s.customer ? s.customer.name : '', itemCount: (s.items || []).reduce((n, i) => n + i.qty, 0) }));
+        return { orders };
+      }
       // Gift cards + store credit — simulated with local balances.
       case 'gcCreate': {
         const list = demoGet('reptipos-demo-giftcards');
@@ -1288,6 +1297,9 @@
 
   let salesPeriod = 'today';
   let salesDate = '';
+  let salesSource = 'till';   // 'till' = money-in events · 'shopify' = Shopify orders (till + online)
+  let _salesLoadToken = 0;
+  function setSalesSource(s) { salesSource = s; renderSales(); }
   function setSalesPeriod(p) { salesPeriod = p; if (p !== 'date') salesDate = ''; renderSales(); }
   function setSalesDate(v) { if (!v) return; salesDate = v; salesPeriod = 'date'; renderSales(); }
   function salesRange() {
@@ -1299,9 +1311,19 @@
     return { since, until };
   }
 
+  function salesHeaderHtml() {
+    const tabs = [['today', 'Today'], ['week', 'This week'], ['month', 'This month']].map(([p, l]) =>
+      `<button class="qbtn" style="width:auto;padding:0 0.8rem;background:${salesPeriod === p ? 'var(--accent)' : 'var(--panel2)'};${salesPeriod === p ? 'color:#04210f' : ''}" onclick="setSalesPeriod('${p}')">${l}</button>`).join('');
+    const src = [['till', '🧾 Till (money in)'], ['shopify', '🛍 Shopify orders']].map(([s, l]) =>
+      `<button class="qbtn" style="width:auto;padding:0 0.8rem;background:${salesSource === s ? 'var(--accent)' : 'var(--panel2)'};${salesSource === s ? 'color:#04210f' : ''}" onclick="setSalesSource('${s}')">${l}</button>`).join('');
+    return `<div style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center;margin-bottom:0.4rem">${src}</div>
+      <div style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem">${tabs}
+        <input type="date" value="${salesDate}" onchange="setSalesDate(this.value)" style="width:auto;padding:0.3rem 0.5rem;background:${salesPeriod === 'date' ? 'var(--accent)' : 'var(--panel2)'};border:1px solid var(--border);border-radius:8px;color:${salesPeriod === 'date' ? '#04210f' : 'var(--text)'};font-size:0.8rem"></div>`;
+  }
   function renderSales() {
     const body = document.getElementById('sales-body');
     const { since, until } = salesRange();
+    if (salesSource === 'shopify') { renderSalesShopify(body, since, until); return; }
     const events = moneyInEvents(since, until);
     const total = events.reduce((t, e) => t + e.amountCents, 0);
     const by = { cash: 0, card: 0, eft: 0 };
@@ -1313,8 +1335,6 @@
     const deps = events.filter(e => e.kind === 'deposit');
     const depTotal = deps.reduce((t, e) => t + e.amountCents, 0);
 
-    const tabs = [['today', 'Today'], ['week', 'This week'], ['month', 'This month']].map(([p, l]) =>
-      `<button class="qbtn" style="width:auto;padding:0 0.8rem;background:${salesPeriod === p ? 'var(--accent)' : 'var(--panel2)'};${salesPeriod === p ? 'color:#04210f' : ''}" onclick="setSalesPeriod('${p}')">${l}</button>`).join('');
     const stat = (label, val, accent) => `<div style="background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.45rem 0.6rem;min-width:90px">
       <div style="font-size:0.68rem;color:var(--muted)">${label}</div><div style="font-weight:800;${accent ? 'color:var(--accent2)' : ''}">${val}</div></div>`;
 
@@ -1359,8 +1379,7 @@
     }).join('');
 
     body.innerHTML = `
-      <div style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem">${tabs}
-        <input type="date" value="${salesDate}" onchange="setSalesDate(this.value)" style="width:auto;padding:0.3rem 0.5rem;background:${salesPeriod === 'date' ? 'var(--accent)' : 'var(--panel2)'};border:1px solid var(--border);border-radius:8px;color:${salesPeriod === 'date' ? '#04210f' : 'var(--text)'};font-size:0.8rem"></div>
+      ${salesHeaderHtml()}
       <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem">
         ${stat('Money in', money(total), true)}
         ${stat('💵 Cash', money(by.cash))}
@@ -1370,6 +1389,48 @@
       </div>
       ${events.length ? `<div style="max-height:46vh; overflow:auto">${rows}</div>` : '<div class="empty" style="padding:1.5rem">No money in for this period</div>'}`;
   }
+  // The "Shopify orders" source: every order Shopify has for the period —
+  // till sales AND online web orders — straight from the store, newest first.
+  async function renderSalesShopify(body, since, until) {
+    const token = ++_salesLoadToken;
+    body.innerHTML = salesHeaderHtml() + '<div class="empty" style="padding:1.5rem">Loading Shopify orders…</div>';
+    let orders = [];
+    try {
+      const out = await apiX('listOrders', { since: since.toISOString(), until: (until || new Date()).toISOString() });
+      orders = out.orders || [];
+    } catch (e) {
+      if (token !== _salesLoadToken) return;
+      body.innerHTML = salesHeaderHtml() + `<div class="empty" style="padding:1.5rem;color:var(--warn)">${esc(String(e.message || e))}</div>`;
+      return;
+    }
+    if (token !== _salesLoadToken) return;   // user switched view while loading
+    const live = orders.filter(o => !o.cancelled);
+    const total = live.reduce((t, o) => t + o.totalCents, 0);
+    const tillN = live.filter(o => o.source === 'reptipos').length;
+    const onlineN = live.length - tillN;
+    const pending = live.filter(o => o.financialStatus !== 'paid');
+    const stat = (label, val, accent) => `<div style="background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.45rem 0.6rem;min-width:90px">
+      <div style="font-size:0.68rem;color:var(--muted)">${label}</div><div style="font-weight:800;${accent ? 'color:var(--accent2)' : ''}">${val}</div></div>`;
+    const rows = orders.slice(0, 200).map(o => {
+      const src = o.source === 'reptipos' ? '🧾 till' : (o.source === 'web' || o.source === 'online_store' ? '🌐 online' : esc(o.source || ''));
+      const fs = o.cancelled ? '<span style="color:var(--danger)">cancelled</span>' : (o.financialStatus === 'paid' ? 'paid' : `<span style="color:var(--warn)">${esc(o.financialStatus)}</span>`);
+      return `<div class="cust-result" style="cursor:default">
+        <div><div style="font-weight:600">${esc(o.name)} <span style="font-size:0.7rem;color:var(--muted)">${src}</span></div>
+          <div style="font-size:0.72rem;color:var(--muted)">${new Date(o.createdAt).toLocaleString('en-ZA')} · ${o.itemCount} item(s)${o.customerName ? ' · ' + esc(o.customerName) : ''} · ${fs}</div></div>
+        <span style="font-weight:700${o.cancelled ? ';text-decoration:line-through;color:var(--muted)' : ''}">${money(o.totalCents)}</span></div>`;
+    }).join('');
+    body.innerHTML = `
+      ${salesHeaderHtml()}
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem">
+        ${stat('Shopify sales', money(total), true)}
+        ${stat('Orders', live.length)}
+        ${stat('🧾 Till', tillN)}
+        ${stat('🌐 Online', onlineN)}
+        ${stat('⏳ Unpaid', pending.length ? pending.length + ' · ' + money(pending.reduce((t, o) => t + o.totalCents, 0)) : '—')}
+      </div>
+      ${orders.length ? `<div style="max-height:46vh; overflow:auto">${rows}</div>` : '<div class="empty" style="padding:1.5rem">No Shopify orders for this period</div>'}`;
+  }
+
   function reprintSale(saleNumber) {
     const s = loadSales().find(x => x.saleNumber === saleNumber);
     if (s) showReceipt(s); else toast('Sale not found');
