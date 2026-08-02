@@ -2432,6 +2432,8 @@
     }
     if (!lineItems.length) { toast('No matching products with a cost found'); return; }
     if (unmatched.length) console.warn('Cost import — ' + unmatched.length + ' rows did not match:', unmatched);
+    // Bulk-overwrites cost prices in Shopify (the master system) — admin only.
+    if (!(currentStaff && currentStaff.role === 'admin') && !adminOverride('import cost prices — this overwrites costs in Shopify')) return;
     toast('Setting ' + matched + ' cost prices…');
     let done = 0, failed = 0; const chunk = 20;
     try {
@@ -2495,6 +2497,8 @@
     const s = loadStocktake(); if (!s) return;
     const items = stItems(s).filter(p => s.counts[p.variantId] != null);
     if (!items.length) { toast('Nothing counted to reconcile'); return; }
+    // Reconcile OVERWRITES Shopify stock (the master system) — admin only.
+    if (!(currentStaff && currentStaff.role === 'admin') && !adminOverride('reconcile the stock take — this sets Shopify stock counts')) return;
     // Two-tap confirm on the button (no browser dialog — survives dialog suppression).
     if (!reconcileArmed) {
       const varied = items.filter(p => Math.round(Number(s.counts[p.variantId])) !== (Number(p.qty) || 0));
