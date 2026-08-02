@@ -432,7 +432,11 @@
   }
 
   // ---- Demo mode: try the whole system with NO Shopify (simulated locally) ----
-  function isDemo() { return localStorage.getItem('reptipos-demo') === '1' || /[?&]demo=1/.test(location.search); }
+  // Demo is URL-only: the till is REAL unless opened with an explicit ?demo=1
+  // link. No sticky localStorage flag and no staff-facing toggle, so a shop
+  // till can never accidentally sit in demo (where sales don't reach Shopify).
+  function isDemo() { return /[?&]demo=1/.test(location.search); }
+  try { localStorage.removeItem('reptipos-demo'); } catch (e) {}   // clear any old sticky flag
   // Sample reptile catalogue (prices in rands; barcodes are type-able to test scanning).
   const DEMO_CATALOGUE = [
     { productId: 'd1', variantId: 'dv1', inventoryItemId: 'di1', name: 'Exo Terra Glass Terrarium 60×45', sku: 'TERR-6045', barcode: '6009800010011', price: 2499, qty: 4, category: 'Terrariums', vendor: 'Exo Terra SA', imageUrl: '' },
@@ -568,17 +572,17 @@
         return { error: 'demo: unknown action ' + p.action };
     }
   }
+  // Demo is entered/left by navigating with or without ?demo=1 — the cached
+  // catalogue is cleared so the two modes never mix data.
   function setDemo(on) {
-    localStorage.setItem('reptipos-demo', on ? '1' : '0');
     localStorage.removeItem('reptipos-catalogue');
-    catalogue = []; cart = []; cartDiscount = null; customer = null;
-    renderCart(); renderCustomer();
-    renderLockDemo();
-    toast(on ? 'Demo mode ON — nothing touches Shopify' : 'Demo mode OFF — using Shopify');
-    refreshCatalogue(false);
+    const url = new URL(location.href);
+    if (on) url.searchParams.set('demo', '1'); else url.searchParams.delete('demo');
+    location.href = url.toString();
   }
   function toggleDemo() { setDemo(!isDemo()); }
-  function renderLockDemo() { const b = document.getElementById('lock-demo'); if (b) b.textContent = isDemo() ? '🧪 Demo mode is ON — tap to switch to real Shopify' : '🧪 Try demo mode (no Shopify needed)'; }
+  // Lock screen: only a way OUT of demo — never an invitation in.
+  function renderLockDemo() { const b = document.getElementById('lock-demo'); if (b) b.textContent = isDemo() ? '🧪 DEMO MODE — tap to switch to the real store' : ''; }
 
   function setNet(online) {
     document.getElementById('net-dot').classList.toggle('off', !online);
@@ -1125,9 +1129,9 @@
         <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveLoyaltySettings()">Save</button>
       </div>
       <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">1 point = R1 off a future sale. Account is keyed on the customer's cellphone number. Set 0 to turn earning off. (e.g. 5% = R100 spent earns 5 points = R5.)</div>
-      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.3rem">Demo mode</div>
-      <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="toggleDemo()">${isDemo() ? 'Turn demo OFF (use real Shopify)' : 'Turn demo ON (no Shopify)'}</button>
-      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Demo uses a sample catalogue; sales/orders/stock are simulated locally and never touch Shopify.</div>`;
+      ${isDemo() ? `<div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.3rem">Demo mode</div>
+      <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="toggleDemo()">Turn demo OFF (use real Shopify)</button>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Demo only ever starts from an explicit ?demo=1 link — the till is real by default.</div>` : ''}`;
   }
   function addStaff() {
     const name = (document.getElementById('st-name').value || '').trim();
