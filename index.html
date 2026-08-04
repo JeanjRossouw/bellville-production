@@ -319,6 +319,7 @@
     <button class="tab" onclick="showSection('done')">🎁 Done (Ready)</button>
     <button class="tab" onclick="showSection('calendar')">📅 Calendar</button>
     <button class="tab" onclick="showSection('dispatch')">🚚 Dispatch (All)</button>
+    <button class="tab" onclick="showSection('repairs')">🔧 Repairs</button>
     <button class="tab" onclick="showSection('finished')">✅ Finished</button>
     <button class="tab" onclick="showSection('fabric')">Fabric Orders</button>
     <button class="tab" onclick="showSection('bom')">🔧 BOM</button>
@@ -610,7 +611,15 @@
   <!-- DISPATCH (ALL 3 BUSINESSES COMBINED) -->
   <div id="section-dispatch" class="section">
     <div class="card">
-      <div class="card-title">🚚 DELIVERY SCHEDULE (ALL BUSINESSES)</div>
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>🚚 DELIVERY SCHEDULE (ALL BUSINESSES)</span>
+        <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap">
+          <span id="dispatch-sel-count" style="font-size:11px; color:var(--text-muted)"></span>
+          <button class="btn btn-sm" onclick="dispatchSelectAll()" title="Tick every order in the current filter">☑ Select all</button>
+          <button class="btn btn-sm" onclick="dispatchClearSelection()" title="Untick everything">✕ Clear</button>
+          <button class="btn btn-sm btn-primary" onclick="printDispatchOrders()" title="Print the ticked orders — or the whole current list if none are ticked">🖨️ PRINT</button>
+        </div>
+      </div>
       <div class="row">
         <div class="f1">
           <label>Filter</label>
@@ -631,9 +640,36 @@
       </div>
     </div>
     
+    <div id="dispatch-repairs"></div>
     <div id="dispatch-list"><div class="empty">No orders to dispatch</div></div>
   </div>
-  
+
+  <!-- REPAIRS -->
+  <div id="section-repairs" class="section">
+    <div class="card">
+      <div class="card-title">🔧 LOG A REPAIR</div>
+      <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.75rem">
+        Log what came back and why. Dispatch then schedules the pickup and the return delivery on the Dispatch tab, and the workshop marks it done.
+      </p>
+      <div class="row">
+        <div class="f1"><label>Order # (type to search)</label><input id="rep-order" list="rep-order-list" placeholder="Invoice / order number" oninput="repairOrderPicked(this.value)"><datalist id="rep-order-list"></datalist></div>
+        <div class="f1"><label>Customer</label><input id="rep-customer" placeholder="Customer name"></div>
+        <div class="f1"><label>Phone</label><input id="rep-phone" placeholder="Cell number"></div>
+        <div class="f1"><label>Product</label><input id="rep-product" placeholder="e.g. 2 Seater — Amber"></div>
+      </div>
+      <div class="row">
+        <div class="f2"><label>What's wrong (reason)</label><input id="rep-reason" placeholder="e.g. Broken leg / torn seam / cushion collapsed"></div>
+        <div class="f2"><label>Details (optional)</label><input id="rep-details" placeholder="Anything the workshop should know"></div>
+        <div class="f1" style="min-width:140px"><label>&nbsp;</label><button class="btn btn-primary" onclick="logRepair()">LOG REPAIR</button></div>
+      </div>
+      <div id="rep-status" style="font-size:11px; color:var(--text-muted); margin-top:0.25rem"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">🔧 REPAIRS</div>
+      <div id="repair-list"><div class="empty">No repairs logged</div></div>
+    </div>
+  </div>
+
   <!-- FINISHED ORDERS -->
   <div id="section-finished" class="section">
     <div class="card">
@@ -955,6 +991,7 @@
             <option value="products">Product costing (labour per piece + selling price)</option>
             <option value="materials">Material unit costs</option>
             <option value="overheads">Overheads</option>
+            <option value="bom">BOM lines (materials per product)</option>
           </select>
           <button class="btn btn-sm" onclick="exportCostingCSV()" title="Download a CSV to edit in Excel / Google Sheets">⬇️ Export CSV</button>
           <label class="btn btn-sm" style="cursor:pointer; margin:0" title="Import an edited CSV back in">⬆️ Import CSV<input type="file" id="costing-csv-upload" accept=".csv,text/csv" style="display:none" onchange="importCostingCSV(this)"></label>
@@ -1150,7 +1187,7 @@
   // Tab name array — order MUST match the order of .tab buttons in the DOM.
   // Used by showSection and applyRolePermissions. Declared at top so it's
   // initialized regardless of where in the script execution lands.
-  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'woodwork', 'pos'];
+  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'woodwork', 'pos'];
 
   // Categories that never need fabric (wood products). Declared up here so it's
   // initialized BEFORE switchBiz('bellville') → onIntakeCategoryChange() runs at
@@ -1349,6 +1386,7 @@
     if (sec === 'bom') renderBomSection();
     if (sec === 'materials') renderInventory();
     if (sec === 'costing' && typeof renderCosting === 'function') renderCosting();
+    if (sec === 'repairs' && typeof renderRepairs === 'function') renderRepairs();
     if (sec === 'intake') populateProductDatalist();
     if (sec === 'done') renderDoneOrders();
     if (sec === 'planner') renderPlanner();
@@ -3930,6 +3968,8 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof renderWoodwork === 'function') renderWoodwork();
     // Costing self-guards (no-op unless the Costing tab is mounted) — keeps it live on sync.
     if (typeof renderCosting === 'function') renderCosting();
+    // Repairs list stays live on sync too (self-guarded on its element).
+    if (typeof renderRepairs === 'function') renderRepairs();
   }
   
   function renderDoneOrders() {
@@ -4011,6 +4051,268 @@ ${_PRODUCTION_PRINT_STYLES}
   
   window.renderDoneOrders = renderDoneOrders;
   
+  // ===== Repairs — staff log a repair; dispatch schedules pickup + return =====
+  // Record: { id, orderNo, customer, phone, product, reason, details, status,
+  //           pickupDate, returnDate, by, at } stored per business (currentData().repairs).
+  // Lifecycle: logged → in-repair → done → returned.
+  function _repairsFor(bizData) {
+    if (!Array.isArray(bizData.repairs)) bizData.repairs = [];
+    return bizData.repairs;
+  }
+  function _repairs() { return _repairsFor(currentData()); }
+  function _findRepair(id) {
+    const bizs = ['bellville', 'pinkfoot', 'repticube'];
+    for (let i = 0; i < bizs.length; i++) {
+      const r = ((data[bizs[i]] && data[bizs[i]].repairs) || []).find(x => x && x.id === id);
+      if (r) return { r: r, biz: bizs[i] };
+    }
+    return null;
+  }
+  let _repOrderIndex = {};
+  function repairOrderPicked(label) {
+    const o = _repOrderIndex[label];
+    if (!o) return;
+    const set = (fid, v) => { const el = document.getElementById(fid); if (el && v) el.value = v; };
+    set('rep-customer', o.customer);
+    set('rep-phone', o.phone);
+    set('rep-product', (o.category ? '[' + o.category + '] ' : '') + (o.product || '') + (o.fabric ? ' — ' + o.fabric : ''));
+  }
+  window.repairOrderPicked = repairOrderPicked;
+
+  function logRepair() {
+    const val = (fid) => (document.getElementById(fid) ? document.getElementById(fid).value : '').trim();
+    const st = document.getElementById('rep-status');
+    const orderNo = val('rep-order');
+    const reason = val('rep-reason');
+    if (!reason) { if (st) st.textContent = '✗ Say what is wrong (the reason) before logging.'; return; }
+    if (!orderNo && !val('rep-customer')) { if (st) st.textContent = '✗ Give an order # or at least the customer name.'; return; }
+    snapshotState();
+    _repairs().unshift({
+      id: 'REP-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5),
+      orderNo: orderNo, customer: val('rep-customer'), phone: val('rep-phone'), product: val('rep-product'),
+      reason: reason, details: val('rep-details'),
+      status: 'logged', pickupDate: '', returnDate: '',
+      by: (typeof currentUser !== 'undefined' && currentUser && currentUser.email) ? currentUser.email.split('@')[0] : 'staff',
+      at: new Date().toISOString()
+    });
+    saveData();
+    ['rep-order', 'rep-customer', 'rep-phone', 'rep-product', 'rep-reason', 'rep-details'].forEach(fid => { const el = document.getElementById(fid); if (el) el.value = ''; });
+    if (st) st.textContent = '✓ Repair logged — dispatch can now schedule the pickup.';
+    renderRepairs();
+    if (typeof renderDispatch === 'function') renderDispatch();
+  }
+  window.logRepair = logRepair;
+
+  function repairSetStatus(id, status) {
+    const found = _findRepair(id);
+    if (!found) return;
+    snapshotState();
+    found.r.status = status;
+    saveData();
+    renderRepairs();
+    if (typeof renderDispatch === 'function') renderDispatch();
+  }
+  window.repairSetStatus = repairSetStatus;
+  function repairSetDate(id, field, dateStr) {
+    const found = _findRepair(id);
+    if (!found) return;
+    snapshotState();
+    found.r[field] = dateStr || '';
+    saveData();
+    renderRepairs();
+    if (typeof renderDispatch === 'function') renderDispatch();
+  }
+  window.repairSetDate = repairSetDate;
+  function deleteRepair(id) {
+    if (!confirm('Remove this repair?')) return;
+    const found = _findRepair(id);
+    if (!found) return;
+    snapshotState();
+    data[found.biz].repairs = data[found.biz].repairs.filter(x => x.id !== id);
+    saveData();
+    renderRepairs();
+    if (typeof renderDispatch === 'function') renderDispatch();
+  }
+  window.deleteRepair = deleteRepair;
+
+  const _REPAIR_BADGE = {
+    logged: '<span style="color:#991b1b; font-weight:700">🔴 LOGGED</span>',
+    'in-repair': '<span style="color:#92400e; font-weight:700">🔧 IN REPAIR</span>',
+    done: '<span style="color:#166534; font-weight:700">✅ DONE</span>',
+    returned: '<span style="color:#6b7280; font-weight:700">🏠 RETURNED</span>'
+  };
+  function _repairActionButtons(r) {
+    const b = [];
+    if (r.status === 'logged') b.push(`<button class="btn btn-sm" onclick="repairSetStatus('${r.id}','in-repair')">Picked up → in repair</button>`);
+    if (r.status === 'in-repair') b.push(`<button class="btn btn-sm" style="background:var(--success,#16a34a); color:#fff; border-color:var(--success,#16a34a)" onclick="repairSetStatus('${r.id}','done')">✓ Repair done</button>`);
+    if (r.status === 'done') b.push(`<button class="btn btn-sm" onclick="repairSetStatus('${r.id}','returned')">🏠 Returned to customer</button>`);
+    if (r.status === 'returned') b.push(`<button class="btn btn-sm" onclick="repairSetStatus('${r.id}','done')">Reopen</button>`);
+    return b.join('');
+  }
+  function _repairRowHtml(r, bizTag) {
+    const bg = r.status === 'returned' ? '#f3f4f6' : r.status === 'done' ? '#f0fdf4' : r.status === 'in-repair' ? '#fffbeb' : '#fef2f2';
+    return `
+      <div style="border:1px solid var(--border,#ddd); border-radius:8px; padding:8px 10px; margin-bottom:6px; background:${bg}">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px">
+          <div style="min-width:220px; flex:1">
+            <div style="font-weight:700">${bizTag || ''}${r.orderNo ? '#' + _escape(r.orderNo) + ' — ' : ''}${_escape(r.customer || 'No name')}${r.phone ? ' <span style="color:var(--text-muted,#888); font-weight:400">· 📱 ' + _escape(r.phone) + '</span>' : ''}</div>
+            ${r.product ? `<div style="font-size:12px; margin-top:2px">${_escape(r.product)}</div>` : ''}
+            <div style="font-size:12px; color:#991b1b; font-weight:600; margin-top:2px">⚠️ ${_escape(r.reason || '')}</div>
+            ${r.details ? `<div style="font-size:11px; color:var(--text-muted,#888); margin-top:2px">${_escape(r.details)}</div>` : ''}
+            <div style="font-size:11px; color:var(--text-muted,#888); margin-top:3px">${_REPAIR_BADGE[r.status] || r.status} · logged ${_escape(String(r.at || '').slice(0, 10))}${r.by ? ' by ' + _escape(r.by) : ''}</div>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:0.35rem; align-items:flex-end">
+            <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
+              <label style="margin:0; font-size:10px; color:var(--text-muted)">Pickup:</label>
+              <input type="date" value="${_escape(r.pickupDate || '')}" onchange="repairSetDate('${r.id}','pickupDate',this.value)" style="width:140px; padding:4px 8px; margin:0">
+              <label style="margin:0; font-size:10px; color:var(--text-muted)">Return:</label>
+              <input type="date" value="${_escape(r.returnDate || '')}" onchange="repairSetDate('${r.id}','returnDate',this.value)" style="width:140px; padding:4px 8px; margin:0">
+            </div>
+            <div style="display:flex; gap:0.4rem; flex-wrap:wrap; justify-content:flex-end">
+              ${_repairActionButtons(r)}
+              <button class="btn btn-sm btn-danger" onclick="deleteRepair('${r.id}')">✕</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }
+  function renderRepairs() {
+    const list = document.getElementById('repair-list');
+    if (!list) return;
+    // Order picker: every order across all shops (incl. finished) — repairs come back on old orders too.
+    const dl = document.getElementById('rep-order-list');
+    if (dl) {
+      _repOrderIndex = {};
+      const opts = [];
+      ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+        ((data[b] && data[b].orders) || []).forEach(o => {
+          if (!o) return;
+          const label = '#' + (o.invoice || o.id) + ' — ' + (o.customer || '') + (o.product ? ' — ' + o.product : '');
+          _repOrderIndex[label] = o;
+          opts.push(`<option value="${_escape(label)}"></option>`);
+        });
+      });
+      dl.innerHTML = opts.join('');
+    }
+    const items = _repairs();
+    if (!items.length) { list.innerHTML = '<div class="empty">No repairs logged</div>'; return; }
+    const rank = { logged: 0, 'in-repair': 1, done: 2, returned: 3 };
+    const sorted = items.slice().sort((a, b) => ((rank[a.status] || 0) - (rank[b.status] || 0)) || String(b.at || '').localeCompare(String(a.at || '')));
+    list.innerHTML = sorted.map(r => _repairRowHtml(r, '')).join('');
+  }
+  window.renderRepairs = renderRepairs;
+  // Active repairs across ALL businesses on the Dispatch tab, so pickups and
+  // returns get scheduled alongside deliveries.
+  function _renderDispatchRepairs() {
+    const host = document.getElementById('dispatch-repairs');
+    if (!host) return;
+    const bizLabel = { bellville: 'Bellville', pinkfoot: 'PinkFoot', repticube: 'ReptiCube' };
+    const active = [];
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      ((data[b] && data[b].repairs) || []).forEach(r => { if (r && r.status !== 'returned') active.push({ r: r, biz: b }); });
+    });
+    if (!active.length) { host.innerHTML = ''; return; }
+    const rank = { logged: 0, 'in-repair': 1, done: 2 };
+    active.sort((a, b) => ((rank[a.r.status] || 0) - (rank[b.r.status] || 0)) || String(a.r.pickupDate || a.r.at || '').localeCompare(String(b.r.pickupDate || b.r.at || '')));
+    host.innerHTML = `
+      <div class="card">
+        <div class="card-title">🔧 REPAIRS — PICKUPS &amp; RETURNS (${active.length})</div>
+        ${active.map(x => _repairRowHtml(x.r, `<span style="font-size:10px; font-weight:700; letter-spacing:0.05em; color:var(--text-muted,#888)">${bizLabel[x.biz].toUpperCase()}</span> `)).join('')}
+      </div>`;
+  }
+
+  // Dispatch print selection — keys are "biz|orderId". Survives re-renders (live sync
+  // repaints the list); initialized here but only used from user events / rAF renders.
+  let _dispatchSelected = new Set();
+  let _dispatchLastFiltered = [];
+  function toggleDispatchSelect(key, on) {
+    if (on) _dispatchSelected.add(key); else _dispatchSelected.delete(key);
+    _updateDispatchSelCount();
+  }
+  window.toggleDispatchSelect = toggleDispatchSelect;
+  function _updateDispatchSelCount() {
+    const el = document.getElementById('dispatch-sel-count');
+    if (el) el.textContent = _dispatchSelected.size ? _dispatchSelected.size + ' selected' : '';
+  }
+  function dispatchSelectAll() {
+    _dispatchLastFiltered.forEach(k => _dispatchSelected.add(k));
+    renderDispatch();
+  }
+  window.dispatchSelectAll = dispatchSelectAll;
+  function dispatchClearSelection() {
+    _dispatchSelected.clear();
+    renderDispatch();
+  }
+  window.dispatchClearSelection = dispatchClearSelection;
+
+  function printDispatchOrders() {
+    // Ticked orders, or the whole current filtered list if nothing is ticked.
+    const keys = _dispatchSelected.size ? [..._dispatchSelected] : _dispatchLastFiltered.slice();
+    if (!keys.length) { alert('Nothing to print — the current filter has no orders.'); return; }
+    const bizNames = { bellville: 'BELLVILLE', pinkfoot: 'PINKFOOT', repticube: 'REPTICUBE' };
+    const orders = [];
+    keys.forEach(k => {
+      const [b, id] = String(k).split('|');
+      const o = ((data[b] && data[b].orders) || []).find(x => x && x.id === id);
+      if (o) orders.push({ ...o, _biz: b });
+    });
+    if (!orders.length) { alert('The selected orders could not be found — refresh and try again.'); return; }
+    orders.sort((a, b) => String(a.deliveryScheduled || a.dueDate || '').localeCompare(String(b.deliveryScheduled || b.dueDate || '')));
+    const esc = (typeof _escape === 'function') ? _escape : (s => String(s == null ? '' : s));
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const blocks = orders.map(o => `
+      <div class="dnote">
+        <div class="dhead">
+          <span class="dbiz">${esc(bizNames[o._biz] || o._biz)}</span>
+          <span class="dinv">#${esc(o.invoice || o.id)}</span>
+          <span class="ddate">${o.deliveryScheduled ? 'Delivery: ' + esc(o.deliveryScheduled) + (o.deliveryTimeFrom || o.deliveryTimeTo ? ' (' + esc(o.deliveryTimeFrom || '?') + ' – ' + esc(o.deliveryTimeTo || '?') + ')' : '') : (o.dueDate ? 'Due: ' + esc(o.dueDate) : '')}</span>
+        </div>
+        <table class="dtab">
+          <tr><td class="dl">Customer</td><td class="dv">${esc(o.customer || '')}${o.phone ? ' &nbsp;·&nbsp; ' + esc(o.phone) : ''}</td></tr>
+          <tr><td class="dl">Item</td><td class="dv">${o.category ? '[' + esc(o.category) + '] ' : ''}${esc(o.product || '')}${o.fabric ? ' — ' + esc(o.fabric) : ''} &nbsp;×&nbsp; ${esc(o.qty || 1)}</td></tr>
+          ${o.notes ? `<tr><td class="dl">Notes</td><td class="dv">${esc(o.notes)}</td></tr>` : ''}
+        </table>
+        <div class="dsig">
+          <span>Received by: ____________________</span>
+          <span>Signature: ____________________</span>
+          <span>Date: ____________</span>
+        </div>
+      </div>`).join('');
+    const html = `<!DOCTYPE html><html><head><title>Dispatch sheet ${esc(todayStr)}</title>
+<style>
+  @page { size: A4; margin: 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; color: #000; }
+  body { background: #fff; padding: 8px; }
+  .no-print { padding: 10px; text-align: right; background: #f0f0f0; margin-bottom: 10px; }
+  h1 { font-size: 20px; letter-spacing: 0.04em; }
+  .sub { font-size: 11px; color: #555; margin: 4px 0 14px }
+  .dnote { border: 2px solid #000; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; break-inside: avoid; page-break-inside: avoid; }
+  .dhead { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; border-bottom: 1px solid #000; padding-bottom: 6px; margin-bottom: 6px; }
+  .dbiz { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; background: #000; color: #fff; padding: 2px 8px; }
+  .dinv { font-size: 18px; font-weight: 900; }
+  .ddate { font-size: 12px; font-weight: 700; margin-left: auto; }
+  .dtab { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .dtab td { padding: 3px 4px; vertical-align: top; }
+  .dl { width: 90px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: #555; }
+  .dv { font-weight: 600; }
+  .dsig { display: flex; gap: 18px; flex-wrap: wrap; font-size: 11px; color: #333; margin-top: 12px; }
+  @media print { .no-print { display: none; } }
+</style></head><body>
+  <div class="no-print">
+    <button onclick="window.print()" style="padding:8px 16px; font-weight:bold; background:#000; color:#fff; border:none; cursor:pointer">🖨️ PRINT ${orders.length} ORDER${orders.length === 1 ? '' : 'S'}</button>
+    <button onclick="window.close()" style="padding:8px 16px; margin-left:8px; cursor:pointer">CLOSE</button>
+  </div>
+  <h1>🚚 DISPATCH / DELIVERY SHEET</h1>
+  <div class="sub">Printed ${esc(todayStr)} · ${orders.length} order${orders.length === 1 ? '' : 's'}</div>
+  ${blocks}
+</body></html>`;
+    const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Allow pop-ups for this site, then tap PRINT again.'); return; }
+    win.document.write(html);
+    win.document.close();
+  }
+  window.printDispatchOrders = printDispatchOrders;
+
   function renderDispatch() {
     // Combine orders from ALL 3 businesses
     const allOrders = [];
@@ -4077,19 +4379,24 @@ ${_PRODUCTION_PRINT_STYLES}
       pinkfoot: { name: 'PinkFoot', color: '#ff1493' },
       repticube: { name: 'ReptiCube', color: '#00d4aa' }
     };
-    
+
+    _dispatchLastFiltered = filtered.map(o => o._biz + '|' + o.id);
+    _updateDispatchSelCount();
+
     const html = filtered.map(o => {
       const biz = bizLabels[o._biz];
+      const selKey = o._biz + '|' + o.id;
       const due = new Date(o.dueDate);
       const daysLeft = isNaN(due.getTime()) ? 0 : Math.ceil((due - today) / (1000 * 60 * 60 * 24));
       const isUrgent = daysLeft <= 7 && daysLeft >= 0;
       const isOverdue = daysLeft < 0;
-      
+
       return `
         <div class="order-card">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap">
             <div style="flex:1; min-width:250px">
               <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.5rem">
+                <input type="checkbox" ${_dispatchSelected.has(selKey) ? 'checked' : ''} onchange="toggleDispatchSelect('${selKey}', this.checked)" title="Tick to include in the printed dispatch sheet" style="width:20px; height:20px; cursor:pointer; flex-shrink:0">
                 <span style="background:${biz.color}; color:#fff; padding:3px 10px; font-size:10px; font-weight:700; letter-spacing:0.05em">${biz.name}</span>
                 <span style="font-size:18px; font-weight:700; color:var(--accent)">#${o.invoice || o.id}</span>
               </div>
@@ -4166,6 +4473,7 @@ ${_PRODUCTION_PRINT_STYLES}
     
     const list = document.getElementById('dispatch-list');
     if (list) list.innerHTML = html || '<div class="empty">No orders match this filter</div>';
+    _renderDispatchRepairs();
   }
   
   let calCurrentDate = new Date();
@@ -5188,6 +5496,28 @@ ${_PRODUCTION_PRINT_STYLES}
           if (o) rows.push([b, o.name || '', (o.monthly != null ? o.monthly : '')]);
         });
       });
+    } else if (type === 'bom') {
+      // One row per product-material line. Products with no BOM lines still get a
+      // row (blank material columns) so the full product list is visible in the sheet.
+      rows.push(['Business', 'Product', 'Material Id', 'Material', 'Qty', 'Unit', 'Unit Cost', 'Line Cost']);
+      COSTING_BIZ.forEach(b => {
+        const biz = data[b];
+        if (!biz) return;
+        const matById = {};
+        (biz.materialsLibrary || []).forEach(m => { if (m && m.id) matById[m.id] = m; });
+        Object.keys(biz.productBoms || {}).sort().forEach(key => {
+          const p = biz.productBoms[key] || {};
+          const entries = Object.entries(p.materials || {}).filter(([, q]) => parseFloat(q) > 0);
+          if (entries.length === 0) { rows.push([b, key, '', '', '', '', '', '']); return; }
+          entries
+            .map(([matId, qty]) => ({ matId, qty, m: matById[matId] }))
+            .sort((x, y) => String((x.m && x.m.name) || x.matId).localeCompare(String((y.m && y.m.name) || y.matId)))
+            .forEach(({ matId, qty, m }) => {
+              const cost = m ? (parseFloat(m.cost) || 0) : 0;
+              rows.push([b, key, matId, (m && m.name) || '', qty, (m && m.unit) || '', cost, (parseFloat(qty) * cost).toFixed(2)]);
+            });
+        });
+      });
     } else {
       rows.push(['Business', 'Product', 'Material Cost (auto)', 'Labour Per Piece', 'Selling Price']);
       COSTING_BIZ.forEach(b => {
@@ -5240,6 +5570,30 @@ ${_PRODUCTION_PRINT_STYLES}
             if (!m) { skipped++; continue; }
             const cv = costIdx >= 0 ? num(cells[costIdx]) : null;
             if (cv != null) { m.cost = cv; updated++; } else skipped++;
+          } else if (type === 'bom') {
+            // Header names overlap ("Material Id" contains "Material"), so match exactly.
+            const exact = (name) => header.findIndex(h => h === name);
+            const prodIdx = exact('product');
+            const matIdIdx = exact('material id');
+            const matNameIdx = exact('material');
+            const qtyIdx = col(['qty', 'quantity']);
+            const key = prodIdx >= 0 ? String(cells[prodIdx] || '').trim() : '';
+            if (!key || !biz.productBoms) { skipped++; continue; }
+            const realKey = biz.productBoms[key] ? key : Object.keys(biz.productBoms).find(k => k.toLowerCase() === key.toLowerCase());
+            if (!realKey) { skipped++; continue; }
+            const mid = matIdIdx >= 0 ? String(cells[matIdIdx] || '').trim() : '';
+            const mnm = matNameIdx >= 0 ? String(cells[matNameIdx] || '').trim() : '';
+            if (!mid && !mnm) { skipped++; continue; } // placeholder row for a product with no BOM yet
+            const lib = biz.materialsLibrary || [];
+            let m = mid ? lib.find(x => x && x.id === mid) : null;
+            if (!m && mnm) m = lib.find(x => x && String(x.name || '').toLowerCase() === mnm.toLowerCase());
+            if (!m) { skipped++; continue; }
+            const qv = qtyIdx >= 0 ? num(cells[qtyIdx]) : null;
+            if (qv == null) { skipped++; continue; }
+            const p = biz.productBoms[realKey];
+            if (!p.materials || typeof p.materials !== 'object') p.materials = {};
+            if (qv <= 0) { if (p.materials[m.id] != null) { delete p.materials[m.id]; updated++; } else skipped++; }
+            else { if (p.materials[m.id] == null) added++; else updated++; p.materials[m.id] = qv; }
           } else if (type === 'overheads') {
             const nameIdx = col(['overhead', 'name']);
             const monIdx = col(['monthly', 'amount', 'month']);
@@ -9746,13 +10100,13 @@ ${totalsSection}
   // currentRole declared at top of script (TDZ safety)
   // Role permissions: which tabs each role can see
   const ROLE_PERMISSIONS = {
-    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'woodwork', 'pos'],
-    sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'woodwork', 'pos'],
-    factory: ['dashboard', 'orders', 'done', 'calendar', 'fabric', 'bom', 'schedule', 'planner'],
-    dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'finished', 'fabric'],
+    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'woodwork', 'pos'],
+    sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'woodwork', 'pos'],
+    factory: ['dashboard', 'orders', 'done', 'calendar', 'repairs', 'fabric', 'bom', 'schedule', 'planner'],
+    dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric'],
     fabric: ['dashboard', 'calendar', 'fabric'],
     cashier: ['dashboard', 'fabric', 'pos'],
-    manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'pos']
+    manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'pos']
   };
   
   // Roles that should NOT see fabric ordering info on dashboard or order cards
