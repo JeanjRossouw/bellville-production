@@ -319,6 +319,7 @@
     <button class="tab" onclick="showSection('done')">🎁 Done (Ready)</button>
     <button class="tab" onclick="showSection('calendar')">📅 Calendar</button>
     <button class="tab" onclick="showSection('dispatch')">🚚 Dispatch (All)</button>
+    <button class="tab" onclick="showSection('repairs')">🔧 Repairs</button>
     <button class="tab" onclick="showSection('finished')">✅ Finished</button>
     <button class="tab" onclick="showSection('fabric')">Fabric Orders</button>
     <button class="tab" onclick="showSection('bom')">🔧 BOM</button>
@@ -639,9 +640,36 @@
       </div>
     </div>
     
+    <div id="dispatch-repairs"></div>
     <div id="dispatch-list"><div class="empty">No orders to dispatch</div></div>
   </div>
-  
+
+  <!-- REPAIRS -->
+  <div id="section-repairs" class="section">
+    <div class="card">
+      <div class="card-title">🔧 LOG A REPAIR</div>
+      <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.75rem">
+        Log what came back and why. Dispatch then schedules the pickup and the return delivery on the Dispatch tab, and the workshop marks it done.
+      </p>
+      <div class="row">
+        <div class="f1"><label>Order # (type to search)</label><input id="rep-order" list="rep-order-list" placeholder="Invoice / order number" oninput="repairOrderPicked(this.value)"><datalist id="rep-order-list"></datalist></div>
+        <div class="f1"><label>Customer</label><input id="rep-customer" placeholder="Customer name"></div>
+        <div class="f1"><label>Phone</label><input id="rep-phone" placeholder="Cell number"></div>
+        <div class="f1"><label>Product</label><input id="rep-product" placeholder="e.g. 2 Seater — Amber"></div>
+      </div>
+      <div class="row">
+        <div class="f2"><label>What's wrong (reason)</label><input id="rep-reason" placeholder="e.g. Broken leg / torn seam / cushion collapsed"></div>
+        <div class="f2"><label>Details (optional)</label><input id="rep-details" placeholder="Anything the workshop should know"></div>
+        <div class="f1" style="min-width:140px"><label>&nbsp;</label><button class="btn btn-primary" onclick="logRepair()">LOG REPAIR</button></div>
+      </div>
+      <div id="rep-status" style="font-size:11px; color:var(--text-muted); margin-top:0.25rem"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">🔧 REPAIRS</div>
+      <div id="repair-list"><div class="empty">No repairs logged</div></div>
+    </div>
+  </div>
+
   <!-- FINISHED ORDERS -->
   <div id="section-finished" class="section">
     <div class="card">
@@ -1152,7 +1180,7 @@
   // Tab name array — order MUST match the order of .tab buttons in the DOM.
   // Used by showSection and applyRolePermissions. Declared at top so it's
   // initialized regardless of where in the script execution lands.
-  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'woodwork', 'pos'];
+  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'woodwork', 'pos'];
 
   // Categories that never need fabric (wood products). Declared up here so it's
   // initialized BEFORE switchBiz('bellville') → onIntakeCategoryChange() runs at
@@ -1351,6 +1379,7 @@
     if (sec === 'bom') renderBomSection();
     if (sec === 'materials') renderInventory();
     if (sec === 'costing' && typeof renderCosting === 'function') renderCosting();
+    if (sec === 'repairs' && typeof renderRepairs === 'function') renderRepairs();
     if (sec === 'intake') populateProductDatalist();
     if (sec === 'done') renderDoneOrders();
     if (sec === 'planner') renderPlanner();
@@ -3932,6 +3961,8 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof renderWoodwork === 'function') renderWoodwork();
     // Costing self-guards (no-op unless the Costing tab is mounted) — keeps it live on sync.
     if (typeof renderCosting === 'function') renderCosting();
+    // Repairs list stays live on sync too (self-guarded on its element).
+    if (typeof renderRepairs === 'function') renderRepairs();
   }
   
   function renderDoneOrders() {
@@ -4013,6 +4044,176 @@ ${_PRODUCTION_PRINT_STYLES}
   
   window.renderDoneOrders = renderDoneOrders;
   
+  // ===== Repairs — staff log a repair; dispatch schedules pickup + return =====
+  // Record: { id, orderNo, customer, phone, product, reason, details, status,
+  //           pickupDate, returnDate, by, at } stored per business (currentData().repairs).
+  // Lifecycle: logged → in-repair → done → returned.
+  function _repairsFor(bizData) {
+    if (!Array.isArray(bizData.repairs)) bizData.repairs = [];
+    return bizData.repairs;
+  }
+  function _repairs() { return _repairsFor(currentData()); }
+  function _findRepair(id) {
+    const bizs = ['bellville', 'pinkfoot', 'repticube'];
+    for (let i = 0; i < bizs.length; i++) {
+      const r = ((data[bizs[i]] && data[bizs[i]].repairs) || []).find(x => x && x.id === id);
+      if (r) return { r: r, biz: bizs[i] };
+    }
+    return null;
+  }
+  let _repOrderIndex = {};
+  function repairOrderPicked(label) {
+    const o = _repOrderIndex[label];
+    if (!o) return;
+    const set = (fid, v) => { const el = document.getElementById(fid); if (el && v) el.value = v; };
+    set('rep-customer', o.customer);
+    set('rep-phone', o.phone);
+    set('rep-product', (o.category ? '[' + o.category + '] ' : '') + (o.product || '') + (o.fabric ? ' — ' + o.fabric : ''));
+  }
+  window.repairOrderPicked = repairOrderPicked;
+
+  function logRepair() {
+    const val = (fid) => (document.getElementById(fid) ? document.getElementById(fid).value : '').trim();
+    const st = document.getElementById('rep-status');
+    const orderNo = val('rep-order');
+    const reason = val('rep-reason');
+    if (!reason) { if (st) st.textContent = '✗ Say what is wrong (the reason) before logging.'; return; }
+    if (!orderNo && !val('rep-customer')) { if (st) st.textContent = '✗ Give an order # or at least the customer name.'; return; }
+    snapshotState();
+    _repairs().unshift({
+      id: 'REP-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5),
+      orderNo: orderNo, customer: val('rep-customer'), phone: val('rep-phone'), product: val('rep-product'),
+      reason: reason, details: val('rep-details'),
+      status: 'logged', pickupDate: '', returnDate: '',
+      by: (typeof currentUser !== 'undefined' && currentUser && currentUser.email) ? currentUser.email.split('@')[0] : 'staff',
+      at: new Date().toISOString()
+    });
+    saveData();
+    ['rep-order', 'rep-customer', 'rep-phone', 'rep-product', 'rep-reason', 'rep-details'].forEach(fid => { const el = document.getElementById(fid); if (el) el.value = ''; });
+    if (st) st.textContent = '✓ Repair logged — dispatch can now schedule the pickup.';
+    renderRepairs();
+    if (typeof renderDispatch === 'function') renderDispatch();
+  }
+  window.logRepair = logRepair;
+
+  function repairSetStatus(id, status) {
+    const found = _findRepair(id);
+    if (!found) return;
+    snapshotState();
+    found.r.status = status;
+    saveData();
+    renderRepairs();
+    if (typeof renderDispatch === 'function') renderDispatch();
+  }
+  window.repairSetStatus = repairSetStatus;
+  function repairSetDate(id, field, dateStr) {
+    const found = _findRepair(id);
+    if (!found) return;
+    snapshotState();
+    found.r[field] = dateStr || '';
+    saveData();
+    renderRepairs();
+    if (typeof renderDispatch === 'function') renderDispatch();
+  }
+  window.repairSetDate = repairSetDate;
+  function deleteRepair(id) {
+    if (!confirm('Remove this repair?')) return;
+    const found = _findRepair(id);
+    if (!found) return;
+    snapshotState();
+    data[found.biz].repairs = data[found.biz].repairs.filter(x => x.id !== id);
+    saveData();
+    renderRepairs();
+    if (typeof renderDispatch === 'function') renderDispatch();
+  }
+  window.deleteRepair = deleteRepair;
+
+  const _REPAIR_BADGE = {
+    logged: '<span style="color:#991b1b; font-weight:700">🔴 LOGGED</span>',
+    'in-repair': '<span style="color:#92400e; font-weight:700">🔧 IN REPAIR</span>',
+    done: '<span style="color:#166534; font-weight:700">✅ DONE</span>',
+    returned: '<span style="color:#6b7280; font-weight:700">🏠 RETURNED</span>'
+  };
+  function _repairActionButtons(r) {
+    const b = [];
+    if (r.status === 'logged') b.push(`<button class="btn btn-sm" onclick="repairSetStatus('${r.id}','in-repair')">Picked up → in repair</button>`);
+    if (r.status === 'in-repair') b.push(`<button class="btn btn-sm" style="background:var(--success,#16a34a); color:#fff; border-color:var(--success,#16a34a)" onclick="repairSetStatus('${r.id}','done')">✓ Repair done</button>`);
+    if (r.status === 'done') b.push(`<button class="btn btn-sm" onclick="repairSetStatus('${r.id}','returned')">🏠 Returned to customer</button>`);
+    if (r.status === 'returned') b.push(`<button class="btn btn-sm" onclick="repairSetStatus('${r.id}','done')">Reopen</button>`);
+    return b.join('');
+  }
+  function _repairRowHtml(r, bizTag) {
+    const bg = r.status === 'returned' ? '#f3f4f6' : r.status === 'done' ? '#f0fdf4' : r.status === 'in-repair' ? '#fffbeb' : '#fef2f2';
+    return `
+      <div style="border:1px solid var(--border,#ddd); border-radius:8px; padding:8px 10px; margin-bottom:6px; background:${bg}">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px">
+          <div style="min-width:220px; flex:1">
+            <div style="font-weight:700">${bizTag || ''}${r.orderNo ? '#' + _escape(r.orderNo) + ' — ' : ''}${_escape(r.customer || 'No name')}${r.phone ? ' <span style="color:var(--text-muted,#888); font-weight:400">· 📱 ' + _escape(r.phone) + '</span>' : ''}</div>
+            ${r.product ? `<div style="font-size:12px; margin-top:2px">${_escape(r.product)}</div>` : ''}
+            <div style="font-size:12px; color:#991b1b; font-weight:600; margin-top:2px">⚠️ ${_escape(r.reason || '')}</div>
+            ${r.details ? `<div style="font-size:11px; color:var(--text-muted,#888); margin-top:2px">${_escape(r.details)}</div>` : ''}
+            <div style="font-size:11px; color:var(--text-muted,#888); margin-top:3px">${_REPAIR_BADGE[r.status] || r.status} · logged ${_escape(String(r.at || '').slice(0, 10))}${r.by ? ' by ' + _escape(r.by) : ''}</div>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:0.35rem; align-items:flex-end">
+            <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
+              <label style="margin:0; font-size:10px; color:var(--text-muted)">Pickup:</label>
+              <input type="date" value="${_escape(r.pickupDate || '')}" onchange="repairSetDate('${r.id}','pickupDate',this.value)" style="width:140px; padding:4px 8px; margin:0">
+              <label style="margin:0; font-size:10px; color:var(--text-muted)">Return:</label>
+              <input type="date" value="${_escape(r.returnDate || '')}" onchange="repairSetDate('${r.id}','returnDate',this.value)" style="width:140px; padding:4px 8px; margin:0">
+            </div>
+            <div style="display:flex; gap:0.4rem; flex-wrap:wrap; justify-content:flex-end">
+              ${_repairActionButtons(r)}
+              <button class="btn btn-sm btn-danger" onclick="deleteRepair('${r.id}')">✕</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }
+  function renderRepairs() {
+    const list = document.getElementById('repair-list');
+    if (!list) return;
+    // Order picker: every order across all shops (incl. finished) — repairs come back on old orders too.
+    const dl = document.getElementById('rep-order-list');
+    if (dl) {
+      _repOrderIndex = {};
+      const opts = [];
+      ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+        ((data[b] && data[b].orders) || []).forEach(o => {
+          if (!o) return;
+          const label = '#' + (o.invoice || o.id) + ' — ' + (o.customer || '') + (o.product ? ' — ' + o.product : '');
+          _repOrderIndex[label] = o;
+          opts.push(`<option value="${_escape(label)}"></option>`);
+        });
+      });
+      dl.innerHTML = opts.join('');
+    }
+    const items = _repairs();
+    if (!items.length) { list.innerHTML = '<div class="empty">No repairs logged</div>'; return; }
+    const rank = { logged: 0, 'in-repair': 1, done: 2, returned: 3 };
+    const sorted = items.slice().sort((a, b) => ((rank[a.status] || 0) - (rank[b.status] || 0)) || String(b.at || '').localeCompare(String(a.at || '')));
+    list.innerHTML = sorted.map(r => _repairRowHtml(r, '')).join('');
+  }
+  window.renderRepairs = renderRepairs;
+  // Active repairs across ALL businesses on the Dispatch tab, so pickups and
+  // returns get scheduled alongside deliveries.
+  function _renderDispatchRepairs() {
+    const host = document.getElementById('dispatch-repairs');
+    if (!host) return;
+    const bizLabel = { bellville: 'Bellville', pinkfoot: 'PinkFoot', repticube: 'ReptiCube' };
+    const active = [];
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      ((data[b] && data[b].repairs) || []).forEach(r => { if (r && r.status !== 'returned') active.push({ r: r, biz: b }); });
+    });
+    if (!active.length) { host.innerHTML = ''; return; }
+    const rank = { logged: 0, 'in-repair': 1, done: 2 };
+    active.sort((a, b) => ((rank[a.r.status] || 0) - (rank[b.r.status] || 0)) || String(a.r.pickupDate || a.r.at || '').localeCompare(String(b.r.pickupDate || b.r.at || '')));
+    host.innerHTML = `
+      <div class="card">
+        <div class="card-title">🔧 REPAIRS — PICKUPS &amp; RETURNS (${active.length})</div>
+        ${active.map(x => _repairRowHtml(x.r, `<span style="font-size:10px; font-weight:700; letter-spacing:0.05em; color:var(--text-muted,#888)">${bizLabel[x.biz].toUpperCase()}</span> `)).join('')}
+      </div>`;
+  }
+
   // Dispatch print selection — keys are "biz|orderId". Survives re-renders (live sync
   // repaints the list); initialized here but only used from user events / rAF renders.
   let _dispatchSelected = new Set();
@@ -4265,6 +4466,7 @@ ${_PRODUCTION_PRINT_STYLES}
     
     const list = document.getElementById('dispatch-list');
     if (list) list.innerHTML = html || '<div class="empty">No orders match this filter</div>';
+    _renderDispatchRepairs();
   }
   
   let calCurrentDate = new Date();
@@ -9891,13 +10093,13 @@ ${totalsSection}
   // currentRole declared at top of script (TDZ safety)
   // Role permissions: which tabs each role can see
   const ROLE_PERMISSIONS = {
-    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'woodwork', 'pos'],
-    sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'woodwork', 'pos'],
-    factory: ['dashboard', 'orders', 'done', 'calendar', 'fabric', 'bom', 'schedule', 'planner'],
-    dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'finished', 'fabric'],
+    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'woodwork', 'pos'],
+    sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'woodwork', 'pos'],
+    factory: ['dashboard', 'orders', 'done', 'calendar', 'repairs', 'fabric', 'bom', 'schedule', 'planner'],
+    dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric'],
     fabric: ['dashboard', 'calendar', 'fabric'],
     cashier: ['dashboard', 'fabric', 'pos'],
-    manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'pos']
+    manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'pos']
   };
   
   // Roles that should NOT see fabric ordering info on dashboard or order cards
