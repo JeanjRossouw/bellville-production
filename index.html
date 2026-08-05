@@ -16,7 +16,7 @@
   <!-- Firebase SDK -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
-    import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+    import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
     import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
     
     const firebaseConfig = {
@@ -45,6 +45,7 @@
       createUser: createUserWithEmailAndPassword,
       signOut,
       onAuthStateChanged,
+      signInAnonymously,
       doc, setDoc, getDoc, onSnapshot, collection
     };
     
@@ -285,6 +286,26 @@
   <div style="margin-top:2rem; text-align:center; font-size:11px; color:#555">Live data via Firestore · Updates automatically</div>
 </div>
 
+<!-- CLIENT DELIVERY BOOKING — only shown when URL has ?book=1 (link sent by WhatsApp when an order is done) -->
+<div id="booking-only-view" style="display:none; position:fixed; inset:0; background:#f2f0ec; color:#1c1917; z-index:9000; overflow:auto; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; -webkit-font-smoothing:antialiased">
+  <div id="booking-header" style="background:linear-gradient(135deg,#7c4a21,#a3622e); color:#fff; padding:1.75rem 1.25rem 2.75rem; text-align:center">
+    <div id="booking-biz-name" style="font-size:11px; letter-spacing:0.22em; text-transform:uppercase; opacity:0.85">Delivery booking</div>
+    <div style="font-size:25px; font-weight:800; margin-top:0.45rem; letter-spacing:-0.01em">Book your delivery</div>
+    <div id="booking-order-info" style="display:inline-block; font-size:13px; font-weight:600; margin-top:0.7rem; background:rgba(255,255,255,0.16); border:1px solid rgba(255,255,255,0.25); border-radius:999px; padding:0.3rem 0.9rem"></div>
+  </div>
+  <div style="max-width:560px; margin:-1.6rem auto 0; padding:0 1rem 3rem">
+    <div id="booking-content"><div style="text-align:center; color:#78716c; padding:2.5rem 0">Loading available dates…</div></div>
+    <div style="text-align:center; font-size:11px; color:#a8a29e; margin-top:1.5rem">Trouble booking? Just reply to our WhatsApp message and we'll arrange it for you.</div>
+  </div>
+</div>
+
+<!-- DISPATCH PROMPT — shown when an order is marked DONE: choose delivery / pickup / courier and message the client -->
+<div id="dispatch-prompt" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9500; align-items:center; justify-content:center; padding:1rem">
+  <div style="background:var(--card-bg,#fff); color:var(--text,#111); border-radius:12px; max-width:520px; width:100%; padding:1.25rem; box-shadow:0 20px 60px rgba(0,0,0,0.4)">
+    <div id="dispatch-prompt-content"></div>
+  </div>
+</div>
+
 <div id="main-app" style="display:none">
 
 <header>
@@ -396,6 +417,13 @@
     <div class="card" id="dash-low-stock-card">
       <div class="card-title">📦 LOW STOCK MATERIALS</div>
       <div id="low-stock-list"><div class="empty">All materials in stock</div></div>
+    </div>
+    <div class="card" id="dash-week-deliveries-card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>🚚 DELIVERIES THIS WEEK</span>
+        <button class="btn btn-sm" onclick="printWeekDeliveries()">🖨️ Print week</button>
+      </div>
+      <div id="week-deliveries-list"><div class="empty">No deliveries scheduled this week</div></div>
     </div>
   </div>
   
@@ -511,7 +539,7 @@
       <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
         <span>SEARCH ORDERS</span>
         <div style="display:flex; gap:0.5rem; flex-wrap:wrap">
-          <button class="btn" onclick="resetDueDates6wk()" title="Set every active order's due date to 6 weeks after its order date">📅 Reset due dates → 6 weeks</button>
+          <button class="btn" onclick="resetDueDates6wk()" title="Set every active order's due date from its order date: 6 weeks (ReptiCube: 7 days)">📅 Reset due dates → 6 weeks / 7 days</button>
           <button class="btn btn-primary" onclick="printProductionList()">🖨️ Print Production List</button>
         </div>
       </div>
@@ -642,6 +670,43 @@
     
     <div id="dispatch-repairs"></div>
     <div id="dispatch-list"><div class="empty">No orders to dispatch</div></div>
+
+    <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>⚙️ DISPATCH MANAGER SETTINGS</span>
+        <select id="ds-biz" onchange="renderDispatchSettings()" style="font-size:12px; padding:5px">
+          <option value="bellville">Bellville</option>
+          <option value="pinkfoot">PinkFoot</option>
+          <option value="repticube">ReptiCube</option>
+        </select>
+      </div>
+      <p style="font-size:11px; color:var(--text-muted); margin-bottom:0.75rem">
+        Used by the automatic client messages when an order is marked DONE, and by the client booking calendar. Set per business.
+      </p>
+      <div class="row">
+        <div class="f2"><label>Pickup / collection address</label><input id="ds-address" placeholder="e.g. 12 Factory Rd, Bellville" onchange="saveDispatchSettings()"></div>
+        <div class="f2"><label>Google Maps link</label><input id="ds-maps" placeholder="https://maps.app.goo.gl/…" onchange="saveDispatchSettings()"></div>
+      </div>
+      <div class="row">
+        <div class="f2"><label>Opening hours (shown to client)</label><input id="ds-hours" placeholder="e.g. Mon–Fri 08:00–17:00, Sat 08:00–13:00" onchange="saveDispatchSettings()"></div>
+        <div class="f1"><label>Campos email (quotes)</label><input id="ds-campos" placeholder="quotes@campos.co.za" onchange="saveDispatchSettings()"></div>
+        <div class="f1"><label>Business WhatsApp # </label><input id="ds-whatsapp" placeholder="e.g. 0821234567" onchange="saveDispatchSettings()"></div>
+      </div>
+      <div class="row">
+        <div class="f2"><label>Delivery time slots (comma-separated)</label><input id="ds-slots" placeholder="09:00-12:00, 12:00-15:00, 15:00-17:00" onchange="saveDispatchSettings()"></div>
+        <div class="f1"><label>Deliveries per slot (capacity)</label><input id="ds-capacity" type="number" min="1" step="1" placeholder="3" onchange="saveDispatchSettings()"></div>
+        <div class="f1"><label>Days closed for delivery (block a date)</label><input id="ds-block-date" type="date" onchange="addDispatchBlockedDate(this.value)"></div>
+      </div>
+      <div class="row">
+        <div class="f2"><label style="font-size:10px">Delivery days</label>
+          <div id="ds-days" style="display:flex; gap:0.6rem; flex-wrap:wrap; font-size:12px"></div>
+        </div>
+        <div class="f2"><label style="font-size:10px">Blocked dates</label>
+          <div id="ds-blocked" style="display:flex; gap:0.4rem; flex-wrap:wrap; font-size:11px"></div>
+        </div>
+      </div>
+      <div id="ds-status" style="font-size:11px; color:var(--text-muted); margin-top:0.25rem"></div>
+    </div>
   </div>
 
   <!-- REPAIRS -->
@@ -1657,7 +1722,7 @@
           fabric: li.fabric || '',
           qty: li.qty,
           orderDate: p.orderDate || today,
-          dueDate: _dueFromLead('', li.product),
+          dueDate: _dueFromLead('', li.product, p.orderDate || today, activeBiz),
           status: 'pending',
           startDate: null,
           paymentStatus: p.paymentStatus || 'deposit',
@@ -2323,14 +2388,15 @@
   window.confirmStockIn = confirmStockIn;
   window.showMaterialReport = showMaterialReport;
   
-  // Lead time (weeks) by product type → due date. Cots/compactums 8, rocking chairs
-  // and couches/chairs 6, everything else 4. Matches on category and product name.
-  function _leadWeeksFor(category, product) {
-    // All products: 6-week lead time.
-    return 6;
+  // Lead time per business → due date, counted from the ORDER date (not from today).
+  // Bellville & PinkFoot: 6 weeks. ReptiCube: out within 7 days.
+  function _leadDaysFor(biz) {
+    return biz === 'repticube' ? 7 : 42;
   }
-  function _dueFromLead(category, product) {
-    return new Date(Date.now() + _leadWeeksFor(category, product) * 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  function _dueFromLead(category, product, orderDateStr, biz) {
+    const base = orderDateStr ? new Date(orderDateStr + 'T00:00:00') : new Date();
+    const d = isNaN(base.getTime()) ? new Date() : base;
+    return new Date(d.getTime() + _leadDaysFor(biz || activeBiz) * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   }
 
   function addOrder() {
@@ -2375,7 +2441,7 @@
       fabric,
       qty,
       orderDate: today,
-      dueDate: _dueFromLead(category, product),
+      dueDate: _dueFromLead(category, product, today, activeBiz),
       status: 'pending',
       startDate: null,
       paymentStatus,
@@ -2384,7 +2450,7 @@
 
     snapshotState();
     currentData().orders.push(order);
-    document.getElementById('order-status').innerHTML = `✓ Order added (Due: ${dueDate})`;
+    document.getElementById('order-status').innerHTML = `✓ Order added (Due: ${order.dueDate})`;
     
     document.getElementById('intake-invoice').value = '';
     document.getElementById('intake-customer').value = '';
@@ -2498,7 +2564,7 @@
             fabricStatus,
             qty,
             orderDate: dateStr || today,
-            dueDate: _dueFromLead(category, product),
+            dueDate: _dueFromLead(category, product, dateStr || today, activeBiz),
             status: status.includes('progress') ? 'in-production' : 'pending',
             startDate: status.includes('progress') ? today : null
           };
@@ -2546,9 +2612,14 @@
       
       saveData();
       render();
+      // Dispatch Manager: the moment an order lands on DONE, ask how it gets to
+      // the client and prep the WhatsApp / Campos actions.
+      if (newStatus === 'done' && oldStatus !== 'done' && typeof openDispatchPrompt === 'function') {
+        openDispatchPrompt(activeBiz, order.id);
+      }
     }
   }
-  
+
   // ============================================
   // SHARED PRODUCTION PRINT ASSETS
   // Used by BOTH printProductionList() (Active Orders → Print Production List)
@@ -2644,27 +2715,27 @@
       `;
   }
 
-  // Recompute every active order's due date to 6 weeks after its order date (all
-  // businesses). One-off cleanup for existing orders when the lead time changed.
+  // Recompute every active order's due date from its ORDER date (all businesses):
+  // Bellville & PinkFoot 6 weeks, ReptiCube 7 days. One-off cleanup when lead times change.
   function resetDueDates6wk() {
     const bizs = ['bellville', 'pinkfoot', 'repticube'];
     const active = o => o && o.status !== 'delivered' && o.status !== 'done';
     let n = 0;
     bizs.forEach(b => ((data[b] && data[b].orders) || []).forEach(o => { if (active(o)) n++; }));
     if (n === 0) { alert('No active orders to update.'); return; }
-    if (!confirm('Set the due date of all ' + n + ' active order(s), across all shops, to 6 weeks after each order\'s order date?\n\nThis overwrites existing due dates (a snapshot is saved — Ctrl+Z reverts).')) return;
+    if (!confirm('Set the due date of all ' + n + ' active order(s) from each order\'s order date?\n\n• Bellville & PinkFoot: 6 weeks\n• ReptiCube: 7 days\n\nThis overwrites existing due dates (a snapshot is saved — Ctrl+Z reverts).')) return;
     snapshotState();
     let changed = 0;
     bizs.forEach(b => ((data[b] && data[b].orders) || []).forEach(o => {
       if (!active(o)) return;
       const base = o.orderDate ? new Date(o.orderDate + 'T00:00:00') : new Date();
       if (isNaN(base.getTime())) return;
-      const due = new Date(base.getTime() + 6 * 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const due = new Date(base.getTime() + _leadDaysFor(b) * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       if (o.dueDate !== due) { o.dueDate = due; changed++; }
     }));
     saveData();
     render();
-    if (typeof toast === 'function') toast('Updated ' + changed + ' order due date(s) to a 6-week lead.', 'success', 3500);
+    if (typeof toast === 'function') toast('Updated ' + changed + ' due date(s) — 6 weeks from order date (ReptiCube 7 days).', 'success', 3500);
   }
   window.resetDueDates6wk = resetDueDates6wk;
 
@@ -3939,6 +4010,11 @@ ${_PRODUCTION_PRINT_STYLES}
   function renderImmediate() {
     // If we're in second-screen dashboard mode, only the standalone dashboard renders.
     // Skip every other per-section renderer — none of their DOM exists in this mode.
+    if (typeof IS_BOOKING_MODE !== 'undefined' && IS_BOOKING_MODE) {
+      // Client booking page — only the booking calendar renders (live slot updates).
+      if (typeof renderBookingPage === 'function') renderBookingPage();
+      return;
+    }
     if (((typeof IS_RESERVED_MODE !== 'undefined' && IS_RESERVED_MODE) || currentRole === 'fabricrep')) {
       // Fabric-rep reserved-sheet portal — only the reserved sheet renders.
       if (typeof renderReservedSheet === 'function') renderReservedSheet();
@@ -3970,6 +4046,9 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof renderCosting === 'function') renderCosting();
     // Repairs list stays live on sync too (self-guarded on its element).
     if (typeof renderRepairs === 'function') renderRepairs();
+    // Dispatch Manager: week-deliveries dashboard card + settings form (self-guarded).
+    if (typeof _renderWeekDeliveriesCard === 'function') _renderWeekDeliveriesCard();
+    if (typeof renderDispatchSettings === 'function') renderDispatchSettings();
   }
   
   function renderDoneOrders() {
@@ -4051,6 +4130,465 @@ ${_PRODUCTION_PRINT_STYLES}
   
   window.renderDoneOrders = renderDoneOrders;
   
+  // ===== Dispatch Manager — settings, done-prompt, client booking, week report =====
+  const DISPATCH_DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const BIZ_DISPLAY = { bellville: 'Bellville Furniture', pinkfoot: 'PinkFoot Boutique', repticube: 'ReptiCube' };
+  function _dispatchSettingsFor(biz) {
+    const d = data[biz];
+    if (!d) return null;
+    if (!d.dispatchSettings || typeof d.dispatchSettings !== 'object') d.dispatchSettings = {};
+    const s = d.dispatchSettings;
+    if (typeof s.address !== 'string') s.address = '';
+    if (typeof s.mapsLink !== 'string') s.mapsLink = '';
+    if (typeof s.hours !== 'string') s.hours = '';
+    if (typeof s.camposEmail !== 'string') s.camposEmail = '';
+    if (typeof s.whatsapp !== 'string') s.whatsapp = '';
+    if (typeof s.slots !== 'string' || !s.slots.trim()) s.slots = '09:00-12:00, 12:00-15:00, 15:00-17:00';
+    if (typeof s.capacity !== 'number' || s.capacity < 1) s.capacity = 3;
+    if (!Array.isArray(s.openDays)) s.openDays = [1, 2, 3, 4, 5];
+    if (!Array.isArray(s.closedDates)) s.closedDates = [];
+    return s;
+  }
+  function _dispatchSlotList(s) {
+    return String(s.slots || '').split(',').map(x => x.trim()).filter(Boolean);
+  }
+  function _dsActiveBiz() {
+    const sel = document.getElementById('ds-biz');
+    return (sel && sel.value) || 'bellville';
+  }
+  function renderDispatchSettings() {
+    const b = _dsActiveBiz();
+    const s = _dispatchSettingsFor(b);
+    if (!s) return;
+    const set = (fid, v) => { const el = document.getElementById(fid); if (el && document.activeElement !== el) el.value = v; };
+    set('ds-address', s.address); set('ds-maps', s.mapsLink); set('ds-hours', s.hours);
+    set('ds-campos', s.camposEmail); set('ds-whatsapp', s.whatsapp);
+    set('ds-slots', s.slots); set('ds-capacity', s.capacity);
+    const daysEl = document.getElementById('ds-days');
+    if (daysEl) {
+      daysEl.innerHTML = [1, 2, 3, 4, 5, 6, 0].map(d => `
+        <label style="display:flex; align-items:center; gap:4px; margin:0; cursor:pointer">
+          <input type="checkbox" ${s.openDays.includes(d) ? 'checked' : ''} onchange="toggleDispatchDay(${d}, this.checked)"> ${DISPATCH_DAY_NAMES[d]}
+        </label>`).join('');
+    }
+    const blockedEl = document.getElementById('ds-blocked');
+    if (blockedEl) {
+      blockedEl.innerHTML = s.closedDates.length
+        ? s.closedDates.slice().sort().map(dt => `<span style="border:1px solid var(--border,#ddd); border-radius:12px; padding:2px 8px">${_escape(dt)} <a style="cursor:pointer; color:var(--danger,#991b1b)" onclick="removeDispatchBlockedDate('${_escape(dt)}')">✕</a></span>`).join('')
+        : '<span style="color:var(--text-muted,#888)">None — deliveries allowed on all open days</span>';
+    }
+  }
+  window.renderDispatchSettings = renderDispatchSettings;
+  function saveDispatchSettings() {
+    const b = _dsActiveBiz();
+    const s = _dispatchSettingsFor(b);
+    if (!s) return;
+    snapshotState();
+    const val = (fid) => { const el = document.getElementById(fid); return el ? el.value.trim() : ''; };
+    s.address = val('ds-address'); s.mapsLink = val('ds-maps'); s.hours = val('ds-hours');
+    s.camposEmail = val('ds-campos'); s.whatsapp = val('ds-whatsapp');
+    s.slots = val('ds-slots') || s.slots;
+    s.capacity = Math.max(1, parseInt(val('ds-capacity')) || s.capacity);
+    saveData();
+    const st = document.getElementById('ds-status');
+    if (st) st.textContent = '✓ Saved for ' + (BIZ_DISPLAY[b] || b);
+  }
+  window.saveDispatchSettings = saveDispatchSettings;
+  function toggleDispatchDay(day, on) {
+    const s = _dispatchSettingsFor(_dsActiveBiz());
+    if (!s) return;
+    snapshotState();
+    s.openDays = on ? [...new Set([...s.openDays, day])] : s.openDays.filter(d => d !== day);
+    saveData();
+    renderDispatchSettings();
+  }
+  window.toggleDispatchDay = toggleDispatchDay;
+  function addDispatchBlockedDate(dateStr) {
+    if (!dateStr) return;
+    const s = _dispatchSettingsFor(_dsActiveBiz());
+    if (!s) return;
+    snapshotState();
+    if (!s.closedDates.includes(dateStr)) s.closedDates.push(dateStr);
+    saveData();
+    const el = document.getElementById('ds-block-date'); if (el) el.value = '';
+    renderDispatchSettings();
+  }
+  window.addDispatchBlockedDate = addDispatchBlockedDate;
+  function removeDispatchBlockedDate(dateStr) {
+    const s = _dispatchSettingsFor(_dsActiveBiz());
+    if (!s) return;
+    snapshotState();
+    s.closedDates = s.closedDates.filter(d => d !== dateStr);
+    saveData();
+    renderDispatchSettings();
+  }
+  window.removeDispatchBlockedDate = removeDispatchBlockedDate;
+
+  // Booking link the client receives — carries fallback info (slots/days/whatsapp)
+  // so the page still works even when live availability can't load.
+  function _bookingLinkFor(biz, order) {
+    const s = _dispatchSettingsFor(biz) || {};
+    const p = new URLSearchParams();
+    p.set('book', '1'); p.set('b', biz); p.set('o', order.id);
+    p.set('inv', order.invoice || order.id);
+    p.set('s', s.slots || ''); p.set('d', (s.openDays || []).join(','));
+    if (s.whatsapp) p.set('w', s.whatsapp);
+    return window.location.origin + '/?' + p.toString();
+  }
+  function _dispatchClientMsg(biz, order, method) {
+    const s = _dispatchSettingsFor(biz) || {};
+    const name = BIZ_DISPLAY[biz] || biz;
+    const head = `Hi ${order.customer},\n\nThis is ${name}. Great news — your order #${order.invoice || order.id} (${order.product}) is DONE! 🎉\n\n`;
+    if (method === 'pickup') {
+      return head + `You're welcome to collect it:\n📍 ${s.address || '(collection address — ask us)'}${s.mapsLink ? '\n🗺️ ' + s.mapsLink : ''}\n🕒 ${s.hours || 'Please contact us for opening hours'}\n\nSee you soon!`;
+    }
+    if (method === 'campos') {
+      return head + `We'll be shipping it to you with Campos Couriers within the next 2 working days. We'll send you the tracking details as soon as it's collected.\n\nThanks!`;
+    }
+    return head + `Please choose the delivery date & time slot that suits you best here:\n📅 ${_bookingLinkFor(biz, order)}\n\nIf the link gives any trouble, just reply here and we'll book it for you.`;
+  }
+
+  // Prompt shown the moment an order is marked DONE.
+  let _dispatchPromptCtx = null;
+  function openDispatchPrompt(biz, orderId) {
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    if (!order) return;
+    _dispatchPromptCtx = { biz: biz, orderId: orderId, method: order.fulfillment || null };
+    _renderDispatchPrompt();
+    const el = document.getElementById('dispatch-prompt');
+    if (el) el.style.display = 'flex';
+  }
+  window.openDispatchPrompt = openDispatchPrompt;
+  function closeDispatchPrompt() {
+    const el = document.getElementById('dispatch-prompt');
+    if (el) el.style.display = 'none';
+    _dispatchPromptCtx = null;
+  }
+  window.closeDispatchPrompt = closeDispatchPrompt;
+  function _renderDispatchPrompt() {
+    const host = document.getElementById('dispatch-prompt-content');
+    if (!host || !_dispatchPromptCtx) return;
+    const { biz, orderId, method } = _dispatchPromptCtx;
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    if (!order) { closeDispatchPrompt(); return; }
+    const mBtn = (m, icon, label) => `<button class="btn" style="flex:1; min-width:130px; ${method === m ? 'background:var(--accent,#b45309); color:#fff; border-color:var(--accent,#b45309)' : ''}" onclick="dispatchPromptChoose('${m}')">${icon} ${label}</button>`;
+    let actions = '';
+    if (method) {
+      const canWa = !!order.phone;
+      actions = `
+        <div style="margin-top:0.9rem; border-top:1px solid var(--border,#ddd); padding-top:0.9rem; display:flex; flex-direction:column; gap:0.5rem">
+          ${canWa
+            ? `<button class="btn btn-primary" onclick="dispatchPromptWhatsApp()">📱 WhatsApp the client${method === 'delivery' ? ' (with booking link)' : method === 'pickup' ? ' (collection details)' : ' (Campos notice)'}</button>`
+            : '<div style="font-size:12px; color:var(--warn,#b45309)">⚠️ No phone number on this order — add one to WhatsApp the client.</div>'}
+          ${method === 'campos' ? `<button class="btn" onclick="dispatchPromptCamposEmail()">📧 Email Campos for a quote</button>` : ''}
+          ${method === 'delivery' ? `<button class="btn" onclick="dispatchPromptCopyLink()">🔗 Copy booking link</button>` : ''}
+        </div>`;
+    }
+    host.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem">
+        <div>
+          <div style="font-size:16px; font-weight:900">✅ Order #${_escape(order.invoice || order.id)} is DONE</div>
+          <div style="font-size:12px; color:var(--text-muted,#888); margin-top:2px">${_escape(order.customer || '')} · ${_escape(order.product || '')}</div>
+        </div>
+        <button class="btn btn-sm" onclick="closeDispatchPrompt()">✕</button>
+      </div>
+      <div style="font-size:12px; color:var(--text-muted,#888); margin:0.75rem 0 0.5rem">How is it getting to the client?</div>
+      <div style="display:flex; gap:0.5rem; flex-wrap:wrap">
+        ${mBtn('delivery', '🚚', 'Our delivery')}
+        ${mBtn('pickup', '🏬', 'Client picks up')}
+        ${mBtn('campos', '📦', 'Campos courier')}
+      </div>
+      ${actions}`;
+  }
+  function dispatchPromptChoose(method) {
+    if (!_dispatchPromptCtx) return;
+    const { biz, orderId } = _dispatchPromptCtx;
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    if (!order) return;
+    snapshotState();
+    order.fulfillment = method;
+    saveData();
+    _dispatchPromptCtx.method = method;
+    _renderDispatchPrompt();
+  }
+  window.dispatchPromptChoose = dispatchPromptChoose;
+  function dispatchPromptWhatsApp() {
+    if (!_dispatchPromptCtx) return;
+    const { biz, orderId, method } = _dispatchPromptCtx;
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    if (!order || !order.phone) return;
+    const msg = _dispatchClientMsg(biz, order, method || 'delivery');
+    window.open(`https://wa.me/${formatPhone(order.phone)}?text=${encodeURIComponent(msg)}`, '_blank');
+  }
+  window.dispatchPromptWhatsApp = dispatchPromptWhatsApp;
+  function dispatchPromptCamposEmail() {
+    if (!_dispatchPromptCtx) return;
+    const { biz, orderId } = _dispatchPromptCtx;
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    if (!order) return;
+    const s = _dispatchSettingsFor(biz) || {};
+    const to = s.camposEmail || '';
+    if (!to) { alert('Set the Campos email first (Dispatch tab → Dispatch Manager Settings).'); return; }
+    const subject = `Quote request — order #${order.invoice || order.id} (${BIZ_DISPLAY[biz] || biz})`;
+    const body = `Hi Campos team,\n\nPlease quote us for the following shipment:\n\nOrder: #${order.invoice || order.id}\nItem: ${order.product}${order.fabric ? ' — ' + order.fabric : ''} × ${order.qty || 1}\nClient: ${order.customer}${order.phone ? ' · ' + order.phone : ''}\n\nCollection from: ${s.address || BIZ_DISPLAY[biz] || biz}\n\nWe'd like it collected within the next 2 working days.\n\nThanks!`;
+    const a = document.createElement('a');
+    a.href = 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+    a.style.display = 'none';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { try { a.remove(); } catch (e) {} }, 200);
+  }
+  window.dispatchPromptCamposEmail = dispatchPromptCamposEmail;
+  function dispatchPromptCopyLink() {
+    if (!_dispatchPromptCtx) return;
+    const { biz, orderId } = _dispatchPromptCtx;
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    if (!order) return;
+    const url = _bookingLinkFor(biz, order);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(
+        () => { if (typeof toast === 'function') toast('🔗 Booking link copied', 'success', 2500); else alert('Copied:\n' + url); },
+        () => { prompt('Copy this booking link:', url); }
+      );
+    } else { prompt('Copy this booking link:', url); }
+  }
+  window.dispatchPromptCopyLink = dispatchPromptCopyLink;
+
+  // ---- Weekly deliveries report (dashboard card + print) ----
+  function _weekDeliveries() {
+    const now = new Date(); now.setHours(0, 0, 0, 0);
+    const mon = new Date(now); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7));
+    const days = [];
+    for (let i = 0; i < 7; i++) { const d = new Date(mon); d.setDate(mon.getDate() + i); days.push(d.toISOString().split('T')[0]); }
+    const byDay = Object.fromEntries(days.map(d => [d, []]));
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      ((data[b] && data[b].orders) || []).forEach(o => {
+        if (o && o.status !== 'delivered' && o.deliveryScheduled && byDay[o.deliveryScheduled]) byDay[o.deliveryScheduled].push({ ...o, _biz: b });
+      });
+      ((data[b] && data[b].repairs) || []).forEach(r => {
+        if (!r || r.status === 'returned') return;
+        if (r.pickupDate && byDay[r.pickupDate]) byDay[r.pickupDate].push({ _repair: 'pickup', _biz: b, ...r });
+        if (r.returnDate && byDay[r.returnDate]) byDay[r.returnDate].push({ _repair: 'return', _biz: b, ...r });
+      });
+    });
+    return { days, byDay };
+  }
+  function _renderWeekDeliveriesCard() {
+    const host = document.getElementById('week-deliveries-list');
+    if (!host) return;
+    const { days, byDay } = _weekDeliveries();
+    const total = days.reduce((n, d) => n + byDay[d].length, 0);
+    if (!total) { host.innerHTML = '<div class="empty">No deliveries scheduled this week</div>'; return; }
+    const dayName = d => new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'short' });
+    const todayStr = new Date().toISOString().split('T')[0];
+    host.innerHTML = days.filter(d => byDay[d].length).map(d => `
+      <div style="margin-bottom:0.5rem">
+        <div style="font-size:11px; font-weight:700; ${d === todayStr ? 'color:var(--accent,#b45309)' : 'color:var(--text-muted,#888)'}; text-transform:uppercase; letter-spacing:0.05em">${d === todayStr ? '👉 ' : ''}${_escape(dayName(d))} (${byDay[d].length})</div>
+        ${byDay[d].map(x => x._repair
+          ? `<div style="font-size:12px; padding:2px 0 2px 10px">🔧 ${x._repair === 'pickup' ? 'Repair pickup' : 'Repair return'} — ${_escape(x.customer || '')}${x.orderNo ? ' (#' + _escape(x.orderNo) + ')' : ''}</div>`
+          : `<div style="font-size:12px; padding:2px 0 2px 10px">🚚 #${_escape(x.invoice || x.id)} — ${_escape(x.customer || '')} · ${_escape(x.product || '')}${x.deliveryTimeFrom ? ' · ' + _escape(x.deliveryTimeFrom) + (x.deliveryTimeTo ? '–' + _escape(x.deliveryTimeTo) : '') : ''}${x.fulfillment === 'pickup' ? ' · 🏬 pickup' : x.fulfillment === 'campos' ? ' · 📦 Campos' : ''}</div>`).join('')}
+      </div>`).join('');
+  }
+  function printWeekDeliveries() {
+    const { days, byDay } = _weekDeliveries();
+    const total = days.reduce((n, d) => n + byDay[d].length, 0);
+    if (!total) { alert('No deliveries scheduled this week.'); return; }
+    const esc = (typeof _escape === 'function') ? _escape : (s => String(s == null ? '' : s));
+    const dayName = d => new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' });
+    const rows = days.filter(d => byDay[d].length).map(d => `
+      <h2>${esc(dayName(d))} — ${byDay[d].length}</h2>
+      <table><tr><th>Order</th><th>Client</th><th>Item / repair</th><th>Time</th><th>Type</th><th>Phone</th></tr>
+      ${byDay[d].map(x => x._repair
+        ? `<tr><td>${esc(x.orderNo || '—')}</td><td>${esc(x.customer || '')}</td><td>🔧 ${x._repair === 'pickup' ? 'Repair pickup' : 'Repair return'}: ${esc(x.reason || '')}</td><td></td><td>REPAIR</td><td>${esc(x.phone || '')}</td></tr>`
+        : `<tr><td>#${esc(x.invoice || x.id)}</td><td>${esc(x.customer || '')}</td><td>${esc(x.product || '')}${x.fabric ? ' — ' + esc(x.fabric) : ''} × ${esc(x.qty || 1)}</td><td>${esc(x.deliveryTimeFrom || '')}${x.deliveryTimeTo ? '–' + esc(x.deliveryTimeTo) : ''}</td><td>${x.fulfillment === 'pickup' ? 'PICKUP' : x.fulfillment === 'campos' ? 'CAMPOS' : 'DELIVERY'}</td><td>${esc(x.phone || '')}</td></tr>`).join('')}
+      </table>`).join('');
+    const html = `<!DOCTYPE html><html><head><title>Deliveries this week</title>
+<style>
+  @page { size: A4; margin: 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; color: #000; }
+  body { padding: 8px; } h1 { font-size: 20px; } .sub { font-size: 11px; color: #555; margin: 4px 0 10px }
+  h2 { font-size: 14px; margin: 14px 0 4px; border-bottom: 2px solid #000; padding-bottom: 2px }
+  table { width: 100%; border-collapse: collapse; font-size: 11px }
+  th, td { border: 1px solid #999; padding: 4px 6px; text-align: left }
+  th { background: #eee; font-size: 10px; text-transform: uppercase }
+  .no-print { padding: 10px; text-align: right; background: #f0f0f0; margin-bottom: 10px }
+  @media print { .no-print { display: none } }
+</style></head><body>
+  <div class="no-print"><button onclick="window.print()" style="padding:8px 16px; font-weight:bold; background:#000; color:#fff; border:none; cursor:pointer">🖨️ PRINT</button>
+  <button onclick="window.close()" style="padding:8px 16px; margin-left:8px; cursor:pointer">CLOSE</button></div>
+  <h1>🚚 DELIVERIES THIS WEEK</h1>
+  <div class="sub">Printed ${esc(new Date().toISOString().slice(0, 10))} · ${total} stop${total === 1 ? '' : 's'} (all businesses, incl. repair pickups/returns)</div>
+  ${rows}
+</body></html>`;
+    const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Allow pop-ups for this site, then try again.'); return; }
+    win.document.write(html);
+    win.document.close();
+  }
+  window.printWeekDeliveries = printWeekDeliveries;
+
+  // ---- Client booking page (?book=1&b=<biz>&o=<orderId>) ----
+  function _bookingParams() {
+    try { return new URLSearchParams(window.location.search); } catch (e) { return new URLSearchParams(); }
+  }
+  // Per-business accent for the client booking page.
+  function _bookingAccent() {
+    const b = _bookingParams().get('b');
+    if (b === 'pinkfoot') return { g1: '#be2f6c', g2: '#e0498d', solid: '#be2f6c' };
+    if (b === 'repticube') return { g1: '#0b7f6a', g2: '#12a88d', solid: '#0b7f6a' };
+    return { g1: '#7c4a21', g2: '#a3622e', solid: '#8a5426' };
+  }
+  function _bookingDayCard(dateObj, slotsHtml) {
+    const wd = dateObj.toLocaleDateString('en-ZA', { weekday: 'long' });
+    const dm = dateObj.toLocaleDateString('en-ZA', { day: 'numeric', month: 'long' });
+    return `
+      <div style="background:#fff; border-radius:14px; padding:14px 16px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,0.07)">
+        <div style="display:flex; align-items:baseline; gap:8px; margin-bottom:10px">
+          <span style="font-size:15px; font-weight:800">${_escape(wd)}</span>
+          <span style="font-size:12.5px; color:#78716c">${_escape(dm)}</span>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap">${slotsHtml}</div>
+      </div>`;
+  }
+  function _bookingSlotBtn(onclickAttr, slotLabel, accent) {
+    return `<button onclick="${onclickAttr}" style="padding:9px 15px; border-radius:999px; border:1.5px solid ${accent}; background:#fff; color:${accent}; font-size:13.5px; font-weight:700; cursor:pointer; font-family:inherit">${_escape(slotLabel)}</button>`;
+  }
+  function _bookingSlotFull(slotLabel) {
+    return `<span style="padding:9px 15px; border-radius:999px; background:#f5f5f4; color:#a8a29e; font-size:13.5px; text-decoration:line-through">${_escape(slotLabel)}</span>`;
+  }
+  function enterBookingOnlyMode() {
+    ['main-app', 'login-overlay', 'dashboard-only-view', 'reserved-only-view'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    const view = document.getElementById('booking-only-view');
+    if (view) view.style.display = 'block';
+    const p = _bookingParams();
+    const ac = _bookingAccent();
+    const hd = document.getElementById('booking-header');
+    if (hd) hd.style.background = `linear-gradient(135deg, ${ac.g1}, ${ac.g2})`;
+    const bn = document.getElementById('booking-biz-name');
+    if (bn) bn.textContent = BIZ_DISPLAY[p.get('b')] || 'Delivery booking';
+    const oi = document.getElementById('booking-order-info');
+    if (oi && p.get('inv')) oi.textContent = 'Order #' + p.get('inv');
+    document.title = 'Book your delivery';
+    renderBookingPage();
+  }
+  window.enterBookingOnlyMode = enterBookingOnlyMode;
+  let _bookingDone = false;
+  let _bookingLiveShown = false;
+  let _bookingFallbackShown = false;
+  function renderBookingPage() {
+    const host = document.getElementById('booking-content');
+    if (!host || _bookingDone) return;
+    const p = _bookingParams();
+    const biz = p.get('b'), orderId = p.get('o');
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    // No live data yet — keep whatever is showing (loading note or the static
+    // fallback slots); never clobber a usable fallback with a spinner.
+    if (!order) {
+      if (!_bookingFallbackShown) host.innerHTML = '<div style="text-align:center; color:#64748b; padding:2rem">Loading available dates…</div>';
+      return;
+    }
+    _bookingLiveShown = true;
+    _bookingFallbackShown = false;
+    if (order.deliveryScheduled && order.deliveryBookedByClient) { _renderBookingThanks(order); return; }
+    const s = _dispatchSettingsFor(biz) || {};
+    const slots = _dispatchSlotList(s);
+    const cap = s.capacity || 3;
+    // Count existing bookings per date+slot to close full slots.
+    const taken = {};
+    ((data[biz] && data[biz].orders) || []).forEach(o => {
+      if (o && o.deliveryScheduled && o.status !== 'delivered') {
+        const k = o.deliveryScheduled + '|' + (o.deliveryTimeFrom || '');
+        taken[k] = (taken[k] || 0) + 1;
+      }
+    });
+    const ac = _bookingAccent();
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const daysHtml = [];
+    for (let i = 1; i <= 21; i++) {
+      const d = new Date(today); d.setDate(today.getDate() + i);
+      const iso = d.toISOString().split('T')[0];
+      if (!(s.openDays || []).includes(d.getDay())) continue;
+      if ((s.closedDates || []).includes(iso)) continue;
+      const slotBtns = slots.map(sl => {
+        const from = sl.split('-')[0].trim();
+        const full = (taken[iso + '|' + from] || 0) >= cap;
+        return full ? _bookingSlotFull(sl) : _bookingSlotBtn(`bookingChooseSlot('${iso}', '${_escape(sl)}')`, sl, ac.solid);
+      }).join(' ');
+      daysHtml.push(_bookingDayCard(d, slotBtns));
+    }
+    host.innerHTML = daysHtml.length
+      ? `<div style="text-align:center; font-size:13.5px; color:#57534e; margin-bottom:1rem; background:#fff; border-radius:14px; padding:0.85rem 1rem; box-shadow:0 1px 3px rgba(0,0,0,0.07)">Tap a time that suits you for<br><strong style="font-size:14.5px; color:#1c1917">${_escape(order.product || 'your order')}</strong></div>` + daysHtml.join('')
+      : '<div style="text-align:center; color:#78716c; padding:2.5rem 0">No delivery slots are open right now — please reply to our WhatsApp message and we\'ll arrange a date.</div>';
+  }
+  window.renderBookingPage = renderBookingPage;
+  function bookingChooseSlot(dateIso, slot) {
+    const p = _bookingParams();
+    const biz = p.get('b'), orderId = p.get('o');
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    if (!order) return;
+    const nice = new Date(dateIso + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' });
+    if (!confirm('Book delivery for ' + nice + ', ' + slot + '?')) return;
+    const parts = slot.split('-').map(x => x.trim());
+    snapshotState();
+    order.deliveryScheduled = dateIso;
+    order.deliveryTimeFrom = parts[0] || '';
+    order.deliveryTimeTo = parts[1] || '';
+    order.deliveryBookedByClient = true;
+    saveData();
+    _renderBookingThanks(order);
+  }
+  window.bookingChooseSlot = bookingChooseSlot;
+  function _renderBookingThanks(order) {
+    _bookingDone = true;
+    const host = document.getElementById('booking-content');
+    if (!host) return;
+    const ac = _bookingAccent();
+    const nice = order.deliveryScheduled ? new Date(order.deliveryScheduled + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' }) : '';
+    host.innerHTML = `
+      <div style="background:#fff; border-radius:16px; padding:2rem 1.5rem; text-align:center; box-shadow:0 1px 3px rgba(0,0,0,0.07)">
+        <div style="width:64px; height:64px; margin:0 auto; border-radius:50%; background:linear-gradient(135deg, ${ac.g1}, ${ac.g2}); display:flex; align-items:center; justify-content:center; font-size:30px; color:#fff">✓</div>
+        <div style="font-size:20px; font-weight:800; margin-top:1rem">Delivery booked!</div>
+        <div style="font-size:15px; color:#44403c; margin-top:0.6rem"><strong>${_escape(nice)}</strong>${order.deliveryTimeFrom ? '<br><span style="color:' + ac.solid + '; font-weight:700">' + _escape(order.deliveryTimeFrom) + (order.deliveryTimeTo ? ' – ' + _escape(order.deliveryTimeTo) : '') + '</span>' : ''}</div>
+        <div style="font-size:12.5px; color:#78716c; margin-top:0.9rem">We'll WhatsApp you before the driver leaves. Thank you!</div>
+      </div>`;
+  }
+  // Fallback when live availability can't load (anonymous sign-in disabled):
+  // offer the slots from the link itself and confirm via WhatsApp to the business.
+  function bookingStaticFallback() {
+    const host = document.getElementById('booking-content');
+    if (!host || _bookingDone || _bookingLiveShown) return;
+    _bookingFallbackShown = true;
+    const p = _bookingParams();
+    const slots = String(p.get('s') || '09:00-12:00, 12:00-15:00, 15:00-17:00').split(',').map(x => x.trim()).filter(Boolean);
+    const days = String(p.get('d') || '1,2,3,4,5').split(',').map(Number);
+    const waRaw = p.get('w') || '';
+    const inv = p.get('inv') || '';
+    const ac = _bookingAccent();
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const daysHtml = [];
+    for (let i = 1; i <= 21; i++) {
+      const d = new Date(today); d.setDate(today.getDate() + i);
+      if (!days.includes(d.getDay())) continue;
+      const iso = d.toISOString().split('T')[0];
+      const label = d.toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' });
+      const slotBtns = slots.map(sl => _bookingSlotBtn(`bookingFallbackChoose('${iso}', '${_escape(sl)}', '${_escape(label)}')`, sl, ac.solid)).join(' ');
+      daysHtml.push(_bookingDayCard(d, slotBtns));
+    }
+    window._bookingFallbackWa = waRaw; window._bookingFallbackInv = inv;
+    host.innerHTML = `<div style="text-align:center; font-size:13.5px; color:#57534e; margin-bottom:1rem; background:#fff; border-radius:14px; padding:0.85rem 1rem; box-shadow:0 1px 3px rgba(0,0,0,0.07)">Tap a time that suits you —<br>we'll confirm your booking on WhatsApp</div>` + daysHtml.join('');
+  }
+  window.bookingStaticFallback = bookingStaticFallback;
+  function bookingFallbackChoose(dateIso, slot, label) {
+    const wa = window._bookingFallbackWa || '';
+    const inv = window._bookingFallbackInv || '';
+    const msg = `Hi! ${inv ? 'Order #' + inv + ' — ' : ''}I'd like my delivery on ${label}, ${slot} please.`;
+    if (wa && typeof formatPhone === 'function') {
+      window.open(`https://wa.me/${formatPhone(wa)}?text=${encodeURIComponent(msg)}`, '_blank');
+    } else {
+      prompt('Send us this message on WhatsApp to confirm:', msg);
+    }
+  }
+  window.bookingFallbackChoose = bookingFallbackChoose;
+
   // ===== Repairs — staff log a repair; dispatch schedules pickup + return =====
   // Record: { id, orderNo, customer, phone, product, reason, details, status,
   //           pickupDate, returnDate, by, at } stored per business (currentData().repairs).
@@ -4245,6 +4783,16 @@ ${_PRODUCTION_PRINT_STYLES}
   }
   window.dispatchClearSelection = dispatchClearSelection;
 
+  function setOrderFulfillment(biz, orderId, method) {
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    if (!order) return;
+    snapshotState();
+    order.fulfillment = method || '';
+    saveData();
+    renderDispatch();
+  }
+  window.setOrderFulfillment = setOrderFulfillment;
+
   function printDispatchOrders() {
     // Ticked orders, or the whole current filtered list if nothing is ticked.
     const keys = _dispatchSelected.size ? [..._dispatchSelected] : _dispatchLastFiltered.slice();
@@ -4425,6 +4973,13 @@ ${_PRODUCTION_PRINT_STYLES}
                 <option value="done" ${o.status === 'done' ? 'selected' : ''}>✓ READY/DONE</option>
                 <option value="delivered" ${o.status === 'delivered' ? 'selected' : ''}>🚚 DELIVERED</option>
               </select>
+              <select onchange="setOrderFulfillment('${o._biz}', '${o.id}', this.value)" style="width:160px" title="How this order gets to the client">
+                <option value="" ${!o.fulfillment ? 'selected' : ''}>— How to client? —</option>
+                <option value="delivery" ${o.fulfillment === 'delivery' ? 'selected' : ''}>🚚 Our delivery</option>
+                <option value="pickup" ${o.fulfillment === 'pickup' ? 'selected' : ''}>🏬 Client pickup</option>
+                <option value="campos" ${o.fulfillment === 'campos' ? 'selected' : ''}>📦 Campos courier</option>
+              </select>
+              ${o.status === 'done' ? `<button class="btn btn-sm" onclick="openDispatchPrompt('${o._biz}', '${o.id}')" title="Re-open the done actions (WhatsApp / booking link / Campos)">📣 Notify client</button>` : ''}
               <div style="display:flex; flex-direction:column; gap:0.25rem; align-items:flex-end">
                 <label style="margin:0; font-size:10px; color:var(--text-muted)">Delivery Date:</label>
                 <input type="date" value="${o.deliveryScheduled || ''}" onchange="setDeliveryDate('${o._biz}', '${o.id}', this.value)" style="width:160px; padding:4px 8px; margin:0">
@@ -6593,9 +7148,13 @@ ${_PRODUCTION_PRINT_STYLES}
       if (oldStatus === 'in-production' && newStatus === 'pending') {
         try { restoreMaterialsForOrder(biz, order); } catch (e) { console.warn('Restoration failed:', e); }
       }
-      
+
       saveData();
       render();
+      // Dispatch Manager prompt on DONE (same as updateOrderStatus).
+      if (newStatus === 'done' && oldStatus !== 'done' && typeof openDispatchPrompt === 'function') {
+        openDispatchPrompt(biz, order.id);
+      }
     }
   }
   
@@ -6842,6 +7401,24 @@ ${_PRODUCTION_PRINT_STYLES}
     try { return new URLSearchParams(window.location.search).get('reserved') === '1'; }
     catch (e) { return false; }
   })();
+
+  // Client delivery-booking mode (?book=1&b=<biz>&o=<orderId>) — the link a client
+  // gets on WhatsApp when their order is done. Full-screen booking calendar only.
+  const IS_BOOKING_MODE = (function () {
+    try { return new URLSearchParams(window.location.search).get('book') === '1'; }
+    catch (e) { return false; }
+  })();
+  // Enter booking mode IMMEDIATELY — the client must never see the staff login
+  // screen. This runs at script load (before Firebase resolves); if live
+  // availability hasn't arrived within a few seconds (slow phone, Firebase
+  // blocked, anonymous sign-in disabled), show the link-encoded slots so the
+  // client can always pick a time.
+  if (IS_BOOKING_MODE) {
+    try {
+      enterBookingOnlyMode();
+      setTimeout(() => { try { bookingStaticFallback(); } catch (e) {} }, 4000);
+    } catch (e) { console.warn('Booking boot failed:', e); }
+  }
 
   // Open the current app URL with ?dashboard=1 in a new browser window the user
   // can drag onto a second monitor. Sized large by default — they can resize / move.
@@ -10184,7 +10761,10 @@ ${totalsSection}
         }
         
         document.getElementById('login-overlay').style.display = 'none';
-        if (IS_RESERVED_MODE || currentRole === 'fabricrep') {
+        if (IS_BOOKING_MODE) {
+          // Client booking link — full-screen calendar only (works for anonymous sign-ins too)
+          enterBookingOnlyMode();
+        } else if (IS_RESERVED_MODE || currentRole === 'fabricrep') {
           // Fabric-rep portal — view-only reserved sheet with out-of-stock + ETA
           enterReservedOnlyMode();
         } else if (IS_DASHBOARD_MODE) {
@@ -10204,6 +10784,21 @@ ${totalsSection}
       } else {
         currentUser = null;
         currentRole = null;
+        if (IS_BOOKING_MODE) {
+          // Client with a booking link — no account. Try anonymous sign-in so the
+          // calendar can show LIVE availability; if that's disabled in Firebase,
+          // fall back to the link-encoded slots + WhatsApp confirmation.
+          document.getElementById('login-overlay').style.display = 'none';
+          enterBookingOnlyMode();
+          if (window.firebaseFns && window.firebaseFns.signInAnonymously) {
+            window.firebaseFns.signInAnonymously(window.firebaseAuth).catch(() => {
+              if (typeof bookingStaticFallback === 'function') bookingStaticFallback();
+            });
+          } else if (typeof bookingStaticFallback === 'function') {
+            bookingStaticFallback();
+          }
+          return;
+        }
         document.getElementById('login-overlay').style.display = 'flex';
         document.getElementById('main-app').style.display = 'none';
         const _rv = document.getElementById('reserved-only-view'); if (_rv) _rv.style.display = 'none';
