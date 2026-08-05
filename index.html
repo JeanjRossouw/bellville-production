@@ -511,7 +511,7 @@
       <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
         <span>SEARCH ORDERS</span>
         <div style="display:flex; gap:0.5rem; flex-wrap:wrap">
-          <button class="btn" onclick="resetDueDates6wk()" title="Set every active order's due date to 6 weeks after its order date">📅 Reset due dates → 6 weeks</button>
+          <button class="btn" onclick="resetDueDates6wk()" title="Set every active order's due date from its order date: 6 weeks (ReptiCube: 7 days)">📅 Reset due dates → 6 weeks / 7 days</button>
           <button class="btn btn-primary" onclick="printProductionList()">🖨️ Print Production List</button>
         </div>
       </div>
@@ -1657,7 +1657,7 @@
           fabric: li.fabric || '',
           qty: li.qty,
           orderDate: p.orderDate || today,
-          dueDate: _dueFromLead('', li.product),
+          dueDate: _dueFromLead('', li.product, p.orderDate || today, activeBiz),
           status: 'pending',
           startDate: null,
           paymentStatus: p.paymentStatus || 'deposit',
@@ -2323,14 +2323,15 @@
   window.confirmStockIn = confirmStockIn;
   window.showMaterialReport = showMaterialReport;
   
-  // Lead time (weeks) by product type → due date. Cots/compactums 8, rocking chairs
-  // and couches/chairs 6, everything else 4. Matches on category and product name.
-  function _leadWeeksFor(category, product) {
-    // All products: 6-week lead time.
-    return 6;
+  // Lead time per business → due date, counted from the ORDER date (not from today).
+  // Bellville & PinkFoot: 6 weeks. ReptiCube: out within 7 days.
+  function _leadDaysFor(biz) {
+    return biz === 'repticube' ? 7 : 42;
   }
-  function _dueFromLead(category, product) {
-    return new Date(Date.now() + _leadWeeksFor(category, product) * 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  function _dueFromLead(category, product, orderDateStr, biz) {
+    const base = orderDateStr ? new Date(orderDateStr + 'T00:00:00') : new Date();
+    const d = isNaN(base.getTime()) ? new Date() : base;
+    return new Date(d.getTime() + _leadDaysFor(biz || activeBiz) * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   }
 
   function addOrder() {
@@ -2375,7 +2376,7 @@
       fabric,
       qty,
       orderDate: today,
-      dueDate: _dueFromLead(category, product),
+      dueDate: _dueFromLead(category, product, today, activeBiz),
       status: 'pending',
       startDate: null,
       paymentStatus,
@@ -2384,7 +2385,7 @@
 
     snapshotState();
     currentData().orders.push(order);
-    document.getElementById('order-status').innerHTML = `✓ Order added (Due: ${dueDate})`;
+    document.getElementById('order-status').innerHTML = `✓ Order added (Due: ${order.dueDate})`;
     
     document.getElementById('intake-invoice').value = '';
     document.getElementById('intake-customer').value = '';
@@ -2498,7 +2499,7 @@
             fabricStatus,
             qty,
             orderDate: dateStr || today,
-            dueDate: _dueFromLead(category, product),
+            dueDate: _dueFromLead(category, product, dateStr || today, activeBiz),
             status: status.includes('progress') ? 'in-production' : 'pending',
             startDate: status.includes('progress') ? today : null
           };
@@ -2644,27 +2645,27 @@
       `;
   }
 
-  // Recompute every active order's due date to 6 weeks after its order date (all
-  // businesses). One-off cleanup for existing orders when the lead time changed.
+  // Recompute every active order's due date from its ORDER date (all businesses):
+  // Bellville & PinkFoot 6 weeks, ReptiCube 7 days. One-off cleanup when lead times change.
   function resetDueDates6wk() {
     const bizs = ['bellville', 'pinkfoot', 'repticube'];
     const active = o => o && o.status !== 'delivered' && o.status !== 'done';
     let n = 0;
     bizs.forEach(b => ((data[b] && data[b].orders) || []).forEach(o => { if (active(o)) n++; }));
     if (n === 0) { alert('No active orders to update.'); return; }
-    if (!confirm('Set the due date of all ' + n + ' active order(s), across all shops, to 6 weeks after each order\'s order date?\n\nThis overwrites existing due dates (a snapshot is saved — Ctrl+Z reverts).')) return;
+    if (!confirm('Set the due date of all ' + n + ' active order(s) from each order\'s order date?\n\n• Bellville & PinkFoot: 6 weeks\n• ReptiCube: 7 days\n\nThis overwrites existing due dates (a snapshot is saved — Ctrl+Z reverts).')) return;
     snapshotState();
     let changed = 0;
     bizs.forEach(b => ((data[b] && data[b].orders) || []).forEach(o => {
       if (!active(o)) return;
       const base = o.orderDate ? new Date(o.orderDate + 'T00:00:00') : new Date();
       if (isNaN(base.getTime())) return;
-      const due = new Date(base.getTime() + 6 * 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const due = new Date(base.getTime() + _leadDaysFor(b) * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       if (o.dueDate !== due) { o.dueDate = due; changed++; }
     }));
     saveData();
     render();
-    if (typeof toast === 'function') toast('Updated ' + changed + ' order due date(s) to a 6-week lead.', 'success', 3500);
+    if (typeof toast === 'function') toast('Updated ' + changed + ' due date(s) — 6 weeks from order date (ReptiCube 7 days).', 'success', 3500);
   }
   window.resetDueDates6wk = resetDueDates6wk;
 
