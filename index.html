@@ -4443,13 +4443,22 @@ ${_PRODUCTION_PRINT_STYLES}
   }
   window.enterBookingOnlyMode = enterBookingOnlyMode;
   let _bookingDone = false;
+  let _bookingLiveShown = false;
+  let _bookingFallbackShown = false;
   function renderBookingPage() {
     const host = document.getElementById('booking-content');
     if (!host || _bookingDone) return;
     const p = _bookingParams();
     const biz = p.get('b'), orderId = p.get('o');
     const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
-    if (!order) { host.innerHTML = '<div style="text-align:center; color:#64748b; padding:2rem">Loading available dates…</div>'; return; }
+    // No live data yet — keep whatever is showing (loading note or the static
+    // fallback slots); never clobber a usable fallback with a spinner.
+    if (!order) {
+      if (!_bookingFallbackShown) host.innerHTML = '<div style="text-align:center; color:#64748b; padding:2rem">Loading available dates…</div>';
+      return;
+    }
+    _bookingLiveShown = true;
+    _bookingFallbackShown = false;
     if (order.deliveryScheduled && order.deliveryBookedByClient) { _renderBookingThanks(order); return; }
     const s = _dispatchSettingsFor(biz) || {};
     const slots = _dispatchSlotList(s);
@@ -4522,7 +4531,8 @@ ${_PRODUCTION_PRINT_STYLES}
   // offer the slots from the link itself and confirm via WhatsApp to the business.
   function bookingStaticFallback() {
     const host = document.getElementById('booking-content');
-    if (!host || _bookingDone) return;
+    if (!host || _bookingDone || _bookingLiveShown) return;
+    _bookingFallbackShown = true;
     const p = _bookingParams();
     const slots = String(p.get('s') || '09:00-12:00, 12:00-15:00, 15:00-17:00').split(',').map(x => x.trim()).filter(Boolean);
     const days = String(p.get('d') || '1,2,3,4,5').split(',').map(Number);
@@ -7377,6 +7387,17 @@ ${_PRODUCTION_PRINT_STYLES}
     try { return new URLSearchParams(window.location.search).get('book') === '1'; }
     catch (e) { return false; }
   })();
+  // Enter booking mode IMMEDIATELY — the client must never see the staff login
+  // screen. This runs at script load (before Firebase resolves); if live
+  // availability hasn't arrived within a few seconds (slow phone, Firebase
+  // blocked, anonymous sign-in disabled), show the link-encoded slots so the
+  // client can always pick a time.
+  if (IS_BOOKING_MODE) {
+    try {
+      enterBookingOnlyMode();
+      setTimeout(() => { try { bookingStaticFallback(); } catch (e) {} }, 4000);
+    } catch (e) { console.warn('Booking boot failed:', e); }
+  }
 
   // Open the current app URL with ?dashboard=1 in a new browser window the user
   // can drag onto a second monitor. Sized large by default — they can resize / move.
