@@ -698,7 +698,7 @@
       </div>
       <div class="row">
         <div class="f2"><label>Delivery time slots (comma-separated)</label><input id="ds-slots" placeholder="09:00-12:00, 12:00-15:00, 15:00-17:00" onchange="saveDispatchSettings()"></div>
-        <div class="f1"><label>Deliveries per slot (capacity)</label><input id="ds-capacity" type="number" min="1" step="1" placeholder="3" onchange="saveDispatchSettings()"></div>
+        <div class="f1"><label>Deliveries per slot (capacity)</label><input id="ds-capacity" type="number" min="1" step="1" placeholder="1" onchange="saveDispatchSettings()"></div>
         <div class="f1"><label>Days closed for delivery (block a date)</label><input id="ds-block-date" type="date" onchange="addDispatchBlockedDate(this.value)"></div>
       </div>
       <div class="row">
@@ -4150,7 +4150,9 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof s.camposEmail !== 'string') s.camposEmail = '';
     if (typeof s.whatsapp !== 'string') s.whatsapp = '';
     if (typeof s.slots !== 'string' || !s.slots.trim()) s.slots = '09:00-12:00, 12:00-15:00, 15:00-17:00';
-    if (typeof s.capacity !== 'number' || s.capacity < 1) s.capacity = 3;
+    // Default: one delivery per slot — a booked slot disappears for the next
+    // client. Raise "Deliveries per slot" in settings if you do multiple drops.
+    if (typeof s.capacity !== 'number' || s.capacity < 1) s.capacity = 1;
     if (!Array.isArray(s.openDays)) s.openDays = [1, 2, 3, 4, 5];
     if (!Array.isArray(s.closedDates)) s.closedDates = [];
     return s;
@@ -4239,6 +4241,10 @@ ${_PRODUCTION_PRINT_STYLES}
     p.set('inv', order.invoice || order.id);
     p.set('s', s.slots || ''); p.set('d', (s.openDays || []).join(','));
     if (s.whatsapp) p.set('w', s.whatsapp);
+    // Carry upcoming blocked dates so even the no-auth fallback page hides them.
+    const todayIso = new Date().toISOString().split('T')[0];
+    const blocked = (s.closedDates || []).filter(d => d >= todayIso).sort().slice(0, 15);
+    if (blocked.length) p.set('x', blocked.join(','));
     return window.location.origin + '/?' + p.toString();
   }
   function _dispatchClientMsg(biz, order, method) {
@@ -4619,6 +4625,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const p = _bookingParams();
     const slots = String(p.get('s') || '09:00-12:00, 12:00-15:00, 15:00-17:00').split(',').map(x => x.trim()).filter(Boolean);
     const days = String(p.get('d') || '1,2,3,4,5').split(',').map(Number);
+    const blockedDates = String(p.get('x') || '').split(',').filter(Boolean);
     const waRaw = p.get('w') || '';
     const inv = p.get('inv') || '';
     const ac = _bookingAccent();
@@ -4628,6 +4635,7 @@ ${_PRODUCTION_PRINT_STYLES}
       const d = new Date(today); d.setDate(today.getDate() + i);
       if (!days.includes(d.getDay())) continue;
       const iso = d.toISOString().split('T')[0];
+      if (blockedDates.includes(iso)) continue;
       const label = d.toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' });
       const slotBtns = slots.map(sl => _bookingSlotBtn(`bookingFallbackChoose('${iso}', '${_escape(sl)}', '${_escape(label)}')`, sl, ac.solid)).join(' ');
       daysHtml.push(_bookingDayCard(d, slotBtns));
@@ -5132,7 +5140,8 @@ ${_PRODUCTION_PRINT_STYLES}
         }
         if (showDelivery && o.deliveryScheduled) {
           events[o.deliveryScheduled] = events[o.deliveryScheduled] || [];
-          events[o.deliveryScheduled].push({ biz, type: 'delivery', order: o, icon: '🚚' });
+          // Client-booked deliveries get 📅 so they stand out from staff-scheduled 🚚.
+          events[o.deliveryScheduled].push({ biz, type: 'delivery', order: o, icon: o.deliveryBookedByClient ? '📅' : '🚚', time: o.deliveryTimeFrom || '' });
         }
         if (showStart && o.startDate) {
           events[o.startDate] = events[o.startDate] || [];
@@ -5166,8 +5175,8 @@ ${_PRODUCTION_PRINT_STYLES}
       const dayEvents = events[dateStr] || [];
       
       const eventsHtml = dayEvents.slice(0, 4).map(e => `
-        <div onclick="searchToOrder('${e.order.invoice}')" style="background:${bizColors[e.biz]}; color:#fff; padding:2px 5px; margin-bottom:2px; border-radius:3px; font-size:10px; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${e.icon} ${e.type.toUpperCase()}: #${e.order.invoice} - ${e.order.customer} - ${e.order.product}">
-          ${e.icon} #${e.order.invoice} ${e.order.customer.split(' ')[0]}
+        <div onclick="searchToOrder('${e.order.invoice}')" style="background:${bizColors[e.biz]}; color:#fff; padding:2px 5px; margin-bottom:2px; border-radius:3px; font-size:10px; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${e.icon} ${e.type.toUpperCase()}: #${e.order.invoice} - ${e.order.customer} - ${e.order.product}${e.time ? ' @ ' + e.time : ''}">
+          ${e.icon} #${e.order.invoice} ${e.order.customer.split(' ')[0]}${e.time ? ' · ' + e.time : ''}
         </div>
       `).join('');
       
