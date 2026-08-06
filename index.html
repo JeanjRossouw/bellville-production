@@ -349,6 +349,7 @@
     <button class="tab" onclick="showSection('costing')">💰 Costing</button>
     <button class="tab" onclick="showSection('schedule')">Schedule</button>
     <button class="tab" onclick="showSection('planner')">🗓️ Planner</button>
+    <button class="tab" onclick="showSection('weekplan')">📊 Week Plan</button>
     <button class="tab" onclick="showSection('woodwork')">🪵 Woodwork</button>
     <button class="tab" onclick="showSection('pos')">🛒 POS</button>
   </div>
@@ -452,7 +453,8 @@
         </div>
         <div class="f1" id="fabric-row">
           <label>Fabric / Color (optional)</label>
-          <input id="intake-fabric" placeholder="e.g., Full Grain Wild - Tobacco">
+          <input id="intake-fabric" list="intake-fabric-list" placeholder="e.g., Full Grain Wild - Tobacco" oninput="fabricPickHint(this.value, 'intake-fabric-hint')"><datalist id="intake-fabric-list"></datalist>
+          <div id="intake-fabric-hint" style="font-size:11px; color:var(--text-muted); margin-top:2px"></div>
         </div>
       </div>
       <div class="row">
@@ -785,7 +787,7 @@
       <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.75rem">Reserve fabric against a sales order number, then email it to admin. It also appears under "Reserved fabric" below and syncs to admin live.</p>
       <div class="row">
         <div class="f1"><label>Open sales order (type # or customer)</label><input id="fr-order" list="fr-order-list" autocomplete="off" placeholder="Type order # or customer…" oninput="onReserveOrderPick()"><datalist id="fr-order-list"></datalist></div>
-        <div class="f1"><label>Fabric</label><input id="fr-fabric" list="fr-fabric-list" placeholder="e.g. Sienna"><datalist id="fr-fabric-list"></datalist></div>
+        <div class="f1"><label>Fabric</label><input id="fr-fabric" list="fr-fabric-list" placeholder="e.g. Sienna" oninput="fabricPickHint(this.value, 'fr-fabric-hint')"><datalist id="fr-fabric-list"></datalist><div id="fr-fabric-hint" style="font-size:11px; color:var(--text-muted); margin-top:2px"></div></div>
         <div class="f1"><label>Colour (optional)</label><input id="fr-colour" placeholder="e.g. Light Grey"></div>
         <div class="f2" style="min-width:90px"><label>Meters</label><input id="fr-meters" type="number" step="0.1" placeholder="0"></div>
       </div>
@@ -806,6 +808,20 @@
         </div>
       </div>
       <div id="fr-list"><div class="empty">No fabric reserved yet</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>🎨 FABRIC PRICE LIST <span id="flib-count" style="font-size:11px; color:var(--text-muted); font-weight:400"></span></span>
+        <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap">
+          <input id="flib-supplier" placeholder="Supplier for this file (e.g. U&G)" style="min-width:170px; margin:0; font-size:12px; padding:5px">
+          <label class="btn btn-sm" style="cursor:pointer; margin:0" title="Import a price list CSV: Fabric, Supplier (optional), Price">⬆️ Import price list<input type="file" id="flib-upload" accept=".csv,text/csv" style="display:none" onchange="importFabricLibraryCSV(this)"></label>
+          <button class="btn btn-sm" onclick="exportFabricLibraryCSV()">⬇️ Export</button>
+        </div>
+      </div>
+      <div id="flib-status" style="font-size:11px; color:var(--text-muted); margin-bottom:0.4rem"></div>
+      <input id="flib-search" placeholder="Search fabrics…" oninput="renderFabricLibrary()" style="width:100%; max-width:340px; margin-bottom:0.5rem">
+      <div id="flib-list"><div class="empty">No fabric price list yet — import your suppliers' lists (any CSV with fabric + price columns).</div></div>
     </div>
 
     <div class="card">
@@ -1071,6 +1087,34 @@
     </div>
   </div>
 
+  <!-- WEEK PLAN -->
+  <div id="section-weekplan" class="section">
+    <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>📊 WEEK PLAN — <span id="wp-week-label">…</span></span>
+        <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap">
+          <button class="btn btn-sm" onclick="weekPlanShift(-1)">← Prev</button>
+          <button class="btn btn-sm" onclick="weekPlanShift(1)">Next →</button>
+          <button class="btn btn-sm btn-primary" onclick="printWeekPlan()">🖨️ Print plan</button>
+        </div>
+      </div>
+      <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.75rem">
+        Everything for the selected week's production (current business): the orders to build, the raw materials to have ready,
+        the staffing you actually need (short-time suggestion), and what the week costs vs what it brings in.
+        Orders count if they're planned into the week on the Planner, or (unplanned) due that week.
+      </p>
+      <div class="row">
+        <div class="f1"><label>Weekly factory wage bill (R)</label><input id="wp-wages" type="number" step="100" placeholder="e.g. 38000" onchange="weekPlanSetWages(this.value)"></div>
+        <div class="f1"><label>Staff on payroll (auto from Staff tab)</label><input id="wp-staff-count" type="number" step="1" placeholder="auto" onchange="weekPlanSetStaffOverride(this.value)"></div>
+      </div>
+      <div id="wp-warnings"></div>
+    </div>
+    <div class="card"><div class="card-title">🛠️ TO BUILD</div><div id="wp-orders"></div></div>
+    <div class="card"><div class="card-title">📦 RAW MATERIALS NEEDED</div><div id="wp-materials"></div></div>
+    <div class="card"><div class="card-title">👷 STAFFING</div><div id="wp-staffing"></div></div>
+    <div class="card"><div class="card-title">💰 WEEK COSTING</div><div id="wp-costing"></div></div>
+  </div>
+
   <!-- SCHEDULE -->
   <div id="section-schedule" class="section">
     <div class="card">
@@ -1236,6 +1280,12 @@
   let lastSyncedPayload = '';
   // Per-business POS doc sync state (shared-data/pos-<biz>).
   let unsubscribePos = {};
+  // Fabric price list lives in its OWN doc (shared-data/fabric-library) so a
+  // big supplier list can never bloat the main production doc (1MB doc limit).
+  let fabricLibrary = [];
+  let unsubscribeFabricLib = null;
+  let lastSyncedFabricPayload = '';
+  let fabricLibSaveTimeout = null;
   let posSaveTimeouts = {};
   let lastSyncedPosPayload = {};
   // ReptiCube till → factory bridge (salesorders collection listener).
@@ -1256,7 +1306,7 @@
   // Tab name array — order MUST match the order of .tab buttons in the DOM.
   // Used by showSection and applyRolePermissions. Declared at top so it's
   // initialized regardless of where in the script execution lands.
-  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'woodwork', 'pos'];
+  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'weekplan', 'woodwork', 'pos'];
 
   // Categories that never need fabric (wood products). Declared up here so it's
   // initialized BEFORE switchBiz('bellville') → onIntakeCategoryChange() runs at
@@ -1456,6 +1506,7 @@
     if (sec === 'materials') renderInventory();
     if (sec === 'costing' && typeof renderCosting === 'function') renderCosting();
     if (sec === 'repairs' && typeof renderRepairs === 'function') renderRepairs();
+    if (sec === 'weekplan' && typeof renderWeekPlan === 'function') renderWeekPlan();
     if (sec === 'intake') populateProductDatalist();
     if (sec === 'done') renderDoneOrders();
     if (sec === 'planner') renderPlanner();
@@ -4055,6 +4106,11 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof renderDispatchSettings === 'function') renderDispatchSettings();
     // New client-booking alerts — card + live toast when a booking lands on sync.
     if (typeof _renderNewBookingsCard === 'function') _renderNewBookingsCard();
+    // Week Plan stays live on sync (self-guarded on its element).
+    if (typeof renderWeekPlan === 'function') renderWeekPlan();
+    // Fabric price list card + dropdowns (self-guarded, no-op when empty).
+    if (typeof renderFabricLibrary === 'function') renderFabricLibrary();
+    if (typeof _populateFabricDatalists === 'function') _populateFabricDatalists();
   }
   
   function renderDoneOrders() {
@@ -4136,6 +4192,335 @@ ${_PRODUCTION_PRINT_STYLES}
   
   window.renderDoneOrders = renderDoneOrders;
   
+  // ===== Fabric price list (own Firestore doc: shared-data/fabric-library) =====
+  // Records: { id, name, supplier, price } — price is R per metre. Feeds the
+  // fabric dropdowns on New Order + Reserve Fabric with "Name — Supplier".
+  function startSyncFabricLib() {
+    try {
+      const ref = window.firebaseFns.doc(window.firebaseDb, 'shared-data', 'fabric-library');
+      if (unsubscribeFabricLib) { try { unsubscribeFabricLib(); } catch (e) {} }
+      unsubscribeFabricLib = window.firebaseFns.onSnapshot(ref, (snapshot) => {
+        if (!snapshot.exists()) return;
+        const payload = snapshot.data().data || '';
+        if (!payload || payload === lastSyncedFabricPayload) return; // our own echo
+        try {
+          const parsed = JSON.parse(payload);
+          fabricLibrary = Array.isArray(parsed.fabrics) ? parsed.fabrics : [];
+        } catch (e) { console.error('Corrupt fabric library payload, ignoring:', e); return; }
+        lastSyncedFabricPayload = payload;
+        renderFabricLibrary();
+        _populateFabricDatalists();
+      }, (err) => console.error('Fabric library sync error:', err));
+    } catch (e) { console.warn('Fabric library sync not started:', e); }
+  }
+  function cloudSaveFabricLib() {
+    if (!currentUser || !firebaseReady) return;
+    clearTimeout(fabricLibSaveTimeout);
+    fabricLibSaveTimeout = setTimeout(async () => {
+      const serialized = JSON.stringify({ fabrics: fabricLibrary });
+      try {
+        const ref = window.firebaseFns.doc(window.firebaseDb, 'shared-data', 'fabric-library');
+        await window.firebaseFns.setDoc(ref, { data: serialized, updatedAt: new Date().toISOString(), updatedBy: currentUser.email });
+        lastSyncedFabricPayload = serialized;
+      } catch (err) { console.error('Fabric library save failed:', err); }
+    }, 500);
+  }
+  function _fabricByLabel(label) {
+    const s = String(label || '').trim().toLowerCase();
+    if (!s) return null;
+    return fabricLibrary.find(f => f && ((f.name + ' — ' + (f.supplier || '')).toLowerCase() === s || String(f.name || '').toLowerCase() === s)) || null;
+  }
+  function fabricPickHint(value, hintId) {
+    const el = document.getElementById(hintId);
+    if (!el) return;
+    const f = _fabricByLabel(value);
+    el.textContent = f ? ('💰 R' + (parseFloat(f.price) || 0).toFixed(2) + '/m' + (f.supplier ? ' · ' + f.supplier : '')) : '';
+  }
+  window.fabricPickHint = fabricPickHint;
+  function _populateFabricDatalists() {
+    if (!fabricLibrary.length) return; // keep the old order-based suggestions
+    const opts = fabricLibrary.slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))
+      .map(f => `<option value="${_escape(f.name + (f.supplier ? ' — ' + f.supplier : ''))}"></option>`).join('');
+    ['intake-fabric-list', 'fr-fabric-list'].forEach(id => { const dl = document.getElementById(id); if (dl) dl.innerHTML = opts; });
+  }
+  function renderFabricLibrary() {
+    const list = document.getElementById('flib-list');
+    if (!list) return;
+    const cnt = document.getElementById('flib-count');
+    if (cnt) cnt.textContent = fabricLibrary.length ? '(' + fabricLibrary.length + ' fabrics)' : '';
+    if (!fabricLibrary.length) { list.innerHTML = '<div class="empty">No fabric price list yet — import your suppliers\' lists (any CSV with fabric + price columns).</div>'; return; }
+    const q = (document.getElementById('flib-search') || {}).value || '';
+    const ql = q.trim().toLowerCase();
+    const matches = ql
+      ? fabricLibrary.filter(f => String(f.name || '').toLowerCase().includes(ql) || String(f.supplier || '').toLowerCase().includes(ql))
+      : fabricLibrary;
+    const shown = matches.slice(0, 60);
+    list.innerHTML = `
+      <div style="overflow-x:auto"><table style="width:100%; border-collapse:collapse; font-size:12px">
+        <thead><tr style="text-align:left; border-bottom:2px solid var(--border,#ddd)"><th style="padding:4px 6px">Fabric</th><th style="padding:4px 6px">Supplier</th><th style="padding:4px 6px; text-align:right">R / m</th><th></th></tr></thead>
+        <tbody>${shown.map(f => `<tr style="border-bottom:1px solid var(--border,#eee)">
+          <td style="padding:3px 6px; font-weight:600">${_escape(f.name || '')}</td>
+          <td style="padding:3px 6px">${_escape(f.supplier || '')}</td>
+          <td style="padding:3px 6px; text-align:right">${(parseFloat(f.price) || 0).toFixed(2)}</td>
+          <td style="padding:3px 6px; text-align:center"><button class="btn btn-sm btn-danger" onclick="deleteFabricLibItem('${_jsq(f.id)}')">✕</button></td></tr>`).join('')}</tbody>
+      </table></div>
+      ${matches.length > shown.length ? `<div style="font-size:11px; color:var(--text-muted); margin-top:4px">Showing ${shown.length} of ${matches.length} — refine the search.</div>` : ''}`;
+  }
+  window.renderFabricLibrary = renderFabricLibrary;
+  function deleteFabricLibItem(id) {
+    fabricLibrary = fabricLibrary.filter(f => f && f.id !== id);
+    cloudSaveFabricLib();
+    renderFabricLibrary();
+    _populateFabricDatalists();
+  }
+  window.deleteFabricLibItem = deleteFabricLibItem;
+  function importFabricLibraryCSV(input) {
+    const file = input && input.files && input.files[0];
+    if (!file) return;
+    const st = document.getElementById('flib-status');
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const rows = _parseCsv(e.target.result);
+        if (rows.length < 2) { if (st) st.textContent = '✗ Empty or header-only CSV.'; input.value = ''; return; }
+        const header = rows[0].map(h => String(h).trim().toLowerCase());
+        const col = (names) => header.findIndex(h => names.some(n => h.indexOf(n) >= 0));
+        const nameIdx = col(['fabric', 'name', 'description', 'design']);
+        const supIdx = col(['supplier', 'vendor', 'brand']);
+        const priceIdx = col(['price', 'cost', 'r/m', 'rate']);
+        if (nameIdx < 0 || priceIdx < 0) { if (st) st.textContent = '✗ Need at least a fabric/name column and a price column.'; input.value = ''; return; }
+        const fileSupplier = ((document.getElementById('flib-supplier') || {}).value || '').trim();
+        const num = (v) => { const n = parseFloat(String(v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? null : n; };
+        let added = 0, updated = 0, skipped = 0;
+        for (let i = 1; i < rows.length; i++) {
+          const name = String(rows[i][nameIdx] || '').trim();
+          const price = num(rows[i][priceIdx]);
+          if (!name || price == null) { skipped++; continue; }
+          const supplier = (supIdx >= 0 ? String(rows[i][supIdx] || '').trim() : '') || fileSupplier;
+          const existing = fabricLibrary.find(f => f && String(f.name || '').toLowerCase() === name.toLowerCase() && String(f.supplier || '').toLowerCase() === supplier.toLowerCase());
+          if (existing) { existing.price = price; updated++; }
+          else { fabricLibrary.push({ id: 'FB-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6), name: name, supplier: supplier, price: price }); added++; }
+        }
+        cloudSaveFabricLib();
+        renderFabricLibrary();
+        _populateFabricDatalists();
+        if (st) st.textContent = '✓ Imported: added ' + added + ', updated ' + updated + ', skipped ' + skipped + '. Total ' + fabricLibrary.length + ' fabrics.';
+      } catch (err) {
+        if (st) st.textContent = '✗ Import failed: ' + (err && err.message ? err.message : err);
+      }
+      input.value = '';
+    };
+    reader.readAsText(file);
+  }
+  window.importFabricLibraryCSV = importFabricLibraryCSV;
+  function exportFabricLibraryCSV() {
+    if (!fabricLibrary.length) { alert('The fabric price list is empty.'); return; }
+    const rows = [['Fabric', 'Supplier', 'Price']];
+    fabricLibrary.slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))).forEach(f => rows.push([f.name || '', f.supplier || '', (f.price != null ? f.price : '')]));
+    _downloadCsvRows('fabric-price-list-' + new Date().toISOString().slice(0, 10) + '.csv', rows);
+  }
+  window.exportFabricLibraryCSV = exportFabricLibraryCSV;
+
+  // ===== Week Plan — materials, staffing (short-time) and cost for one week =====
+  // Reads the Planner (planWeek) + unplanned orders due that week, the BOMs +
+  // cutting lists for material needs vs stock, labour-per-piece for the wage
+  // load, and the Costing overheads for the week's cost vs revenue.
+  let _weekPlanOffset = 1; // 0 = this week, 1 = next week (default)
+  function weekPlanShift(dir) { _weekPlanOffset += dir; renderWeekPlan(); }
+  window.weekPlanShift = weekPlanShift;
+  function weekPlanSetWages(v) {
+    snapshotState();
+    _costing().weeklyWages = parseFloat(v) || 0;
+    saveData();
+    renderWeekPlan();
+  }
+  window.weekPlanSetWages = weekPlanSetWages;
+  function weekPlanSetStaffOverride(v) {
+    snapshotState();
+    _costing().staffOverride = parseInt(v) || 0;
+    saveData();
+    renderWeekPlan();
+  }
+  window.weekPlanSetStaffOverride = weekPlanSetStaffOverride;
+  function _weekPlanWeekIso() {
+    const mon = getMondayOf(new Date());
+    return _addDaysIso(mon, _weekPlanOffset * 7);
+  }
+  function _wpFindBom(biz, productName) {
+    if (!biz.productBoms || !productName) return null;
+    if (biz.productBoms[productName]) return biz.productBoms[productName];
+    const k = Object.keys(biz.productBoms).find(x => x.toLowerCase() === String(productName).toLowerCase());
+    return k ? biz.productBoms[k] : null;
+  }
+  function _weekPlanData() {
+    const biz = currentData();
+    const mon = _weekPlanWeekIso();
+    const sun = _addDaysIso(mon, 6);
+    // Orders in the week: planner-scheduled to this Monday, or unplanned and due this week.
+    const orders = (biz.orders || []).filter(o => {
+      if (!o || o.status === 'delivered' || o.status === 'done') return false;
+      if (o.planWeek) return o.planWeek === mon;
+      return o.dueDate && o.dueDate >= mon && o.dueDate <= sun;
+    });
+    const matById = {};
+    (biz.materialsLibrary || []).forEach(m => { if (m && m.id) matById[m.id] = m; });
+    const need = {}; // matId -> qty
+    let missingBom = 0, missingLabour = 0, missingPrice = 0;
+    let labourNeeded = 0, materialsCost = 0, revenue = 0;
+    const fabricIssues = [];
+    orders.forEach(o => {
+      const qty = parseInt(o.qty) || 1;
+      const prod = _wpFindBom(biz, o.product);
+      if (!prod || ((!prod.materials || !Object.keys(prod.materials).length) && (!prod.cutList || !prod.cutList.length))) missingBom++;
+      if (prod) {
+        Object.entries(prod.materials || {}).forEach(([id, q]) => { need[id] = (need[id] || 0) + qty * (parseFloat(q) || 0); });
+        if (typeof _cutListConsumption === 'function') {
+          const cc = _cutListConsumption(prod, biz);
+          Object.entries(cc || {}).forEach(([id, q]) => { need[id] = (need[id] || 0) + qty * (parseFloat(q) || 0); });
+        }
+        const lc = parseFloat(prod.labourCost);
+        if (!isNaN(lc) && lc > 0) labourNeeded += qty * lc; else missingLabour++;
+        const sp = parseFloat(prod.sellingPrice);
+        if (!isNaN(sp) && sp > 0) revenue += qty * sp; else missingPrice++;
+        materialsCost += qty * _productMaterialsCost(o.product, biz);
+      }
+      if (o.fabric && (o.fabricOOS || (o.fabricStatus || 'waiting') === 'waiting')) {
+        fabricIssues.push({ orderNo: o.invoice || o.id, fabric: o.fabric, oos: !!o.fabricOOS, eta: o.fabricStockETA || '' });
+      }
+    });
+    const matRows = Object.entries(need).map(([id, q]) => {
+      const m = matById[id];
+      return { name: (m && m.name) || id, unit: (m && m.unit) || '', need: q, needCost: q * ((m && parseFloat(m.cost)) || 0) };
+    }).filter(r => r.need > 0.0001).sort((a, b) => a.name.localeCompare(b.name));
+    const c = _costing();
+    const weeklyWages = parseFloat(c.weeklyWages) || 0;
+    const staffAuto = (biz.staff || []).length;
+    const staffCount = (parseInt(c.staffOverride) || 0) > 0 ? parseInt(c.staffOverride) : staffAuto;
+    const utilization = weeklyWages > 0 ? labourNeeded / weeklyWages : 0;
+    const staffNeeded = staffCount > 0 ? Math.min(staffCount, Math.ceil(utilization * staffCount)) : 0;
+    const shortTime = Math.max(0, staffCount - staffNeeded);
+    const overheadWeek = _costingTotalOverhead(c) * 12 / 52;
+    const weekCost = materialsCost + Math.min(labourNeeded, weeklyWages || labourNeeded) + overheadWeek;
+    return {
+      mon, sun, orders, matRows, fabricIssues,
+      missingBom, missingLabour, missingPrice,
+      labourNeeded, weeklyWages, staffAuto, staffCount, utilization, staffNeeded, shortTime,
+      materialsCost, overheadWeek, revenue, weekCost, profit: revenue - weekCost
+    };
+  }
+  function renderWeekPlan() {
+    const host = document.getElementById('wp-orders');
+    if (!host) return;
+    const d = _weekPlanData();
+    const R = v => 'R' + (Math.round(v * 100) / 100).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const lbl = document.getElementById('wp-week-label');
+    if (lbl) {
+      const md = new Date(d.mon + 'T00:00:00'), sd = new Date(d.sun + 'T00:00:00');
+      lbl.textContent = md.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) + ' – ' + sd.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) + (_weekPlanOffset === 1 ? ' (next week)' : _weekPlanOffset === 0 ? ' (this week)' : '');
+    }
+    const wEl = document.getElementById('wp-wages');
+    if (wEl && document.activeElement !== wEl) wEl.value = d.weeklyWages || '';
+    const scEl = document.getElementById('wp-staff-count');
+    if (scEl && document.activeElement !== scEl) scEl.value = d.staffCount || '';
+    // Data-quality warnings — the plan is only as good as the data.
+    const warn = document.getElementById('wp-warnings');
+    if (warn) {
+      const w = [];
+      if (d.missingBom) w.push(d.missingBom + ' order(s) have no BOM — their materials are NOT counted');
+      if (d.missingLabour) w.push(d.missingLabour + ' order(s) have no labour cost per piece');
+      if (d.missingPrice) w.push(d.missingPrice + ' order(s) have no selling price — revenue is understated');
+      if (!d.weeklyWages) w.push('Set the weekly factory wage bill above to get staffing + labour numbers');
+      warn.innerHTML = w.length ? `<div style="background:#FEF3C7; border-left:3px solid #F59E0B; padding:0.5rem 0.75rem; font-size:12px; border-radius:4px">${w.map(x => '⚠️ ' + _escape(x)).join('<br>')}</div>` : '';
+    }
+    host.innerHTML = d.orders.length === 0
+      ? '<div class="empty">Nothing planned or due this week — schedule orders on the Planner.</div>'
+      : `<div style="overflow-x:auto"><table style="width:100%; border-collapse:collapse; font-size:12px">
+          <thead><tr style="text-align:left; border-bottom:2px solid var(--border,#ddd)"><th style="padding:5px 6px">Order</th><th style="padding:5px 6px">Product</th><th style="padding:5px 6px; text-align:right">Qty</th><th style="padding:5px 6px">Fabric</th><th style="padding:5px 6px">Due</th></tr></thead>
+          <tbody>${d.orders.map(o => `<tr style="border-bottom:1px solid var(--border,#eee)">
+            <td style="padding:4px 6px; font-weight:700">#${_escape(o.invoice || o.id)}</td>
+            <td style="padding:4px 6px">${_escape(o.product || '')}</td>
+            <td style="padding:4px 6px; text-align:right">${_escape(o.qty || 1)}</td>
+            <td style="padding:4px 6px">${o.fabric ? _escape(o.fabric) + (o.fabricOOS ? ' <span style="color:#991b1b; font-weight:700">OOS' + (o.fabricStockETA ? ' → ' + _escape(o.fabricStockETA) : '') + '</span>' : (o.fabricStatus === 'received' ? ' ✅' : o.fabricStatus === 'ordered' ? ' 📦' : ' ⏳')) : '—'}</td>
+            <td style="padding:4px 6px">${_escape(o.dueDate || '')}</td></tr>`).join('')}</tbody>
+        </table></div>`;
+    const matEl = document.getElementById('wp-materials');
+    if (matEl) {
+      const totNeed = d.matRows.reduce((s, r) => s + r.needCost, 0);
+      matEl.innerHTML = d.matRows.length === 0
+        ? '<div class="empty">No material needs computed — check the orders have BOMs.</div>'
+        : `<div style="overflow-x:auto"><table style="width:100%; border-collapse:collapse; font-size:12px">
+            <thead><tr style="text-align:left; border-bottom:2px solid var(--border,#ddd)"><th style="padding:5px 6px">Material</th><th style="padding:5px 6px; text-align:right">Needed for the week</th><th style="padding:5px 6px; text-align:right">Cost</th></tr></thead>
+            <tbody>${d.matRows.map(r => `<tr style="border-bottom:1px solid var(--border,#eee)">
+              <td style="padding:4px 6px; font-weight:600">${_escape(r.name)}</td>
+              <td style="padding:4px 6px; text-align:right; font-weight:700">${r.need.toFixed(2)} ${_escape(r.unit)}</td>
+              <td style="padding:4px 6px; text-align:right">${R(r.needCost)}</td></tr>`).join('')}
+            <tr style="border-top:2px solid var(--border,#ddd)"><td colspan="2" style="padding:5px 6px; font-weight:700">Total material for the week</td><td style="padding:5px 6px; text-align:right; font-weight:900">${R(totNeed)}</td></tr></tbody>
+          </table></div>
+          ${d.fabricIssues.length ? `<div style="margin-top:0.5rem; font-size:12px; color:#991b1b"><strong>Fabric to chase:</strong> ${d.fabricIssues.map(f => '#' + _escape(f.orderNo) + ' ' + _escape(f.fabric) + (f.oos ? ' (OUT OF STOCK' + (f.eta ? ', ETA ' + _escape(f.eta) : '') + ')' : ' (not ordered yet)')).join(' · ')}</div>` : ''}`;
+    }
+    const stEl = document.getElementById('wp-staffing');
+    if (stEl) {
+      stEl.innerHTML = !d.weeklyWages
+        ? '<div class="empty">Enter the weekly factory wage bill above.</div>'
+        : `<div style="display:flex; gap:1.5rem; flex-wrap:wrap; font-size:13px">
+            <div><div style="font-size:11px; color:var(--text-muted)">Labour needed (week)</div><div style="font-size:20px; font-weight:900">${R(d.labourNeeded)}</div></div>
+            <div><div style="font-size:11px; color:var(--text-muted)">Weekly wage bill</div><div style="font-size:20px; font-weight:900">${R(d.weeklyWages)}</div></div>
+            <div><div style="font-size:11px; color:var(--text-muted)">Team busy</div><div style="font-size:20px; font-weight:900; color:${d.utilization >= 0.9 ? 'var(--success,#166534)' : d.utilization >= 0.6 ? '#b45309' : '#991b1b'}">${Math.round(d.utilization * 100)}%</div></div>
+            <div><div style="font-size:11px; color:var(--text-muted)">Staff needed / on payroll</div><div style="font-size:20px; font-weight:900">${d.staffNeeded} / ${d.staffCount}</div></div>
+          </div>
+          <div style="margin-top:0.75rem; padding:0.6rem 0.8rem; border-radius:8px; font-size:13px; font-weight:600; background:${d.shortTime > 0 ? '#FEF3C7' : '#f0fdf4'}; border-left:3px solid ${d.shortTime > 0 ? '#F59E0B' : 'var(--success,#16a34a)'}">
+            ${d.shortTime > 0
+              ? '💡 This week only needs <strong>' + d.staffNeeded + '</strong> of your <strong>' + d.staffCount + '</strong> staff — you could put <strong>' + d.shortTime + '</strong> on short time (± ' + R(d.weeklyWages / (d.staffCount || 1) * d.shortTime) + ' wage saving), or pull more orders into the week on the Planner.'
+              : '✅ The full team is needed this week' + (d.utilization > 1 ? ' — in fact the load is ' + Math.round(d.utilization * 100) + '% of capacity: consider overtime or moving some orders out.' : '.')}
+          </div>`;
+    }
+    const cEl = document.getElementById('wp-costing');
+    if (cEl) {
+      const labourUsed = Math.min(d.labourNeeded, d.weeklyWages || d.labourNeeded);
+      const pcol = d.profit >= 0 ? 'var(--success,#166534)' : '#991b1b';
+      cEl.innerHTML = `
+        <table style="width:100%; max-width:460px; border-collapse:collapse; font-size:13px">
+          <tr><td style="padding:4px 6px">Materials used (week's builds)</td><td style="padding:4px 6px; text-align:right; font-weight:700">${R(d.materialsCost)}</td></tr>
+          <tr><td style="padding:4px 6px">Labour (per-piece total)</td><td style="padding:4px 6px; text-align:right; font-weight:700">${R(labourUsed)}</td></tr>
+          <tr><td style="padding:4px 6px">Overheads (week share)</td><td style="padding:4px 6px; text-align:right; font-weight:700">${R(d.overheadWeek)}</td></tr>
+          <tr style="border-top:2px solid var(--border,#ddd)"><td style="padding:5px 6px; font-weight:800">Week cost</td><td style="padding:5px 6px; text-align:right; font-weight:900">${R(d.weekCost)}</td></tr>
+          <tr><td style="padding:4px 6px">Expected revenue (selling prices)</td><td style="padding:4px 6px; text-align:right; font-weight:700">${R(d.revenue)}</td></tr>
+          <tr style="border-top:2px solid var(--border,#ddd)"><td style="padding:5px 6px; font-weight:800">Week profit</td><td style="padding:5px 6px; text-align:right; font-weight:900; color:${pcol}">${R(d.profit)}</td></tr>
+        </table>`;
+    }
+  }
+  window.renderWeekPlan = renderWeekPlan;
+  function printWeekPlan() {
+    const wpSection = document.getElementById('section-weekplan');
+    if (!wpSection) return;
+    renderWeekPlan();
+    const d = _weekPlanData();
+    const esc = (typeof _escape === 'function') ? _escape : (s => String(s == null ? '' : s));
+    const grab = id => (document.getElementById(id) || {}).innerHTML || '';
+    const html = `<!DOCTYPE html><html><head><title>Week plan ${esc(d.mon)}</title>
+<style>
+  @page { size: A4; margin: 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; color: #000; }
+  body { padding: 8px; font-size: 12px; } h1 { font-size: 18px; } h2 { font-size: 14px; margin: 14px 0 6px; border-bottom: 2px solid #000; padding-bottom: 2px }
+  table { width: 100%; border-collapse: collapse; } th, td { border: 1px solid #bbb; padding: 4px 6px; text-align: left; font-size: 11px }
+  .no-print { padding: 10px; text-align: right; background: #f0f0f0; margin-bottom: 10px }
+  @media print { .no-print { display: none } }
+</style></head><body>
+  <div class="no-print"><button onclick="window.print()" style="padding:8px 16px; font-weight:bold; background:#000; color:#fff; border:none; cursor:pointer">🖨️ PRINT</button>
+  <button onclick="window.close()" style="padding:8px 16px; margin-left:8px; cursor:pointer">CLOSE</button></div>
+  <h1>📊 WEEK PLAN — ${esc(d.mon)} to ${esc(d.sun)}</h1>
+  <h2>To build (${d.orders.length})</h2>${grab('wp-orders')}
+  <h2>Raw materials needed</h2>${grab('wp-materials')}
+  <h2>Staffing</h2>${grab('wp-staffing')}
+  <h2>Week costing</h2>${grab('wp-costing')}
+</body></html>`;
+    const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Allow pop-ups for this site, then try again.'); return; }
+    win.document.write(html);
+    win.document.close();
+  }
+  window.printWeekPlan = printWeekPlan;
+
   // ===== Dispatch Manager — settings, done-prompt, client booking, week report =====
   const DISPATCH_DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const BIZ_DISPLAY = { bellville: 'Bellville Furniture', pinkfoot: 'PinkFoot Boutique', repticube: 'ReptiCube' };
@@ -10746,13 +11131,13 @@ ${totalsSection}
   // currentRole declared at top of script (TDZ safety)
   // Role permissions: which tabs each role can see
   const ROLE_PERMISSIONS = {
-    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'woodwork', 'pos'],
+    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'weekplan', 'woodwork', 'pos'],
     sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'woodwork', 'pos'],
     factory: ['dashboard', 'orders', 'done', 'calendar', 'repairs', 'fabric', 'bom', 'schedule', 'planner'],
     dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric'],
     fabric: ['dashboard', 'calendar', 'fabric'],
     cashier: ['dashboard', 'fabric', 'pos'],
-    manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'pos']
+    manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'weekplan', 'pos']
   };
   
   // Roles that should NOT see fabric ordering info on dashboard or order cards
@@ -10850,6 +11235,7 @@ ${totalsSection}
         startSync();
         startSyncPos();
         startSyncSalesOrders();
+        startSyncFabricLib();
       } else {
         currentUser = null;
         currentRole = null;
@@ -10874,6 +11260,7 @@ ${totalsSection}
         if (unsubscribe) { unsubscribe(); unsubscribe = null; }
         Object.keys(unsubscribePos).forEach(b => { try { unsubscribePos[b](); } catch (e) {} });
         unsubscribePos = {};
+        if (unsubscribeFabricLib) { try { unsubscribeFabricLib(); } catch (e) {} unsubscribeFabricLib = null; }
         if (unsubscribeSalesOrders) { try { unsubscribeSalesOrders(); } catch (e) {} unsubscribeSalesOrders = null; }
         productionLoaded = false;
         _rcPendingSOs = [];
