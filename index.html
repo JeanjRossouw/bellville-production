@@ -4365,13 +4365,13 @@ ${_PRODUCTION_PRINT_STYLES}
     const matById = {};
     (biz.materialsLibrary || []).forEach(m => { if (m && m.id) matById[m.id] = m; });
     const need = {}; // matId -> qty
-    let missingBom = 0, missingLabour = 0, missingPrice = 0;
+    const missingBom = new Set(), missingLabour = new Set(), missingPrice = new Set();
     let labourNeeded = 0, materialsCost = 0, revenue = 0;
     const fabricIssues = [];
     orders.forEach(o => {
       const qty = parseInt(o.qty) || 1;
       const prod = _wpFindBom(biz, o.product);
-      if (!prod || ((!prod.materials || !Object.keys(prod.materials).length) && (!prod.cutList || !prod.cutList.length))) missingBom++;
+      if (!prod || ((!prod.materials || !Object.keys(prod.materials).length) && (!prod.cutList || !prod.cutList.length))) missingBom.add(o.product || ('#' + (o.invoice || o.id)));
       if (prod) {
         Object.entries(prod.materials || {}).forEach(([id, q]) => { need[id] = (need[id] || 0) + qty * (parseFloat(q) || 0); });
         if (typeof _cutListConsumption === 'function') {
@@ -4379,9 +4379,9 @@ ${_PRODUCTION_PRINT_STYLES}
           Object.entries(cc || {}).forEach(([id, q]) => { need[id] = (need[id] || 0) + qty * (parseFloat(q) || 0); });
         }
         const lc = parseFloat(prod.labourCost);
-        if (!isNaN(lc) && lc > 0) labourNeeded += qty * lc; else missingLabour++;
+        if (!isNaN(lc) && lc > 0) labourNeeded += qty * lc; else missingLabour.add(o.product || ('#' + (o.invoice || o.id)));
         const sp = parseFloat(prod.sellingPrice);
-        if (!isNaN(sp) && sp > 0) revenue += qty * sp; else missingPrice++;
+        if (!isNaN(sp) && sp > 0) revenue += qty * sp; else missingPrice.add(o.product || ('#' + (o.invoice || o.id)));
         materialsCost += qty * _productMaterialsCost(o.product, biz);
       }
       if (o.fabric && (o.fabricOOS || (o.fabricStatus || 'waiting') === 'waiting')) {
@@ -4403,7 +4403,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const weekCost = materialsCost + Math.min(labourNeeded, weeklyWages || labourNeeded) + overheadWeek;
     return {
       mon, sun, orders, matRows, fabricIssues,
-      missingBom, missingLabour, missingPrice,
+      missingBom: [...missingBom], missingLabour: [...missingLabour], missingPrice: [...missingPrice],
       labourNeeded, weeklyWages, staffAuto, staffCount, utilization, staffNeeded, shortTime,
       materialsCost, overheadWeek, revenue, weekCost, profit: revenue - weekCost
     };
@@ -4426,11 +4426,15 @@ ${_PRODUCTION_PRINT_STYLES}
     const warn = document.getElementById('wp-warnings');
     if (warn) {
       const w = [];
-      if (d.missingBom) w.push(d.missingBom + ' order(s) have no BOM — their materials are NOT counted');
-      if (d.missingLabour) w.push(d.missingLabour + ' order(s) have no labour cost per piece');
-      if (d.missingPrice) w.push(d.missingPrice + ' order(s) have no selling price — revenue is understated');
+      const nameList = (arr) => {
+        const shown = arr.slice(0, 8).map(n => '<strong>' + _escape(n) + '</strong>').join(', ');
+        return shown + (arr.length > 8 ? ' +' + (arr.length - 8) + ' more' : '');
+      };
+      if (d.missingBom.length) w.push('No BOM (materials NOT counted): ' + nameList(d.missingBom));
+      if (d.missingLabour.length) w.push('No labour cost per piece: ' + nameList(d.missingLabour));
+      if (d.missingPrice.length) w.push('No selling price (revenue understated): ' + nameList(d.missingPrice));
       if (!d.weeklyWages) w.push('Set the weekly factory wage bill above to get staffing + labour numbers');
-      warn.innerHTML = w.length ? `<div style="background:#FEF3C7; border-left:3px solid #F59E0B; padding:0.5rem 0.75rem; font-size:12px; border-radius:4px">${w.map(x => '⚠️ ' + _escape(x)).join('<br>')}</div>` : '';
+      warn.innerHTML = w.length ? `<div style="background:#FEF3C7; border-left:3px solid #F59E0B; padding:0.5rem 0.75rem; font-size:12px; border-radius:4px">${w.map(x => '⚠️ ' + x).join('<br>')}</div>` : '';
     }
     host.innerHTML = d.orders.length === 0
       ? '<div class="empty">Nothing planned or due this week — schedule orders on the Planner.</div>'
