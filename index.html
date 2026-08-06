@@ -4346,11 +4346,30 @@ ${_PRODUCTION_PRINT_STYLES}
     const mon = getMondayOf(new Date());
     return _addDaysIso(mon, _weekPlanOffset * 7);
   }
+  // Order product names are free-typed on invoices ("2 SEATER ANNE"), while BOM
+  // keys are structured ("2 Seater — Anne") — match them loosely: exact →
+  // case-insensitive → punctuation-normalized → all BOM words present in the
+  // order name (longest such BOM wins). Returns { key, prod } or null.
+  function _wpNorm(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  }
   function _wpFindBom(biz, productName) {
     if (!biz.productBoms || !productName) return null;
-    if (biz.productBoms[productName]) return biz.productBoms[productName];
-    const k = Object.keys(biz.productBoms).find(x => x.toLowerCase() === String(productName).toLowerCase());
-    return k ? biz.productBoms[k] : null;
+    if (biz.productBoms[productName]) return { key: productName, prod: biz.productBoms[productName] };
+    const keys = Object.keys(biz.productBoms);
+    let k = keys.find(x => x.toLowerCase() === String(productName).toLowerCase());
+    if (k) return { key: k, prod: biz.productBoms[k] };
+    const target = _wpNorm(productName);
+    k = keys.find(x => _wpNorm(x) === target);
+    if (k) return { key: k, prod: biz.productBoms[k] };
+    // Word-subset fallback: every word of the BOM name appears in the order name.
+    const targetWords = new Set(target.split(' ').filter(Boolean));
+    let best = null, bestCount = 0;
+    keys.forEach(x => {
+      const w = _wpNorm(x).split(' ').filter(Boolean);
+      if (w.length >= 2 && w.every(t => targetWords.has(t)) && w.length > bestCount) { best = x; bestCount = w.length; }
+    });
+    return best ? { key: best, prod: biz.productBoms[best] } : null;
   }
   function _weekPlanData() {
     const biz = currentData();
@@ -4365,13 +4384,14 @@ ${_PRODUCTION_PRINT_STYLES}
     const matById = {};
     (biz.materialsLibrary || []).forEach(m => { if (m && m.id) matById[m.id] = m; });
     const need = {}; // matId -> qty
-    let missingBom = 0, missingLabour = 0, missingPrice = 0;
+    const missingBom = new Set(), missingLabour = new Set(), missingPrice = new Set();
     let labourNeeded = 0, materialsCost = 0, revenue = 0;
     const fabricIssues = [];
     orders.forEach(o => {
       const qty = parseInt(o.qty) || 1;
-      const prod = _wpFindBom(biz, o.product);
-      if (!prod || ((!prod.materials || !Object.keys(prod.materials).length) && (!prod.cutList || !prod.cutList.length))) missingBom++;
+      const found = _wpFindBom(biz, o.product);
+      const prod = found && found.prod;
+      if (!prod || ((!prod.materials || !Object.keys(prod.materials).length) && (!prod.cutList || !prod.cutList.length))) missingBom.add(o.product || ('#' + (o.invoice || o.id)));
       if (prod) {
         Object.entries(prod.materials || {}).forEach(([id, q]) => { need[id] = (need[id] || 0) + qty * (parseFloat(q) || 0); });
         if (typeof _cutListConsumption === 'function') {
@@ -4379,10 +4399,10 @@ ${_PRODUCTION_PRINT_STYLES}
           Object.entries(cc || {}).forEach(([id, q]) => { need[id] = (need[id] || 0) + qty * (parseFloat(q) || 0); });
         }
         const lc = parseFloat(prod.labourCost);
-        if (!isNaN(lc) && lc > 0) labourNeeded += qty * lc; else missingLabour++;
+        if (!isNaN(lc) && lc > 0) labourNeeded += qty * lc; else missingLabour.add(o.product || ('#' + (o.invoice || o.id)));
         const sp = parseFloat(prod.sellingPrice);
-        if (!isNaN(sp) && sp > 0) revenue += qty * sp; else missingPrice++;
-        materialsCost += qty * _productMaterialsCost(o.product, biz);
+        if (!isNaN(sp) && sp > 0) revenue += qty * sp; else missingPrice.add(o.product || ('#' + (o.invoice || o.id)));
+        materialsCost += qty * _productMaterialsCost(found.key, biz);
       }
       if (o.fabric && (o.fabricOOS || (o.fabricStatus || 'waiting') === 'waiting')) {
         fabricIssues.push({ orderNo: o.invoice || o.id, fabric: o.fabric, oos: !!o.fabricOOS, eta: o.fabricStockETA || '' });
@@ -4403,7 +4423,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const weekCost = materialsCost + Math.min(labourNeeded, weeklyWages || labourNeeded) + overheadWeek;
     return {
       mon, sun, orders, matRows, fabricIssues,
-      missingBom, missingLabour, missingPrice,
+      missingBom: [...missingBom], missingLabour: [...missingLabour], missingPrice: [...missingPrice],
       labourNeeded, weeklyWages, staffAuto, staffCount, utilization, staffNeeded, shortTime,
       materialsCost, overheadWeek, revenue, weekCost, profit: revenue - weekCost
     };
@@ -4426,11 +4446,19 @@ ${_PRODUCTION_PRINT_STYLES}
     const warn = document.getElementById('wp-warnings');
     if (warn) {
       const w = [];
-      if (d.missingBom) w.push(d.missingBom + ' order(s) have no BOM — their materials are NOT counted');
-      if (d.missingLabour) w.push(d.missingLabour + ' order(s) have no labour cost per piece');
-      if (d.missingPrice) w.push(d.missingPrice + ' order(s) have no selling price — revenue is understated');
+      // Each product name is a click-through: BOM issues open that product in the
+      // BOM editor; labour/price issues jump to (and highlight) its Costing row.
+      const nameList = (arr, fixFn) => {
+        const shown = arr.slice(0, 8).map(n =>
+          `<a style="font-weight:700; text-decoration:underline; cursor:pointer; color:inherit" onclick="${fixFn}('${_escape(_jsq(n))}')" title="Open ${_escape(n)} to fill this in">${_escape(n)}</a>`
+        ).join(', ');
+        return shown + (arr.length > 8 ? ' +' + (arr.length - 8) + ' more' : '');
+      };
+      if (d.missingBom.length) w.push('No BOM (materials NOT counted): ' + nameList(d.missingBom, 'weekPlanFixBom'));
+      if (d.missingLabour.length) w.push('No labour cost per piece: ' + nameList(d.missingLabour, 'weekPlanFixCosting'));
+      if (d.missingPrice.length) w.push('No selling price (revenue understated): ' + nameList(d.missingPrice, 'weekPlanFixCosting'));
       if (!d.weeklyWages) w.push('Set the weekly factory wage bill above to get staffing + labour numbers');
-      warn.innerHTML = w.length ? `<div style="background:#FEF3C7; border-left:3px solid #F59E0B; padding:0.5rem 0.75rem; font-size:12px; border-radius:4px">${w.map(x => '⚠️ ' + _escape(x)).join('<br>')}</div>` : '';
+      warn.innerHTML = w.length ? `<div style="background:#FEF3C7; border-left:3px solid #F59E0B; padding:0.5rem 0.75rem; font-size:12px; border-radius:4px">${w.map(x => '⚠️ ' + x).join('<br>')}</div>` : '';
     }
     host.innerHTML = d.orders.length === 0
       ? '<div class="empty">Nothing planned or due this week — schedule orders on the Planner.</div>'
@@ -4490,6 +4518,37 @@ ${_PRODUCTION_PRINT_STYLES}
     }
   }
   window.renderWeekPlan = renderWeekPlan;
+  // Click-through from a Week Plan warning to the place where it gets fixed.
+  function weekPlanFixBom(product) {
+    showSection('bom');
+    const cat = document.getElementById('prod-editor-cat');
+    if (cat) cat.value = '';
+    if (typeof renderProductEditor === 'function') renderProductEditor();
+    const sel = document.getElementById('prod-editor-product');
+    if (sel) {
+      sel.value = product;
+      if (typeof renderProductEditor === 'function') renderProductEditor();
+      if (sel.value !== product && typeof toast === 'function') {
+        toast('"' + product + '" is not set up as a BOM product yet — add it on this tab first.', 'warn', 4500);
+      }
+    }
+  }
+  window.weekPlanFixBom = weekPlanFixBom;
+  function weekPlanFixCosting(product) {
+    showSection('costing');
+    if (typeof renderCosting === 'function') renderCosting();
+    setTimeout(() => {
+      const escd = (window.CSS && CSS.escape) ? CSS.escape(product) : product.replace(/"/g, '\\"');
+      const row = document.querySelector('#costing-products tr[data-prod="' + escd + '"]');
+      if (row) {
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        row.style.transition = 'background 0.4s';
+        row.style.background = '#FEF3C7';
+        setTimeout(() => { row.style.background = ''; }, 2600);
+      }
+    }, 150);
+  }
+  window.weekPlanFixCosting = weekPlanFixCosting;
   function printWeekPlan() {
     const wpSection = document.getElementById('section-weekplan');
     if (!wpSection) return;
@@ -6375,7 +6434,7 @@ ${_PRODUCTION_PRINT_STYLES}
       const profit = sell - trueCost;
       const margin = sell > 0 ? (profit / sell * 100) : 0;
       const pcol = profit >= 0 ? 'var(--success,#166534)' : 'var(--danger,#991b1b)';
-      return `<tr style="border-bottom:1px solid var(--border,#eee)">
+      return `<tr data-prod="${_escape(key)}" style="border-bottom:1px solid var(--border,#eee)">
         <td style="padding:5px 6px">${_escape(key)}</td>
         <td style="padding:5px 6px; text-align:right">R${mat.toFixed(2)}</td>
         <td style="padding:5px 6px; text-align:right"><input type="number" step="1" value="${!isNaN(directLabour) ? directLabour : ''}" placeholder="${(hrs * rate) ? (hrs * rate).toFixed(0) : '0'}" onchange="costingSetProduct('${_q(key)}','labourCost',this.value)" style="width:96px; padding:3px; text-align:right" title="Labour cost per piece (Rand)"></td>
