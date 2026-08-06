@@ -453,7 +453,8 @@
         </div>
         <div class="f1" id="fabric-row">
           <label>Fabric / Color (optional)</label>
-          <input id="intake-fabric" placeholder="e.g., Full Grain Wild - Tobacco">
+          <input id="intake-fabric" list="intake-fabric-list" placeholder="e.g., Full Grain Wild - Tobacco" oninput="fabricPickHint(this.value, 'intake-fabric-hint')"><datalist id="intake-fabric-list"></datalist>
+          <div id="intake-fabric-hint" style="font-size:11px; color:var(--text-muted); margin-top:2px"></div>
         </div>
       </div>
       <div class="row">
@@ -786,7 +787,7 @@
       <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.75rem">Reserve fabric against a sales order number, then email it to admin. It also appears under "Reserved fabric" below and syncs to admin live.</p>
       <div class="row">
         <div class="f1"><label>Open sales order (type # or customer)</label><input id="fr-order" list="fr-order-list" autocomplete="off" placeholder="Type order # or customer…" oninput="onReserveOrderPick()"><datalist id="fr-order-list"></datalist></div>
-        <div class="f1"><label>Fabric</label><input id="fr-fabric" list="fr-fabric-list" placeholder="e.g. Sienna"><datalist id="fr-fabric-list"></datalist></div>
+        <div class="f1"><label>Fabric</label><input id="fr-fabric" list="fr-fabric-list" placeholder="e.g. Sienna" oninput="fabricPickHint(this.value, 'fr-fabric-hint')"><datalist id="fr-fabric-list"></datalist><div id="fr-fabric-hint" style="font-size:11px; color:var(--text-muted); margin-top:2px"></div></div>
         <div class="f1"><label>Colour (optional)</label><input id="fr-colour" placeholder="e.g. Light Grey"></div>
         <div class="f2" style="min-width:90px"><label>Meters</label><input id="fr-meters" type="number" step="0.1" placeholder="0"></div>
       </div>
@@ -807,6 +808,20 @@
         </div>
       </div>
       <div id="fr-list"><div class="empty">No fabric reserved yet</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>🎨 FABRIC PRICE LIST <span id="flib-count" style="font-size:11px; color:var(--text-muted); font-weight:400"></span></span>
+        <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap">
+          <input id="flib-supplier" placeholder="Supplier for this file (e.g. U&G)" style="min-width:170px; margin:0; font-size:12px; padding:5px">
+          <label class="btn btn-sm" style="cursor:pointer; margin:0" title="Import a price list CSV: Fabric, Supplier (optional), Price">⬆️ Import price list<input type="file" id="flib-upload" accept=".csv,text/csv" style="display:none" onchange="importFabricLibraryCSV(this)"></label>
+          <button class="btn btn-sm" onclick="exportFabricLibraryCSV()">⬇️ Export</button>
+        </div>
+      </div>
+      <div id="flib-status" style="font-size:11px; color:var(--text-muted); margin-bottom:0.4rem"></div>
+      <input id="flib-search" placeholder="Search fabrics…" oninput="renderFabricLibrary()" style="width:100%; max-width:340px; margin-bottom:0.5rem">
+      <div id="flib-list"><div class="empty">No fabric price list yet — import your suppliers' lists (any CSV with fabric + price columns).</div></div>
     </div>
 
     <div class="card">
@@ -1265,6 +1280,12 @@
   let lastSyncedPayload = '';
   // Per-business POS doc sync state (shared-data/pos-<biz>).
   let unsubscribePos = {};
+  // Fabric price list lives in its OWN doc (shared-data/fabric-library) so a
+  // big supplier list can never bloat the main production doc (1MB doc limit).
+  let fabricLibrary = [];
+  let unsubscribeFabricLib = null;
+  let lastSyncedFabricPayload = '';
+  let fabricLibSaveTimeout = null;
   let posSaveTimeouts = {};
   let lastSyncedPosPayload = {};
   // ReptiCube till → factory bridge (salesorders collection listener).
@@ -4087,6 +4108,9 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof _renderNewBookingsCard === 'function') _renderNewBookingsCard();
     // Week Plan stays live on sync (self-guarded on its element).
     if (typeof renderWeekPlan === 'function') renderWeekPlan();
+    // Fabric price list card + dropdowns (self-guarded, no-op when empty).
+    if (typeof renderFabricLibrary === 'function') renderFabricLibrary();
+    if (typeof _populateFabricDatalists === 'function') _populateFabricDatalists();
   }
   
   function renderDoneOrders() {
@@ -4168,6 +4192,135 @@ ${_PRODUCTION_PRINT_STYLES}
   
   window.renderDoneOrders = renderDoneOrders;
   
+  // ===== Fabric price list (own Firestore doc: shared-data/fabric-library) =====
+  // Records: { id, name, supplier, price } — price is R per metre. Feeds the
+  // fabric dropdowns on New Order + Reserve Fabric with "Name — Supplier".
+  function startSyncFabricLib() {
+    try {
+      const ref = window.firebaseFns.doc(window.firebaseDb, 'shared-data', 'fabric-library');
+      if (unsubscribeFabricLib) { try { unsubscribeFabricLib(); } catch (e) {} }
+      unsubscribeFabricLib = window.firebaseFns.onSnapshot(ref, (snapshot) => {
+        if (!snapshot.exists()) return;
+        const payload = snapshot.data().data || '';
+        if (!payload || payload === lastSyncedFabricPayload) return; // our own echo
+        try {
+          const parsed = JSON.parse(payload);
+          fabricLibrary = Array.isArray(parsed.fabrics) ? parsed.fabrics : [];
+        } catch (e) { console.error('Corrupt fabric library payload, ignoring:', e); return; }
+        lastSyncedFabricPayload = payload;
+        renderFabricLibrary();
+        _populateFabricDatalists();
+      }, (err) => console.error('Fabric library sync error:', err));
+    } catch (e) { console.warn('Fabric library sync not started:', e); }
+  }
+  function cloudSaveFabricLib() {
+    if (!currentUser || !firebaseReady) return;
+    clearTimeout(fabricLibSaveTimeout);
+    fabricLibSaveTimeout = setTimeout(async () => {
+      const serialized = JSON.stringify({ fabrics: fabricLibrary });
+      try {
+        const ref = window.firebaseFns.doc(window.firebaseDb, 'shared-data', 'fabric-library');
+        await window.firebaseFns.setDoc(ref, { data: serialized, updatedAt: new Date().toISOString(), updatedBy: currentUser.email });
+        lastSyncedFabricPayload = serialized;
+      } catch (err) { console.error('Fabric library save failed:', err); }
+    }, 500);
+  }
+  function _fabricByLabel(label) {
+    const s = String(label || '').trim().toLowerCase();
+    if (!s) return null;
+    return fabricLibrary.find(f => f && ((f.name + ' — ' + (f.supplier || '')).toLowerCase() === s || String(f.name || '').toLowerCase() === s)) || null;
+  }
+  function fabricPickHint(value, hintId) {
+    const el = document.getElementById(hintId);
+    if (!el) return;
+    const f = _fabricByLabel(value);
+    el.textContent = f ? ('💰 R' + (parseFloat(f.price) || 0).toFixed(2) + '/m' + (f.supplier ? ' · ' + f.supplier : '')) : '';
+  }
+  window.fabricPickHint = fabricPickHint;
+  function _populateFabricDatalists() {
+    if (!fabricLibrary.length) return; // keep the old order-based suggestions
+    const opts = fabricLibrary.slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))
+      .map(f => `<option value="${_escape(f.name + (f.supplier ? ' — ' + f.supplier : ''))}"></option>`).join('');
+    ['intake-fabric-list', 'fr-fabric-list'].forEach(id => { const dl = document.getElementById(id); if (dl) dl.innerHTML = opts; });
+  }
+  function renderFabricLibrary() {
+    const list = document.getElementById('flib-list');
+    if (!list) return;
+    const cnt = document.getElementById('flib-count');
+    if (cnt) cnt.textContent = fabricLibrary.length ? '(' + fabricLibrary.length + ' fabrics)' : '';
+    if (!fabricLibrary.length) { list.innerHTML = '<div class="empty">No fabric price list yet — import your suppliers\' lists (any CSV with fabric + price columns).</div>'; return; }
+    const q = (document.getElementById('flib-search') || {}).value || '';
+    const ql = q.trim().toLowerCase();
+    const matches = ql
+      ? fabricLibrary.filter(f => String(f.name || '').toLowerCase().includes(ql) || String(f.supplier || '').toLowerCase().includes(ql))
+      : fabricLibrary;
+    const shown = matches.slice(0, 60);
+    list.innerHTML = `
+      <div style="overflow-x:auto"><table style="width:100%; border-collapse:collapse; font-size:12px">
+        <thead><tr style="text-align:left; border-bottom:2px solid var(--border,#ddd)"><th style="padding:4px 6px">Fabric</th><th style="padding:4px 6px">Supplier</th><th style="padding:4px 6px; text-align:right">R / m</th><th></th></tr></thead>
+        <tbody>${shown.map(f => `<tr style="border-bottom:1px solid var(--border,#eee)">
+          <td style="padding:3px 6px; font-weight:600">${_escape(f.name || '')}</td>
+          <td style="padding:3px 6px">${_escape(f.supplier || '')}</td>
+          <td style="padding:3px 6px; text-align:right">${(parseFloat(f.price) || 0).toFixed(2)}</td>
+          <td style="padding:3px 6px; text-align:center"><button class="btn btn-sm btn-danger" onclick="deleteFabricLibItem('${_jsq(f.id)}')">✕</button></td></tr>`).join('')}</tbody>
+      </table></div>
+      ${matches.length > shown.length ? `<div style="font-size:11px; color:var(--text-muted); margin-top:4px">Showing ${shown.length} of ${matches.length} — refine the search.</div>` : ''}`;
+  }
+  window.renderFabricLibrary = renderFabricLibrary;
+  function deleteFabricLibItem(id) {
+    fabricLibrary = fabricLibrary.filter(f => f && f.id !== id);
+    cloudSaveFabricLib();
+    renderFabricLibrary();
+    _populateFabricDatalists();
+  }
+  window.deleteFabricLibItem = deleteFabricLibItem;
+  function importFabricLibraryCSV(input) {
+    const file = input && input.files && input.files[0];
+    if (!file) return;
+    const st = document.getElementById('flib-status');
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const rows = _parseCsv(e.target.result);
+        if (rows.length < 2) { if (st) st.textContent = '✗ Empty or header-only CSV.'; input.value = ''; return; }
+        const header = rows[0].map(h => String(h).trim().toLowerCase());
+        const col = (names) => header.findIndex(h => names.some(n => h.indexOf(n) >= 0));
+        const nameIdx = col(['fabric', 'name', 'description', 'design']);
+        const supIdx = col(['supplier', 'vendor', 'brand']);
+        const priceIdx = col(['price', 'cost', 'r/m', 'rate']);
+        if (nameIdx < 0 || priceIdx < 0) { if (st) st.textContent = '✗ Need at least a fabric/name column and a price column.'; input.value = ''; return; }
+        const fileSupplier = ((document.getElementById('flib-supplier') || {}).value || '').trim();
+        const num = (v) => { const n = parseFloat(String(v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? null : n; };
+        let added = 0, updated = 0, skipped = 0;
+        for (let i = 1; i < rows.length; i++) {
+          const name = String(rows[i][nameIdx] || '').trim();
+          const price = num(rows[i][priceIdx]);
+          if (!name || price == null) { skipped++; continue; }
+          const supplier = (supIdx >= 0 ? String(rows[i][supIdx] || '').trim() : '') || fileSupplier;
+          const existing = fabricLibrary.find(f => f && String(f.name || '').toLowerCase() === name.toLowerCase() && String(f.supplier || '').toLowerCase() === supplier.toLowerCase());
+          if (existing) { existing.price = price; updated++; }
+          else { fabricLibrary.push({ id: 'FB-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6), name: name, supplier: supplier, price: price }); added++; }
+        }
+        cloudSaveFabricLib();
+        renderFabricLibrary();
+        _populateFabricDatalists();
+        if (st) st.textContent = '✓ Imported: added ' + added + ', updated ' + updated + ', skipped ' + skipped + '. Total ' + fabricLibrary.length + ' fabrics.';
+      } catch (err) {
+        if (st) st.textContent = '✗ Import failed: ' + (err && err.message ? err.message : err);
+      }
+      input.value = '';
+    };
+    reader.readAsText(file);
+  }
+  window.importFabricLibraryCSV = importFabricLibraryCSV;
+  function exportFabricLibraryCSV() {
+    if (!fabricLibrary.length) { alert('The fabric price list is empty.'); return; }
+    const rows = [['Fabric', 'Supplier', 'Price']];
+    fabricLibrary.slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))).forEach(f => rows.push([f.name || '', f.supplier || '', (f.price != null ? f.price : '')]));
+    _downloadCsvRows('fabric-price-list-' + new Date().toISOString().slice(0, 10) + '.csv', rows);
+  }
+  window.exportFabricLibraryCSV = exportFabricLibraryCSV;
+
   // ===== Week Plan — materials, staffing (short-time) and cost for one week =====
   // Reads the Planner (planWeek) + unplanned orders due that week, the BOMs +
   // cutting lists for material needs vs stock, labour-per-piece for the wage
@@ -11082,6 +11235,7 @@ ${totalsSection}
         startSync();
         startSyncPos();
         startSyncSalesOrders();
+        startSyncFabricLib();
       } else {
         currentUser = null;
         currentRole = null;
@@ -11106,6 +11260,7 @@ ${totalsSection}
         if (unsubscribe) { unsubscribe(); unsubscribe = null; }
         Object.keys(unsubscribePos).forEach(b => { try { unsubscribePos[b](); } catch (e) {} });
         unsubscribePos = {};
+        if (unsubscribeFabricLib) { try { unsubscribeFabricLib(); } catch (e) {} unsubscribeFabricLib = null; }
         if (unsubscribeSalesOrders) { try { unsubscribeSalesOrders(); } catch (e) {} unsubscribeSalesOrders = null; }
         productionLoaded = false;
         _rcPendingSOs = [];
