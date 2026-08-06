@@ -4346,11 +4346,30 @@ ${_PRODUCTION_PRINT_STYLES}
     const mon = getMondayOf(new Date());
     return _addDaysIso(mon, _weekPlanOffset * 7);
   }
+  // Order product names are free-typed on invoices ("2 SEATER ANNE"), while BOM
+  // keys are structured ("2 Seater — Anne") — match them loosely: exact →
+  // case-insensitive → punctuation-normalized → all BOM words present in the
+  // order name (longest such BOM wins). Returns { key, prod } or null.
+  function _wpNorm(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  }
   function _wpFindBom(biz, productName) {
     if (!biz.productBoms || !productName) return null;
-    if (biz.productBoms[productName]) return biz.productBoms[productName];
-    const k = Object.keys(biz.productBoms).find(x => x.toLowerCase() === String(productName).toLowerCase());
-    return k ? biz.productBoms[k] : null;
+    if (biz.productBoms[productName]) return { key: productName, prod: biz.productBoms[productName] };
+    const keys = Object.keys(biz.productBoms);
+    let k = keys.find(x => x.toLowerCase() === String(productName).toLowerCase());
+    if (k) return { key: k, prod: biz.productBoms[k] };
+    const target = _wpNorm(productName);
+    k = keys.find(x => _wpNorm(x) === target);
+    if (k) return { key: k, prod: biz.productBoms[k] };
+    // Word-subset fallback: every word of the BOM name appears in the order name.
+    const targetWords = new Set(target.split(' ').filter(Boolean));
+    let best = null, bestCount = 0;
+    keys.forEach(x => {
+      const w = _wpNorm(x).split(' ').filter(Boolean);
+      if (w.length >= 2 && w.every(t => targetWords.has(t)) && w.length > bestCount) { best = x; bestCount = w.length; }
+    });
+    return best ? { key: best, prod: biz.productBoms[best] } : null;
   }
   function _weekPlanData() {
     const biz = currentData();
@@ -4370,7 +4389,8 @@ ${_PRODUCTION_PRINT_STYLES}
     const fabricIssues = [];
     orders.forEach(o => {
       const qty = parseInt(o.qty) || 1;
-      const prod = _wpFindBom(biz, o.product);
+      const found = _wpFindBom(biz, o.product);
+      const prod = found && found.prod;
       if (!prod || ((!prod.materials || !Object.keys(prod.materials).length) && (!prod.cutList || !prod.cutList.length))) missingBom.add(o.product || ('#' + (o.invoice || o.id)));
       if (prod) {
         Object.entries(prod.materials || {}).forEach(([id, q]) => { need[id] = (need[id] || 0) + qty * (parseFloat(q) || 0); });
@@ -4382,7 +4402,7 @@ ${_PRODUCTION_PRINT_STYLES}
         if (!isNaN(lc) && lc > 0) labourNeeded += qty * lc; else missingLabour.add(o.product || ('#' + (o.invoice || o.id)));
         const sp = parseFloat(prod.sellingPrice);
         if (!isNaN(sp) && sp > 0) revenue += qty * sp; else missingPrice.add(o.product || ('#' + (o.invoice || o.id)));
-        materialsCost += qty * _productMaterialsCost(o.product, biz);
+        materialsCost += qty * _productMaterialsCost(found.key, biz);
       }
       if (o.fabric && (o.fabricOOS || (o.fabricStatus || 'waiting') === 'waiting')) {
         fabricIssues.push({ orderNo: o.invoice || o.id, fabric: o.fabric, oos: !!o.fabricOOS, eta: o.fabricStockETA || '' });
