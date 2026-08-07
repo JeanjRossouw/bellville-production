@@ -368,6 +368,7 @@
     <button class="tab" onclick="showSection('schedule')">Schedule</button>
     <button class="tab" onclick="showSection('planner')">🗓️ Planner</button>
     <button class="tab" onclick="showSection('weekplan')">📊 Week Plan</button>
+    <button class="tab" onclick="showSection('stages')">🛋️ Stages</button>
     <button class="tab" onclick="showSection('woodwork')">🪵 Woodwork</button>
     <button class="tab" onclick="showSection('pos')">🛒 POS</button>
   </div>
@@ -1105,6 +1106,19 @@
     </div>
   </div>
 
+  <!-- PRODUCTION STAGES -->
+  <div id="section-stages" class="section">
+    <div class="card">
+      <div class="card-title">🛋️ PRODUCTION STAGES</div>
+      <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.5rem">
+        Track each piece through the factory. Tap <strong>▶ Next stage</strong> as it moves, or pick a stage directly.
+        Finishing the last stage marks the order DONE (and opens the dispatch actions).
+      </p>
+      <div id="stages-summary" style="display:flex; gap:0.4rem; flex-wrap:wrap; margin-bottom:0.25rem"></div>
+    </div>
+    <div id="stages-board"><div class="empty">No orders in production</div></div>
+  </div>
+
   <!-- WEEK PLAN -->
   <div id="section-weekplan" class="section">
     <div class="card">
@@ -1324,7 +1338,7 @@
   // Tab name array — order MUST match the order of .tab buttons in the DOM.
   // Used by showSection and applyRolePermissions. Declared at top so it's
   // initialized regardless of where in the script execution lands.
-  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'weekplan', 'woodwork', 'pos'];
+  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'weekplan', 'stages', 'woodwork', 'pos'];
 
   // Categories that never need fabric (wood products). Declared up here so it's
   // initialized BEFORE switchBiz('bellville') → onIntakeCategoryChange() runs at
@@ -1525,6 +1539,7 @@
     if (sec === 'costing' && typeof renderCosting === 'function') renderCosting();
     if (sec === 'repairs' && typeof renderRepairs === 'function') renderRepairs();
     if (sec === 'weekplan' && typeof renderWeekPlan === 'function') renderWeekPlan();
+    if (sec === 'stages' && typeof renderStages === 'function') renderStages();
     if (sec === 'intake') populateProductDatalist();
     if (sec === 'done') renderDoneOrders();
     if (sec === 'planner') renderPlanner();
@@ -4129,6 +4144,8 @@ ${_PRODUCTION_PRINT_STYLES}
     // Fabric price list card + dropdowns (self-guarded, no-op when empty).
     if (typeof renderFabricLibrary === 'function') renderFabricLibrary();
     if (typeof _populateFabricDatalists === 'function') _populateFabricDatalists();
+    // Production stages board stays live on sync (self-guarded).
+    if (typeof renderStages === 'function') renderStages();
   }
   
   function renderDoneOrders() {
@@ -4338,6 +4355,91 @@ ${_PRODUCTION_PRINT_STYLES}
     _downloadCsvRows('fabric-price-list-' + new Date().toISOString().slice(0, 10) + '.csv', rows);
   }
   window.exportFabricLibraryCSV = exportFabricLibraryCSV;
+
+  // ===== Production stages — track each piece through the factory =====
+  // o.prodStage holds the current stage name; o.stageLog records every move
+  // ({ stage, at, by }). Advancing off the last stage marks the order DONE
+  // (which fires the dispatch prompt); starting the first stage on a pending
+  // order moves it to in-production (which deducts materials as usual).
+  const PROD_STAGES = ['Frame', 'Webbing & Springs', 'Foam', 'Cut Fabric', 'Sewing', 'Upholstery', 'Finishing & QC'];
+  function setProdStage(orderId, stage) {
+    const o = currentData().orders.find(x => x && x.id === orderId);
+    if (!o) return;
+    snapshotState();
+    o.prodStage = stage;
+    if (!Array.isArray(o.stageLog)) o.stageLog = [];
+    o.stageLog.push({ stage: stage, at: new Date().toISOString(), by: (typeof currentUser !== 'undefined' && currentUser && currentUser.email) ? currentUser.email.split('@')[0] : 'staff' });
+    saveData();
+    renderStages();
+    if (typeof render === 'function') render();
+  }
+  window.setProdStage = setProdStage;
+  function advanceProdStage(orderId) {
+    const o = currentData().orders.find(x => x && x.id === orderId);
+    if (!o) return;
+    const idx = PROD_STAGES.indexOf(o.prodStage);
+    if (idx === -1) {
+      // Not started → first stage; a pending order goes into production (deducts materials).
+      if (o.status === 'pending') updateOrderStatus(orderId, 'in-production');
+      setProdStage(orderId, PROD_STAGES[0]);
+    } else if (idx >= PROD_STAGES.length - 1) {
+      // Last stage finished → the order is DONE (fires the dispatch prompt).
+      updateOrderStatus(orderId, 'done');
+    } else {
+      setProdStage(orderId, PROD_STAGES[idx + 1]);
+    }
+  }
+  window.advanceProdStage = advanceProdStage;
+  function renderStages() {
+    const board = document.getElementById('stages-board');
+    if (!board) return;
+    const orders = (currentData().orders || []).filter(o => o && (o.status === 'pending' || o.status === 'in-production'));
+    const summary = document.getElementById('stages-summary');
+    const buckets = { '': [] };
+    PROD_STAGES.forEach(st => { buckets[st] = []; });
+    orders.forEach(o => {
+      const st = PROD_STAGES.includes(o.prodStage) ? o.prodStage : '';
+      buckets[st].push(o);
+    });
+    if (summary) {
+      summary.innerHTML = [['', 'Not started'], ...PROD_STAGES.map(st => [st, st])].map(([key, label]) =>
+        `<span style="border:1px solid var(--border,#ddd); border-radius:12px; padding:2px 10px; font-size:11px; ${buckets[key].length ? 'font-weight:700' : 'color:var(--text-muted,#888)'}">${_escape(label)}: ${buckets[key].length}</span>`).join('');
+    }
+    if (!orders.length) { board.innerHTML = '<div class="empty">No active orders — add orders or check the Active Orders tab.</div>'; return; }
+    const stageSel = (o) => `
+      <select onchange="setProdStage('${o.id}', this.value)" style="width:150px; padding:4px 6px; font-size:11px">
+        <option value="" ${!PROD_STAGES.includes(o.prodStage) ? 'selected' : ''}>— Not started —</option>
+        ${PROD_STAGES.map(st => `<option value="${_escape(st)}" ${o.prodStage === st ? 'selected' : ''}>${_escape(st)}</option>`).join('')}
+      </select>`;
+    const cardFor = (o, idx) => {
+      const last = idx === PROD_STAGES.length - 1;
+      const lastLog = Array.isArray(o.stageLog) && o.stageLog.length ? o.stageLog[o.stageLog.length - 1] : null;
+      return `
+      <div style="border:1px solid var(--border,#ddd); border-radius:8px; padding:8px 10px; margin-bottom:6px; background:#fff">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:0.75rem; flex-wrap:wrap">
+          <div>
+            <div style="font-weight:700">#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}${o.fabric ? ' <span style="color:var(--text-muted,#888); font-weight:400">· ' + _escape(o.fabric) + '</span>' : ''}</div>
+            <div style="font-size:11px; color:var(--text-muted,#888)">${_escape(o.customer || '')} · qty ${_escape(o.qty || 1)}${o.dueDate ? ' · due ' + _escape(o.dueDate) : ''}${lastLog ? ' · ' + _escape(String(lastLog.at || '').slice(0, 10)) + (lastLog.by ? ' by ' + _escape(lastLog.by) : '') : ''}</div>
+          </div>
+          <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap">
+            ${stageSel(o)}
+            <button class="btn btn-sm ${last ? '' : 'btn-primary'}" style="${last ? 'background:var(--success,#16a34a); color:#fff; border-color:var(--success,#16a34a)' : ''}" onclick="advanceProdStage('${o.id}')">${idx === -1 ? '▶ Start' : last ? '✓ Finished → DONE' : '▶ Next stage'}</button>
+          </div>
+        </div>
+      </div>`;
+    };
+    const sections = [];
+    const notStarted = buckets[''];
+    if (notStarted.length) {
+      sections.push(`<div class="card"><div class="card-title" style="font-size:12px">⚪ NOT STARTED (${notStarted.length})</div>${notStarted.map(o => cardFor(o, -1)).join('')}</div>`);
+    }
+    PROD_STAGES.forEach((st, i) => {
+      if (!buckets[st].length) return;
+      sections.push(`<div class="card"><div class="card-title" style="font-size:12px">🛠️ ${_escape(st.toUpperCase())} (${buckets[st].length})</div>${buckets[st].map(o => cardFor(o, i)).join('')}</div>`);
+    });
+    board.innerHTML = sections.join('') || '<div class="empty">No active orders</div>';
+  }
+  window.renderStages = renderStages;
 
   // ===== Week Plan — materials, staffing (short-time) and cost for one week =====
   // Reads the Planner (planWeek) + unplanned orders due that week, the BOMs +
@@ -11250,13 +11352,13 @@ ${totalsSection}
   // currentRole declared at top of script (TDZ safety)
   // Role permissions: which tabs each role can see
   const ROLE_PERMISSIONS = {
-    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'weekplan', 'woodwork', 'pos'],
-    sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'woodwork', 'pos'],
-    factory: ['dashboard', 'orders', 'done', 'calendar', 'repairs', 'fabric', 'bom', 'schedule', 'planner'],
+    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'weekplan', 'stages', 'woodwork', 'pos'],
+    sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'stages', 'woodwork', 'pos'],
+    factory: ['dashboard', 'orders', 'done', 'calendar', 'repairs', 'fabric', 'bom', 'schedule', 'planner', 'stages'],
     dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric'],
     fabric: ['dashboard', 'calendar', 'fabric'],
     cashier: ['dashboard', 'fabric', 'pos'],
-    manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'weekplan', 'pos']
+    manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'weekplan', 'stages', 'pos']
   };
   
   // Roles that should NOT see fabric ordering info on dashboard or order cards
