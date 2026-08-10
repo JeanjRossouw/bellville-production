@@ -50,11 +50,13 @@ Links are `https://<site>/o/<token>` — short enough to sit in a WhatsApp messa
 The old `/reptipos/doc.html?t=…` form still resolves, so anything already sent
 keeps working.
 
-The domain is whatever the site answers on. To send customers to
-`orders.repticube.co.za` instead of `bellville-production.netlify.app`, add that
-subdomain under **Domain management** in Netlify and point a CNAME at the site
-from wherever the domain is registered. Nothing in the code changes — links are
-built from the host the request arrived on.
+The domain is whatever the site answers on. To send customers to a subdomain of
+your own domain instead of `bellville-production.netlify.app`, add that
+subdomain under **Domain management** in Netlify, set it as the **primary**
+domain, and point a CNAME at the site from wherever the domain is registered.
+Then redeploy — the function reads `URL` from the build environment, so links
+keep using the old host until a deploy picks up the new one. Nothing in the code
+changes.
 
 ## So the customer can find it again
 
@@ -79,10 +81,10 @@ side, and worth suggesting to anyone who asks.
 ## The token is the password
 
 Anyone holding the link can see that document and post messages to it — there is
-no sign-in, which is what makes it usable for a customer. Tokens are 32 random
+no sign-in, which is what makes it usable for a customer. Tokens are 16 random
 hex characters — 64 bits, far too large to guess — and each document has its
-own. Older 32-character tokens remain valid. The
-page is marked `noindex` so search engines will not list it.
+own. Tokens issued before this were 32 characters and remain valid. The page is
+marked `noindex` so search engines will not list it.
 
 What a link does **not** expose: the customer's email address and phone number
 are stored but never returned to the page, and one token gives access to exactly

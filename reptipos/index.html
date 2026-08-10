@@ -179,14 +179,14 @@
     <span id="net"><span class="dot" id="net-dot"></span> <span id="net-txt">online</span></span>
     <span id="cat-status">loading catalogue…</span>
     <button id="queue-badge" onclick="flushQueue(true)" title="Sales waiting to sync — click to sync now" style="display:none; width:auto;padding:0 0.6rem;height:30px;font-size:0.78rem;border-radius:8px;border:1px solid var(--warn);background:transparent;color:var(--warn);cursor:pointer"></button>
-    <button class="qbtn" title="Dashboard" onclick="openDashboard()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📈 Dashboard</button>
+    <button class="qbtn" id="btn-dashboard" title="Dashboard" onclick="openDashboard()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📈 Dashboard</button>
     <button class="qbtn" title="Clients &amp; accounts" onclick="openClients()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">👥 Clients</button>
     <button class="qbtn" title="Sales orders &amp; quotes" onclick="openDocs('salesorder')" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📋 Orders</button>
     <button class="qbtn" id="inbox-btn" title="Messages from customers" onclick="openInbox()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">💬 Messages<span id="inbox-badge" style="display:none;margin-left:0.3rem;background:var(--warn,#e5484d);color:#fff;border-radius:999px;padding:0 0.4rem;font-size:0.7rem"></span></button>
-    <button class="qbtn" title="Receive stock (GRV) &amp; suppliers" onclick="openGrv()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📥 Receive</button>
+    <button class="qbtn" id="btn-receive" title="Receive stock (GRV) &amp; suppliers" onclick="openGrv()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📥 Receive</button>
     <button class="qbtn" title="Stock take / count" onclick="openStocktake()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📦 Count</button>
-    <button class="qbtn" title="Create a purchase order" onclick="openReorder()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🧾 PO Order</button>
-    <button class="qbtn" title="Sales history" onclick="openSales()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📊 Sales</button>
+    <button class="qbtn" id="btn-po" title="Create a purchase order" onclick="openReorder()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🧾 PO Order</button>
+    <button class="qbtn" id="btn-sales" title="Sales history" onclick="openSales()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📊 Sales</button>
     <button class="qbtn" title="Refund / return" onclick="openRefund()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">↩ Refund</button>
     <button class="qbtn" title="Register / cash-up" onclick="openReg()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🧾 Register</button>
     <button class="qbtn" title="Refresh catalogue" onclick="refreshCatalogue(true)" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">↻</button>
@@ -957,9 +957,40 @@
   function staffList() { try { return JSON.parse(localStorage.getItem('reptipos-staff') || '[]'); } catch (e) { return []; } }
   function saveStaff(arr) { localStorage.setItem('reptipos-staff', JSON.stringify(arr)); }
   function ensureStaffSeed() { if (staffList().length === 0) saveStaff([{ id: 'admin', name: 'Admin', pin: '0000', role: 'admin' }]); }
-  function renderStaffBadge() { const b = document.getElementById('staff-badge'); if (b) b.textContent = currentStaff ? '👤 ' + currentStaff.name : ''; }
+  function renderStaffBadge() {
+    const b = document.getElementById('staff-badge');
+    if (b) b.textContent = currentStaff ? '👤 ' + currentStaff.name + (isManager() ? '' : ' · cashier') : '';
+  }
 
-  function lockPOS() { currentStaff = null; pinBuffer = ''; renderStaffBadge(); renderLockPad(); renderLockDemo(); document.getElementById('lock').style.display = 'flex'; }
+  // ---- What a cashier may not see ---------------------------------------
+  // Cost prices and the takings figures are the owner's business, so they are
+  // limited to managers. Everything needed to serve a customer stays open.
+  //
+  // This hides screens; it is not a vault. The product catalogue is cached in
+  // the browser and cost prices come down with it, so anyone able to open the
+  // developer tools on the till could still read them. It stops casual
+  // looking, which is what a shop floor needs — see STAFF-ROLES.md.
+  function isManager() { return !!currentStaff && currentStaff.role === 'admin'; }
+
+  // Guard at the point of use as well as hiding the button, so a screen cannot
+  // be reached by another route.
+  function managerOnly(what) {
+    if (isManager()) return true;
+    toast((what || 'That') + ' is for managers only');
+    return false;
+  }
+
+  // Buttons a cashier never sees. Applied on sign-in and on sign-out.
+  const MANAGER_BUTTONS = ['btn-dashboard', 'btn-receive', 'btn-po', 'btn-sales'];
+  function applyRoleToChrome() {
+    const show = isManager();
+    MANAGER_BUTTONS.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = show ? '' : 'none';
+    });
+  }
+
+  function lockPOS() { currentStaff = null; pinBuffer = ''; renderStaffBadge(); applyRoleToChrome(); renderLockPad(); renderLockDemo(); document.getElementById('lock').style.display = 'flex'; }
   function renderLockPad() {
     document.getElementById('lock-dots').textContent = '••••'.slice(0, pinBuffer.length).padEnd(4, '·');
     const pad = document.getElementById('lock-pad');
@@ -973,7 +1004,7 @@
     document.getElementById('lock-dots').textContent = (pinBuffer.replace(/./g, '•') || '').padEnd(4, '·');
     if (pinBuffer.length >= 4) {
       const s = staffList().find(x => x.pin === pinBuffer);
-      if (s) { currentStaff = s; pinBuffer = ''; document.getElementById('lock').style.display = 'none'; renderStaffBadge(); }
+      if (s) { currentStaff = s; pinBuffer = ''; document.getElementById('lock').style.display = 'none'; renderStaffBadge(); applyRoleToChrome(); }
       else if (pinBuffer.length >= 6) { toast('Wrong PIN'); pinBuffer = ''; renderLockPad(); }
     }
   }
@@ -1031,7 +1062,12 @@
     const list = staffList();
     return `<div style="font-size:0.8rem; font-weight:700; margin-bottom:0.4rem">Staff</div>
       ${list.map(s => `<div style="display:flex; justify-content:space-between; padding:0.25rem 0; font-size:0.85rem"><span>${esc(s.name)} <span style="color:var(--muted)">(${s.role})</span></span>${s.id !== 'admin' ? `<button class="rm" onclick="removeStaff('${s.id}')">✕</button>` : ''}</div>`).join('')}
-      <div style="display:flex; gap:0.4rem; margin-top:0.4rem"><input id="st-name" placeholder="Name" style="flex:1"><input id="st-pin" placeholder="PIN" style="width:80px"></div>
+      <div style="display:flex; gap:0.4rem; margin-top:0.4rem">
+        <input id="st-name" placeholder="Name" style="flex:1">
+        <input id="st-pin" placeholder="PIN" style="width:80px">
+        <select id="st-role" style="width:110px"><option value="cashier">Cashier</option><option value="admin">Manager</option></select>
+      </div>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Cashiers can sell, refund and handle customers. Cost prices, the dashboard, receiving and purchase orders are managers only.</div>
       <button class="qbtn" style="width:auto; padding:0 0.7rem; margin-top:0.4rem" onclick="addStaff()">+ Add staff</button>
       <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">Company details (printed on documents)</div>
       <div style="display:flex; flex-direction:column; gap:0.35rem">
@@ -1082,7 +1118,9 @@
     if (!name || !/^\d{4,6}$/.test(pin)) { toast('Name + 4–6 digit PIN'); return; }
     const list = staffList();
     if (list.some(s => s.pin === pin)) { toast('PIN already in use'); return; }
-    list.push({ id: 'st-' + Date.now(), name, pin, role: 'cashier' });
+    const roleEl = document.getElementById('st-role');
+    const role = roleEl && roleEl.value === 'admin' ? 'admin' : 'cashier';
+    list.push({ id: 'st-' + Date.now(), name, pin, role });
     saveStaff(list); renderReg(); toast('Staff added');
   }
   function removeStaff(id) { if (!confirm('Remove this staff member?')) return; saveStaff(staffList().filter(s => s.id !== id)); renderReg(); }
@@ -1173,7 +1211,11 @@
 
   // ---- Sales history (local log) + reprint ----
   function loadSales() { try { return JSON.parse(localStorage.getItem('reptipos-sales') || '[]'); } catch (e) { return []; } }
-  function openSales() { document.getElementById('sales-modal').classList.add('show'); renderSales(); }
+  function openSales() {
+    if (!managerOnly('Sales history')) return;
+    document.getElementById('sales-modal').classList.add('show');
+    renderSales();
+  }
   function closeSales() { document.getElementById('sales-modal').classList.remove('show'); }
 
   // ---- Money-in (takings) ------------------------------------------------
@@ -1903,7 +1945,11 @@
 
   // ---- Dashboard ----
   let dashPeriod = 'today';
-  function openDashboard() { document.getElementById('dash-modal').classList.add('show'); renderDashboard(); }
+  function openDashboard() {
+    if (!managerOnly('The dashboard')) return;
+    document.getElementById('dash-modal').classList.add('show');
+    renderDashboard();
+  }
   function closeDashboard() { document.getElementById('dash-modal').classList.remove('show'); }
   function setDashPeriod(p) { dashPeriod = p; renderDashboard(); }
   function dashRange(period) {
@@ -2100,11 +2146,11 @@
         <div style="display:flex;gap:0.5rem;margin-top:0.6rem;flex-wrap:wrap">
           <button class="btn btn-ghost" style="padding:0.6rem;flex:1" onclick="exportStockXlsx()">⬇ Export to Excel</button>
           <button class="btn btn-ghost" style="padding:0.6rem;flex:1" onclick="document.getElementById('st-file').click()">⬆ Import counts</button>
-          <button class="btn btn-ghost" style="padding:0.6rem;flex:1" onclick="document.getElementById('st-cost-file').click()">💰 Import cost prices</button>
+          ${isManager() ? `<button class="btn btn-ghost" style="padding:0.6rem;flex:1" onclick="document.getElementById('st-cost-file').click()">💰 Import cost prices</button>` : ''}
         </div>
         <input type="file" id="st-file" accept=".xlsx,.xls,.csv,text/csv" style="display:none" onchange="importStockFile(this)">
         <input type="file" id="st-cost-file" accept=".xlsx,.xls,.csv,text/csv" style="display:none" onchange="importCostsFile(this)">
-        <div style="font-size:0.72rem;color:var(--muted);margin-top:0.3rem">Export to Excel; fill the <b>Count</b> column → <b>Import counts</b> (stock take), or fill the <b>Cost</b> column → <b>Import cost prices</b> (writes Shopify "Cost per item" so profit works).</div>
+        <div style="font-size:0.72rem;color:var(--muted);margin-top:0.3rem">Export to Excel; fill the <b>Count</b> column → <b>Import counts</b> (stock take).${isManager() ? ` Or fill the <b>Cost</b> column → <b>Import cost prices</b> (writes Shopify "Cost per item" so profit works).` : ''}</div>
         ${stHistory()}`;
       return;
     }
@@ -2139,7 +2185,7 @@
     if (!catalogue.length) { toast('No catalogue loaded'); return; }
     const header = ['SKU', 'Barcode', 'Name', 'Category', 'Vendor', 'OnHand', 'Price', 'Cost', 'Count'];
     const lines = [header.join(',')];
-    catalogue.forEach(p => lines.push([p.sku, p.barcode, p.name, p.category, p.vendor, (Number(p.qty) || 0), ((p.priceCents || 0) / 100).toFixed(2), ((p.costCents || 0) / 100).toFixed(2), ''].map(csvEscape).join(',')));
+    catalogue.forEach(p => lines.push([p.sku, p.barcode, p.name, p.category, p.vendor, (Number(p.qty) || 0), ((p.priceCents || 0) / 100).toFixed(2), isManager() ? ((p.costCents || 0) / 100).toFixed(2) : '', ''].map(csvEscape).join(',')));
     const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = 'reptipos-stock-' + new Date().toISOString().slice(0, 10) + '.csv'; a.click();
@@ -2175,7 +2221,7 @@
     if (!catalogue.length) { toast('No catalogue loaded'); return; }
     try {
       const XLSX = await loadXlsx();
-      const data = catalogue.map(p => ({ SKU: p.sku || '', Barcode: p.barcode || '', Name: p.name || '', Category: p.category || '', Vendor: p.vendor || '', OnHand: Number(p.qty) || 0, Price: (p.priceCents || 0) / 100, Cost: (p.costCents || 0) / 100, Count: '' }));
+      const data = catalogue.map(p => ({ SKU: p.sku || '', Barcode: p.barcode || '', Name: p.name || '', Category: p.category || '', Vendor: p.vendor || '', OnHand: Number(p.qty) || 0, Price: (p.priceCents || 0) / 100, Cost: isManager() ? (p.costCents || 0) / 100 : '', Count: '' }));
       const ws = XLSX.utils.json_to_sheet(data);
       const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Stock');
       XLSX.writeFile(wb, 'reptipos-stock-' + new Date().toISOString().slice(0, 10) + '.xlsx');
@@ -2415,7 +2461,12 @@
   }
 
   let suppliersCache = [], grvsCache = [], grvLines = [], grvSupplierId = null, grvInFlight = false, grvCurTab = 'new', receivingPoId = null, posCache = [];
-  function openGrv() { receivingPoId = null; grvLines = []; grvSupplierId = null; grvInFlight = false; document.getElementById('grv-modal').classList.add('show'); grvTab('new'); }
+  function openGrv() {
+    if (!managerOnly('Receiving stock')) return;
+    receivingPoId = null; grvLines = []; grvSupplierId = null; grvInFlight = false;
+    document.getElementById('grv-modal').classList.add('show');
+    grvTab('new');
+  }
   function closeGrv() { document.getElementById('grv-modal').classList.remove('show'); }
   function grvTab(t) {
     grvCurTab = t;
@@ -2707,7 +2758,14 @@
     for (const g of grvsCache) { const li = (g.lineItems || []).find(l => l.variantId === variantId); if (li && li.costCents != null) return li.costCents; }
     return 0;
   }
-  async function openReorder() { document.getElementById('reorder-modal').classList.add('show'); await ensureSuppliers(); try { grvsCache = await fbList('grvs', 'createdAt', 'desc'); } catch (e) {} poDraft = null; startBlankPO(); }
+  async function openReorder() {
+    if (!managerOnly('Purchase orders')) return;
+    document.getElementById('reorder-modal').classList.add('show');
+    await ensureSuppliers();
+    try { grvsCache = await fbList('grvs', 'createdAt', 'desc'); } catch (e) {}
+    poDraft = null;
+    startBlankPO();
+  }
   function closeReorder() { document.getElementById('reorder-modal').classList.remove('show'); }
   async function renderReorder() {
     const body = document.getElementById('reorder-body');

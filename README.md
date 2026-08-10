@@ -45,6 +45,9 @@ required env vars are in `XERO-SETUP.md` (Phase 2 — accounting) and
   (**📤 Send** → WhatsApp or copy). They see the document, its status and
   banking details, and can ask for an update; replies land in the till's 💬
   **Messages** inbox. See `CLIENT-LINKS-SETUP.md`.
+- Till staff sign in with a PIN and are either a **cashier** or a **manager**.
+  Cost prices, the dashboard, receiving, purchase orders and sales history are
+  managers only. See `STAFF-ROLES.md`.
 - The standalone ReptiCube till at `/reptipos/` posts each completed sale to
   **Shopify** (order + stock) and to **Xero** (paid invoice) via the same
   `xero-invoice` function the main POS tab uses. The two have separate retry
