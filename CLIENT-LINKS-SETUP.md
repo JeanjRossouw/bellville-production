@@ -56,6 +56,26 @@ subdomain under **Domain management** in Netlify and point a CNAME at the site
 from wherever the domain is registered. Nothing in the code changes — links are
 built from the host the request arrived on.
 
+## So the customer can find it again
+
+A link sits in a WhatsApp thread and is buried within a week. Three things
+address that, in order of how well they work:
+
+1. **Home screen.** The customer's page prompts them to save it to their phone,
+   with the right wording for iPhone or Android. It then opens as an app icon —
+   one tap, no searching. On Android the page builds a manifest at load time so
+   the installed shortcut points at *that* document rather than a generic page;
+   iPhone uses the `apple-*` meta tags with whatever URL is open. The prompt is
+   dismissible and remembered.
+2. **The message says so.** The WhatsApp text sent with the link suggests saving
+   it, which is where the customer decides what to do with it.
+3. **Re-send it.** Pressing Send again reuses the same token, so the newest
+   message in the chat always carries a working link and the conversation on the
+   page is not lost.
+
+Customers can also star the WhatsApp message or pin the chat — no work on our
+side, and worth suggesting to anyone who asks.
+
 ## The token is the password
 
 Anyone holding the link can see that document and post messages to it — there is

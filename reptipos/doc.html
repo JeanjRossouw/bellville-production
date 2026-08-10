@@ -10,6 +10,9 @@
 <meta property="og:title" content="ReptiCube order">
 <meta property="og:description" content="View it, check its progress, and message us.">
 <meta name="theme-color" content="#0f7b6c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="ReptiCube">
 <meta name="twitter:card" content="summary">
 <style>
   :root { --ink:#16191d; --muted:#5c6570; --line:#e4e7eb; --accent:#0f7b6c; --bg:#f6f7f9; }
@@ -45,6 +48,12 @@
   .err { background:#fdecea; border:1px solid #f3c7c3; color:#b3261e; padding:11px 14px; border-radius:9px; margin-bottom:14px }
   .ok { background:#e6f4ec; border:1px solid #b7e0c8; color:#0b7a4b; padding:11px 14px; border-radius:9px; margin-bottom:14px }
   .center { text-align:center; color:var(--muted); padding:40px 0 }
+  .keep { display:flex; gap:12px; align-items:flex-start; background:#eef6f4; border:1px solid #cfe6e0;
+          border-radius:12px; padding:14px 16px; margin-bottom:16px }
+  .keep .txt { flex:1; font-size:14px; line-height:1.45 }
+  .keep strong { display:block; margin-bottom:2px }
+  .keep .x { background:none; border:none; color:var(--muted); font-size:20px; line-height:1;
+             width:auto; min-height:0; padding:0 2px; cursor:pointer }
   @media print { body { background:#fff } .card { border:none; padding:0 } .noprint { display:none } }
 </style>
 </head>
@@ -69,6 +78,39 @@
 
   let doc = null;
 
+  // Android's "Install app" needs a manifest, and it must point at this exact
+  // document — a static one would send every customer to the same page. Built
+  // as a blob at load time. iOS ignores manifests and uses the apple-* meta
+  // tags with whatever URL is open, which is also this document.
+  function installManifest() {
+    try {
+      const manifest = {
+        name: 'ReptiCube order', short_name: 'ReptiCube',
+        start_url: location.href, scope: location.href,
+        display: 'standalone', background_color: '#f6f7f9', theme_color: '#0f7b6c'
+      };
+      const url = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' }));
+      const link = document.createElement('link');
+      link.rel = 'manifest'; link.href = url;
+      document.head.appendChild(link);
+    } catch (e) { /* the page works fine without it */ }
+  }
+
+  // Shown once, then remembered — a customer who has already saved it should
+  // not be nagged every visit.
+  const KEEP_KEY = 'rc-keep-hint-dismissed';
+  function keepHtml() {
+    if (localStorage.getItem(KEEP_KEY)) return '';
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const how = ios
+      ? 'Tap the Share button below, then <strong style="display:inline">Add to Home Screen</strong>.'
+      : 'Tap the ⋮ menu top right, then <strong style="display:inline">Add to Home screen</strong>.';
+    return `<div class="keep">
+      <div style="font-size:20px">📌</div>
+      <div class="txt"><strong>Keep this handy</strong>Save it to your phone so you can check your order any time, without hunting for the message. ${how}</div>
+      <button class="x" id="keep-x" aria-label="Dismiss">×</button></div>`;
+  }
+
   async function load() {
     if (!token) return fail('That link is incomplete. Please use the full link we sent you.');
     try {
@@ -76,6 +118,7 @@
       const data = await res.json();
       if (!res.ok) return fail(data.error || 'This link is no longer available.');
       doc = data;
+      installManifest();
       render();
     } catch (e) {
       fail('Could not load this document. Please check your connection and try again.');
@@ -116,6 +159,7 @@
     const owing = doc.balanceCents || 0;
 
     document.getElementById('root').innerHTML = `
+      ${keepHtml()}
       <div class="card">
         ${companyHtml()}
         <div class="kind">${esc(KIND[doc.type] || 'Document')}</div>
@@ -146,6 +190,8 @@
       </div>`;
 
     document.getElementById('send').onclick = send;
+    const keepX = document.getElementById('keep-x');
+    if (keepX) keepX.onclick = () => { try { localStorage.setItem(KEEP_KEY, '1'); } catch (e) {} render(); };
   }
 
   async function send() {
