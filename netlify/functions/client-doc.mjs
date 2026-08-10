@@ -32,12 +32,14 @@ const json = (status, obj) => ({
 const docKey = (token) => `clientdoc-${token}`;
 const clean = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
 
-// Tokens are the only thing protecting a document, so they must be random and
-// long. 32 hex characters from randomUUID is ample and needs no dependency.
-const newToken = () => randomUUID().replace(/-/g, '');
+// Tokens are the only thing protecting a document, so they must be random. 16
+// hex characters is 64 bits — short enough to read in a WhatsApp message, far
+// too large to guess, and there is nothing to enumerate against. Tokens issued
+// before this were 32 characters and stay valid.
+const newToken = () => randomUUID().replace(/-/g, '').slice(0, 16);
 
 function validToken(token) {
-  return /^[a-f0-9]{32}$/.test(String(token || ''));
+  return /^[a-f0-9]{16,32}$/.test(String(token || ''));
 }
 
 function siteUrl(event) {
@@ -169,7 +171,7 @@ export const handler = async (event) => {
         number: doc.number, type: doc.type, client: doc.client.name,
         totalCents: doc.totalCents, status: doc.status, unread: doc.unread, lastClientAt: doc.lastClientAt
       });
-      return json(200, { token, url: `${siteUrl(event)}/reptipos/doc.html?t=${token}` });
+      return json(200, { token, url: `${siteUrl(event)}/o/${token}` });
     }
 
     if (action === 'reply' || action === 'status') {

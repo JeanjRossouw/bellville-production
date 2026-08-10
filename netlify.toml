@@ -14,3 +14,12 @@
   from = "/pos"
   to = "/index.html?pos=1"
   status = 200
+
+# Short, tidy link for a customer document: /o/<token> instead of
+# /reptipos/doc.html?t=<token>. A rewrite (status 200) so the pretty path stays
+# in the address bar. The old ?t= form still works — links already sent out
+# must keep opening.
+[[redirects]]
+  from = "/o/*"
+  to = "/reptipos/doc.html"
+  status = 200

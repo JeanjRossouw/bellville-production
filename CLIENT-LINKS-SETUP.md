@@ -13,7 +13,7 @@ also a copy-link button for pasting anywhere else.
 | Piece | Where |
 |---|---|
 | Shared document + message thread | `netlify/functions/client-doc.mjs` |
-| The customer's page | `reptipos/doc.html` — opened as `/reptipos/doc.html?t=<token>` |
+| The customer's page | `reptipos/doc.html`, served at `/o/<token>` by a rewrite in `netlify.toml` |
 | Staff inbox | 💬 **Messages** in the till header, with an unread count |
 
 Documents live in Firestore alongside the rest of the app state, one per shared
@@ -24,7 +24,7 @@ needs no query support.
 
 | Variable | Needed for | Notes |
 |----------|-----------|-------|
-| `FIREBASE_SERVICE_ACCOUNT` | Everything | Already set — the Shopify webhook uses it |
+| `FIREBASE_SERVICE_ACCOUNT` | Everything | The service-account JSON. Mark it **secret** in Netlify, or its value is readable in plain text through the API |
 
 Nothing else. Sharing is deliberately WhatsApp-only: it needs no mail provider,
 no domain verification and no per-message fee, and it is how customers here
@@ -44,11 +44,24 @@ cannot be made sense of is refused rather than opening an empty chat.
 If a customer would rather have it by email, use **Copy link** and paste it into
 whatever you normally send mail from.
 
+## Making the link look like yours
+
+Links are `https://<site>/o/<token>` — short enough to sit in a WhatsApp message.
+The old `/reptipos/doc.html?t=…` form still resolves, so anything already sent
+keeps working.
+
+The domain is whatever the site answers on. To send customers to
+`orders.repticube.co.za` instead of `bellville-production.netlify.app`, add that
+subdomain under **Domain management** in Netlify and point a CNAME at the site
+from wherever the domain is registered. Nothing in the code changes — links are
+built from the host the request arrived on.
+
 ## The token is the password
 
 Anyone holding the link can see that document and post messages to it — there is
 no sign-in, which is what makes it usable for a customer. Tokens are 32 random
-hex characters, so they cannot be guessed, and each document has its own. The
+hex characters — 64 bits, far too large to guess — and each document has its
+own. Older 32-character tokens remain valid. The
 page is marked `noindex` so search engines will not list it.
 
 What a link does **not** expose: the customer's email address and phone number
