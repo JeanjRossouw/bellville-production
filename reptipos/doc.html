@@ -4,7 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Your document</title>
+<title>ReptiCube order</title>
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="ReptiCube">
+<meta property="og:title" content="ReptiCube order">
+<meta property="og:description" content="View it, check its progress, and message us.">
+<meta name="theme-color" content="#0f7b6c">
+<meta name="twitter:card" content="summary">
 <style>
   :root { --ink:#16191d; --muted:#5c6570; --line:#e4e7eb; --accent:#0f7b6c; --bg:#f6f7f9; }
   * { box-sizing:border-box }
@@ -47,7 +53,11 @@
 
 <script>
   const FN = '/.netlify/functions/client-doc';
-  const token = new URLSearchParams(location.search).get('t') || '';
+  // Accepts the tidy /o/<token> form and the original ?t=<token> one, so links
+  // already sent to customers keep working.
+  const token = (new URLSearchParams(location.search).get('t')
+    || (location.pathname.match(/\/o\/([a-f0-9]+)/i) || [])[1]
+    || '').toLowerCase();
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
   const money = c => 'R' + (Math.round(Number(c) || 0) / 100).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const when = iso => { try { return new Date(iso).toLocaleString('en-ZA', { dateStyle: 'medium', timeStyle: 'short' }); } catch (e) { return ''; } };
