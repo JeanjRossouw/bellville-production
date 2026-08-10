@@ -50,13 +50,30 @@ Links are `https://<site>/o/<token>` — short enough to sit in a WhatsApp messa
 The old `/reptipos/doc.html?t=…` form still resolves, so anything already sent
 keeps working.
 
-The domain is whatever the site answers on. To send customers to a subdomain of
-your own domain instead of `bellville-production.netlify.app`, add that
-subdomain under **Domain management** in Netlify, set it as the **primary**
-domain, and point a CNAME at the site from wherever the domain is registered.
-Then redeploy — the function reads `URL` from the build environment, so links
-keep using the old host until a deploy picks up the new one. Nothing in the code
-changes.
+Links are built on **whatever address the till was opened at**, so a branded
+subdomain needs no code change and no redeploy — open the till at the new
+address and the links it creates use it.
+
+To send customers to `order.repticube.com` instead of
+`bellville-production.netlify.app`:
+
+1. **In Shopify** (which manages `repticube.com`): **Settings → Domains →**
+   `repticube.com` **→ DNS settings → Add custom record**. Type `CNAME`,
+   name `order`, points to `bellville-production.netlify.app`. Leave the
+   existing `www` and `@` records alone — they run the shop.
+2. **In Netlify**: **Domain management → Add a domain** →
+   `order.repticube.com`. Netlify issues the certificate once DNS resolves,
+   usually within the hour.
+3. Open the till at `https://order.repticube.com/reptipos/` and bookmark it
+   there. Links now come out as `https://order.repticube.com/o/<token>`.
+
+Do **not** set it as Netlify's primary domain. The production management app
+answers on this same site, and making an order subdomain primary would redirect
+that app's address to it too. The host allowlist in `client-doc.mjs` accepts
+`*.repticube.com` and `*.netlify.app`; a new domain has to be added there.
+
+Links already sent keep working — the old host still serves them, and the older
+`/reptipos/doc.html?t=…` form resolves too.
 
 ## So the customer can find it again
 

@@ -42,11 +42,20 @@ function validToken(token) {
   return /^[a-f0-9]{16,32}$/.test(String(token || ''));
 }
 
+// Build the customer's link on whatever address the till was opened at, so a
+// short branded domain works without making it the site's primary domain —
+// the production app answers on this same site and should keep its own address.
+//
+// The host arrives in a header, so it is only trusted when it is one of ours;
+// anything else falls back to the address Netlify was built with. A spoofed
+// Host would in any case only change the link handed back to whoever sent it.
+const OWN_HOST = /(^|\.)repticube\.com$|(^|\.)netlify\.app$/i;
+
 function siteUrl(event) {
+  const host = String(event.headers['x-forwarded-host'] || event.headers.host || '').split(',')[0].trim();
+  if (host && OWN_HOST.test(host.replace(/:\d+$/, ''))) return `https://${host}`;
   const base = process.env.URL || process.env.DEPLOY_PRIME_URL;
-  if (base) return base.replace(/\/$/, '');
-  const host = event.headers['x-forwarded-host'] || event.headers.host || '';
-  return host ? `https://${host}` : '';
+  return base ? base.replace(/\/$/, '') : (host ? `https://${host}` : '');
 }
 
 // What the client is allowed to see. Everything here was put on the document
