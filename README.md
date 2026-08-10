@@ -45,6 +45,9 @@ required env vars are in `XERO-SETUP.md` (Phase 2 — accounting) and
   (**📤 Send** → WhatsApp or copy). They see the document, its status and
   banking details, and can ask for an update; replies land in the till's 💬
   **Messages** inbox. See `CLIENT-LINKS-SETUP.md`.
+- Those links are **prepared automatically** — a sales order, a quote, or any
+  sale with an enclosure on it queues one under 📤 **To send** in the till
+  header. Staff tap once to fire WhatsApp; click-to-chat cannot send by itself.
 - Till staff sign in with a PIN and are either a **cashier** or a **manager**.
   Cost prices, the dashboard, receiving, purchase orders and sales history are
   managers only. See `STAFF-ROLES.md`.
