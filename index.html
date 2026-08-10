@@ -9610,6 +9610,7 @@ ${_PRODUCTION_PRINT_STYLES}
           <div class="pc-inv">#${inv}</div>
           <div class="pc-prod">${_escape(prodLabel)}</div>
           <div class="pc-cust">👤 ${_escape(o.customer)}</div>
+          ${o.orderDate ? `<div class="pc-due" style="color:var(--text-muted)">🗓️ Ordered ${_escape(o.orderDate)}</div>` : ''}
           ${dueText ? `<div class="pc-due">${_escape(dueText)}</div>` : ''}
           ${fabricRowHtml}
           ${showPlanDate ? `<div class="pc-due">📅 Week of ${_escape(o.planWeek)}</div>` : ''}
