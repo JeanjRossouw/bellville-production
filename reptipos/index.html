@@ -396,10 +396,12 @@
     coName: 'ReptiCube', coRegNo: '', coAddress: '', coPhone: '', coEmail: '', coLogoUrl: '',
     bankName: '', bankAccName: '', bankAccNo: '', bankBranch: '', bankAccType: '',
     // Product types treated as enclosures, so a sale with one queues a tracking
-    // link. Every enclosure range is "<x> RANGE" (RC, RCA, RCB, RCV); decor and
-    // starter kits have "enclosure" in their name but are not one. Comma-
-    // separated, matched loosely; empty turns the enclosure trigger off.
-    enclosureTypes: 'RANGE'
+    // link. Every enclosure range is "<x> RANGE" (RC, RCA, RCB, RCV), and a
+    // starter kit is built around an enclosure so it counts too. "Reptile
+    // enclosure decor" also has "enclosure" in its name and is NOT one — which
+    // is why these are matched as terms rather than on the word enclosure.
+    // Comma-separated, matched loosely; empty turns the enclosure trigger off.
+    enclosureTypes: 'RANGE, Starter Kit'
   };
   function settings() { try { return { ...DEFAULT_SETTINGS, ...(JSON.parse(localStorage.getItem('reptipos-settings') || '{}')) }; } catch (e) { return { ...DEFAULT_SETTINGS }; } }
   function saveSettings(s) { localStorage.setItem('reptipos-settings', JSON.stringify({ ...settings(), ...s })); }
@@ -1117,10 +1119,10 @@
       <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">📤 Customer links</div>
       <div style="display:flex; gap:0.4rem; align-items:center">
         <span style="color:var(--muted); font-size:0.85rem">Enclosure types</span>
-        <input id="enc-types" value="${esc(settings().enclosureTypes)}" placeholder="RANGE" style="flex:1">
+        <input id="enc-types" value="${esc(settings().enclosureTypes)}" placeholder="${esc(DEFAULT_SETTINGS.enclosureTypes)}" style="flex:1">
         <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveEnclosureSettings()">Save</button>
       </div>
-      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">A sales order or quote always queues a link. A plain sale queues one too when it has an enclosure on it. Matched against the product type, comma-separated — every enclosure range is "&hellip; RANGE", while decor and starter kits are not enclosures. Leave empty to only queue links for orders and quotes.</div>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">A sales order or quote always queues a link. A plain sale queues one too when it has an enclosure on it. Matched against the product type, comma-separated — the ranges are "&hellip; RANGE" and a starter kit counts as well, while enclosure <em>decor</em> does not. Leave empty to only queue links for orders and quotes.</div>
       <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.3rem">Demo mode</div>
       <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="toggleDemo()">${isDemo() ? 'Turn demo OFF (use real Shopify)' : 'Turn demo ON (no Shopify)'}</button>
       <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Demo uses a sample catalogue; sales/orders/stock are simulated locally and never touch Shopify.</div>`;
@@ -1856,15 +1858,15 @@
     badge.textContent = n;
   }
 
-  // Which product types are enclosures. Their Shopify product types are all
-  // "<something> RANGE" (RC, RCA, RCB, RCV), while "Reptile enclosure decor"
-  // and "Reptile enclosure Starter Kit" are not enclosures — so this matches on
-  // RANGE, not on the word enclosure. Editable in Register → settings if the
-  // naming ever changes.
+  // Which product types are enclosures. The ranges are "<something> RANGE"
+  // (RC, RCA, RCB, RCV) and a starter kit is built around one, so both count.
+  // "Reptile enclosure decor" has the word enclosure in it and is not one,
+  // which is why this matches on terms rather than on that word. Editable in
+  // Register → settings if the naming ever changes.
   function enclosureTerms() {
     const raw = settings().enclosureTypes;
-    const terms = String(raw == null ? 'RANGE' : raw).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-    return terms;
+    const src = raw == null ? DEFAULT_SETTINGS.enclosureTypes : raw;
+    return String(src).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
   }
   function isEnclosureItem(item) {
     const terms = enclosureTerms();

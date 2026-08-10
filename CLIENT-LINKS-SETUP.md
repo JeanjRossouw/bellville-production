@@ -44,10 +44,15 @@ all, and that part is now automatic.
 
 ### Which products count as enclosures
 
-Every enclosure range has a Shopify product type ending in **RANGE** (`RC
-RANGE`, `RCA RANGE`, `RCB RANGE`, `RCV RANGE`). Note that `Reptile enclosure
-decor` and `Reptile enclosure Starter Kit` have the word *enclosure* in them and
-are **not** enclosures — which is why the match is on RANGE, not on the word.
+Two things count, and the default is `RANGE, Starter Kit`:
+
+- Every enclosure range has a Shopify product type ending in **RANGE** — `RC
+  RANGE`, `RCA RANGE`, `RCB RANGE`, `RCV RANGE`.
+- `Reptile enclosure Starter Kit`, which is built around an enclosure.
+
+`Reptile enclosure decor` also has the word *enclosure* in its name and is **not**
+one — matching on that word would queue a link every time somebody bought a
+piece of cork bark. That is why these are matched as terms instead.
 
 Set it under **🧾 Register → 📤 Customer links** (managers only), comma-separated
 and matched loosely against the product type. Leaving it empty turns the sale
