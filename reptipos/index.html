@@ -1711,7 +1711,11 @@
 
     const kind = type === 'quote' ? 'quote' : 'order';
     const first = d.customer ? String(d.customer.name || '').split(' ')[0] : '';
-    const msg = `Hi${first ? ' ' + first : ''}, here is your ${kind} ${d.name} from ${coName()}: ${out.url}`;
+    // Two lines: the link, then why it is worth keeping. Customers otherwise
+    // scroll back through weeks of chat looking for it.
+    const msg = `Hi${first ? ' ' + first : ''}, here is your ${kind} ${d.name} from ${coName()}:\n${out.url}\n\n`
+      + `You can check the progress there any time and message us on the same page. `
+      + `Tip: save it to your phone's home screen so you don't have to look for this message again.`;
     const el = overlay(`
       <div style="font-weight:700;margin-bottom:4px">Send ${esc(d.name)}</div>
       <div style="font-size:0.72rem;color:var(--muted);margin-bottom:12px;word-break:break-all">${esc(out.url)}</div>
