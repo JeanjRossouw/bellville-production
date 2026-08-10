@@ -182,6 +182,7 @@
     <button class="qbtn" id="btn-dashboard" title="Dashboard" onclick="openDashboard()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📈 Dashboard</button>
     <button class="qbtn" title="Clients &amp; accounts" onclick="openClients()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">👥 Clients</button>
     <button class="qbtn" title="Sales orders &amp; quotes" onclick="openDocs('salesorder')" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📋 Orders</button>
+    <button class="qbtn" id="btn-outbox" title="Links waiting to be sent to customers" onclick="openOutbox()" style="display:none;width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📤 To send<span id="outbox-badge" style="display:none;margin-left:0.3rem;background:var(--accent,#3fb950);color:#04210f;border-radius:999px;padding:0 0.4rem;font-size:0.7rem;font-weight:700"></span></button>
     <button class="qbtn" id="inbox-btn" title="Messages from customers" onclick="openInbox()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">💬 Messages<span id="inbox-badge" style="display:none;margin-left:0.3rem;background:var(--warn,#e5484d);color:#fff;border-radius:999px;padding:0 0.4rem;font-size:0.7rem"></span></button>
     <button class="qbtn" id="btn-receive" title="Receive stock (GRV) &amp; suppliers" onclick="openGrv()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📥 Receive</button>
     <button class="qbtn" title="Stock take / count" onclick="openStocktake()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📦 Count</button>
@@ -393,7 +394,12 @@
     // Never commit real banking details — this repository is public. They are
     // typed into Settings on each till and live only in that browser.
     coName: 'ReptiCube', coRegNo: '', coAddress: '', coPhone: '', coEmail: '', coLogoUrl: '',
-    bankName: '', bankAccName: '', bankAccNo: '', bankBranch: '', bankAccType: ''
+    bankName: '', bankAccName: '', bankAccNo: '', bankBranch: '', bankAccType: '',
+    // Product types treated as enclosures, so a sale with one queues a tracking
+    // link. Every enclosure range is "<x> RANGE" (RC, RCA, RCB, RCV); decor and
+    // starter kits have "enclosure" in their name but are not one. Comma-
+    // separated, matched loosely; empty turns the enclosure trigger off.
+    enclosureTypes: 'RANGE'
   };
   function settings() { try { return { ...DEFAULT_SETTINGS, ...(JSON.parse(localStorage.getItem('reptipos-settings') || '{}')) }; } catch (e) { return { ...DEFAULT_SETTINGS }; } }
   function saveSettings(s) { localStorage.setItem('reptipos-settings', JSON.stringify({ ...settings(), ...s })); }
@@ -1108,6 +1114,13 @@
         <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveLoyaltySettings()">Save</button>
       </div>
       <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">1 point = R1 off a future sale. Account is keyed on the customer's cellphone number. Set 0 to turn earning off. (e.g. 5% = R100 spent earns 5 points = R5.)</div>
+      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">📤 Customer links</div>
+      <div style="display:flex; gap:0.4rem; align-items:center">
+        <span style="color:var(--muted); font-size:0.85rem">Enclosure types</span>
+        <input id="enc-types" value="${esc(settings().enclosureTypes)}" placeholder="RANGE" style="flex:1">
+        <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveEnclosureSettings()">Save</button>
+      </div>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">A sales order or quote always queues a link. A plain sale queues one too when it has an enclosure on it. Matched against the product type, comma-separated — every enclosure range is "&hellip; RANGE", while decor and starter kits are not enclosures. Leave empty to only queue links for orders and quotes.</div>
       <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.3rem">Demo mode</div>
       <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="toggleDemo()">${isDemo() ? 'Turn demo OFF (use real Shopify)' : 'Turn demo ON (no Shopify)'}</button>
       <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Demo uses a sample catalogue; sales/orders/stock are simulated locally and never touch Shopify.</div>`;
@@ -1149,6 +1162,14 @@
     renderCart(); renderReg();
     toast(rate > 0 ? `Tax set: ${label} ${rate}% (inclusive)` : 'Tax off');
   }
+  function saveEnclosureSettings() {
+    const v = (document.getElementById('enc-types').value || '').trim();
+    saveSettings({ enclosureTypes: v });
+    const n = enclosureTerms().length;
+    renderReg();
+    toast(n ? 'Enclosure link trigger: ' + v : 'Enclosure trigger off — orders and quotes still queue');
+  }
+
   function saveLoyaltySettings() {
     const rate = Math.max(0, parseFloat(document.getElementById('loy-rate').value) || 0);
     saveSettings({ loyaltyPct: rate });
@@ -1586,6 +1607,7 @@
       const out = await api('docSave', { tags: 'pos,quote', customerId: customer ? customer.id : undefined, lineItems: cart.map(l => ({ variantId: l.variantId, qty: l.qty })), doc });
       printDoc({ ...doc, name: out.name, customer: customer ? { name: customer.name } : null }, 'QUOTE');
       toast('Quote ' + (out.name || '') + ' saved');
+      queueClientLink({ type: 'quote', number: out.name || '', customer, items, totalCents: c.total, status: 'sent' });
       cart = []; cartDiscount = null; renderCart(); renderGrid();
     } catch (e) { toast('Quote failed: ' + (e.message || e)); }
   }
@@ -1638,6 +1660,11 @@
       closeSalesOrder();
       printDoc({ ...doc, name: out.name, customer: { name: cust.name } }, 'SALES ORDER');
       toast('Sales order ' + (out.name || '') + ' created');
+      queueClientLink({
+        type: 'salesorder', number: out.name || '', customer: cust, items,
+        totalCents: total, depositCents: payment ? payment.amountCents : 0,
+        expectedDate: date, status: 'awaiting_stock'
+      });
       cart = []; cartDiscount = null; customer = null; renderCart(); renderCustomer(); renderGrid();
     } catch (e) { toast('Sales order failed: ' + (e.message || e)); }
   }
@@ -1751,13 +1778,7 @@
       try { await saveSO(d, { ...m, clientToken: out.token }); } catch (e) { /* the link still works */ }
     }
 
-    const kind = type === 'quote' ? 'quote' : 'order';
-    const first = d.customer ? String(d.customer.name || '').split(' ')[0] : '';
-    // Two lines: the link, then why it is worth keeping. Customers otherwise
-    // scroll back through weeks of chat looking for it.
-    const msg = `Hi${first ? ' ' + first : ''}, here is your ${kind} ${d.name} from ${coName()}:\n${out.url}\n\n`
-      + `You can check the progress there any time and message us on the same page. `
-      + `Tip: save it to your phone's home screen so you don't have to look for this message again.`;
+    const msg = clientLinkMessage(type, d.name, d.customer ? d.customer.name : '', out.url);
     const el = overlay(`
       <div style="font-weight:700;margin-bottom:4px">Send ${esc(d.name)}</div>
       <div style="font-size:0.72rem;color:var(--muted);margin-bottom:12px;word-break:break-all">${esc(out.url)}</div>
@@ -1793,6 +1814,182 @@
     else if (n.startsWith('0')) n = '27' + n.slice(1);
     else if (n.length === 9) n = '27' + n;           // 821234567, leading 0 dropped
     return n.length >= 10 && n.length <= 15 ? n : '';
+  }
+
+  // Two lines: the link, then why it is worth keeping. Customers otherwise
+  // scroll back through weeks of chat looking for it.
+  function clientLinkMessage(type, number, customerName, url) {
+    const kind = type === 'quote' ? 'quote' : 'order';
+    const first = String(customerName || '').trim().split(' ')[0];
+    return `Hi${first ? ' ' + first : ''}, here is your ${kind} ${number} from ${coName()}:\n${url}\n\n`
+      + `You can check the progress there any time and message us on the same page. `
+      + `Tip: save it to your phone's home screen so you don't have to look for this message again.`;
+  }
+
+  // ---- To send: links prepared the moment an order is placed -------------
+  // WhatsApp's click-to-chat always needs a person to press send — a link
+  // cannot send itself. So the link is *made* automatically and queued here,
+  // which removes the failure that actually happens: nobody remembering to
+  // create one. Staff press send once, from a list that is already written.
+  //
+  // Queued on: a sales order, a quote, and any sale with an enclosure on it,
+  // since those are built in the factory and the customer wants to follow them.
+  const OUTBOX_KEY = 'reptipos-outbox';
+  const OUTBOX_KEEP_MS = 24 * 60 * 60 * 1000;   // sent rows linger a day, then go
+
+  function outbox() { try { return JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); } catch (e) { return []; } }
+  function outboxPending() { return outbox().filter(e => !e.sentAt); }
+  function saveOutbox(arr) {
+    const cut = Date.now() - OUTBOX_KEEP_MS;
+    const keep = arr.filter(e => !e.sentAt || new Date(e.sentAt).getTime() > cut).slice(0, 100);
+    localStorage.setItem(OUTBOX_KEY, JSON.stringify(keep));
+    renderOutboxBadge();
+  }
+
+  function renderOutboxBadge() {
+    const btn = document.getElementById('btn-outbox');
+    const badge = document.getElementById('outbox-badge');
+    if (!btn || !badge) return;
+    const n = outboxPending().length;
+    btn.style.display = outbox().length ? '' : 'none';
+    badge.style.display = n ? '' : 'none';
+    badge.textContent = n;
+  }
+
+  // Which product types are enclosures. Their Shopify product types are all
+  // "<something> RANGE" (RC, RCA, RCB, RCV), while "Reptile enclosure decor"
+  // and "Reptile enclosure Starter Kit" are not enclosures — so this matches on
+  // RANGE, not on the word enclosure. Editable in Register → settings if the
+  // naming ever changes.
+  function enclosureTerms() {
+    const raw = settings().enclosureTypes;
+    const terms = String(raw == null ? 'RANGE' : raw).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    return terms;
+  }
+  function isEnclosureItem(item) {
+    const terms = enclosureTerms();
+    if (!terms.length) return false;
+    const p = item && item.variantId ? findProduct(item.variantId) : null;
+    const cat = String((p && p.category) || '').toLowerCase();
+    if (!cat) return false;
+    return terms.some(t => cat.includes(t));
+  }
+  const hasEnclosure = (items) => (items || []).some(isEnclosureItem);
+
+  // Create the shared link and queue it. Never throws — a till mid-sale must
+  // not be interrupted by this, so a failure is queued with a Retry instead.
+  async function queueClientLink(o) {
+    if (isDemo()) return null;
+    const payload = {
+      type: o.type, number: o.number || '',
+      company: companyPayload(),
+      client: { name: (o.customer && o.customer.name) || '', email: (o.customer && o.customer.email) || '', phone: (o.customer && o.customer.phone) || '' },
+      items: (o.items || []).map(i => ({ name: i.name, qty: i.qty, lineTotalCents: i.lineTotalCents != null ? i.lineTotalCents : i.priceCents * i.qty })),
+      totalCents: o.totalCents || 0, depositCents: o.depositCents || 0,
+      balanceCents: (o.totalCents || 0) - (o.depositCents || 0),
+      expectedDate: o.expectedDate || '', status: o.status || 'sent'
+    };
+    const entry = {
+      id: 'ob-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+      type: o.type, number: o.number || '', reason: o.reason || '',
+      customerName: payload.client.name, phone: payload.client.phone,
+      totalCents: payload.totalCents, at: new Date().toISOString(),
+      url: '', token: '', sentAt: '', error: ''
+    };
+    try {
+      const out = await clientApi({ action: 'create', doc: payload });
+      entry.url = out.url; entry.token = out.token;
+    } catch (e) {
+      entry.error = e.message || String(e);
+      entry.payload = payload;                  // kept only so Retry can try again
+    }
+    const arr = outbox(); arr.unshift(entry); saveOutbox(arr);
+    if (!entry.error) toast('📤 Link ready for ' + (entry.customerName || 'customer') + ' — tap To send');
+    return entry;
+  }
+
+  async function outboxRetry(id) {
+    const arr = outbox();
+    const e = arr.find(x => x.id === id);
+    if (!e || !e.payload) return;
+    toast('Retrying…');
+    try {
+      const out = await clientApi({ action: 'create', doc: e.payload });
+      e.url = out.url; e.token = out.token; e.error = ''; delete e.payload;
+      saveOutbox(arr); openOutbox(true); toast('Link ready');
+    } catch (err) { toast('Still failing: ' + (err.message || err)); }
+  }
+
+  function outboxSend(id) {
+    const arr = outbox();
+    const e = arr.find(x => x.id === id);
+    if (!e || !e.url) return;
+    const input = document.getElementById('ob-phone-' + id);
+    const phone = waNumber(input ? input.value : e.phone);
+    if (!phone) { toast('Enter a cellphone number, or copy the link'); return; }
+    if (input) e.phone = input.value;
+    const msg = clientLinkMessage(e.type, e.number, e.customerName, e.url);
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+    e.sentAt = new Date().toISOString();
+    saveOutbox(arr);
+    openOutbox(true);
+    toast('WhatsApp opened — press send there');
+  }
+
+  async function outboxCopy(id) {
+    const e = outbox().find(x => x.id === id);
+    if (!e || !e.url) return;
+    try { await navigator.clipboard.writeText(e.url); toast('Link copied'); } catch (err) { toast(e.url); }
+  }
+
+  function outboxDismiss(id) {
+    const arr = outbox();
+    const e = arr.find(x => x.id === id);
+    if (!e) return;
+    // Dismiss means "customer took it with them" — the link still exists and can
+    // be re-sent from 📋 Orders, so nothing is lost.
+    if (!confirm('Remove ' + (e.number || 'this') + ' from the send list?')) return;
+    saveOutbox(arr.filter(x => x.id !== id));
+    openOutbox(true);
+  }
+
+  function outboxRow(e) {
+    const when = new Date(e.at).toLocaleString('en-ZA', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+    const head = `<div style="font-weight:600">${esc(e.number || '(no number)')} · ${esc(e.customerName || 'Walk-in')}</div>
+      <div style="font-size:0.72rem;color:var(--muted)">${esc(e.type === 'quote' ? 'Quote' : 'Order')} · ${money(e.totalCents || 0)} · ${esc(when)}${e.reason ? ' · ' + esc(e.reason) : ''}</div>`;
+    if (e.error) {
+      return `<div style="padding:0.6rem 0;border-bottom:1px solid var(--border)">${head}
+        <div style="font-size:0.72rem;color:var(--danger);margin:0.3rem 0">Link not created: ${esc(e.error)}</div>
+        <button class="qbtn" style="width:auto;padding:0 0.7rem;height:34px" onclick="outboxRetry('${esc(e.id)}')">Retry</button>
+        <button class="qbtn" style="width:auto;padding:0 0.7rem;height:34px;background:var(--panel2)" onclick="outboxDismiss('${esc(e.id)}')">Remove</button></div>`;
+    }
+    if (e.sentAt) {
+      return `<div style="padding:0.6rem 0;border-bottom:1px solid var(--border);opacity:0.6">${head}
+        <div style="font-size:0.72rem;color:var(--accent2);margin-top:0.25rem">✓ Sent ${new Date(e.sentAt).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })}
+        · <button class="qbtn" style="width:auto;padding:0 0.5rem;height:26px;font-size:0.7rem" onclick="outboxSend('${esc(e.id)}')">Send again</button></div></div>`;
+    }
+    return `<div style="padding:0.6rem 0;border-bottom:1px solid var(--border)">${head}
+      <input id="ob-phone-${esc(e.id)}" value="${esc(e.phone || '')}" placeholder="082 123 4567" style="width:100%;margin:0.4rem 0 0.4rem">
+      <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
+        <button class="qbtn" style="flex:1;min-width:130px;height:40px;background:var(--accent);color:#04210f;font-weight:700" onclick="outboxSend('${esc(e.id)}')">💬 Send on WhatsApp</button>
+        <button class="qbtn" style="width:auto;padding:0 0.7rem;height:40px" onclick="outboxCopy('${esc(e.id)}')">🔗 Copy</button>
+        <button class="qbtn" style="width:auto;padding:0 0.7rem;height:40px;background:var(--panel2)" onclick="outboxDismiss('${esc(e.id)}')">Not needed</button>
+      </div></div>`;
+  }
+
+  let outboxEl = null;
+  function openOutbox(reuse) {
+    if (isDemo()) { toast('Sharing is off in demo mode'); return; }
+    if (reuse && outboxEl && document.body.contains(outboxEl)) outboxEl.remove();
+    const arr = outbox();
+    const pending = arr.filter(e => !e.sentAt);
+    const done = arr.filter(e => e.sentAt);
+    const body = arr.length
+      ? `${pending.map(outboxRow).join('')}${done.length ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:0.8rem">Sent today</div>${done.map(outboxRow).join('')}` : ''}`
+      : '<div class="empty" style="padding:1.2rem">Nothing waiting. Links appear here on their own when an order, quote or enclosure is rung up.</div>';
+    outboxEl = overlay(`<div style="font-weight:700;margin-bottom:4px">📤 To send${pending.length ? ' · ' + pending.length : ''}</div>
+      <div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px">Prepared automatically. Check the number, then press send in WhatsApp.</div>
+      <div style="max-height:60vh;overflow:auto">${body}</div>`);
   }
 
   // ---- Customer messages inbox -------------------------------------------
@@ -3056,6 +3253,16 @@
     // and a failure queues itself.
     syncSaleToXero(sale);
 
+    // An enclosure is built in the factory, so the customer gets a page to
+    // follow it on. Paid in full, so no banking details show. If they walked
+    // out with it off the shelf, staff press "Not needed" in the send list.
+    if (hasEnclosure(items)) {
+      queueClientLink({
+        type: 'salesorder', number: sale.saleNumber, customer: loyaltyCust, items,
+        totalCents: total, depositCents: total, status: 'in_production', reason: 'enclosure'
+      });
+    }
+
     // Record against the open register shift (cash-up).
     shiftRecordSale(sale);
     // Loyalty: update the balance (subtract redeemed, add earned).
@@ -3335,12 +3542,13 @@
     openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier, loadVendorSuppliers, receivePO, deletePO,
     openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, stAddItem, reconcileStocktake, exportStockCsv, exportStockXlsx, importStockFile, importCostsFile,
     openReorder, closeReorder, setReorderLevel, startPO, startBlankPO, poSetSupplier, poSearch, poAddItem, poBack, poSetQty, poSetCost, poRemove, sendPO,
-    lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings, saveLoyaltySettings,
+    lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings, saveLoyaltySettings, saveEnclosureSettings,
     toggleRedeemPoints,
     flushQueue,
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
     custOpen, custClose, custClear, custSearch, custAttach, custCreate, custHistory, renderCustBody,
-    shareDoc, openInbox, openThread });
+    shareDoc, openInbox, openThread,
+    openOutbox, outboxSend, outboxCopy, outboxRetry, outboxDismiss });
 
   // ---- Boot ----
   ensureStaffSeed();
@@ -3348,6 +3556,7 @@
   renderCart();
   renderCustomer();
   renderQueueBadge();
+  renderOutboxBadge();
   lockPOS();              // require a staff PIN before selling (default admin PIN 0000)
   refreshCatalogue(false);
   flushQueue(false);      // sync anything queued from a previous offline session

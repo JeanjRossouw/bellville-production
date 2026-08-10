@@ -8,6 +8,51 @@ Staff press **📤 Send** on any quote or sales order in **📋 Orders**, check 
 cellphone number, and WhatsApp opens with the message ready to send. There is
 also a copy-link button for pasting anywhere else.
 
+## Links are prepared on their own
+
+Nobody has to remember to make a link. The moment one of these is rung up, the
+link is created and queued under **📤 To send** in the till header, with a count
+on it:
+
+| When | Queued as |
+|---|---|
+| A sales order is created | Order, status *Awaiting stock* |
+| A quote is saved | Quote |
+| A sale goes through with an **enclosure** on it | Order, status *In production* |
+
+Open **📤 To send**, check the cellphone number, press **Send on WhatsApp** —
+one tap, message already written. **Copy** puts the link on the clipboard
+instead. **Not needed** removes the row, for when the customer walked out with
+the thing in their hands; the link still exists and can be re-sent from
+**📋 Orders** later.
+
+Sent rows stay visible for a day with a **Send again** button, then clear
+themselves. If the link could not be created — the till was offline, say — the
+row shows the reason and a **Retry**. A sale is never held up by this: the
+selling finishes first, and the link is queued after.
+
+### Why it does not send by itself
+
+WhatsApp's click-to-chat cannot send on its own; a person has to press send in
+WhatsApp. Sending with no human involved means Meta's WhatsApp Business
+Platform — business verification, a dedicated number that is not already on
+WhatsApp, templates approved by Meta, and a fee per message. That is a real
+option, but it is a decision with a cost, not a switch to flip.
+
+What actually went wrong before was not the tap. It was nobody making a link at
+all, and that part is now automatic.
+
+### Which products count as enclosures
+
+Every enclosure range has a Shopify product type ending in **RANGE** (`RC
+RANGE`, `RCA RANGE`, `RCB RANGE`, `RCV RANGE`). Note that `Reptile enclosure
+decor` and `Reptile enclosure Starter Kit` have the word *enclosure* in them and
+are **not** enclosures — which is why the match is on RANGE, not on the word.
+
+Set it under **🧾 Register → 📤 Customer links** (managers only), comma-separated
+and matched loosely against the product type. Leaving it empty turns the sale
+trigger off; orders and quotes still queue.
+
 ## How it hangs together
 
 | Piece | Where |
