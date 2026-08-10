@@ -9591,12 +9591,21 @@ ${_PRODUCTION_PRINT_STYLES}
         badge = `<span style="font-weight:700; color:#991b1b">⏳ WAITING</span>`;
         bgStyle = 'background:#fffbeb;'; // yellow tint — needs action
       }
+      // One-tap fabric actions straight from the planner card (drag-safe).
+      const fabBtn = (label, status, title) => `<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px" title="${title}"
+        onclick="event.stopPropagation(); planSetFabricStatus('${_escape(o.id)}', '${status}')"
+        onmousedown="event.stopPropagation()" ondragstart="event.preventDefault(); event.stopPropagation()" draggable="false">${label}</button>`;
+      let fabricAction = '';
+      if (o.fabricStatus === 'received') fabricAction = '';
+      else if (o.fabricStatus === 'ordered') fabricAction = fabBtn('✅ Received', 'received', 'Fabric has arrived');
+      else fabricAction = fabBtn('📦 Ordered', 'ordered', 'I have ordered this fabric');
       fabricRowHtml = `
           <div class="pc-fabric" style="font-size:11px; margin-top:4px; display:flex; align-items:center; gap:4px; flex-wrap:wrap; line-height:1.3">
             <span style="color:var(--text-muted)">🧵</span>
             <span style="color:var(--text); font-weight:500">${_escape(o.fabric)}</span>
             <span style="color:var(--text-muted)">·</span>
             ${badge}
+            ${fabricAction}
           </div>`;
     }
 
@@ -9624,6 +9633,23 @@ ${_PRODUCTION_PRINT_STYLES}
     `;
   }
   window.planItemCard = planItemCard;
+
+  // Fabric status straight from a planner card. Searches ALL businesses because
+  // Bellville's planner also shows PinkFoot rocking-chair/foot-stool orders.
+  function planSetFabricStatus(orderId, status) {
+    let order = null;
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      if (!order) order = ((data[b] && data[b].orders) || []).find(o => o && o.id === orderId);
+    });
+    if (!order) return;
+    snapshotState();
+    order.fabricStatus = status;
+    if (status === 'received') { order.fabricOOS = false; order.fabricStockETA = ''; }
+    saveData();
+    if (typeof render === 'function') render();
+    if (typeof toast === 'function') toast('🧵 ' + (order.fabric || 'Fabric') + ' marked ' + status.toUpperCase() + ' for #' + (order.invoice || order.id), 'success', 2500);
+  }
+  window.planSetFabricStatus = planSetFabricStatus;
 
   // ----- Drag handlers (desktop) -----
   function planDragStart(e, orderId) {
