@@ -239,7 +239,6 @@ async function setStock({ lineItems }) {
   return { set: done.length, done, failed };
 }
 
-// Bulk-set unit cost prices (Shopify "Cost per item"). lineItems: [{ inventoryItemId, costCents }].
 // ---- Cost prices: the POS owns these, not Shopify -------------------------
 // Held out of Shopify on purpose, so a buying price is not readable by anyone
 // with a Shopify or Lightspeed login. One small document keyed by variant id,
