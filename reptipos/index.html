@@ -389,8 +389,10 @@
     taxRatePct: 0, taxLabel: 'VAT', loyaltyPct: 5,
     // Company identity and banking, printed on customer documents. Blank
     // fields simply do not appear, so a half-filled form still prints tidily.
-    coName: 'ReptiCube', coRegNo: '', coAddress: '', coPhone: '', coEmail: '',
-    bankName: '', bankAccName: '', bankAccNo: '', bankBranch: ''
+    // Never commit real banking details — this repository is public. They are
+    // typed into Settings on each till and live only in that browser.
+    coName: 'ReptiCube', coRegNo: '', coAddress: '', coPhone: '', coEmail: '', coLogoUrl: '',
+    bankName: '', bankAccName: '', bankAccNo: '', bankBranch: '', bankAccType: ''
   };
   function settings() { try { return { ...DEFAULT_SETTINGS, ...(JSON.parse(localStorage.getItem('reptipos-settings') || '{}')) }; } catch (e) { return { ...DEFAULT_SETTINGS }; } }
   function saveSettings(s) { localStorage.setItem('reptipos-settings', JSON.stringify({ ...settings(), ...s })); }
@@ -417,12 +419,22 @@
     if (s.bankName) lines.push('Bank: ' + s.bankName);
     if (s.bankAccNo) lines.push('Account no: ' + s.bankAccNo);
     if (s.bankBranch) lines.push('Branch code: ' + s.bankBranch);
+    if (s.bankAccType) lines.push('Account type: ' + s.bankAccType);
     return lines;
+  }
+
+  // Logo prints above the name when one is configured. Only http(s) and data
+  // URLs are allowed, so a stray value cannot smuggle javascript: into a
+  // document we then open in a new window.
+  function logoHtml(maxHeight) {
+    const url = String(settings().coLogoUrl || '').trim();
+    if (!/^(https?:|data:image\/)/i.test(url)) return '';
+    return `<div class="c"><img src="${esc(url)}" alt="" style="max-height:${maxHeight || 70}px;max-width:70%;object-fit:contain"></div>`;
   }
 
   function companyHeaderHtml() {
     const lines = companyLines();
-    return `<h2 style="text-align:center;margin:.2rem 0">${esc(coName())}</h2>` +
+    return logoHtml() + `<h2 style="text-align:center;margin:.2rem 0">${esc(coName())}</h2>` +
       (lines.length ? `<div class="c" style="font-size:0.75rem;line-height:1.35">${lines.map(esc).join('<br>')}</div>` : '');
   }
 
@@ -1024,6 +1036,7 @@
       <div style="display:flex; flex-direction:column; gap:0.35rem">
         <input id="co-name" value="${esc(settings().coName)}" placeholder="Trading name">
         <input id="co-reg" value="${esc(settings().coRegNo)}" placeholder="Company registration number">
+        <input id="co-logo" value="${esc(settings().coLogoUrl)}" placeholder="Logo image URL (optional)">
         <textarea id="co-addr" rows="3" placeholder="Address — one line per row">${esc(settings().coAddress)}</textarea>
         <div style="display:flex; gap:0.4rem">
           <input id="co-phone" value="${esc(settings().coPhone)}" placeholder="Telephone" style="flex:1">
@@ -1037,7 +1050,10 @@
           <input id="bk-bank" value="${esc(settings().bankName)}" placeholder="Bank" style="flex:1">
           <input id="bk-branch" value="${esc(settings().bankBranch)}" placeholder="Branch code" style="width:120px">
         </div>
-        <input id="bk-accno" value="${esc(settings().bankAccNo)}" placeholder="Account number">
+        <div style="display:flex; gap:0.4rem">
+          <input id="bk-accno" value="${esc(settings().bankAccNo)}" placeholder="Account number" style="flex:1">
+          <input id="bk-acctype" value="${esc(settings().bankAccType)}" placeholder="Acc type" style="width:120px">
+        </div>
       </div>
       <button class="qbtn" style="width:auto; padding:0 0.7rem; margin-top:0.5rem" onclick="saveCompanySettings()">Save company &amp; banking</button>
       <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Banking details print on quotes and sales orders — anything still owing. Paid till slips leave them off.</div>
@@ -1077,10 +1093,12 @@
       coAddress: val('co-addr'),
       coPhone: val('co-phone'),
       coEmail: val('co-email'),
+      coLogoUrl: val('co-logo'),
       bankAccName: val('bk-accname'),
       bankName: val('bk-bank'),
       bankBranch: val('bk-branch'),
-      bankAccNo: val('bk-accno')
+      bankAccNo: val('bk-accno'),
+      bankAccType: val('bk-acctype')
     });
     renderReg();
     toast('Company details saved');
@@ -3041,6 +3059,7 @@
         .btns{margin-top:12px; display:flex; gap:8px}
         .btns a,.btns button{flex:1; text-align:center; padding:10px; border:1px solid #000; border-radius:8px; background:#fff; font-size:13px; text-decoration:none; color:#000; cursor:pointer}
       </style></head><body>
+      ${logoHtml(60)}
       <h2>${esc(coName())}</h2>
       ${companyLines().length ? `<div class="c" style="font-size:11px;line-height:1.35">${companyLines().map(esc).join('<br>')}</div>` : ''}
       <div class="c">Sale ${esc(sale.saleNumber)}</div>
