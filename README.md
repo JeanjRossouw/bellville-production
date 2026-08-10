@@ -41,6 +41,10 @@ required env vars are in `XERO-SETUP.md` (Phase 2 — accounting) and
   shows a POS sales card (per-business daily takings, week/month totals, top
   products, Xero sync status). See `POS-BUILD-PLAN.md`, `XERO-SETUP.md`,
   `SHOPIFY-SETUP.md`.
+- Quotes and sales orders can be shared with the customer as a private link
+  (**📤 Send** → WhatsApp / email / copy). They see the document, its status and
+  banking details, and can ask for an update; replies land in the till's 💬
+  **Messages** inbox. See `CLIENT-LINKS-SETUP.md`.
 - The standalone ReptiCube till at `/reptipos/` posts each completed sale to
   **Shopify** (order + stock) and to **Xero** (paid invoice) via the same
   `xero-invoice` function the main POS tab uses. The two have separate retry

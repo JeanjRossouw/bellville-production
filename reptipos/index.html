@@ -182,6 +182,7 @@
     <button class="qbtn" title="Dashboard" onclick="openDashboard()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📈 Dashboard</button>
     <button class="qbtn" title="Clients &amp; accounts" onclick="openClients()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">👥 Clients</button>
     <button class="qbtn" title="Sales orders &amp; quotes" onclick="openDocs('salesorder')" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📋 Orders</button>
+    <button class="qbtn" id="inbox-btn" title="Messages from customers" onclick="openInbox()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">💬 Messages<span id="inbox-badge" style="display:none;margin-left:0.3rem;background:var(--warn,#e5484d);color:#fff;border-radius:999px;padding:0 0.4rem;font-size:0.7rem"></span></button>
     <button class="qbtn" title="Receive stock (GRV) &amp; suppliers" onclick="openGrv()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📥 Receive</button>
     <button class="qbtn" title="Stock take / count" onclick="openStocktake()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📦 Count</button>
     <button class="qbtn" title="Create a purchase order" onclick="openReorder()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🧾 PO Order</button>
@@ -385,9 +386,78 @@
   // Plumbed so a rate can be switched on later without code changes. Prices are
   // treated as tax-INCLUSIVE (the Shopify price is final), so a non-zero rate
   // just surfaces the tax portion already inside the price — it never adds on top.
-  const DEFAULT_SETTINGS = { taxRatePct: 0, taxLabel: 'VAT', loyaltyPct: 5 };
+  const DEFAULT_SETTINGS = {
+    taxRatePct: 0, taxLabel: 'VAT', loyaltyPct: 5,
+    // Company identity and banking, printed on customer documents. Blank
+    // fields simply do not appear, so a half-filled form still prints tidily.
+    // Never commit real banking details — this repository is public. They are
+    // typed into Settings on each till and live only in that browser.
+    coName: 'ReptiCube', coRegNo: '', coAddress: '', coPhone: '', coEmail: '', coLogoUrl: '',
+    bankName: '', bankAccName: '', bankAccNo: '', bankBranch: '', bankAccType: ''
+  };
   function settings() { try { return { ...DEFAULT_SETTINGS, ...(JSON.parse(localStorage.getItem('reptipos-settings') || '{}')) }; } catch (e) { return { ...DEFAULT_SETTINGS }; } }
   function saveSettings(s) { localStorage.setItem('reptipos-settings', JSON.stringify({ ...settings(), ...s })); }
+
+  // ---- Company letterhead + banking ------------------------------------
+  // One source for every printed document, so the trading name, registration
+  // number and bank account are never hardcoded in a template again.
+  function coName() { return (settings().coName || 'ReptiCube').trim(); }
+
+  // Address is a free-text box; each line prints as typed.
+  function companyLines() {
+    const s = settings();
+    const lines = String(s.coAddress || '').split('\n').map(x => x.trim()).filter(Boolean);
+    if (s.coRegNo) lines.push('Reg no: ' + s.coRegNo);
+    if (s.coPhone) lines.push('Tel: ' + s.coPhone);
+    if (s.coEmail) lines.push(s.coEmail);
+    return lines;
+  }
+
+  function bankLines() {
+    const s = settings();
+    const lines = [];
+    if (s.bankAccName) lines.push('Account name: ' + s.bankAccName);
+    if (s.bankName) lines.push('Bank: ' + s.bankName);
+    if (s.bankAccNo) lines.push('Account no: ' + s.bankAccNo);
+    if (s.bankBranch) lines.push('Branch code: ' + s.bankBranch);
+    if (s.bankAccType) lines.push('Account type: ' + s.bankAccType);
+    return lines;
+  }
+
+  // Logo prints above the name when one is configured. Only http(s) and data
+  // URLs are allowed, so a stray value cannot smuggle javascript: into a
+  // document we then open in a new window.
+  function logoHtml(maxHeight) {
+    const url = String(settings().coLogoUrl || '').trim();
+    if (!/^(https?:|data:image\/)/i.test(url)) return '';
+    return `<div class="c"><img src="${esc(url)}" alt="" style="max-height:${maxHeight || 70}px;max-width:70%;object-fit:contain"></div>`;
+  }
+
+  function companyHeaderHtml() {
+    const lines = companyLines();
+    return logoHtml() + `<h2 style="text-align:center;margin:.2rem 0">${esc(coName())}</h2>` +
+      (lines.length ? `<div class="c" style="font-size:0.75rem;line-height:1.35">${lines.map(esc).join('<br>')}</div>` : '');
+  }
+
+  // Only shown where money is still owed — a paid till slip does not need it.
+  function bankBlockHtml(reference) {
+    const lines = bankLines();
+    if (!lines.length) return '';
+    return `<div style="margin-top:8px;border-top:1px dashed #999;padding-top:6px;font-size:0.75rem;line-height:1.4">
+      <strong>Banking details</strong><br>${lines.map(esc).join('<br>')}
+      ${reference ? `<br>Reference: <strong>${esc(reference)}</strong>` : ''}</div>`;
+  }
+
+  function companyBlockText() {
+    const lines = companyLines();
+    return coName() + (lines.length ? '\n' + lines.join('\n') : '');
+  }
+
+  function bankBlockText(reference) {
+    const lines = bankLines();
+    if (!lines.length) return '';
+    return '\nBanking details\n' + lines.join('\n') + (reference ? '\nReference: ' + reference : '') + '\n';
+  }
   // Tax portion (cents) already contained in a tax-inclusive total.
   function taxPortionCents(totalCents) {
     const r = Number(settings().taxRatePct) || 0;
@@ -963,6 +1033,31 @@
       ${list.map(s => `<div style="display:flex; justify-content:space-between; padding:0.25rem 0; font-size:0.85rem"><span>${esc(s.name)} <span style="color:var(--muted)">(${s.role})</span></span>${s.id !== 'admin' ? `<button class="rm" onclick="removeStaff('${s.id}')">✕</button>` : ''}</div>`).join('')}
       <div style="display:flex; gap:0.4rem; margin-top:0.4rem"><input id="st-name" placeholder="Name" style="flex:1"><input id="st-pin" placeholder="PIN" style="width:80px"></div>
       <button class="qbtn" style="width:auto; padding:0 0.7rem; margin-top:0.4rem" onclick="addStaff()">+ Add staff</button>
+      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">Company details (printed on documents)</div>
+      <div style="display:flex; flex-direction:column; gap:0.35rem">
+        <input id="co-name" value="${esc(settings().coName)}" placeholder="Trading name">
+        <input id="co-reg" value="${esc(settings().coRegNo)}" placeholder="Company registration number">
+        <input id="co-logo" value="${esc(settings().coLogoUrl)}" placeholder="Logo image URL (optional)">
+        <textarea id="co-addr" rows="3" placeholder="Address — one line per row">${esc(settings().coAddress)}</textarea>
+        <div style="display:flex; gap:0.4rem">
+          <input id="co-phone" value="${esc(settings().coPhone)}" placeholder="Telephone" style="flex:1">
+          <input id="co-email" value="${esc(settings().coEmail)}" placeholder="Email" style="flex:1">
+        </div>
+      </div>
+      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">Banking details (quotes &amp; sales orders)</div>
+      <div style="display:flex; flex-direction:column; gap:0.35rem">
+        <input id="bk-accname" value="${esc(settings().bankAccName)}" placeholder="Account name">
+        <div style="display:flex; gap:0.4rem">
+          <input id="bk-bank" value="${esc(settings().bankName)}" placeholder="Bank" style="flex:1">
+          <input id="bk-branch" value="${esc(settings().bankBranch)}" placeholder="Branch code" style="width:120px">
+        </div>
+        <div style="display:flex; gap:0.4rem">
+          <input id="bk-accno" value="${esc(settings().bankAccNo)}" placeholder="Account number" style="flex:1">
+          <input id="bk-acctype" value="${esc(settings().bankAccType)}" placeholder="Acc type" style="width:120px">
+        </div>
+      </div>
+      <button class="qbtn" style="width:auto; padding:0 0.7rem; margin-top:0.5rem" onclick="saveCompanySettings()">Save company &amp; banking</button>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Banking details print on quotes and sales orders — anything still owing. Paid till slips leave them off.</div>
       <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">Tax (default off — not VAT-registered)</div>
       <div style="display:flex; gap:0.4rem; align-items:center">
         <input id="tax-label" value="${esc(settings().taxLabel)}" placeholder="Label" style="flex:1">
@@ -991,6 +1086,24 @@
     saveStaff(list); renderReg(); toast('Staff added');
   }
   function removeStaff(id) { if (!confirm('Remove this staff member?')) return; saveStaff(staffList().filter(s => s.id !== id)); renderReg(); }
+  function saveCompanySettings() {
+    const val = id => (document.getElementById(id).value || '').trim();
+    saveSettings({
+      coName: val('co-name') || 'ReptiCube',
+      coRegNo: val('co-reg'),
+      coAddress: val('co-addr'),
+      coPhone: val('co-phone'),
+      coEmail: val('co-email'),
+      coLogoUrl: val('co-logo'),
+      bankAccName: val('bk-accname'),
+      bankName: val('bk-bank'),
+      bankBranch: val('bk-branch'),
+      bankAccNo: val('bk-accno'),
+      bankAccType: val('bk-acctype')
+    });
+    renderReg();
+    toast('Company details saved');
+  }
   function saveTaxSettings() {
     const rate = Math.max(0, parseFloat(document.getElementById('tax-rate').value) || 0);
     const label = (document.getElementById('tax-label').value || 'VAT').trim() || 'VAT';
@@ -1019,7 +1132,7 @@
   function zReportHtml(s, countedCents, kind) {
     const exp = expectedCashCents(s);
     const variance = countedCents != null ? countedCents - exp : null;
-    return `<h2 style="text-align:center;margin:.2rem 0">ReptiCube — ${kind}-report</h2>
+    return `<h2 style="text-align:center;margin:.2rem 0">${esc(coName())} — ${kind}-report</h2>
       <div class="c">${new Date().toLocaleString('en-ZA')}</div>
       <div class="c">Opened ${new Date(s.openedAt).toLocaleString('en-ZA')}</div>
       <table>
@@ -1355,7 +1468,7 @@
   function showRefundReceipt(refund) {
     const dt = new Date(refund.datetime).toLocaleString('en-ZA');
     const rows = refund.items.map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">−${money(i.qty * i.unitPriceCents)}</td></tr>`).join('');
-    const html = `<h2 style="text-align:center;margin:.2rem 0">ReptiCube — REFUND</h2>
+    const html = `<h2 style="text-align:center;margin:.2rem 0">${esc(coName())} — REFUND</h2>
       <div class="c">${esc(refund.refundNumber)}</div>
       <div class="c">${esc(dt)}</div>
       <div class="c">Order ${esc(refund.orderName)}</div>
@@ -1518,6 +1631,7 @@
         <div style="display:flex;gap:0.4rem">
           <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="loadQuote('${d.id}')">To cart</button>
           <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="printDocById('${d.id}','QUOTE')">🖨️</button>
+          <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="shareDoc('${d.id}','quote')" title="Send to the customer">📤 Send</button>
           <button class="rm" onclick="soCancel('${d.id}')">✕</button>
         </div></div>`;
     }
@@ -1531,9 +1645,179 @@
         ${m.status !== 'ready' ? `<button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="soMarkReady('${d.id}')">Mark ready</button>` : ''}
         <button class="qbtn" style="width:auto;padding:0 0.6rem;background:var(--accent);color:#04210f" onclick="soFulfil('${d.id}')">Fulfil &amp; invoice</button>
         <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="printDocById('${d.id}','SALES ORDER')">🖨️</button>
+        <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="shareDoc('${d.id}','salesorder')" title="Send to the customer">📤 Send</button>
         <button class="rm" onclick="soCancel('${d.id}')">✕</button>
       </div></div>`;
   }
+  // ---- Sharing a document with the customer ------------------------------
+  // A quote or sales order becomes a private link the customer can open, check
+  // the status of, and ask questions on — instead of phoning the shop.
+  const CLIENT_FN = '/.netlify/functions/client-doc';
+  const SEND_FN = '/.netlify/functions/send-doc';
+
+  async function clientApi(payload) {
+    const token = await firebaseIdToken();
+    const res = await fetch(CLIENT_FN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+      body: JSON.stringify(payload)
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(out.error || 'HTTP ' + res.status);
+    return out;
+  }
+
+  // The company block travels with the document, so the customer's page shows
+  // the same letterhead and banking as the printed copy.
+  function companyPayload() {
+    return { name: coName(), lines: companyLines(), bank: bankLines(), logoUrl: settings().coLogoUrl || '' };
+  }
+
+  function overlay(html) {
+    const el = document.createElement('div');
+    el.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;padding:16px;z-index:60;overflow:auto';
+    el.innerHTML = `<div style="background:var(--panel);border:1px solid var(--border);border-radius:12px;max-width:460px;width:100%;padding:18px">${html}</div>`;
+    el.addEventListener('mousedown', e => { if (e.target === el) el.remove(); });
+    document.body.appendChild(el);
+    return el;
+  }
+
+  async function shareDoc(id, type) {
+    const d = findDoc(id);
+    if (!d) { toast('Document not found'); return; }
+    if (isDemo()) { toast('Sharing is off in demo mode'); return; }
+    const m = d.doc || {};
+    const total = m.totalCents || 0, dep = m.depositCents || 0;
+    toast('Preparing link…');
+    let out;
+    try {
+      out = await clientApi({
+        action: 'create',
+        doc: {
+          token: m.clientToken, type,
+          number: d.name || '',
+          company: companyPayload(),
+          client: { name: d.customer ? d.customer.name : '', email: (d.customer && d.customer.email) || '', phone: (d.customer && d.customer.phone) || '' },
+          items: (m.items || []).map(i => ({ name: i.name, qty: i.qty, lineTotalCents: i.lineTotalCents != null ? i.lineTotalCents : i.priceCents * i.qty })),
+          totalCents: total, depositCents: dep, balanceCents: total - dep,
+          expectedDate: m.expectedDate || '', status: m.status || (type === 'quote' ? 'sent' : 'awaiting_stock')
+        }
+      });
+    } catch (e) { toast('Could not create link: ' + e.message); return; }
+
+    // Remember the token so re-sending updates the same page and keeps the thread.
+    if (!m.clientToken) {
+      try { await saveSO(d, { ...m, clientToken: out.token }); } catch (e) { /* the link still works */ }
+    }
+
+    const kind = type === 'quote' ? 'quote' : 'order';
+    const email = (d.customer && d.customer.email) || '';
+    const phone = String((d.customer && d.customer.phone) || '').replace(/\D/g, '').replace(/^0/, '27');
+    const msg = `Hi${d.customer ? ' ' + String(d.customer.name || '').split(' ')[0] : ''}, here is your ${kind} ${d.name} from ${coName()}: ${out.url}`;
+    const el = overlay(`
+      <div style="font-weight:700;margin-bottom:4px">Send ${esc(d.name)}</div>
+      <div style="font-size:0.72rem;color:var(--muted);margin-bottom:12px;word-break:break-all">${esc(out.url)}</div>
+      <div style="display:flex;flex-direction:column;gap:0.5rem">
+        <button class="qbtn" id="sh-wa" style="width:100%;height:42px">💬 WhatsApp${phone ? '' : ' — no number on file'}</button>
+        <button class="qbtn" id="sh-mail" style="width:100%;height:42px">✉️ Email${email ? ' ' + esc(email) : ' — no address on file'}</button>
+        <button class="qbtn" id="sh-copy" style="width:100%;height:42px">🔗 Copy link</button>
+        <button class="qbtn" id="sh-close" style="width:100%;height:42px;background:var(--panel2)">Close</button>
+      </div>
+      <div id="sh-msg" style="font-size:0.75rem;color:var(--muted);margin-top:10px"></div>`);
+
+    const say = t => { el.querySelector('#sh-msg').textContent = t; };
+    el.querySelector('#sh-close').onclick = () => el.remove();
+    el.querySelector('#sh-copy').onclick = async () => {
+      try { await navigator.clipboard.writeText(out.url); say('Link copied.'); } catch (e) { say(out.url); }
+    };
+    el.querySelector('#sh-wa').onclick = () => {
+      if (!phone) { say('No cellphone number on this customer — copy the link and paste it into WhatsApp.'); return; }
+      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+    };
+    el.querySelector('#sh-mail').onclick = async () => {
+      if (!email) { say('No email address on this customer — use WhatsApp or copy the link.'); return; }
+      say('Sending…');
+      try {
+        const token = await firebaseIdToken();
+        const res = await fetch(SEND_FN, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+          body: JSON.stringify({
+            to: email, subject: `${coName()} — ${kind} ${d.name}`,
+            heading: `Your ${kind} ${d.name}`,
+            intro: `Thank you for your ${kind}. You can view it, check its progress and message us using the link below.`,
+            url: out.url, company: companyPayload()
+          })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
+        say('Emailed to ' + email);
+        toast('Email sent');
+      } catch (e) { say(e.message); }
+    };
+  }
+
+  // ---- Customer messages inbox -------------------------------------------
+  let inboxCache = [];
+
+  async function refreshInbox(quiet) {
+    if (isDemo()) return;
+    try {
+      const token = await firebaseIdToken();
+      const res = await fetch(`${CLIENT_FN}?inbox=1`, { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+      if (!res.ok) return;
+      const data = await res.json();
+      inboxCache = data.docs || [];
+      const badge = document.getElementById('inbox-badge');
+      if (badge) { badge.style.display = data.unread ? '' : 'none'; badge.textContent = data.unread; }
+    } catch (e) { if (!quiet) console.warn('Inbox refresh failed:', e); }
+  }
+
+  async function openInbox() {
+    if (isDemo()) { toast('Messages are off in demo mode'); return; }
+    await refreshInbox();
+    const rows = inboxCache.length ? inboxCache.map(d => `
+      <div class="cust-result" style="cursor:pointer" onclick="openThread('${esc(d.token)}')">
+        <div><div style="font-weight:600">${d.unread ? '🔴 ' : ''}${esc(d.number || '')} · ${esc(d.client || '')}</div>
+        <div style="font-size:0.72rem;color:var(--muted)">${esc(d.type || '')} · ${money(d.totalCents || 0)}${d.lastClientAt ? ' · ' + new Date(d.lastClientAt).toLocaleString('en-ZA') : ''}</div></div>
+      </div>`).join('') : '<div class="empty" style="padding:1.2rem">Nothing shared with customers yet.</div>';
+    overlay(`<div style="font-weight:700;margin-bottom:10px">💬 Customer messages</div>
+      <div style="max-height:60vh;overflow:auto">${rows}</div>`);
+  }
+
+  async function openThread(token) {
+    let doc;
+    try {
+      const res = await fetch(`${CLIENT_FN}?token=${encodeURIComponent(token)}`);
+      doc = await res.json();
+      if (!res.ok) throw new Error(doc.error || 'Could not load');
+    } catch (e) { toast(e.message); return; }
+
+    const msgs = (doc.messages || []).map(m => `<div style="margin-bottom:8px;padding:8px 10px;border-radius:9px;white-space:pre-wrap;overflow-wrap:anywhere;${m.from === 'client' ? 'background:var(--panel2)' : 'background:var(--accent);color:#04210f'}">
+      <div style="font-size:0.68rem;opacity:.7">${esc(m.who || '')} · ${new Date(m.at).toLocaleString('en-ZA')}</div>${esc(m.text)}</div>`).join('')
+      || '<div class="empty" style="padding:0.8rem">No messages yet.</div>';
+
+    const el = overlay(`<div style="font-weight:700">${esc(doc.number || '')} · ${esc((doc.client || {}).name || '')}</div>
+      <div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px">${esc(doc.type || '')} · ${money(doc.totalCents || 0)}</div>
+      <div style="max-height:38vh;overflow:auto;margin-bottom:10px">${msgs}</div>
+      <textarea id="rp-text" rows="3" placeholder="Reply to the customer…" style="width:100%"></textarea>
+      <div style="display:flex;gap:0.5rem;margin-top:8px">
+        <button class="qbtn" id="rp-send" style="flex:1;height:40px">Send reply</button>
+        <button class="qbtn" id="rp-close" style="width:auto;padding:0 0.9rem;height:40px;background:var(--panel2)">Close</button>
+      </div>
+      <div id="rp-msg" style="font-size:0.75rem;color:var(--muted);margin-top:8px"></div>`);
+
+    el.querySelector('#rp-close').onclick = () => { el.remove(); refreshInbox(true); };
+    el.querySelector('#rp-send').onclick = async () => {
+      const text = (el.querySelector('#rp-text').value || '').trim();
+      if (!text) { el.querySelector('#rp-msg').textContent = 'Type a reply first.'; return; }
+      try {
+        await clientApi({ action: 'reply', token, text, who: currentStaff ? currentStaff.name : 'Team' });
+        el.remove(); toast('Reply sent'); refreshInbox(true);
+      } catch (e) { el.querySelector('#rp-msg').textContent = e.message; }
+    };
+  }
+
   async function saveSO(d, doc) {
     return api('docSave', { id: d.id, tags: d.doc.type === 'quote' ? 'pos,quote' : 'pos,sales-order',
       customerId: d.customer ? d.customer.id : undefined, lineItems: (doc.cart || doc.items || []).map(l => ({ variantId: l.variantId, qty: l.qty })), doc });
@@ -1606,7 +1890,7 @@
     const items = doc.items || [];
     const rows = items.map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">${money(i.lineTotalCents != null ? i.lineTotalCents : i.priceCents * i.qty)}</td></tr>`).join('');
     const dep = doc.depositCents || 0; const bal = (doc.totalCents || 0) - dep;
-    let html = `<h2 style="text-align:center;margin:.2rem 0">ReptiCube</h2>
+    let html = `${companyHeaderHtml()}
       <div class="c">${esc(kind)}${doc.name ? ' ' + esc(doc.name) : ''}</div>
       <div class="c">${new Date(doc.createdAt || Date.now()).toLocaleString('en-ZA')}</div>
       ${doc.customer ? `<div class="c">${esc(doc.customer.name)}</div>` : ''}
@@ -1616,6 +1900,8 @@
     if (doc.expectedDate) html += `<div class="c">Expected stock: ${esc(doc.expectedDate)}</div>`;
     if (doc.note) html += `<div class="c">${esc(doc.note)}</div>`;
     html += `<div class="c" style="margin-top:6px">${kind === 'QUOTE' ? 'Quote — subject to availability' : 'Thank you!'}</div>`;
+    // Money still owed on both of these, so the customer needs somewhere to pay it.
+    if (kind === 'QUOTE' || bal > 0) html += bankBlockHtml(doc.name || '');
     printReport(html);
   }
 
@@ -2082,7 +2368,7 @@
   }
   function printStocktake(r) {
     const rows = r.items.filter(i => i.counted !== i.expected).map(i => `<tr><td>${esc(i.name)}</td><td style="text-align:right">${i.expected}→${i.counted}</td><td style="text-align:right">${i.counted - i.expected > 0 ? '+' : ''}${i.counted - i.expected}</td></tr>`).join('');
-    const html = `<h2 style="text-align:center;margin:.2rem 0">ReptiCube — Stock take</h2>
+    const html = `<h2 style="text-align:center;margin:.2rem 0">${esc(coName())} — Stock take</h2>
       <div class="c">${new Date(r.finishedAt).toLocaleString('en-ZA')}</div>
       <div class="c">${r.scope ? esc(r.scope) : 'Whole shop'}${r.by ? ' · ' + esc(r.by) : ''}</div>
       <div class="c">${r.countedCount} counted · ${r.varianceCount} with variance</div>
@@ -2397,7 +2683,7 @@
   function printGrv(g) {
     const rows = (g.lineItems || []).map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">${money(i.costCents * i.qty)}</td></tr>`).join('');
     const paid = g.amountPaidCents || 0; const bal = (g.totalCents || 0) - paid;
-    const html = `<h2 style="text-align:center;margin:.2rem 0">ReptiCube</h2>
+    const html = `<h2 style="text-align:center;margin:.2rem 0">${esc(coName())}</h2>
       <div class="c">GOODS RECEIVED ${esc(g.grvNumber || '')}</div>
       <div class="c">${esc(g.date || '')}</div>
       <div class="c">Supplier: ${esc(g.supplierName || '')}</div>
@@ -2556,9 +2842,9 @@
   function poSetCost(i, v) { poDraft.items[i].costCents = toCents(v); updatePoTotalsUI(); }
   function poRemove(i) { poDraft.items.splice(i, 1); renderPO(); }
   function poText(po, poNumber) {
-    let t = 'ReptiCube — Purchase Order ' + poNumber + '\n' + new Date().toLocaleDateString('en-ZA') + '\nSupplier: ' + po.supplier + '\n\n';
+    let t = coName() + ' — Purchase Order ' + poNumber + '\n' + new Date().toLocaleDateString('en-ZA') + '\nSupplier: ' + po.supplier + '\n\n';
     po.items.forEach(i => { t += i.qty + ' x ' + i.name + (i.sku ? ' (' + i.sku + ')' : '') + '\n'; });
-    t += '\nTotal (excl): ' + money(poTotalCents()) + '\n\nPlease supply the above. Thank you.\nReptiCube';
+    t += '\nTotal (excl): ' + money(poTotalCents()) + '\n\nPlease supply the above. Thank you.\n' + companyBlockText();
     return t;
   }
   async function sendPO(method) {
@@ -2582,7 +2868,7 @@
     const text = poText(poDraft, poNumber);
     if (method === 'email') {
       const to = poDraft.email || '';
-      window.open('mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent('ReptiCube Purchase Order ' + poNumber) + '&body=' + encodeURIComponent(text), '_blank');
+      window.open('mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(coName() + ' Purchase Order ' + poNumber) + '&body=' + encodeURIComponent(text), '_blank');
     } else if (method === 'whatsapp') {
       const ph = (poDraft.phone || '').replace(/[^\d]/g, '');
       window.open('https://wa.me/' + ph + '?text=' + encodeURIComponent(text), '_blank');
@@ -2911,11 +3197,14 @@
   }
   window.addEventListener('online', () => { setNet(true); flushQueue(false); });
   setInterval(() => { if ((loadQueue().length || loadXeroQueue().length) && navigator.onLine) flushQueue(false); }, 30000);
+  // Customer messages: badge on boot, then a light poll.
+  setTimeout(() => refreshInbox(true), 2500);
+  setInterval(() => { if (navigator.onLine) refreshInbox(true); }, 120000);
 
   // ---- Receipt: clean slip, NO VAT. Print (80mm) + WhatsApp ----
   function receiptText(sale) {
     const dt = new Date(sale.datetime).toLocaleString('en-ZA');
-    let t = `ReptiCube\nSale ${sale.saleNumber}\n${dt}\n`;
+    let t = `${companyBlockText()}\nSale ${sale.saleNumber}\n${dt}\n`;
     t += '--------------------------------\n';
     sale.items.forEach(i => { t += `${i.qty} x ${i.name}\n   ${money(i.lineTotalCents)}\n`; });
     t += '--------------------------------\n';
@@ -2930,7 +3219,7 @@
     const dt = new Date(sale.datetime).toLocaleString('en-ZA');
     const rows = sale.items.map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">${money(i.lineTotalCents)}</td></tr>`).join('');
     const waText = encodeURIComponent(receiptText(sale));
-    const emailSubject = encodeURIComponent('ReptiCube invoice ' + sale.saleNumber);
+    const emailSubject = encodeURIComponent(coName() + ' invoice ' + sale.saleNumber);
     const w = window.open('', '_blank', 'width=360,height=640');
     if (!w) { toast('Allow pop-ups to print the slip'); return; }
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(sale.saleNumber)}</title>
@@ -2945,7 +3234,9 @@
         .btns{margin-top:12px; display:flex; gap:8px}
         .btns a,.btns button{flex:1; text-align:center; padding:10px; border:1px solid #000; border-radius:8px; background:#fff; font-size:13px; text-decoration:none; color:#000; cursor:pointer}
       </style></head><body>
-      <h2>ReptiCube</h2>
+      ${logoHtml(60)}
+      <h2>${esc(coName())}</h2>
+      ${companyLines().length ? `<div class="c" style="font-size:11px;line-height:1.35">${companyLines().map(esc).join('<br>')}</div>` : ''}
       <div class="c">Sale ${esc(sale.saleNumber)}</div>
       <div class="c">${esc(dt)}</div>
       ${sale.customer ? `<div class="c">Customer: ${esc(sale.customer.name)}</div>` : ''}
@@ -2994,7 +3285,8 @@
     toggleRedeemPoints,
     flushQueue,
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
-    custOpen, custClose, custClear, custSearch, custAttach, custCreate, custHistory, renderCustBody });
+    custOpen, custClose, custClear, custSearch, custAttach, custCreate, custHistory, renderCustBody,
+    shareDoc, openInbox, openThread });
 
   // ---- Boot ----
   ensureStaffSeed();
