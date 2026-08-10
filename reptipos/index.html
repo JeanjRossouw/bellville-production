@@ -385,9 +385,66 @@
   // Plumbed so a rate can be switched on later without code changes. Prices are
   // treated as tax-INCLUSIVE (the Shopify price is final), so a non-zero rate
   // just surfaces the tax portion already inside the price — it never adds on top.
-  const DEFAULT_SETTINGS = { taxRatePct: 0, taxLabel: 'VAT', loyaltyPct: 5 };
+  const DEFAULT_SETTINGS = {
+    taxRatePct: 0, taxLabel: 'VAT', loyaltyPct: 5,
+    // Company identity and banking, printed on customer documents. Blank
+    // fields simply do not appear, so a half-filled form still prints tidily.
+    coName: 'ReptiCube', coRegNo: '', coAddress: '', coPhone: '', coEmail: '',
+    bankName: '', bankAccName: '', bankAccNo: '', bankBranch: ''
+  };
   function settings() { try { return { ...DEFAULT_SETTINGS, ...(JSON.parse(localStorage.getItem('reptipos-settings') || '{}')) }; } catch (e) { return { ...DEFAULT_SETTINGS }; } }
   function saveSettings(s) { localStorage.setItem('reptipos-settings', JSON.stringify({ ...settings(), ...s })); }
+
+  // ---- Company letterhead + banking ------------------------------------
+  // One source for every printed document, so the trading name, registration
+  // number and bank account are never hardcoded in a template again.
+  function coName() { return (settings().coName || 'ReptiCube').trim(); }
+
+  // Address is a free-text box; each line prints as typed.
+  function companyLines() {
+    const s = settings();
+    const lines = String(s.coAddress || '').split('\n').map(x => x.trim()).filter(Boolean);
+    if (s.coRegNo) lines.push('Reg no: ' + s.coRegNo);
+    if (s.coPhone) lines.push('Tel: ' + s.coPhone);
+    if (s.coEmail) lines.push(s.coEmail);
+    return lines;
+  }
+
+  function bankLines() {
+    const s = settings();
+    const lines = [];
+    if (s.bankAccName) lines.push('Account name: ' + s.bankAccName);
+    if (s.bankName) lines.push('Bank: ' + s.bankName);
+    if (s.bankAccNo) lines.push('Account no: ' + s.bankAccNo);
+    if (s.bankBranch) lines.push('Branch code: ' + s.bankBranch);
+    return lines;
+  }
+
+  function companyHeaderHtml() {
+    const lines = companyLines();
+    return `<h2 style="text-align:center;margin:.2rem 0">${esc(coName())}</h2>` +
+      (lines.length ? `<div class="c" style="font-size:0.75rem;line-height:1.35">${lines.map(esc).join('<br>')}</div>` : '');
+  }
+
+  // Only shown where money is still owed — a paid till slip does not need it.
+  function bankBlockHtml(reference) {
+    const lines = bankLines();
+    if (!lines.length) return '';
+    return `<div style="margin-top:8px;border-top:1px dashed #999;padding-top:6px;font-size:0.75rem;line-height:1.4">
+      <strong>Banking details</strong><br>${lines.map(esc).join('<br>')}
+      ${reference ? `<br>Reference: <strong>${esc(reference)}</strong>` : ''}</div>`;
+  }
+
+  function companyBlockText() {
+    const lines = companyLines();
+    return coName() + (lines.length ? '\n' + lines.join('\n') : '');
+  }
+
+  function bankBlockText(reference) {
+    const lines = bankLines();
+    if (!lines.length) return '';
+    return '\nBanking details\n' + lines.join('\n') + (reference ? '\nReference: ' + reference : '') + '\n';
+  }
   // Tax portion (cents) already contained in a tax-inclusive total.
   function taxPortionCents(totalCents) {
     const r = Number(settings().taxRatePct) || 0;
@@ -963,6 +1020,27 @@
       ${list.map(s => `<div style="display:flex; justify-content:space-between; padding:0.25rem 0; font-size:0.85rem"><span>${esc(s.name)} <span style="color:var(--muted)">(${s.role})</span></span>${s.id !== 'admin' ? `<button class="rm" onclick="removeStaff('${s.id}')">✕</button>` : ''}</div>`).join('')}
       <div style="display:flex; gap:0.4rem; margin-top:0.4rem"><input id="st-name" placeholder="Name" style="flex:1"><input id="st-pin" placeholder="PIN" style="width:80px"></div>
       <button class="qbtn" style="width:auto; padding:0 0.7rem; margin-top:0.4rem" onclick="addStaff()">+ Add staff</button>
+      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">Company details (printed on documents)</div>
+      <div style="display:flex; flex-direction:column; gap:0.35rem">
+        <input id="co-name" value="${esc(settings().coName)}" placeholder="Trading name">
+        <input id="co-reg" value="${esc(settings().coRegNo)}" placeholder="Company registration number">
+        <textarea id="co-addr" rows="3" placeholder="Address — one line per row">${esc(settings().coAddress)}</textarea>
+        <div style="display:flex; gap:0.4rem">
+          <input id="co-phone" value="${esc(settings().coPhone)}" placeholder="Telephone" style="flex:1">
+          <input id="co-email" value="${esc(settings().coEmail)}" placeholder="Email" style="flex:1">
+        </div>
+      </div>
+      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">Banking details (quotes &amp; sales orders)</div>
+      <div style="display:flex; flex-direction:column; gap:0.35rem">
+        <input id="bk-accname" value="${esc(settings().bankAccName)}" placeholder="Account name">
+        <div style="display:flex; gap:0.4rem">
+          <input id="bk-bank" value="${esc(settings().bankName)}" placeholder="Bank" style="flex:1">
+          <input id="bk-branch" value="${esc(settings().bankBranch)}" placeholder="Branch code" style="width:120px">
+        </div>
+        <input id="bk-accno" value="${esc(settings().bankAccNo)}" placeholder="Account number">
+      </div>
+      <button class="qbtn" style="width:auto; padding:0 0.7rem; margin-top:0.5rem" onclick="saveCompanySettings()">Save company &amp; banking</button>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Banking details print on quotes and sales orders — anything still owing. Paid till slips leave them off.</div>
       <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">Tax (default off — not VAT-registered)</div>
       <div style="display:flex; gap:0.4rem; align-items:center">
         <input id="tax-label" value="${esc(settings().taxLabel)}" placeholder="Label" style="flex:1">
@@ -991,6 +1069,22 @@
     saveStaff(list); renderReg(); toast('Staff added');
   }
   function removeStaff(id) { if (!confirm('Remove this staff member?')) return; saveStaff(staffList().filter(s => s.id !== id)); renderReg(); }
+  function saveCompanySettings() {
+    const val = id => (document.getElementById(id).value || '').trim();
+    saveSettings({
+      coName: val('co-name') || 'ReptiCube',
+      coRegNo: val('co-reg'),
+      coAddress: val('co-addr'),
+      coPhone: val('co-phone'),
+      coEmail: val('co-email'),
+      bankAccName: val('bk-accname'),
+      bankName: val('bk-bank'),
+      bankBranch: val('bk-branch'),
+      bankAccNo: val('bk-accno')
+    });
+    renderReg();
+    toast('Company details saved');
+  }
   function saveTaxSettings() {
     const rate = Math.max(0, parseFloat(document.getElementById('tax-rate').value) || 0);
     const label = (document.getElementById('tax-label').value || 'VAT').trim() || 'VAT';
@@ -1019,7 +1113,7 @@
   function zReportHtml(s, countedCents, kind) {
     const exp = expectedCashCents(s);
     const variance = countedCents != null ? countedCents - exp : null;
-    return `<h2 style="text-align:center;margin:.2rem 0">ReptiCube — ${kind}-report</h2>
+    return `<h2 style="text-align:center;margin:.2rem 0">${esc(coName())} — ${kind}-report</h2>
       <div class="c">${new Date().toLocaleString('en-ZA')}</div>
       <div class="c">Opened ${new Date(s.openedAt).toLocaleString('en-ZA')}</div>
       <table>
@@ -1355,7 +1449,7 @@
   function showRefundReceipt(refund) {
     const dt = new Date(refund.datetime).toLocaleString('en-ZA');
     const rows = refund.items.map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">−${money(i.qty * i.unitPriceCents)}</td></tr>`).join('');
-    const html = `<h2 style="text-align:center;margin:.2rem 0">ReptiCube — REFUND</h2>
+    const html = `<h2 style="text-align:center;margin:.2rem 0">${esc(coName())} — REFUND</h2>
       <div class="c">${esc(refund.refundNumber)}</div>
       <div class="c">${esc(dt)}</div>
       <div class="c">Order ${esc(refund.orderName)}</div>
@@ -1606,7 +1700,7 @@
     const items = doc.items || [];
     const rows = items.map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">${money(i.lineTotalCents != null ? i.lineTotalCents : i.priceCents * i.qty)}</td></tr>`).join('');
     const dep = doc.depositCents || 0; const bal = (doc.totalCents || 0) - dep;
-    let html = `<h2 style="text-align:center;margin:.2rem 0">ReptiCube</h2>
+    let html = `${companyHeaderHtml()}
       <div class="c">${esc(kind)}${doc.name ? ' ' + esc(doc.name) : ''}</div>
       <div class="c">${new Date(doc.createdAt || Date.now()).toLocaleString('en-ZA')}</div>
       ${doc.customer ? `<div class="c">${esc(doc.customer.name)}</div>` : ''}
@@ -1616,6 +1710,8 @@
     if (doc.expectedDate) html += `<div class="c">Expected stock: ${esc(doc.expectedDate)}</div>`;
     if (doc.note) html += `<div class="c">${esc(doc.note)}</div>`;
     html += `<div class="c" style="margin-top:6px">${kind === 'QUOTE' ? 'Quote — subject to availability' : 'Thank you!'}</div>`;
+    // Money still owed on both of these, so the customer needs somewhere to pay it.
+    if (kind === 'QUOTE' || bal > 0) html += bankBlockHtml(doc.name || '');
     printReport(html);
   }
 
@@ -2082,7 +2178,7 @@
   }
   function printStocktake(r) {
     const rows = r.items.filter(i => i.counted !== i.expected).map(i => `<tr><td>${esc(i.name)}</td><td style="text-align:right">${i.expected}→${i.counted}</td><td style="text-align:right">${i.counted - i.expected > 0 ? '+' : ''}${i.counted - i.expected}</td></tr>`).join('');
-    const html = `<h2 style="text-align:center;margin:.2rem 0">ReptiCube — Stock take</h2>
+    const html = `<h2 style="text-align:center;margin:.2rem 0">${esc(coName())} — Stock take</h2>
       <div class="c">${new Date(r.finishedAt).toLocaleString('en-ZA')}</div>
       <div class="c">${r.scope ? esc(r.scope) : 'Whole shop'}${r.by ? ' · ' + esc(r.by) : ''}</div>
       <div class="c">${r.countedCount} counted · ${r.varianceCount} with variance</div>
@@ -2397,7 +2493,7 @@
   function printGrv(g) {
     const rows = (g.lineItems || []).map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">${money(i.costCents * i.qty)}</td></tr>`).join('');
     const paid = g.amountPaidCents || 0; const bal = (g.totalCents || 0) - paid;
-    const html = `<h2 style="text-align:center;margin:.2rem 0">ReptiCube</h2>
+    const html = `<h2 style="text-align:center;margin:.2rem 0">${esc(coName())}</h2>
       <div class="c">GOODS RECEIVED ${esc(g.grvNumber || '')}</div>
       <div class="c">${esc(g.date || '')}</div>
       <div class="c">Supplier: ${esc(g.supplierName || '')}</div>
@@ -2556,9 +2652,9 @@
   function poSetCost(i, v) { poDraft.items[i].costCents = toCents(v); updatePoTotalsUI(); }
   function poRemove(i) { poDraft.items.splice(i, 1); renderPO(); }
   function poText(po, poNumber) {
-    let t = 'ReptiCube — Purchase Order ' + poNumber + '\n' + new Date().toLocaleDateString('en-ZA') + '\nSupplier: ' + po.supplier + '\n\n';
+    let t = coName() + ' — Purchase Order ' + poNumber + '\n' + new Date().toLocaleDateString('en-ZA') + '\nSupplier: ' + po.supplier + '\n\n';
     po.items.forEach(i => { t += i.qty + ' x ' + i.name + (i.sku ? ' (' + i.sku + ')' : '') + '\n'; });
-    t += '\nTotal (excl): ' + money(poTotalCents()) + '\n\nPlease supply the above. Thank you.\nReptiCube';
+    t += '\nTotal (excl): ' + money(poTotalCents()) + '\n\nPlease supply the above. Thank you.\n' + companyBlockText();
     return t;
   }
   async function sendPO(method) {
@@ -2582,7 +2678,7 @@
     const text = poText(poDraft, poNumber);
     if (method === 'email') {
       const to = poDraft.email || '';
-      window.open('mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent('ReptiCube Purchase Order ' + poNumber) + '&body=' + encodeURIComponent(text), '_blank');
+      window.open('mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(coName() + ' Purchase Order ' + poNumber) + '&body=' + encodeURIComponent(text), '_blank');
     } else if (method === 'whatsapp') {
       const ph = (poDraft.phone || '').replace(/[^\d]/g, '');
       window.open('https://wa.me/' + ph + '?text=' + encodeURIComponent(text), '_blank');
@@ -2915,7 +3011,7 @@
   // ---- Receipt: clean slip, NO VAT. Print (80mm) + WhatsApp ----
   function receiptText(sale) {
     const dt = new Date(sale.datetime).toLocaleString('en-ZA');
-    let t = `ReptiCube\nSale ${sale.saleNumber}\n${dt}\n`;
+    let t = `${companyBlockText()}\nSale ${sale.saleNumber}\n${dt}\n`;
     t += '--------------------------------\n';
     sale.items.forEach(i => { t += `${i.qty} x ${i.name}\n   ${money(i.lineTotalCents)}\n`; });
     t += '--------------------------------\n';
@@ -2930,7 +3026,7 @@
     const dt = new Date(sale.datetime).toLocaleString('en-ZA');
     const rows = sale.items.map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">${money(i.lineTotalCents)}</td></tr>`).join('');
     const waText = encodeURIComponent(receiptText(sale));
-    const emailSubject = encodeURIComponent('ReptiCube invoice ' + sale.saleNumber);
+    const emailSubject = encodeURIComponent(coName() + ' invoice ' + sale.saleNumber);
     const w = window.open('', '_blank', 'width=360,height=640');
     if (!w) { toast('Allow pop-ups to print the slip'); return; }
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(sale.saleNumber)}</title>
@@ -2945,7 +3041,8 @@
         .btns{margin-top:12px; display:flex; gap:8px}
         .btns a,.btns button{flex:1; text-align:center; padding:10px; border:1px solid #000; border-radius:8px; background:#fff; font-size:13px; text-decoration:none; color:#000; cursor:pointer}
       </style></head><body>
-      <h2>ReptiCube</h2>
+      <h2>${esc(coName())}</h2>
+      ${companyLines().length ? `<div class="c" style="font-size:11px;line-height:1.35">${companyLines().map(esc).join('<br>')}</div>` : ''}
       <div class="c">Sale ${esc(sale.saleNumber)}</div>
       <div class="c">${esc(dt)}</div>
       ${sale.customer ? `<div class="c">Customer: ${esc(sale.customer.name)}</div>` : ''}
