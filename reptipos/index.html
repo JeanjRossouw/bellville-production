@@ -182,6 +182,7 @@
     <button class="qbtn" title="Dashboard" onclick="openDashboard()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📈 Dashboard</button>
     <button class="qbtn" title="Clients &amp; accounts" onclick="openClients()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">👥 Clients</button>
     <button class="qbtn" title="Sales orders &amp; quotes" onclick="openDocs('salesorder')" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📋 Orders</button>
+    <button class="qbtn" id="inbox-btn" title="Messages from customers" onclick="openInbox()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">💬 Messages<span id="inbox-badge" style="display:none;margin-left:0.3rem;background:var(--warn,#e5484d);color:#fff;border-radius:999px;padding:0 0.4rem;font-size:0.7rem"></span></button>
     <button class="qbtn" title="Receive stock (GRV) &amp; suppliers" onclick="openGrv()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📥 Receive</button>
     <button class="qbtn" title="Stock take / count" onclick="openStocktake()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📦 Count</button>
     <button class="qbtn" title="Create a purchase order" onclick="openReorder()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🧾 PO Order</button>
@@ -1630,6 +1631,7 @@
         <div style="display:flex;gap:0.4rem">
           <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="loadQuote('${d.id}')">To cart</button>
           <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="printDocById('${d.id}','QUOTE')">🖨️</button>
+          <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="shareDoc('${d.id}','quote')" title="Send to the customer">📤 Send</button>
           <button class="rm" onclick="soCancel('${d.id}')">✕</button>
         </div></div>`;
     }
@@ -1643,9 +1645,179 @@
         ${m.status !== 'ready' ? `<button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="soMarkReady('${d.id}')">Mark ready</button>` : ''}
         <button class="qbtn" style="width:auto;padding:0 0.6rem;background:var(--accent);color:#04210f" onclick="soFulfil('${d.id}')">Fulfil &amp; invoice</button>
         <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="printDocById('${d.id}','SALES ORDER')">🖨️</button>
+        <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="shareDoc('${d.id}','salesorder')" title="Send to the customer">📤 Send</button>
         <button class="rm" onclick="soCancel('${d.id}')">✕</button>
       </div></div>`;
   }
+  // ---- Sharing a document with the customer ------------------------------
+  // A quote or sales order becomes a private link the customer can open, check
+  // the status of, and ask questions on — instead of phoning the shop.
+  const CLIENT_FN = '/.netlify/functions/client-doc';
+  const SEND_FN = '/.netlify/functions/send-doc';
+
+  async function clientApi(payload) {
+    const token = await firebaseIdToken();
+    const res = await fetch(CLIENT_FN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+      body: JSON.stringify(payload)
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(out.error || 'HTTP ' + res.status);
+    return out;
+  }
+
+  // The company block travels with the document, so the customer's page shows
+  // the same letterhead and banking as the printed copy.
+  function companyPayload() {
+    return { name: coName(), lines: companyLines(), bank: bankLines(), logoUrl: settings().coLogoUrl || '' };
+  }
+
+  function overlay(html) {
+    const el = document.createElement('div');
+    el.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;padding:16px;z-index:60;overflow:auto';
+    el.innerHTML = `<div style="background:var(--panel);border:1px solid var(--border);border-radius:12px;max-width:460px;width:100%;padding:18px">${html}</div>`;
+    el.addEventListener('mousedown', e => { if (e.target === el) el.remove(); });
+    document.body.appendChild(el);
+    return el;
+  }
+
+  async function shareDoc(id, type) {
+    const d = findDoc(id);
+    if (!d) { toast('Document not found'); return; }
+    if (isDemo()) { toast('Sharing is off in demo mode'); return; }
+    const m = d.doc || {};
+    const total = m.totalCents || 0, dep = m.depositCents || 0;
+    toast('Preparing link…');
+    let out;
+    try {
+      out = await clientApi({
+        action: 'create',
+        doc: {
+          token: m.clientToken, type,
+          number: d.name || '',
+          company: companyPayload(),
+          client: { name: d.customer ? d.customer.name : '', email: (d.customer && d.customer.email) || '', phone: (d.customer && d.customer.phone) || '' },
+          items: (m.items || []).map(i => ({ name: i.name, qty: i.qty, lineTotalCents: i.lineTotalCents != null ? i.lineTotalCents : i.priceCents * i.qty })),
+          totalCents: total, depositCents: dep, balanceCents: total - dep,
+          expectedDate: m.expectedDate || '', status: m.status || (type === 'quote' ? 'sent' : 'awaiting_stock')
+        }
+      });
+    } catch (e) { toast('Could not create link: ' + e.message); return; }
+
+    // Remember the token so re-sending updates the same page and keeps the thread.
+    if (!m.clientToken) {
+      try { await saveSO(d, { ...m, clientToken: out.token }); } catch (e) { /* the link still works */ }
+    }
+
+    const kind = type === 'quote' ? 'quote' : 'order';
+    const email = (d.customer && d.customer.email) || '';
+    const phone = String((d.customer && d.customer.phone) || '').replace(/\D/g, '').replace(/^0/, '27');
+    const msg = `Hi${d.customer ? ' ' + String(d.customer.name || '').split(' ')[0] : ''}, here is your ${kind} ${d.name} from ${coName()}: ${out.url}`;
+    const el = overlay(`
+      <div style="font-weight:700;margin-bottom:4px">Send ${esc(d.name)}</div>
+      <div style="font-size:0.72rem;color:var(--muted);margin-bottom:12px;word-break:break-all">${esc(out.url)}</div>
+      <div style="display:flex;flex-direction:column;gap:0.5rem">
+        <button class="qbtn" id="sh-wa" style="width:100%;height:42px">💬 WhatsApp${phone ? '' : ' — no number on file'}</button>
+        <button class="qbtn" id="sh-mail" style="width:100%;height:42px">✉️ Email${email ? ' ' + esc(email) : ' — no address on file'}</button>
+        <button class="qbtn" id="sh-copy" style="width:100%;height:42px">🔗 Copy link</button>
+        <button class="qbtn" id="sh-close" style="width:100%;height:42px;background:var(--panel2)">Close</button>
+      </div>
+      <div id="sh-msg" style="font-size:0.75rem;color:var(--muted);margin-top:10px"></div>`);
+
+    const say = t => { el.querySelector('#sh-msg').textContent = t; };
+    el.querySelector('#sh-close').onclick = () => el.remove();
+    el.querySelector('#sh-copy').onclick = async () => {
+      try { await navigator.clipboard.writeText(out.url); say('Link copied.'); } catch (e) { say(out.url); }
+    };
+    el.querySelector('#sh-wa').onclick = () => {
+      if (!phone) { say('No cellphone number on this customer — copy the link and paste it into WhatsApp.'); return; }
+      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+    };
+    el.querySelector('#sh-mail').onclick = async () => {
+      if (!email) { say('No email address on this customer — use WhatsApp or copy the link.'); return; }
+      say('Sending…');
+      try {
+        const token = await firebaseIdToken();
+        const res = await fetch(SEND_FN, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+          body: JSON.stringify({
+            to: email, subject: `${coName()} — ${kind} ${d.name}`,
+            heading: `Your ${kind} ${d.name}`,
+            intro: `Thank you for your ${kind}. You can view it, check its progress and message us using the link below.`,
+            url: out.url, company: companyPayload()
+          })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
+        say('Emailed to ' + email);
+        toast('Email sent');
+      } catch (e) { say(e.message); }
+    };
+  }
+
+  // ---- Customer messages inbox -------------------------------------------
+  let inboxCache = [];
+
+  async function refreshInbox(quiet) {
+    if (isDemo()) return;
+    try {
+      const token = await firebaseIdToken();
+      const res = await fetch(`${CLIENT_FN}?inbox=1`, { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+      if (!res.ok) return;
+      const data = await res.json();
+      inboxCache = data.docs || [];
+      const badge = document.getElementById('inbox-badge');
+      if (badge) { badge.style.display = data.unread ? '' : 'none'; badge.textContent = data.unread; }
+    } catch (e) { if (!quiet) console.warn('Inbox refresh failed:', e); }
+  }
+
+  async function openInbox() {
+    if (isDemo()) { toast('Messages are off in demo mode'); return; }
+    await refreshInbox();
+    const rows = inboxCache.length ? inboxCache.map(d => `
+      <div class="cust-result" style="cursor:pointer" onclick="openThread('${esc(d.token)}')">
+        <div><div style="font-weight:600">${d.unread ? '🔴 ' : ''}${esc(d.number || '')} · ${esc(d.client || '')}</div>
+        <div style="font-size:0.72rem;color:var(--muted)">${esc(d.type || '')} · ${money(d.totalCents || 0)}${d.lastClientAt ? ' · ' + new Date(d.lastClientAt).toLocaleString('en-ZA') : ''}</div></div>
+      </div>`).join('') : '<div class="empty" style="padding:1.2rem">Nothing shared with customers yet.</div>';
+    overlay(`<div style="font-weight:700;margin-bottom:10px">💬 Customer messages</div>
+      <div style="max-height:60vh;overflow:auto">${rows}</div>`);
+  }
+
+  async function openThread(token) {
+    let doc;
+    try {
+      const res = await fetch(`${CLIENT_FN}?token=${encodeURIComponent(token)}`);
+      doc = await res.json();
+      if (!res.ok) throw new Error(doc.error || 'Could not load');
+    } catch (e) { toast(e.message); return; }
+
+    const msgs = (doc.messages || []).map(m => `<div style="margin-bottom:8px;padding:8px 10px;border-radius:9px;white-space:pre-wrap;overflow-wrap:anywhere;${m.from === 'client' ? 'background:var(--panel2)' : 'background:var(--accent);color:#04210f'}">
+      <div style="font-size:0.68rem;opacity:.7">${esc(m.who || '')} · ${new Date(m.at).toLocaleString('en-ZA')}</div>${esc(m.text)}</div>`).join('')
+      || '<div class="empty" style="padding:0.8rem">No messages yet.</div>';
+
+    const el = overlay(`<div style="font-weight:700">${esc(doc.number || '')} · ${esc((doc.client || {}).name || '')}</div>
+      <div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px">${esc(doc.type || '')} · ${money(doc.totalCents || 0)}</div>
+      <div style="max-height:38vh;overflow:auto;margin-bottom:10px">${msgs}</div>
+      <textarea id="rp-text" rows="3" placeholder="Reply to the customer…" style="width:100%"></textarea>
+      <div style="display:flex;gap:0.5rem;margin-top:8px">
+        <button class="qbtn" id="rp-send" style="flex:1;height:40px">Send reply</button>
+        <button class="qbtn" id="rp-close" style="width:auto;padding:0 0.9rem;height:40px;background:var(--panel2)">Close</button>
+      </div>
+      <div id="rp-msg" style="font-size:0.75rem;color:var(--muted);margin-top:8px"></div>`);
+
+    el.querySelector('#rp-close').onclick = () => { el.remove(); refreshInbox(true); };
+    el.querySelector('#rp-send').onclick = async () => {
+      const text = (el.querySelector('#rp-text').value || '').trim();
+      if (!text) { el.querySelector('#rp-msg').textContent = 'Type a reply first.'; return; }
+      try {
+        await clientApi({ action: 'reply', token, text, who: currentStaff ? currentStaff.name : 'Team' });
+        el.remove(); toast('Reply sent'); refreshInbox(true);
+      } catch (e) { el.querySelector('#rp-msg').textContent = e.message; }
+    };
+  }
+
   async function saveSO(d, doc) {
     return api('docSave', { id: d.id, tags: d.doc.type === 'quote' ? 'pos,quote' : 'pos,sales-order',
       customerId: d.customer ? d.customer.id : undefined, lineItems: (doc.cart || doc.items || []).map(l => ({ variantId: l.variantId, qty: l.qty })), doc });
@@ -3025,6 +3197,9 @@
   }
   window.addEventListener('online', () => { setNet(true); flushQueue(false); });
   setInterval(() => { if ((loadQueue().length || loadXeroQueue().length) && navigator.onLine) flushQueue(false); }, 30000);
+  // Customer messages: badge on boot, then a light poll.
+  setTimeout(() => refreshInbox(true), 2500);
+  setInterval(() => { if (navigator.onLine) refreshInbox(true); }, 120000);
 
   // ---- Receipt: clean slip, NO VAT. Print (80mm) + WhatsApp ----
   function receiptText(sale) {
@@ -3110,7 +3285,8 @@
     toggleRedeemPoints,
     flushQueue,
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
-    custOpen, custClose, custClear, custSearch, custAttach, custCreate, custHistory, renderCustBody });
+    custOpen, custClose, custClear, custSearch, custAttach, custCreate, custHistory, renderCustBody,
+    shareDoc, openInbox, openThread });
 
   // ---- Boot ----
   ensureStaffSeed();
