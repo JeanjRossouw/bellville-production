@@ -41,3 +41,7 @@ required env vars are in `XERO-SETUP.md` (Phase 2 — accounting) and
   shows a POS sales card (per-business daily takings, week/month totals, top
   products, Xero sync status). See `POS-BUILD-PLAN.md`, `XERO-SETUP.md`,
   `SHOPIFY-SETUP.md`.
+- The standalone ReptiCube till at `/reptipos/` posts each completed sale to
+  **Shopify** (order + stock) and to **Xero** (paid invoice) via the same
+  `xero-invoice` function the main POS tab uses. The two have separate retry
+  queues, so one being down never blocks the other.

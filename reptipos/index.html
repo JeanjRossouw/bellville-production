@@ -1585,6 +1585,7 @@
         staff: currentStaff ? currentStaff.name : null, shopifyOrder: out.orderName || null, synced: true, salesOrder: d.name, depositAppliedCents: dep };
       try { const arr = JSON.parse(localStorage.getItem('reptipos-sales') || '[]'); arr.unshift(sale); localStorage.setItem('reptipos-sales', JSON.stringify(arr.slice(0, 300))); } catch (e) {}
       try { if (window.fb) { const { db, fns } = window.fb; await fns.addDoc(fns.collection(db, 'sales'), sale); } } catch (e) {}
+      syncSaleToXero(sale);
       items.forEach(i => { const p = findProduct(i.variantId); if (p) p.qty = Math.max(0, (Number(p.qty) || 0) - i.qty); });
       cacheCatalogue(); renderGrid();
       toast('Fulfilled ' + d.name + ' · ' + (out.orderName || ''));
@@ -2711,6 +2712,10 @@
       toast('Sale ' + sale.saleNumber + ' saved — queued to sync to Shopify');
     }
 
+    // Push to the books. Deliberately not awaited — the till stays responsive
+    // and a failure queues itself.
+    syncSaleToXero(sale);
+
     // Record against the open register shift (cash-up).
     shiftRecordSale(sale);
     // Loyalty: update the balance (subtract redeemed, add earned).
@@ -2737,6 +2742,127 @@
     try { const arr = JSON.parse(localStorage.getItem('reptipos-sales') || '[]'); const i = arr.findIndex(s => s.saleNumber === sale.saleNumber); if (i >= 0) { arr[i] = sale; localStorage.setItem('reptipos-sales', JSON.stringify(arr)); } } catch (e) {}
   }
 
+  // ---- Xero: every completed sale becomes a paid invoice (Phase 2) --------
+  // The main production app already does this from its POS tab; this till was
+  // the one sales path that never reached the books. Same Netlify function and
+  // the same idempotency contract — the sale's idemKey is the invoice
+  // Reference, so a retry returns the existing invoice instead of double-billing.
+  const XERO_FN = '/.netlify/functions/xero-invoice';
+  const XERO_BIZ = 'repticube';
+
+  // xero-invoice always settles the invoice against the bank account, so only
+  // tenders where money actually reached the bank at checkout may auto-post.
+  // Deliberately an allow-list: the in-flight till work adds on-account (a
+  // receivable, not a payment), gift cards and store credit (paid for earlier,
+  // so settling again would double-count the cash). Those need their own
+  // treatment before they can sync, and until then they are left for manual
+  // capture rather than posted wrongly.
+  const XERO_AUTO_TENDERS = ['cash', 'card', 'split', 'paid'];
+
+  // Map the till's sale onto the Lightspeed-ish shape xero-invoice expects.
+  // Money changes units here: the till counts integer cents, Xero wants rands.
+  // Unit prices are already post-discount, so they sum to the sale total.
+  function saleToXeroShape(sale) {
+    return {
+      _localId: sale.idemKey,
+      timeStamp: sale.datetime,
+      total: sale.totalCents / 100,
+      SaleLines: {
+        SaleLine: (sale.items || []).map(i => ({
+          _description: i.name,
+          _sku: i.sku,
+          unitQuantity: i.qty,
+          unitPrice: i.priceCents / 100
+        }))
+      },
+      SalePayments: {
+        SalePayment: [{ _cardRef: sale.saleNumber + ' · ' + paymentSummary(sale.payment) }]
+      }
+    };
+  }
+
+  function loadXeroQueue() { try { return JSON.parse(localStorage.getItem('reptipos-xero-queue') || '[]'); } catch (e) { return []; } }
+  function saveXeroQueue(q) { localStorage.setItem('reptipos-xero-queue', JSON.stringify(q)); }
+
+  function markSaleXeroSynced(saleNumber, out) {
+    try {
+      const arr = JSON.parse(localStorage.getItem('reptipos-sales') || '[]');
+      const i = arr.findIndex(s => s.saleNumber === saleNumber);
+      if (i >= 0) {
+        arr[i].xeroInvoiceId = out.invoiceID || null;
+        arr[i].xeroInvoiceNumber = out.invoiceNumber || null;
+        arr[i].xeroSynced = true;
+        localStorage.setItem('reptipos-sales', JSON.stringify(arr));
+      }
+    } catch (e) {}
+  }
+
+  // The kiosk's anonymous sign-in still yields a Firebase ID token, which is
+  // what the function verifies.
+  async function firebaseIdToken() {
+    try {
+      const user = window.fb && window.fb.auth && window.fb.auth.currentUser;
+      return user ? await user.getIdToken() : null;
+    } catch (e) { return null; }
+  }
+
+  async function postSaleToXero(payload) {
+    const token = await firebaseIdToken();
+    const res = await fetch(XERO_FN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+      body: JSON.stringify({ biz: XERO_BIZ, sale: payload })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 140));
+    return res.json();
+  }
+
+  // Never awaited by the till: a slow accounting API must not hold up the next
+  // customer. A failure queues for retry, exactly like the Shopify path.
+  async function syncSaleToXero(sale) {
+    if (isDemo() || !sale || sale.xeroSynced) return;
+    const method = (sale.payment && sale.payment.method) || '';
+    if (!XERO_AUTO_TENDERS.includes(method)) {
+      sale.xeroSkipped = method || 'unknown-tender';
+      console.warn('Not auto-posting to Xero — tender needs manual treatment:', method, sale.saleNumber);
+      return;
+    }
+    const payload = saleToXeroShape(sale);
+    if (!payload.SaleLines.SaleLine.length) return;
+    try {
+      const out = await postSaleToXero(payload);
+      sale.xeroInvoiceId = out.invoiceID || null;
+      sale.xeroInvoiceNumber = out.invoiceNumber || null;
+      sale.xeroSynced = true;
+      markSaleXeroSynced(sale.saleNumber, out);
+    } catch (e) {
+      console.warn('Xero sync failed — queuing for retry:', e);
+      const q = loadXeroQueue();
+      if (!q.some(x => x.payload._localId === payload._localId)) {
+        q.push({ saleNumber: sale.saleNumber, payload });
+        saveXeroQueue(q);
+      }
+      renderQueueBadge();
+    }
+  }
+
+  let flushingXero = false;
+  async function flushXeroQueue() {
+    const q = loadXeroQueue();
+    if (!q.length || !navigator.onLine || flushingXero) return 0;
+    flushingXero = true;
+    const remaining = [];
+    for (const item of q) {
+      try {
+        const out = await postSaleToXero(item.payload);
+        markSaleXeroSynced(item.saleNumber, out);
+      } catch (e) { remaining.push(item); }
+    }
+    saveXeroQueue(remaining); flushingXero = false;
+    renderQueueBadge();
+    return q.length - remaining.length;
+  }
+
   // ---- Offline sync queue: never lose a sale; flush when back online ----
   function loadQueue() { try { return JSON.parse(localStorage.getItem('reptipos-queue') || '[]'); } catch (e) { return []; } }
   function saveQueue(q) { localStorage.setItem('reptipos-queue', JSON.stringify(q)); }
@@ -2752,15 +2878,25 @@
   }
   function renderQueueBadge() {
     const b = document.getElementById('queue-badge'); if (!b) return;
-    const n = loadQueue().length;
+    const n = loadQueue().length + loadXeroQueue().length;
     b.style.display = n ? '' : 'none';
     b.textContent = '⏳ ' + n + ' to sync';
   }
   let flushing = false;
   async function flushQueue(manual) {
     let q = loadQueue();
-    if (!q.length) { if (manual) toast('Nothing to sync'); return; }
+    const xeroPending = loadXeroQueue().length;
+    if (!q.length && !xeroPending) { if (manual) toast('Nothing to sync'); return; }
     if (!navigator.onLine) { if (manual) toast('Still offline'); return; }
+    // Shopify and Xero fail independently, so each retries on its own.
+    const xeroDone = await flushXeroQueue();
+    if (!q.length) {
+      if (manual || xeroDone) {
+        const left = loadXeroQueue().length;
+        toast(left ? `${xeroDone} sent to Xero · ${left} still pending` : `All ${xeroDone} sent to Xero`);
+      }
+      return;
+    }
     if (flushing) return; flushing = true;
     const remaining = [];
     for (const item of q) {
@@ -2774,7 +2910,7 @@
     if (manual || done) toast(remaining.length ? `${done} synced · ${remaining.length} still pending` : `All ${done} synced to Shopify`);
   }
   window.addEventListener('online', () => { setNet(true); flushQueue(false); });
-  setInterval(() => { if (loadQueue().length && navigator.onLine) flushQueue(false); }, 30000);
+  setInterval(() => { if ((loadQueue().length || loadXeroQueue().length) && navigator.onLine) flushQueue(false); }, 30000);
 
   // ---- Receipt: clean slip, NO VAT. Print (80mm) + WhatsApp ----
   function receiptText(sale) {
