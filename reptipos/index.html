@@ -186,6 +186,7 @@
     <button class="qbtn" id="inbox-btn" title="Messages from customers" onclick="openInbox()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">💬 Messages<span id="inbox-badge" style="display:none;margin-left:0.3rem;background:var(--warn,#e5484d);color:#fff;border-radius:999px;padding:0 0.4rem;font-size:0.7rem"></span></button>
     <button class="qbtn" id="btn-receive" title="Receive stock (GRV) &amp; suppliers" onclick="openGrv()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📥 Receive</button>
     <button class="qbtn" title="Stock take / count" onclick="openStocktake()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📦 Count</button>
+    <button class="qbtn" id="btn-catalogue" title="Products, prices and cost prices" onclick="openCatalogue()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🗂 Catalogue</button>
     <button class="qbtn" id="btn-po" title="Create a purchase order" onclick="openReorder()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🧾 PO Order</button>
     <button class="qbtn" id="btn-sales" title="Sales history" onclick="openSales()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📊 Sales</button>
     <button class="qbtn" title="Refund / return" onclick="openRefund()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">↩ Refund</button>
@@ -251,6 +252,13 @@
   <div class="modal-card" style="width:720px">
     <h2><span>New purchase order</span><button class="rm" onclick="closeReorder()">✕</button></h2>
     <div id="reorder-body"></div>
+  </div>
+</div>
+
+<div class="modal" id="cat-modal">
+  <div class="modal-card" style="width:880px">
+    <h2><span>Catalogue</span><button class="rm" onclick="closeCatalogue()">✕</button></h2>
+    <div id="cat-body"></div>
   </div>
 </div>
 
@@ -989,7 +997,7 @@
   }
 
   // Buttons a cashier never sees. Applied on sign-in and on sign-out.
-  const MANAGER_BUTTONS = ['btn-dashboard', 'btn-receive', 'btn-po', 'btn-sales'];
+  const MANAGER_BUTTONS = ['btn-dashboard', 'btn-receive', 'btn-po', 'btn-sales', 'btn-catalogue'];
   function applyRoleToChrome() {
     const show = isManager();
     MANAGER_BUTTONS.forEach(id => {
@@ -1745,7 +1753,10 @@
 
   function overlay(html) {
     const el = document.createElement('div');
-    el.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;padding:16px;z-index:60;overflow:auto';
+    // Above .modal (100): overlays are opened from inside modals, and at a
+    // lower layer the modal underneath swallowed the clicks. Still below the
+    // lock screen (200), which must always win.
+    el.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;padding:16px;z-index:150;overflow:auto';
     el.innerHTML = `<div style="background:var(--panel);border:1px solid var(--border);border-radius:12px;max-width:460px;width:100%;padding:18px">${html}</div>`;
     el.addEventListener('mousedown', e => { if (e.target === el) el.remove(); });
     document.body.appendChild(el);
@@ -1826,6 +1837,229 @@
     return `Hi${first ? ' ' + first : ''}, here is your ${kind} ${number} from ${coName()}:\n${url}\n\n`
       + `You can check the progress there any time and message us on the same page. `
       + `Tip: save it to your phone's home screen so you don't have to look for this message again.`;
+  }
+
+  // ---- Cost prices ------------------------------------------------------
+  // They live in the POS, not in Shopify, so a buying price is not readable by
+  // anyone holding a Shopify or Lightspeed login. They are fetched on demand
+  // by the manager-only screens that need them, which means a cashier's till
+  // never downloads a cost at all — rather than merely not displaying one.
+  let costsLoaded = false;
+  async function ensureCosts(force) {
+    if (!isManager()) return false;
+    if (costsLoaded && !force) return true;
+    if (isDemo()) { costsLoaded = true; return true; }
+    try {
+      const { costs } = await callFn({ action: 'getCosts' });
+      catalogue.forEach(p => { const c = costs[String(p.variantId)]; p.costCents = c == null ? 0 : c; });
+      costsLoaded = true;
+      return true;
+    } catch (e) {
+      console.warn('Cost prices failed to load:', e);
+      toast('Cost prices unavailable: ' + (e.message || e));
+      return false;
+    }
+  }
+
+  // ---- Catalogue back office --------------------------------------------
+  // Everything that used to mean opening Shopify or Lightspeed admin: put in a
+  // cost price, fix a retail price, add a line, retire one. Manager-only,
+  // because it is where the buying prices are.
+  //
+  // Products stay in Shopify so the online store and the till cannot drift.
+  // Cost prices do not — they are the POS's own (see ensureCosts).
+  let catEdits = {};        // variantId → { costCents?, priceCents?, ... } not yet saved
+  let catFilter = '';
+  let catShowMissingOnly = false;
+
+  async function openCatalogue() {
+    if (!managerOnly('The catalogue')) return;
+    catEdits = {}; catFilter = ''; catShowMissingOnly = false;
+    document.getElementById('cat-modal').classList.add('show');
+    renderCatalogue();
+    await ensureCosts(true);
+    renderCatalogue();
+  }
+  function closeCatalogue() {
+    if (catDirty() && !confirm('You have unsaved changes. Close anyway?')) return;
+    document.getElementById('cat-modal').classList.remove('show');
+  }
+  const catDirty = () => Object.keys(catEdits).length > 0;
+
+  function catSetFilter(v) { catFilter = v; renderCatalogue(); }
+  function catToggleMissing() { catShowMissingOnly = !catShowMissingOnly; renderCatalogue(); }
+
+  function catRows() {
+    const q = catFilter.trim().toLowerCase();
+    let rows = catalogue.slice();
+    if (q) rows = rows.filter(p => [p.name, p.sku, p.barcode, p.category, p.vendor].some(f => String(f || '').toLowerCase().includes(q)));
+    if (catShowMissingOnly) rows = rows.filter(p => !(Number(p.costCents) > 0));
+    return rows.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  }
+
+  // What the row should show: an unsaved edit if there is one, else the product.
+  const catVal = (p, field) => {
+    const e = catEdits[p.variantId];
+    return e && e[field] != null ? e[field] : (Number(p[field]) || 0);
+  };
+
+  function catEdit(variantId, field, value) {
+    const p = findProduct(variantId);
+    if (!p) return;
+    const cents = toCents(value);
+    const e = catEdits[variantId] || {};
+    if (cents === (Number(p[field]) || 0)) delete e[field]; else e[field] = cents;
+    if (Object.keys(e).length) catEdits[variantId] = e; else delete catEdits[variantId];
+    const badge = document.getElementById('cat-dirty');
+    if (badge) badge.textContent = catDirty() ? Object.keys(catEdits).length + ' unsaved' : '';
+    const m = document.getElementById('cat-margin-' + variantId);
+    if (m) {
+      const price = catVal(p, 'priceCents'), cost = catVal(p, 'costCents');
+      m.textContent = cost > 0 ? money(price - cost) : '—';
+      m.style.color = cost > 0 && price - cost < 0 ? 'var(--danger)' : 'var(--muted)';
+    }
+  }
+
+  async function catSave() {
+    if (!catDirty()) { toast('Nothing to save'); return; }
+    const ids = Object.keys(catEdits);
+    toast('Saving ' + ids.length + '…');
+    // Costs go in one call; a price change is a Shopify write per product.
+    const costs = {};
+    ids.forEach(id => { if (catEdits[id].costCents != null) costs[id] = catEdits[id].costCents; });
+    let failed = 0;
+    try {
+      if (Object.keys(costs).length) await callFn({ action: 'saveCosts', costs });
+    } catch (e) { toast('Costs failed: ' + (e.message || e)); return; }
+    for (const id of ids) {
+      const e = catEdits[id];
+      const p = findProduct(id);
+      if (!p || e.priceCents == null) continue;
+      try { await callFn({ action: 'productUpdate', productId: p.productId, variantId: id, priceCents: e.priceCents }); }
+      catch (err) { failed++; console.warn('Price update failed for ' + id, err); }
+    }
+    // Reflect locally so the grid and tiles agree without a full reload.
+    ids.forEach(id => {
+      const p = findProduct(id); if (!p) return;
+      const e = catEdits[id];
+      if (e.costCents != null) p.costCents = e.costCents;
+      if (e.priceCents != null && !failed) p.priceCents = e.priceCents;
+    });
+    cacheCatalogue();
+    catEdits = {};
+    renderCatalogue(); renderGrid();
+    toast(failed ? 'Saved, but ' + failed + ' price change(s) failed' : 'Saved');
+  }
+
+  function renderCatalogue() {
+    const body = document.getElementById('cat-body');
+    if (!body) return;
+    const rows = catRows();
+    const missing = catalogue.filter(p => !(Number(p.costCents) > 0)).length;
+    const list = rows.length ? rows.map(p => {
+      const price = catVal(p, 'priceCents'), cost = catVal(p, 'costCents');
+      const margin = cost > 0 ? money(price - cost) : '—';
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:0.4rem 0.3rem">
+          <div style="font-weight:600;font-size:0.85rem">${esc(p.name)}</div>
+          <div style="font-size:0.7rem;color:var(--muted)">${esc(p.sku || '')}${p.category ? ' · ' + esc(p.category) : ''} · ${Number(p.qty) || 0} in stock</div>
+        </td>
+        <td style="width:110px"><input type="number" step="0.01" min="0" value="${(price / 100).toFixed(2)}" oninput="catEdit('${esc(p.variantId)}','priceCents',this.value)" style="width:100%;padding:0.35rem" title="Retail price"></td>
+        <td style="width:110px"><input type="number" step="0.01" min="0" value="${cost ? (cost / 100).toFixed(2) : ''}" placeholder="—" oninput="catEdit('${esc(p.variantId)}','costCents',this.value)" style="width:100%;padding:0.35rem;${cost ? '' : 'border-color:var(--warn)'}" title="What you pay"></td>
+        <td id="cat-margin-${esc(p.variantId)}" style="width:90px;text-align:right;font-size:0.8rem;color:var(--muted)">${margin}</td>
+        <td style="width:100px;text-align:right">
+          <button class="qbtn" style="width:auto;padding:0 0.5rem;height:30px;font-size:0.72rem" onclick="catArchive('${esc(p.variantId)}')">Retire</button>
+        </td></tr>`;
+    }).join('') : '<tr><td colspan="5"><div class="empty" style="padding:1.2rem">Nothing matches</div></td></tr>';
+
+    body.innerHTML = `
+      <div style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem">
+        <input id="cat-search" value="${esc(catFilter)}" placeholder="Search name, SKU, barcode, category…" oninput="catSetFilter(this.value)" style="flex:1;min-width:200px">
+        <button class="qbtn" style="width:auto;padding:0 0.7rem" onclick="catNewForm()">+ New product</button>
+        <button class="qbtn" style="width:auto;padding:0 0.7rem;background:${catShowMissingOnly ? 'var(--accent)' : 'var(--panel2)'};${catShowMissingOnly ? 'color:#04210f' : ''}" onclick="catToggleMissing()">No cost (${missing})</button>
+      </div>
+      ${missing ? `<div style="font-size:0.72rem;color:var(--warn);margin-bottom:0.5rem">${missing} of ${catalogue.length} products have no cost price, so their profit is not real yet.</div>` : ''}
+      <div style="max-height:52vh;overflow:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:0.85rem">
+          <thead><tr style="text-align:left;color:var(--muted);font-size:0.72rem">
+            <th style="padding:0.3rem">Product</th><th>Sells for</th><th>Costs you</th><th style="text-align:right">Margin</th><th></th>
+          </tr></thead>
+          <tbody>${list}</tbody>
+        </table>
+      </div>
+      <div style="display:flex;gap:0.5rem;align-items:center;margin-top:0.7rem">
+        <button class="btn btn-pay" style="flex:1" onclick="catSave()">Save changes</button>
+        <span id="cat-dirty" style="font-size:0.75rem;color:var(--warn)">${catDirty() ? Object.keys(catEdits).length + ' unsaved' : ''}</span>
+      </div>
+      <div style="font-size:0.72rem;color:var(--muted);margin-top:0.4rem">Cost prices are kept in the POS and never sent to Shopify. Prices, names and stock stay in Shopify so the online shop and the till always agree.</div>`;
+  }
+
+  function catNewForm() {
+    const el = overlay(`
+      <div style="font-weight:700;margin-bottom:10px">New product</div>
+      <label style="font-size:0.75rem;color:var(--muted)">Name *</label>
+      <input id="np-name" style="width:100%;margin:0.2rem 0 0.5rem">
+      <div style="display:flex;gap:0.5rem">
+        <div style="flex:1"><label style="font-size:0.75rem;color:var(--muted)">Sells for (R) *</label><input id="np-price" type="number" step="0.01" min="0" style="width:100%;margin:0.2rem 0 0.5rem"></div>
+        <div style="flex:1"><label style="font-size:0.75rem;color:var(--muted)">Costs you (R)</label><input id="np-cost" type="number" step="0.01" min="0" style="width:100%;margin:0.2rem 0 0.5rem"></div>
+      </div>
+      <div style="display:flex;gap:0.5rem">
+        <div style="flex:1"><label style="font-size:0.75rem;color:var(--muted)">SKU</label><input id="np-sku" style="width:100%;margin:0.2rem 0 0.5rem"></div>
+        <div style="flex:1"><label style="font-size:0.75rem;color:var(--muted)">Barcode</label><input id="np-barcode" style="width:100%;margin:0.2rem 0 0.5rem"></div>
+      </div>
+      <div style="display:flex;gap:0.5rem">
+        <div style="flex:1"><label style="font-size:0.75rem;color:var(--muted)">Category</label><input id="np-cat" list="np-cats" style="width:100%;margin:0.2rem 0 0.5rem">
+          <datalist id="np-cats">${[...new Set(catalogue.map(p => p.category).filter(Boolean))].map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
+        <div style="flex:1"><label style="font-size:0.75rem;color:var(--muted)">Opening stock</label><input id="np-qty" type="number" step="1" min="0" value="0" style="width:100%;margin:0.2rem 0 0.5rem"></div>
+      </div>
+      <button class="btn btn-pay" id="np-save" style="width:100%;margin-top:0.4rem">Create product</button>
+      <div id="np-msg" style="font-size:0.75rem;color:var(--muted);margin-top:8px"></div>`);
+
+    el.querySelector('#np-save').onclick = async () => {
+      const name = el.querySelector('#np-name').value.trim();
+      const priceCents = toCents(el.querySelector('#np-price').value);
+      const msg = t => { el.querySelector('#np-msg').textContent = t; };
+      if (!name) { msg('Give it a name.'); return; }
+      if (priceCents <= 0) { msg('What does it sell for?'); return; }
+      el.querySelector('#np-save').disabled = true;
+      msg('Creating in Shopify…');
+      try {
+        const out = await callFn({
+          action: 'productCreate', title: name, priceCents,
+          costCents: toCents(el.querySelector('#np-cost').value) || null,
+          sku: el.querySelector('#np-sku').value.trim(),
+          barcode: el.querySelector('#np-barcode').value.trim(),
+          category: el.querySelector('#np-cat').value.trim(),
+          qty: Math.max(0, parseInt(el.querySelector('#np-qty').value, 10) || 0)
+        });
+        el.remove();
+        toast('Added ' + name + (out.warnings && out.warnings.length ? ' · ' + out.warnings.join(' · ') : ''));
+        await refreshCatalogue(false);
+        await ensureCosts(true);
+        renderCatalogue();
+      } catch (e) {
+        el.querySelector('#np-save').disabled = false;
+        msg('Could not create it: ' + (e.message || e));
+      }
+    };
+  }
+
+  // "Retire" is an archive: it leaves the till and the shop but survives, so a
+  // mistake costs nothing. Deleting for good is behind a second question.
+  async function catArchive(variantId) {
+    const p = findProduct(variantId);
+    if (!p) return;
+    if (!confirm('Retire "' + p.name + '"?\n\nIt disappears from the till and the online shop but is kept, so this can be undone in Shopify.')) return;
+    try {
+      await callFn({ action: 'productArchive', productId: p.productId });
+      toast('Retired ' + p.name);
+      if (confirm('Retired.\n\nDelete it permanently instead? This cannot be undone, and images and description go with it.\n\nCancel keeps it archived.')) {
+        await callFn({ action: 'productDelete', productId: p.productId, variantId });
+        toast('Deleted ' + p.name);
+      }
+      await refreshCatalogue(false);
+      renderCatalogue(); renderGrid();
+    } catch (e) { toast('Failed: ' + (e.message || e)); }
   }
 
   // ---- To send: links prepared the moment an order is placed -------------
@@ -2144,10 +2378,11 @@
 
   // ---- Dashboard ----
   let dashPeriod = 'today';
-  function openDashboard() {
+  async function openDashboard() {
     if (!managerOnly('The dashboard')) return;
     document.getElementById('dash-modal').classList.add('show');
     renderDashboard();
+    if (await ensureCosts()) renderDashboard();   // gross profit needs costs
   }
   function closeDashboard() { document.getElementById('dash-modal').classList.remove('show'); }
   function setDashPeriod(p) { dashPeriod = p; renderDashboard(); }
@@ -2380,8 +2615,9 @@
   }
   // Export the catalogue to CSV (count offline / records).
   function csvEscape(v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
-  function exportStockCsv() {
+  async function exportStockCsv() {
     if (!catalogue.length) { toast('No catalogue loaded'); return; }
+    await ensureCosts();
     const header = ['SKU', 'Barcode', 'Name', 'Category', 'Vendor', 'OnHand', 'Price', 'Cost', 'Count'];
     const lines = [header.join(',')];
     catalogue.forEach(p => lines.push([p.sku, p.barcode, p.name, p.category, p.vendor, (Number(p.qty) || 0), ((p.priceCents || 0) / 100).toFixed(2), isManager() ? ((p.costCents || 0) / 100).toFixed(2) : '', ''].map(csvEscape).join(',')));
@@ -2418,6 +2654,7 @@
   }
   async function exportStockXlsx() {
     if (!catalogue.length) { toast('No catalogue loaded'); return; }
+    await ensureCosts();
     try {
       const XLSX = await loadXlsx();
       const data = catalogue.map(p => ({ SKU: p.sku || '', Barcode: p.barcode || '', Name: p.name || '', Category: p.category || '', Vendor: p.vendor || '', OnHand: Number(p.qty) || 0, Price: (p.priceCents || 0) / 100, Cost: isManager() ? (p.costCents || 0) / 100 : '', Count: '' }));
@@ -2490,7 +2727,7 @@
       const nmA = aln(nm);
       const p = catalogue.find(x => (sku && matchNorm(x.sku) === sku) || (bar && matchNorm(x.barcode) === bar) || (nm && matchNorm(x.name) === nm))
         || (nmA ? catalogue.find(x => aln(x.name) === nmA) : null);
-      if (p && p.inventoryItemId) { lineItems.push({ inventoryItemId: p.inventoryItemId, costCents, variantId: p.variantId }); matched++; }
+      if (p && p.variantId) { lineItems.push({ costCents, variantId: p.variantId }); matched++; }
       else unmatched.push(nm || sku || bar || ('row ' + r));
     }
     if (!lineItems.length) { toast('No matching products with a cost found'); return; }
@@ -2501,9 +2738,9 @@
       for (let i = 0; i < lineItems.length; i += chunk) {
         const batch = lineItems.slice(i, i + chunk);
         try {
-          const resp = await callFn({ action: 'setCosts', lineItems: batch.map(b => ({ inventoryItemId: b.inventoryItemId, costCents: b.costCents })) });
-          const failedIds = new Set((resp.failed || []).map(f => String(f.inventoryItemId)));
-          batch.forEach(b => { if (failedIds.has(String(b.inventoryItemId))) failed++; else { const p = findProduct(b.variantId); if (p) p.costCents = b.costCents; done++; } });
+          const resp = await callFn({ action: 'setCosts', lineItems: batch.map(b => ({ variantId: b.variantId, costCents: b.costCents })) });
+          const failedIds = new Set((resp.failed || []).map(f => String(f.variantId)));
+          batch.forEach(b => { if (failedIds.has(String(b.variantId))) failed++; else { const p = findProduct(b.variantId); if (p) p.costCents = b.costCents; done++; } });
         } catch (e) { failed += batch.length; }
       }
       cacheCatalogue();
@@ -2660,11 +2897,12 @@
   }
 
   let suppliersCache = [], grvsCache = [], grvLines = [], grvSupplierId = null, grvInFlight = false, grvCurTab = 'new', receivingPoId = null, posCache = [];
-  function openGrv() {
+  async function openGrv() {
     if (!managerOnly('Receiving stock')) return;
     receivingPoId = null; grvLines = []; grvSupplierId = null; grvInFlight = false;
     document.getElementById('grv-modal').classList.add('show');
     grvTab('new');
+    await ensureCosts();                          // margins on each received line
   }
   function closeGrv() { document.getElementById('grv-modal').classList.remove('show'); }
   function grvTab(t) {
@@ -2775,7 +3013,7 @@
     const btn = document.getElementById('grv-confirm'); if (btn) { btn.disabled = true; btn.textContent = 'Receiving…'; }
     const idemKey = uuid();
     try {
-      await callFn({ action: 'receiveStock', idemKey, updateCost, lineItems: lines.map(l => ({ inventoryItemId: l.inventoryItemId, qty: l.qty, costCents: l.costCents })) });
+      await callFn({ action: 'receiveStock', idemKey, updateCost, lineItems: lines.map(l => ({ inventoryItemId: l.inventoryItemId, variantId: l.variantId, qty: l.qty, costCents: l.costCents })) });
       lines.forEach(l => { const p = findProduct(l.variantId); if (p) p.qty = (Number(p.qty) || 0) + l.qty; }); cacheCatalogue(); renderGrid();
       const seq = (parseInt(localStorage.getItem('reptipos-grv-seq') || '0', 10) || 0) + 1; localStorage.setItem('reptipos-grv-seq', String(seq));
       const sup = suppliersCache.find(s => s.id === supId);
@@ -2960,6 +3198,7 @@
   async function openReorder() {
     if (!managerOnly('Purchase orders')) return;
     document.getElementById('reorder-modal').classList.add('show');
+    await ensureCosts();
     await ensureSuppliers();
     try { grvsCache = await fbList('grvs', 'createdAt', 'desc'); } catch (e) {}
     poDraft = null;
@@ -3109,11 +3348,11 @@
     const poNumber = 'PO-' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + String(seq).padStart(3, '0');
     const po = { poNumber, supplierId: poDraft.supplierId, supplierName: poDraft.supplier, items: poDraft.items.map(i => ({ variantId: i.variantId, inventoryItemId: i.inventoryItemId || (findProduct(i.variantId) || {}).inventoryItemId || '', name: i.name, sku: i.sku, qty: i.qty, costCents: i.costCents })), totalCents: poTotalCents(), status: method === 'save' ? 'draft' : 'sent', sentVia: method === 'save' ? '' : method, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
     try { if (fbReady()) await fbAdd('purchase_orders', po); } catch (e) {}
-    // Save the entered costs onto the products (Shopify "Cost per item") so they're remembered.
+    // Remember the entered costs in the POS's own cost store (never Shopify).
     try {
-      const costLines = po.items.filter(i => i.costCents > 0 && (i.inventoryItemId || (findProduct(i.variantId) || {}).inventoryItemId));
+      const costLines = po.items.filter(i => i.costCents > 0 && i.variantId);
       if (costLines.length) {
-        await callFn({ action: 'setCosts', lineItems: costLines.map(i => ({ inventoryItemId: i.inventoryItemId || (findProduct(i.variantId) || {}).inventoryItemId, costCents: i.costCents })) });
+        await callFn({ action: 'setCosts', lineItems: costLines.map(i => ({ variantId: i.variantId, costCents: i.costCents })) });
         costLines.forEach(i => { const p = findProduct(i.variantId); if (p) p.costCents = i.costCents; });
         cacheCatalogue();
       }
@@ -3550,7 +3789,8 @@
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
     custOpen, custClose, custClear, custSearch, custAttach, custCreate, custHistory, renderCustBody,
     shareDoc, openInbox, openThread,
-    openOutbox, outboxSend, outboxCopy, outboxRetry, outboxDismiss });
+    openOutbox, outboxSend, outboxCopy, outboxRetry, outboxDismiss,
+    openCatalogue, closeCatalogue, catSetFilter, catToggleMissing, catEdit, catSave, catNewForm, catArchive });
 
   // ---- Boot ----
   ensureStaffSeed();
