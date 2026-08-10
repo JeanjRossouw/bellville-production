@@ -31,6 +31,7 @@ name shows in the top right, with `· cashier` after it for a cashier.
 | 📥 Receive stock (GRV) — supplier costs and margins | — | ✅ |
 | 🧾 PO Order — purchase orders | — | ✅ |
 | 📊 Sales history | — | ✅ |
+| 🗂 Catalogue — cost prices, prices, add/retire products | — | ✅ |
 | Cost prices in the stock export | blank | filled |
 | 💰 Import cost prices | — | ✅ |
 | Company, banking, tax and loyalty settings | — | ✅ |
@@ -51,12 +52,12 @@ It stops casual looking, which is what a shop floor needs: a cashier cannot
 wander into the dashboard, see what stock cost you, or read the margin on a
 purchase order.
 
-It is **not** a vault. The product catalogue is downloaded to the till and
-cached in the browser, and cost prices come down with it. Anyone who can open
-the browser's developer tools on that machine could read them, and anyone who
-knows a manager PIN can simply sign in as a manager. Treat the PINs as real
-credentials: give each person their own, and change one when someone leaves.
+**Cost prices are now genuinely not there.** They were moved out of Shopify and
+into the POS, and they are fetched only by the manager-only screens that need
+them. A cashier's till never downloads a buying price, so there is nothing to
+find in the developer tools either.
 
-If cost prices genuinely must never reach a cashier's device, they have to be
-stripped server-side before the catalogue is sent — a larger change than this,
-and worth doing only if the risk is real for you.
+The rest is still only hiding. Retail prices, stock and sales figures do come
+down with the catalogue, and anyone who knows a manager PIN can simply sign in
+as a manager. Treat the PINs as real credentials: give each person their own,
+and change one when somebody leaves.

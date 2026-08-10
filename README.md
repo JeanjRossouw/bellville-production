@@ -48,6 +48,11 @@ required env vars are in `XERO-SETUP.md` (Phase 2 — accounting) and
 - Those links are **prepared automatically** — a sales order, a quote, or any
   sale with an enclosure on it queues one under 📤 **To send** in the till
   header. Staff tap once to fire WhatsApp; click-to-chat cannot send by itself.
+- **🗂 Catalogue** (managers only) is the back office: cost prices, retail
+  prices, adding and retiring products, without opening Shopify or Lightspeed.
+  Products stay in Shopify; **cost prices live in the POS** and are fetched only
+  by manager screens, so a cashier's till never receives one. See
+  `CATALOGUE-SETUP.md`.
 - Till staff sign in with a PIN and are either a **cashier** or a **manager**.
   Cost prices, the dashboard, receiving, purchase orders and sales history are
   managers only. See `STAFF-ROLES.md`.

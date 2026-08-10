@@ -13,6 +13,7 @@
 //
 // Phase 1 action: "getProducts". (Phase 2 will add "createOrder".)
 import { getStore } from '@netlify/blobs';
+import { readDoc, writeDoc } from './lib/firestore.mjs';
 const API_VERSION = '2024-10';
 
 function env(...names) {
@@ -108,18 +109,9 @@ async function getProducts() {
     const m = link.match(/<([^>]+)>;\s*rel="next"/);
     url = m ? m[1].replace(/^https?:\/\/[^/]+\/admin\/api\/[^/]+/, '') : null;
   }
-  // Best-effort: pull each variant's unit cost (Shopify "Cost per item") so the
-  // POS can show margins. Batched; never blocks the catalogue if it fails.
-  try {
-    const ids = [...new Set(out.map(r => r.inventoryItemId).filter(Boolean))];
-    const costMap = {};
-    for (let i = 0; i < ids.length; i += 100) {
-      const batch = ids.slice(i, i + 100);
-      const { json } = await shopify(`/inventory_items.json?ids=${batch.join(',')}&limit=100`);
-      (json.inventory_items || []).forEach(it => { if (it.cost != null && it.cost !== '') costMap[String(it.id)] = Math.round((Number(it.cost) || 0) * 100); });
-    }
-    out.forEach(r => { if (costMap[r.inventoryItemId] != null) r.costCents = costMap[r.inventoryItemId]; });
-  } catch (e) { /* costs optional (needs read_inventory) */ }
+  // Cost prices deliberately do NOT come down with the catalogue. They live in
+  // the POS (see getCosts) and are fetched only by the manager-only screens
+  // that need them, so a cashier's till never receives a buying price at all.
   return out;
 }
 
@@ -207,8 +199,9 @@ async function receiveStock({ lineItems, idemKey, updateCost }) {
       await shopify('/inventory_levels/connect.json', { method: 'POST', body: { location_id: Number(locationId), inventory_item_id: invItem } }).catch(() => {});
       await shopify('/inventory_levels/adjust.json', { method: 'POST', body });
     }
-    if (updateCost && li.costCents != null) {
-      try { await shopify(`/inventory_items/${invItem}.json`, { method: 'PUT', body: { inventory_item: { id: invItem, cost: (Number(li.costCents) / 100).toFixed(2) } } }); } catch (e) { /* cost is non-critical */ }
+    if (updateCost && li.costCents != null && li.variantId) {
+      // Into the POS's own cost store, never into Shopify.
+      try { await saveCosts({ costs: { [String(li.variantId)]: li.costCents } }); } catch (e) { /* cost is non-critical */ }
     }
     received.push({ inventoryItemId: String(invItem), qty });
   }
@@ -247,16 +240,126 @@ async function setStock({ lineItems }) {
 }
 
 // Bulk-set unit cost prices (Shopify "Cost per item"). lineItems: [{ inventoryItemId, costCents }].
-async function setCosts({ lineItems }) {
-  const lines = (lineItems || []).filter(l => l.inventoryItemId && l.costCents != null);
-  if (lines.length === 0) { const e = new Error('No costs'); e.status = 400; throw e; }
-  const done = []; const failed = [];
-  for (const l of lines) {
-    const invItem = Number(l.inventoryItemId);
-    try { await shopify(`/inventory_items/${invItem}.json`, { method: 'PUT', body: { inventory_item: { id: invItem, cost: (Number(l.costCents) / 100).toFixed(2) } } }); done.push(String(invItem)); }
-    catch (e) { failed.push({ inventoryItemId: String(invItem), error: String(e.message || e).slice(0, 160) }); }
+// ---- Cost prices: the POS owns these, not Shopify -------------------------
+// Held out of Shopify on purpose, so a buying price is not readable by anyone
+// with a Shopify or Lightspeed login. One small document keyed by variant id,
+// shared by every till, fetched only by the manager-only screens that need it
+// — which is why a cashier's till never receives a cost at all.
+const COSTS_DOC = 'pos-costs-repticube';
+
+async function getCosts() {
+  const doc = await readDoc(COSTS_DOC);
+  return { costs: (doc && typeof doc.costs === 'object' && doc.costs) || {} };
+}
+
+// Takes a patch of { variantId: costCents }. Merged rather than replaced, so
+// two tills editing different products cannot wipe each other's work. A null
+// or empty value clears that product's cost.
+async function saveCosts({ costs }) {
+  if (!costs || typeof costs !== 'object' || Array.isArray(costs)) { const e = new Error('No costs given'); e.status = 400; throw e; }
+  const current = (await getCosts()).costs;
+  let changed = 0;
+  for (const [variantId, cents] of Object.entries(costs)) {
+    const key = String(variantId).trim();
+    if (!key) continue;
+    if (cents == null || cents === '') { if (key in current) { delete current[key]; changed++; } continue; }
+    const n = Math.max(0, Math.round(Number(cents) || 0));
+    if (current[key] !== n) { current[key] = n; changed++; }
   }
-  return { set: done.length, done, failed };
+  await writeDoc(COSTS_DOC, { costs: current }, 'pos');
+  return { saved: changed, total: Object.keys(current).length };
+}
+
+// ---- Managing the catalogue from the till ---------------------------------
+// So nobody has to open Shopify or Lightspeed admin to correct a price or add
+// a line. Single-variant products only, which is what the till can sell as one
+// tile; variants (Black/White) are still set up in Shopify.
+const money = (cents) => (Math.max(0, Math.round(Number(cents) || 0)) / 100).toFixed(2);
+const text = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
+
+async function productCreate(b) {
+  const title = text(b.title, 200);
+  if (!title) { const e = new Error('A product needs a name'); e.status = 400; throw e; }
+  const body = {
+    product: {
+      title,
+      product_type: text(b.category, 100),
+      vendor: text(b.vendor, 100),
+      status: 'active',
+      variants: [{
+        price: money(b.priceCents),
+        sku: text(b.sku, 100),
+        barcode: text(b.barcode, 100),
+        inventory_management: 'shopify'
+      }]
+    }
+  };
+  const { json } = await shopify('/products.json', { method: 'POST', body });
+  const p = json.product || {};
+  const v = (p.variants || [])[0] || {};
+
+  // Opening stock and cost are best-effort: the product exists either way, and
+  // reporting a half-failure beats rolling back something already created.
+  const warnings = [];
+  if (b.qty != null && v.inventory_item_id) {
+    try { await setStock({ lineItems: [{ inventoryItemId: v.inventory_item_id, counted: b.qty }] }); }
+    catch (e) { warnings.push('Stock not set: ' + String(e.message || e).slice(0, 120)); }
+  }
+  if (b.costCents != null && v.id) {
+    try { await saveCosts({ costs: { [String(v.id)]: b.costCents } }); }
+    catch (e) { warnings.push('Cost not saved: ' + String(e.message || e).slice(0, 120)); }
+  }
+  return { productId: String(p.id || ''), variantId: String(v.id || ''), inventoryItemId: String(v.inventory_item_id || ''), warnings };
+}
+
+async function productUpdate(b) {
+  const productId = Number(b.productId);
+  const variantId = Number(b.variantId);
+  if (!productId) { const e = new Error('Which product?'); e.status = 400; throw e; }
+
+  const product = { id: productId };
+  if (b.title != null) product.title = text(b.title, 200);
+  if (b.category != null) product.product_type = text(b.category, 100);
+  if (b.vendor != null) product.vendor = text(b.vendor, 100);
+  if (variantId) {
+    const variant = { id: variantId };
+    if (b.priceCents != null) variant.price = money(b.priceCents);
+    if (b.sku != null) variant.sku = text(b.sku, 100);
+    if (b.barcode != null) variant.barcode = text(b.barcode, 100);
+    if (Object.keys(variant).length > 1) product.variants = [variant];
+  }
+  if (Object.keys(product).length > 1) await shopify(`/products/${productId}.json`, { method: 'PUT', body: { product } });
+
+  if (b.costCents !== undefined && variantId) await saveCosts({ costs: { [String(variantId)]: b.costCents } });
+  return { ok: true };
+}
+
+// Archive is the everyday "delete": it leaves the shop and the till but the
+// product, its history and its images survive, so a mistake costs nothing.
+async function productArchive({ productId, restore }) {
+  const id = Number(productId);
+  if (!id) { const e = new Error('Which product?'); e.status = 400; throw e; }
+  await shopify(`/products/${id}.json`, { method: 'PUT', body: { product: { id, status: restore ? 'active' : 'archived' } } });
+  return { ok: true, status: restore ? 'active' : 'archived' };
+}
+
+// Permanent, and Shopify offers no undo — the till asks twice before this.
+async function productDelete({ productId, variantId }) {
+  const id = Number(productId);
+  if (!id) { const e = new Error('Which product?'); e.status = 400; throw e; }
+  await shopify(`/products/${id}.json`, { method: 'DELETE' });
+  if (variantId) { try { await saveCosts({ costs: { [String(variantId)]: null } }); } catch (e) { /* the product is already gone */ } }
+  return { ok: true };
+}
+
+// Kept for the older line-item shape used by receiving and purchase orders.
+async function setCosts({ lineItems }) {
+  const lines = (lineItems || []).filter(l => l.variantId && l.costCents != null);
+  if (lines.length === 0) { const e = new Error('No costs'); e.status = 400; throw e; }
+  const patch = {};
+  lines.forEach(l => { patch[String(l.variantId)] = l.costCents; });
+  const out = await saveCosts({ costs: patch });
+  return { set: out.saved, done: Object.keys(patch), failed: [] };
 }
 
 async function shopInfo() {
@@ -525,6 +628,12 @@ export const handler = async (event) => {
     if (body.action === 'receiveStock') return json(200, await receiveStock(body));
     if (body.action === 'setStock') return json(200, await setStock(body));
     if (body.action === 'setCosts') return json(200, await setCosts(body));
+    if (body.action === 'getCosts') return json(200, await getCosts());
+    if (body.action === 'saveCosts') return json(200, await saveCosts(body));
+    if (body.action === 'productCreate') return json(200, await productCreate(body));
+    if (body.action === 'productUpdate') return json(200, await productUpdate(body));
+    if (body.action === 'productArchive') return json(200, await productArchive(body));
+    if (body.action === 'productDelete') return json(200, await productDelete(body));
     if (body.action === 'docSave') return json(200, await docSave(body));
     if (body.action === 'docList') return json(200, { docs: await docList(body.type, body.customerId) });
     if (body.action === 'docDelete') return json(200, await draftDelete(body.id));
