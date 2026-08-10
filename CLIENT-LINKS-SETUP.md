@@ -4,8 +4,9 @@ A quote or sales order can be shared with the customer as a private link. They
 see the document with your letterhead and banking details, its current status,
 and can ask for an update without phoning. Replies appear on the same page.
 
-Staff press **📤 Send** on any quote or sales order in **📋 Orders**, then pick
-WhatsApp, email, or copy the link.
+Staff press **📤 Send** on any quote or sales order in **📋 Orders**, check the
+cellphone number, and WhatsApp opens with the message ready to send. There is
+also a copy-link button for pasting anywhere else.
 
 ## How it hangs together
 
@@ -13,7 +14,6 @@ WhatsApp, email, or copy the link.
 |---|---|
 | Shared document + message thread | `netlify/functions/client-doc.mjs` |
 | The customer's page | `reptipos/doc.html` — opened as `/reptipos/doc.html?t=<token>` |
-| Email delivery | `netlify/functions/send-doc.mjs` |
 | Staff inbox | 💬 **Messages** in the till header, with an unread count |
 
 Documents live in Firestore alongside the rest of the app state, one per shared
@@ -25,12 +25,24 @@ needs no query support.
 | Variable | Needed for | Notes |
 |----------|-----------|-------|
 | `FIREBASE_SERVICE_ACCOUNT` | Everything | Already set — the Shopify webhook uses it |
-| `RESEND_API_KEY` | Emailing a link | From <https://resend.com>; the free tier covers a shop's volume |
-| `MAIL_FROM` | Emailing a link | e.g. `ReptiCube <accounts@repticube.co.za>` — the domain must be verified in Resend, or mail is rejected |
 
-**Without `RESEND_API_KEY` nothing breaks.** The link, the WhatsApp share and
-copy-to-clipboard all work; only the Email button reports that sending is not
-set up yet.
+Nothing else. Sharing is deliberately WhatsApp-only: it needs no mail provider,
+no domain verification and no per-message fee, and it is how customers here
+prefer to be reached.
+
+## Sending on WhatsApp
+
+The **Send** button opens WhatsApp with the customer's number and a short
+message containing the link — staff press send there. It is the same
+click-to-chat approach the till already uses for receipts, so it works on the
+till, a phone or the desktop app with no approval from Meta.
+
+Numbers are accepted however staff type them — `082 123 4567`, `+27 82…`,
+`0027…` — and converted to the international form WhatsApp needs. A number that
+cannot be made sense of is refused rather than opening an empty chat.
+
+If a customer would rather have it by email, use **Copy link** and paste it into
+whatever you normally send mail from.
 
 ## The token is the password
 

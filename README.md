@@ -42,7 +42,7 @@ required env vars are in `XERO-SETUP.md` (Phase 2 — accounting) and
   products, Xero sync status). See `POS-BUILD-PLAN.md`, `XERO-SETUP.md`,
   `SHOPIFY-SETUP.md`.
 - Quotes and sales orders can be shared with the customer as a private link
-  (**📤 Send** → WhatsApp / email / copy). They see the document, its status and
+  (**📤 Send** → WhatsApp or copy). They see the document, its status and
   banking details, and can ask for an update; replies land in the till's 💬
   **Messages** inbox. See `CLIENT-LINKS-SETUP.md`.
 - The standalone ReptiCube till at `/reptipos/` posts each completed sale to
