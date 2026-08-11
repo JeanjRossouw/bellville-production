@@ -197,6 +197,11 @@
     .toast.error { border-left-color: var(--accent); }
 
     /* Read-only mode for managers */
+    /* Planner view-only mode (?planner=1): hide every planner control. */
+    body.planner-view .plan-menu-trigger,
+    body.planner-view .pc-fabric .btn,
+    body.planner-view .plan-col-header .btn { display: none !important; }
+    body.planner-view .plan-card { cursor: default; }
     body.readonly-mode .btn-danger { display: none !important; }
     body.readonly-mode .btn-primary { opacity: 0.5; pointer-events: none; }
     body.readonly-mode input:not([type="checkbox"]):not([type="search"]):not(#order-search):not(#finished-search):not(#dispatch-search),
@@ -1165,6 +1170,7 @@
           <button class="btn" id="planner-mat-btn" onclick="printWeeklyMaterialRequirements()" title="Per-week raw materials forecast based on each order's BOM">📊 Materials by Week</button>
           <button class="btn" onclick="printPlannerSheetByWeek()" title="One A4 portrait page per week — for handing to individual foremen">🖨️ Print Per Week</button>
           <button class="btn btn-primary" onclick="printPlannerSheet()" title="All 4 weeks on one A4 landscape page — overview">🖨️ Print Plan</button>
+          <button class="btn" onclick="copyPlannerLink()" title="Copy a view-only planner link — staff sign in and see ONLY the live planner, no editing">🔗 Share view-only</button>
         </div>
       </div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
@@ -8095,6 +8101,33 @@ ${_PRODUCTION_PRINT_STYLES}
     } catch (e) { console.warn('Booking boot failed:', e); }
   }
 
+  // View-only planner mode (?planner=1) — a link to share with staff: they sign
+  // in and see ONLY the live planner, no tabs, no editing, no dragging.
+  const IS_PLANNER_MODE = (function () {
+    try { return new URLSearchParams(window.location.search).get('planner') === '1'; }
+    catch (e) { return false; }
+  })();
+  function enterPlannerOnlyMode() {
+    ['login-overlay', 'dashboard-only-view', 'reserved-only-view', 'booking-only-view'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    const m = document.getElementById('main-app'); if (m) m.style.display = 'block';
+    const hd = document.querySelector('header'); if (hd) hd.style.display = 'none';
+    const tabs = document.querySelector('.tabs'); if (tabs) tabs.style.display = 'none';
+    document.body.classList.add('readonly-mode', 'planner-view');
+    document.title = 'Production Planner';
+    showSection('planner');
+  }
+  window.enterPlannerOnlyMode = enterPlannerOnlyMode;
+  function copyPlannerLink() {
+    const url = window.location.origin + '/?planner=1';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(
+        () => { if (typeof toast === 'function') toast('🔗 View-only planner link copied — send it to the staff', 'success', 3200); else alert('Copied: ' + url); },
+        () => { prompt('Copy this view-only planner link:', url); }
+      );
+    } else { prompt('Copy this view-only planner link:', url); }
+  }
+  window.copyPlannerLink = copyPlannerLink;
+
   // Open the current app URL with ?dashboard=1 in a new browser window the user
   // can drag onto a second monitor. Sized large by default — they can resize / move.
   function openDashboardWindow() {
@@ -9654,6 +9687,7 @@ ${_PRODUCTION_PRINT_STYLES}
 
   // ----- Drag handlers (desktop) -----
   function planDragStart(e, orderId) {
+    if (typeof IS_PLANNER_MODE !== 'undefined' && IS_PLANNER_MODE) { try { e.preventDefault(); } catch (x) {} return; }
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', orderId);
     e.currentTarget.classList.add('dragging');
@@ -9673,6 +9707,7 @@ ${_PRODUCTION_PRINT_STYLES}
     }
   }
   function planDrop(e, weekIso) {
+    if (typeof IS_PLANNER_MODE !== 'undefined' && IS_PLANNER_MODE) { try { e.preventDefault(); } catch (x) {} return; }
     e.preventDefault();
     e.currentTarget.classList.remove('drag-over');
     const orderId = e.dataTransfer.getData('text/plain');
@@ -9685,6 +9720,7 @@ ${_PRODUCTION_PRINT_STYLES}
     e.currentTarget.classList.add('drag-over');
   }
   function planDropUnscheduled(e) {
+    if (typeof IS_PLANNER_MODE !== 'undefined' && IS_PLANNER_MODE) { try { e.preventDefault(); } catch (x) {} return; }
     e.preventDefault();
     e.currentTarget.classList.remove('drag-over');
     const orderId = e.dataTransfer.getData('text/plain');
@@ -11473,6 +11509,9 @@ ${totalsSection}
         if (IS_BOOKING_MODE) {
           // Client booking link — full-screen calendar only (works for anonymous sign-ins too)
           enterBookingOnlyMode();
+        } else if (IS_PLANNER_MODE) {
+          // Shared view-only planner
+          enterPlannerOnlyMode();
         } else if (IS_RESERVED_MODE || currentRole === 'fabricrep') {
           // Fabric-rep portal — view-only reserved sheet with out-of-stock + ETA
           enterReservedOnlyMode();
