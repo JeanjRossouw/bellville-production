@@ -8959,6 +8959,7 @@ ${_PRODUCTION_PRINT_STYLES}
           ${colLabels[i]}
           <span class="col-sub">${_formatWeekShort(w)}</span>
           <span class="col-sub">${buckets[w].length} order${buckets[w].length !== 1 ? 's' : ''}</span>
+          <button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px; margin-top:2px" title="Print just this week (use Save as PDF in the print dialog)" onclick="printPlannerSheet('${w}')">🖨️ Print week</button>
         </div>
         <div class="plan-col-body">
           ${buckets[w].map(o => planItemCard(o)).join('') || '<div class="empty" style="padding:0.75rem 0; font-size:11px">—</div>'}
@@ -9819,13 +9820,19 @@ ${_PRODUCTION_PRINT_STYLES}
   //   - Title says "PRODUCTION PLAN" instead of "PRODUCTION STATUS"
   //   - Orders are grouped by planWeek with a heading row "📅 WEEK OF YYYY-MM-DD"
   //   - Unscheduled orders go under a final "📥 UNSCHEDULED" heading row
-  function printPlannerSheet() {
+  function printPlannerSheet(weekIso) {
     const biz = activeBiz;
     const bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
 
     let orders = _plannerOrders().filter(o => o.status !== 'delivered' && o.status !== 'done');
+    if (weekIso) {
+      // One week only. The CURRENT week also collects past-scheduled orders,
+      // matching what the on-screen planner shows in the Current column.
+      const curMon = getMondayOf(new Date());
+      orders = orders.filter(o => o.planWeek && (o.planWeek === weekIso || (weekIso === curMon && o.planWeek < curMon)));
+    }
     if (orders.length === 0) {
-      alert('No active orders to print.');
+      alert(weekIso ? 'No orders scheduled in that week.' : 'No active orders to print.');
       return;
     }
 
@@ -9869,7 +9876,7 @@ ${_PRODUCTION_PRINT_STYLES}
         bodyParts.push(_productionRowHtml(o, seq, today));
       });
     });
-    if (unscheduled.length > 0) {
+    if (unscheduled.length > 0 && !weekIso) {
       bodyParts.push(`<tr class="week-group"><td colspan="${COLSPAN}" class="unscheduled-head">📥 UNSCHEDULED &nbsp;·&nbsp; ${unscheduled.length} order${unscheduled.length !== 1 ? 's' : ''}</td></tr>`);
       unscheduled.forEach(o => {
         seq++;
@@ -9888,7 +9895,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const html = `<!DOCTYPE html>
 <html>
 <head>
-<title>Production Plan — ${bizNames[biz]}</title>
+<title>Production Plan${weekIso ? ' — week of ' + weekIso : ''} — ${bizNames[biz]}</title>
 ${_PRODUCTION_PRINT_STYLES}
 </head>
 <body>
@@ -9900,7 +9907,7 @@ ${_PRODUCTION_PRINT_STYLES}
   <div class="header">
     <div>
       <div class="biz-name">${bizNames[biz]}</div>
-      <div class="date">Production Plan · ${todayStr}</div>
+      <div class="date">Production Plan${weekIso ? ' · WEEK OF ' + weekIso : ''} · ${todayStr}</div>
     </div>
     <div class="title">PRODUCTION PLAN</div>
   </div>
