@@ -507,7 +507,9 @@ async function shopInfo() {
 // ---- Customers ----
 function mapCustomer(c) {
   const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim() || c.email || c.phone || ('Customer ' + c.id);
-  return { id: String(c.id), name, email: c.email || '', phone: c.phone || '' };
+  // tags matter to the till: a customer tagged "wholesale" buys at the
+  // wholesale price list instead of retail.
+  return { id: String(c.id), name, email: c.email || '', phone: c.phone || '', tags: c.tags || '' };
 }
 async function searchCustomers(q) {
   const query = encodeURIComponent(String(q || '').trim());
@@ -521,6 +523,19 @@ async function createCustomer({ firstName, lastName, name, email, phone }) {
   const body = { customer: { first_name: fn || '', last_name: ln || '', email: email || undefined, phone: phone || undefined } };
   const { json } = await shopify('/customers.json', { method: 'POST', body });
   return mapCustomer(json.customer);
+}
+// Add or remove a single tag on a customer (e.g. "wholesale" turns the
+// wholesale price list on for that client). Other tags are preserved.
+async function customerSetTag({ customerId, tag, on }) {
+  const id = Number(customerId);
+  const t = String(tag || '').trim();
+  if (!id || !t) { const e = new Error('customerId and tag are required'); e.status = 400; throw e; }
+  const { json } = await shopify(`/customers/${id}.json`);
+  const tags = String(json.customer.tags || '').split(',').map(s => s.trim()).filter(Boolean)
+    .filter(s => s.toLowerCase() !== t.toLowerCase());
+  if (on) tags.push(t);
+  const { json: upd } = await shopify(`/customers/${id}.json`, { method: 'PUT', body: { customer: { id, tags: tags.join(', ') } } });
+  return { customer: mapCustomer(upd.customer) };
 }
 // ---- Parked sales (Shopify draft orders) ----
 // The full cart state (incl. discounts) is stashed in the draft's note as JSON
@@ -570,10 +585,18 @@ function parseDocNote(note) {
   try { return JSON.parse(note.slice(i + DOC_MARKER.length)); } catch (e) { return null; }
 }
 async function docSave({ id, lineItems, customerId, tags, doc }) {
+  // Variant lines can carry discountCents (line total, cents) so the Shopify
+  // draft's amount matches what the till will actually charge — wholesale
+  // prices and discounts included.
+  const docLine = li => {
+    if (li.custom) return { title: String(li.title || 'Custom item').slice(0, 255), quantity: Number(li.qty) || 1, price: (Number(li.priceCents) / 100).toFixed(2) };
+    const line = { variant_id: Number(li.variantId), quantity: Number(li.qty) || 1 };
+    const dc = Number(li.discountCents) || 0;
+    if (dc > 0) line.applied_discount = { description: 'POS price', value_type: 'fixed_amount', value: (dc / 100).toFixed(2), amount: (dc / 100).toFixed(2) };
+    return line;
+  };
   const draft = {
-    line_items: (lineItems || []).map(li => li.custom
-      ? { title: String(li.title || 'Custom item').slice(0, 255), quantity: Number(li.qty) || 1, price: (Number(li.priceCents) / 100).toFixed(2) }
-      : { variant_id: Number(li.variantId), quantity: Number(li.qty) || 1 }),
+    line_items: (lineItems || []).map(docLine),
     tags: tags || 'pos',
     note: buildDocNote(doc),
     ...(customerId ? { customer: { id: Number(customerId) } } : {})
@@ -591,7 +614,7 @@ async function docList(type, customerId) {
     const doc = parseDocNote(d.note);
     return {
       id: String(d.id), name: d.name, createdAt: d.created_at,
-      customer: d.customer ? { id: String(d.customer.id), name: [d.customer.first_name, d.customer.last_name].filter(Boolean).join(' ') } : null,
+      customer: d.customer ? { id: String(d.customer.id), name: [d.customer.first_name, d.customer.last_name].filter(Boolean).join(' '), tags: d.customer.tags || '' } : null,
       doc
     };
   }).filter(d => d.doc && (!type || d.doc.type === type) && (!customerId || (d.customer && d.customer.id === String(customerId))));
@@ -831,6 +854,7 @@ export const handler = async (event) => {
     if (body.action === 'deleteParked') return json(200, await draftDelete(body.id));
     if (body.action === 'searchCustomers') return json(200, { customers: await searchCustomers(body.q) });
     if (body.action === 'createCustomer') return json(200, { customer: await createCustomer(body) });
+    if (body.action === 'customerSetTag') return json(200, await customerSetTag(body));
     if (body.action === 'customerOrders') return json(200, { orders: await customerOrders(body.customerId) });
     if (body.action === 'salesReport') return json(200, await salesReport(body));
     if (body.action === 'listOrders') return json(200, await listOrders(body));
