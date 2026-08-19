@@ -41,3 +41,22 @@ required env vars are in `XERO-SETUP.md` (Phase 2 — accounting) and
   shows a POS sales card (per-business daily takings, week/month totals, top
   products, Xero sync status). See `POS-BUILD-PLAN.md`, `XERO-SETUP.md`,
   `SHOPIFY-SETUP.md`.
+- Quotes and sales orders can be shared with the customer as a private link
+  (**📤 Send** → WhatsApp or copy). They see the document, its status and
+  banking details, and can ask for an update; replies land in the till's 💬
+  **Messages** inbox. See `CLIENT-LINKS-SETUP.md`.
+- Those links are **prepared automatically** — a sales order, a quote, or any
+  sale with an enclosure on it queues one under 📤 **To send** in the till
+  header. Staff tap once to fire WhatsApp; click-to-chat cannot send by itself.
+- **🗂 Catalogue** (managers only) is the back office: cost prices, retail
+  prices, adding and retiring products, without opening Shopify or Lightspeed.
+  Products stay in Shopify; **cost prices live in the POS** and are fetched only
+  by manager screens, so a cashier's till never receives one. See
+  `CATALOGUE-SETUP.md`.
+- Till staff sign in with a PIN and are either a **cashier** or a **manager**.
+  Cost prices, the dashboard, receiving, purchase orders and sales history are
+  managers only. See `STAFF-ROLES.md`.
+- The standalone ReptiCube till at `/reptipos/` posts each completed sale to
+  **Shopify** (order + stock) and to **Xero** (paid invoice) via the same
+  `xero-invoice` function the main POS tab uses. The two have separate retry
+  queues, so one being down never blocks the other.

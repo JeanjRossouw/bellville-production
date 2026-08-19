@@ -179,13 +179,16 @@
     <span id="net"><span class="dot" id="net-dot"></span> <span id="net-txt">online</span></span>
     <span id="cat-status">loading catalogue…</span>
     <button id="queue-badge" onclick="flushQueue(true)" title="Sales waiting to sync — click to sync now" style="display:none; width:auto;padding:0 0.6rem;height:30px;font-size:0.78rem;border-radius:8px;border:1px solid var(--warn);background:transparent;color:var(--warn);cursor:pointer"></button>
-    <button class="qbtn" title="Dashboard" onclick="openDashboard()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📈 Dashboard</button>
+    <button class="qbtn" id="btn-dashboard" title="Dashboard" onclick="openDashboard()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📈 Dashboard</button>
     <button class="qbtn" title="Clients &amp; accounts" onclick="openClients()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">👥 Clients</button>
     <button class="qbtn" title="Sales orders &amp; quotes" onclick="openDocs('salesorder')" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📋 Orders</button>
-    <button class="qbtn" title="Receive stock (GRV) &amp; suppliers" onclick="openGrv()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📥 Receive</button>
+    <button class="qbtn" id="btn-outbox" title="Links waiting to be sent to customers" onclick="openOutbox()" style="display:none;width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📤 To send<span id="outbox-badge" style="display:none;margin-left:0.3rem;background:var(--accent,#3fb950);color:#04210f;border-radius:999px;padding:0 0.4rem;font-size:0.7rem;font-weight:700"></span></button>
+    <button class="qbtn" id="inbox-btn" title="Messages from customers" onclick="openInbox()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">💬 Messages<span id="inbox-badge" style="display:none;margin-left:0.3rem;background:var(--warn,#e5484d);color:#fff;border-radius:999px;padding:0 0.4rem;font-size:0.7rem"></span></button>
+    <button class="qbtn" id="btn-receive" title="Receive stock (GRV) &amp; suppliers" onclick="openGrv()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📥 Receive</button>
     <button class="qbtn" title="Stock take / count" onclick="openStocktake()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📦 Count</button>
-    <button class="qbtn" title="Create a purchase order" onclick="openReorder()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🧾 PO Order</button>
-    <button class="qbtn" title="Sales history" onclick="openSales()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📊 Sales</button>
+    <button class="qbtn" id="btn-catalogue" title="Products, prices and cost prices" onclick="openCatalogue()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🗂 Catalogue</button>
+    <button class="qbtn" id="btn-po" title="Create a purchase order" onclick="openReorder()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🧾 PO Order</button>
+    <button class="qbtn" id="btn-sales" title="Sales history" onclick="openSales()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📊 Sales</button>
     <button class="qbtn" title="Refund / return" onclick="openRefund()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">↩ Refund</button>
     <button class="qbtn" title="Register / cash-up" onclick="openReg()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">🧾 Register</button>
     <button class="qbtn" title="Refresh catalogue" onclick="refreshCatalogue(true)" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">↻</button>
@@ -255,6 +258,13 @@
   <div class="modal-card" style="width:720px">
     <h2><span>New purchase order</span><button class="rm" onclick="closeReorder()">✕</button></h2>
     <div id="reorder-body"></div>
+  </div>
+</div>
+
+<div class="modal" id="cat-modal">
+  <div class="modal-card" style="width:880px">
+    <h2><span>Catalogue</span><button class="rm" onclick="closeCatalogue()">✕</button></h2>
+    <div id="cat-body"></div>
   </div>
 </div>
 
@@ -405,14 +415,89 @@
   // Plumbed so a rate can be switched on later without code changes. Prices are
   // treated as tax-INCLUSIVE (the Shopify price is final), so a non-zero rate
   // just surfaces the tax portion already inside the price — it never adds on top.
-  // ReptiCube logo, embedded so quotes/sales orders print branded with no
-  // external image to fetch. Override with a URL in Register -> admin.
+  // ReptiCube logo, embedded so the A4 quote/sales-order document prints
+  // branded even before a logo URL is set in Settings (no banking data here —
+  // banking is typed into Settings per till and never committed).
   const DEFAULT_LOGO = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASwBLAAD/2wBDAAIBAQIBAQICAgICAgICAwUDAwMDAwYEBAMFBwYHBwcGBwcICQsJCAgKCAcHCg0KCgsMDAwMBwkODw0MDgsMDAz/2wBDAQICAgMDAwYDAwYMCAcIDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAz/wAARCAIcAhwDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD9/KKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAoooJxQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUjNtGa8p8cft2/BP4ZeKLvRPEfxf+F+gazYOY7qw1HxVY2t1bMP4XjklDKfYgUAer0V4n/w8p/Z3x/yXj4Nj/udNN/8Aj1If+Cln7OgP/Jevgz/4Wum//HqAPbaK8S/4eW/s6Y/5L18Gf/C103/49SD/AIKXfs6H/mvXwZ/8LXTf/j1AHt1FeJf8PK/2dT/zXr4M/wDha6b/APHqP+Hln7On/Revgz/4Wum//HqAPbaK8SP/AAUt/Z0H/Nevgz/4Wum//HqT/h5f+zn/ANF6+DP/AIWum/8Ax6gD26ivEf8Ah5f+zn/0Xr4M/wDha6b/APHqD/wUw/ZzH/Ne/gz/AOFrpv8A8eoA9uorxH/h5h+zn/0Xv4Mf+Frpv/x6gf8ABS/9nM/817+DP/ha6b/8eoA9uorx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FFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFAH/9k=';
-  // Banking defaults match the shop's existing quote documents; change them in
-  // Register -> admin (that saves to settings and shares across tills).
-  const DEFAULT_SETTINGS = { taxRatePct: 0, taxLabel: 'VAT', loyaltyPct: 5, bankName: 'Capitec Business bank', bankAccountHolder: 'Repticube', bankAccountNo: '1053001347', bankBranchCode: '', bankAccountType: 'Transact', logoUrl: '', shopName: 'Repticube' };
+  const DEFAULT_SETTINGS = {
+    taxRatePct: 0, taxLabel: 'VAT', loyaltyPct: 5,
+    // Company identity and banking, printed on customer documents. Blank
+    // fields simply do not appear, so a half-filled form still prints tidily.
+    // Never commit real banking details — this repository is public. They are
+    // typed into Settings on each till and live only in that browser.
+    coName: 'ReptiCube', coRegNo: '', coAddress: '', coPhone: '', coEmail: '', coLogoUrl: '',
+    bankName: '', bankAccName: '', bankAccNo: '', bankBranch: '', bankAccType: '',
+    // Product types treated as enclosures, so a sale with one queues a tracking
+    // link. Every enclosure range is "<x> RANGE" (RC, RCA, RCB, RCV), and a
+    // starter kit is built around an enclosure so it counts too. "Reptile
+    // enclosure decor" also has "enclosure" in its name and is NOT one — which
+    // is why these are matched as terms rather than on the word enclosure.
+    // Comma-separated, matched loosely; empty turns the enclosure trigger off.
+    enclosureTypes: 'RANGE, Starter Kit'
+  };
   function settings() { try { return { ...DEFAULT_SETTINGS, ...(JSON.parse(localStorage.getItem('reptipos-settings') || '{}')) }; } catch (e) { return { ...DEFAULT_SETTINGS }; } }
   function saveSettings(s) { localStorage.setItem('reptipos-settings', JSON.stringify({ ...settings(), ...s })); }
+
+  // ---- Company letterhead + banking ------------------------------------
+  // One source for every printed document, so the trading name, registration
+  // number and bank account are never hardcoded in a template again.
+  function coName() { return (settings().coName || 'ReptiCube').trim(); }
+
+  // Address is a free-text box; each line prints as typed.
+  function companyLines() {
+    const s = settings();
+    const lines = String(s.coAddress || '').split('\n').map(x => x.trim()).filter(Boolean);
+    if (s.coRegNo) lines.push('Reg no: ' + s.coRegNo);
+    if (s.coPhone) lines.push('Tel: ' + s.coPhone);
+    if (s.coEmail) lines.push(s.coEmail);
+    return lines;
+  }
+
+  function bankLines() {
+    const s = settings();
+    const lines = [];
+    if (s.bankAccName) lines.push('Account name: ' + s.bankAccName);
+    if (s.bankName) lines.push('Bank: ' + s.bankName);
+    if (s.bankAccNo) lines.push('Account no: ' + s.bankAccNo);
+    if (s.bankBranch) lines.push('Branch code: ' + s.bankBranch);
+    if (s.bankAccType) lines.push('Account type: ' + s.bankAccType);
+    return lines;
+  }
+
+  // Logo prints above the name when one is configured. Only http(s) and data
+  // URLs are allowed, so a stray value cannot smuggle javascript: into a
+  // document we then open in a new window.
+  function logoHtml(maxHeight) {
+    const url = String(settings().coLogoUrl || '').trim();
+    if (!/^(https?:|data:image\/)/i.test(url)) return '';
+    return `<div class="c"><img src="${esc(url)}" alt="" style="max-height:${maxHeight || 70}px;max-width:70%;object-fit:contain"></div>`;
+  }
+
+  function companyHeaderHtml() {
+    const lines = companyLines();
+    return logoHtml() + `<h2 style="text-align:center;margin:.2rem 0">${esc(coName())}</h2>` +
+      (lines.length ? `<div class="c" style="font-size:0.75rem;line-height:1.35">${lines.map(esc).join('<br>')}</div>` : '');
+  }
+
+  // Only shown where money is still owed — a paid till slip does not need it.
+  function bankBlockHtml(reference) {
+    const lines = bankLines();
+    if (!lines.length) return '';
+    return `<div style="margin-top:8px;border-top:1px dashed #999;padding-top:6px;font-size:0.75rem;line-height:1.4">
+      <strong>Banking details</strong><br>${lines.map(esc).join('<br>')}
+      ${reference ? `<br>Reference: <strong>${esc(reference)}</strong>` : ''}</div>`;
+  }
+
+  function companyBlockText() {
+    const lines = companyLines();
+    return coName() + (lines.length ? '\n' + lines.join('\n') : '');
+  }
+
+  function bankBlockText(reference) {
+    const lines = bankLines();
+    if (!lines.length) return '';
+    return '\nBanking details\n' + lines.join('\n') + (reference ? '\nReference: ' + reference : '') + '\n';
+  }
   // Tax portion (cents) already contained in a tax-inclusive total.
   function taxPortionCents(totalCents) {
     const r = Number(settings().taxRatePct) || 0;
@@ -1051,7 +1136,10 @@
   function staffList() { try { return JSON.parse(localStorage.getItem('reptipos-staff') || '[]'); } catch (e) { return []; } }
   function saveStaff(arr) { localStorage.setItem('reptipos-staff', JSON.stringify(arr)); }
   function ensureStaffSeed() { if (staffList().length === 0) saveStaff([{ id: 'admin', name: 'Admin', pin: '0000', role: 'admin' }]); }
-  function renderStaffBadge() { const b = document.getElementById('staff-badge'); if (b) b.textContent = currentStaff ? '👤 ' + currentStaff.name : ''; }
+  function renderStaffBadge() {
+    const b = document.getElementById('staff-badge');
+    if (b) b.textContent = currentStaff ? '👤 ' + currentStaff.name + (isManager() ? '' : ' · cashier') : '';
+  }
 
   // ---- Per-staff limits ---------------------------------------------------
   // Admin: no limits. Others: maxDiscPct caps discounts (default 10%), and
@@ -1076,7 +1164,36 @@
     return baseCents > 0 ? (disc.value / baseCents) * 100 : 100;
   }
 
-  function lockPOS() { currentStaff = null; pinBuffer = ''; renderStaffBadge(); renderLockPad(); renderLockDemo(); document.getElementById('lock').style.display = 'flex'; }
+
+  // ---- What a cashier may not see ---------------------------------------
+  // Cost prices and the takings figures are the owner's business, so they are
+  // limited to managers. Everything needed to serve a customer stays open.
+  //
+  // This hides screens; it is not a vault. The product catalogue is cached in
+  // the browser and cost prices come down with it, so anyone able to open the
+  // developer tools on the till could still read them. It stops casual
+  // looking, which is what a shop floor needs — see STAFF-ROLES.md.
+  function isManager() { return !!currentStaff && currentStaff.role === 'admin'; }
+
+  // Guard at the point of use as well as hiding the button, so a screen cannot
+  // be reached by another route.
+  function managerOnly(what) {
+    if (isManager()) return true;
+    toast((what || 'That') + ' is for managers only');
+    return false;
+  }
+
+  // Buttons a cashier never sees. Applied on sign-in and on sign-out.
+  const MANAGER_BUTTONS = ['btn-dashboard', 'btn-receive', 'btn-po', 'btn-sales', 'btn-catalogue'];
+  function applyRoleToChrome() {
+    const show = isManager();
+    MANAGER_BUTTONS.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = show ? '' : 'none';
+    });
+  }
+
+  function lockPOS() { currentStaff = null; pinBuffer = ''; renderStaffBadge(); applyRoleToChrome(); renderLockPad(); renderLockDemo(); document.getElementById('lock').style.display = 'flex'; }
   function renderLockPad() {
     document.getElementById('lock-dots').textContent = '••••'.slice(0, pinBuffer.length).padEnd(4, '·');
     const pad = document.getElementById('lock-pad');
@@ -1090,7 +1207,7 @@
     document.getElementById('lock-dots').textContent = (pinBuffer.replace(/./g, '•') || '').padEnd(4, '·');
     if (pinBuffer.length >= 4) {
       const s = staffList().find(x => x.pin === pinBuffer);
-      if (s) { currentStaff = s; pinBuffer = ''; document.getElementById('lock').style.display = 'none'; renderStaffBadge(); }
+      if (s) { currentStaff = s; pinBuffer = ''; document.getElementById('lock').style.display = 'none'; renderStaffBadge(); applyRoleToChrome(); }
       else if (pinBuffer.length >= 6) { toast('Wrong PIN'); pinBuffer = ''; renderLockPad(); }
     }
   }
@@ -1160,9 +1277,40 @@
     const list = staffList();
     return `<div style="font-size:0.8rem; font-weight:700; margin-bottom:0.4rem">Staff</div>
       ${list.map(s => `<div style="display:flex; justify-content:space-between; padding:0.25rem 0; font-size:0.85rem"><span>${esc(s.name)} <span style="color:var(--muted)">(${s.role}${s.role === 'admin' ? '' : ' · disc ≤' + (s.maxDiscPct != null ? s.maxDiscPct : 10) + '% · ' + (s.canRefund ? 'refunds ✓' : 'no refunds')})</span></span>${s.id !== 'admin' ? `<button class="rm" onclick="removeStaff('${s.id}')">✕</button>` : ''}</div>`).join('')}
-      <div style="display:flex; gap:0.4rem; margin-top:0.4rem; flex-wrap:wrap"><input id="st-name" placeholder="Name" style="flex:1; min-width:100px"><input id="st-pin" placeholder="PIN" style="width:80px"><input id="st-disc" type="number" min="0" max="100" placeholder="disc %" title="Max discount % without admin approval" style="width:80px"><label style="display:flex;align-items:center;gap:0.3rem;font-size:0.8rem;cursor:pointer"><input id="st-refund" type="checkbox" style="width:auto">refunds</label></div>
+      <div style="display:flex; gap:0.4rem; margin-top:0.4rem">
+        <input id="st-name" placeholder="Name" style="flex:1">
+        <input id="st-pin" placeholder="PIN" style="width:80px">
+        <select id="st-role" style="width:110px"><option value="cashier">Cashier</option><option value="admin">Manager</option></select>
+        <input id="st-disc" type="number" min="0" max="100" placeholder="disc %" title="Max discount % without manager approval" style="width:80px">
+        <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.8rem;cursor:pointer"><input id="st-refund" type="checkbox" style="width:auto">refunds</label>
+      </div>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Cashiers can sell, refund and handle customers. Cost prices, the dashboard, receiving and purchase orders are managers only. Over-limit discounts, refunds and pay-outs ask for a manager PIN.</div>
       <button class="qbtn" style="width:auto; padding:0 0.7rem; margin-top:0.4rem" onclick="addStaff()">+ Add staff</button>
-      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.2rem">Over-limit discounts, refunds and pay-outs ask for an admin PIN.</div>
+      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">Company details (printed on documents)</div>
+      <div style="display:flex; flex-direction:column; gap:0.35rem">
+        <input id="co-name" value="${esc(settings().coName)}" placeholder="Trading name">
+        <input id="co-reg" value="${esc(settings().coRegNo)}" placeholder="Company registration number">
+        <input id="co-logo" value="${esc(settings().coLogoUrl)}" placeholder="Logo image URL (optional)">
+        <textarea id="co-addr" rows="3" placeholder="Address — one line per row">${esc(settings().coAddress)}</textarea>
+        <div style="display:flex; gap:0.4rem">
+          <input id="co-phone" value="${esc(settings().coPhone)}" placeholder="Telephone" style="flex:1">
+          <input id="co-email" value="${esc(settings().coEmail)}" placeholder="Email" style="flex:1">
+        </div>
+      </div>
+      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">Banking details (quotes &amp; sales orders)</div>
+      <div style="display:flex; flex-direction:column; gap:0.35rem">
+        <input id="bk-accname" value="${esc(settings().bankAccName)}" placeholder="Account name">
+        <div style="display:flex; gap:0.4rem">
+          <input id="bk-bank" value="${esc(settings().bankName)}" placeholder="Bank" style="flex:1">
+          <input id="bk-branch" value="${esc(settings().bankBranch)}" placeholder="Branch code" style="width:120px">
+        </div>
+        <div style="display:flex; gap:0.4rem">
+          <input id="bk-accno" value="${esc(settings().bankAccNo)}" placeholder="Account number" style="flex:1">
+          <input id="bk-acctype" value="${esc(settings().bankAccType)}" placeholder="Acc type" style="width:120px">
+        </div>
+      </div>
+      <button class="qbtn" style="width:auto; padding:0 0.7rem; margin-top:0.5rem" onclick="saveCompanySettings()">Save company &amp; banking</button>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Banking details print on quotes and sales orders — anything still owing. Paid till slips leave them off.</div>
       <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">Tax (default off — not VAT-registered)</div>
       <div style="display:flex; gap:0.4rem; align-items:center">
         <input id="tax-label" value="${esc(settings().taxLabel)}" placeholder="Label" style="flex:1">
@@ -1177,23 +1325,6 @@
         <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveLoyaltySettings()">Save</button>
       </div>
       <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">1 point = R1 off a future sale. Account is keyed on the customer's cellphone number. Set 0 to turn earning off. (e.g. 5% = R100 spent earns 5 points = R5.)</div>
-      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">🏦 Banking details (printed on quotes &amp; sales orders for EFT)</div>
-      <div style="display:flex; gap:0.4rem; flex-wrap:wrap">
-        <input id="bk-name" value="${esc(settings().bankName)}" placeholder="Bank (e.g. Capitec)" style="flex:1; min-width:110px">
-        <input id="bk-holder" value="${esc(settings().bankAccountHolder)}" placeholder="Account holder" style="flex:1; min-width:130px">
-        <input id="bk-acct" value="${esc(settings().bankAccountNo)}" placeholder="Account number" style="width:140px">
-        <input id="bk-branch" value="${esc(settings().bankBranchCode)}" placeholder="Branch code" style="width:100px">
-        <input id="bk-type" value="${esc(settings().bankAccountType)}" placeholder="Acc type (e.g. Transact)" style="width:150px">
-        <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveBankSettings()">Save</button>
-      </div>
-      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Shown with the order number as payment reference. Leave blank to print nothing.</div>
-      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">🖼 Document branding (quotes &amp; sales orders)</div>
-      <div style="display:flex; gap:0.4rem; flex-wrap:wrap">
-        <input id="doc-shop" value="${esc(settings().shopName)}" placeholder="Business name" style="flex:1; min-width:120px">
-        <input id="doc-logo" value="${esc(settings().logoUrl)}" placeholder="Logo image URL (https://…)" style="flex:2; min-width:180px">
-        <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveDocSettings()">Save</button>
-      </div>
-      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">The logo prints at the top of quotes &amp; sales orders. Any public image URL (e.g. your logo on repticube.com).</div>
       <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">🗄 History</div>
       <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center">
         <label class="qbtn" style="width:auto; padding:0 0.7rem; display:flex; align-items:center; cursor:pointer">📥 Import Lightspeed sales CSV<input type="file" accept=".csv,text/csv" style="display:none" onchange="importLsSales(this)"></label>
@@ -1202,9 +1333,16 @@
         <button class="qbtn" style="width:auto; padding:0 0.7rem; border-color:var(--danger); color:var(--danger)" onclick="clearTillHistory()">🧹 Clear till test history</button>
       </div>
       <div id="ls-status" style="font-size:0.75rem; color:var(--muted); margin-top:0.3rem">Import creates backdated, paid Shopify orders (tag <b>lightspeed-import</b>) — stock is never touched, and re-importing the same file can't duplicate. Clear wipes this till's local test logs + the cloud test logs; it never touches Shopify.</div>
-      ${isDemo() ? `<div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.3rem">Demo mode</div>
-      <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="toggleDemo()">Turn demo OFF (use real Shopify)</button>
-      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Demo only ever starts from an explicit ?demo=1 link — the till is real by default.</div>` : ''}`;
+      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">📤 Customer links</div>
+      <div style="display:flex; gap:0.4rem; align-items:center">
+        <span style="color:var(--muted); font-size:0.85rem">Enclosure types</span>
+        <input id="enc-types" value="${esc(settings().enclosureTypes)}" placeholder="${esc(DEFAULT_SETTINGS.enclosureTypes)}" style="flex:1">
+        <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveEnclosureSettings()">Save</button>
+      </div>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">A sales order or quote always queues a link. A plain sale queues one too when it has an enclosure on it. Matched against the product type, comma-separated — the ranges are "&hellip; RANGE" and a starter kit counts as well, while enclosure <em>decor</em> does not. Leave empty to only queue links for orders and quotes.</div>
+      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.3rem">Demo mode</div>
+      <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="toggleDemo()">${isDemo() ? 'Turn demo OFF (use real Shopify)' : 'Turn demo ON (no Shopify)'}</button>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Demo uses a sample catalogue; sales/orders/stock are simulated locally and never touch Shopify.</div>`;
   }
   function addStaff() {
     const name = (document.getElementById('st-name').value || '').trim();
@@ -1212,9 +1350,11 @@
     if (!name || !/^\d{4,6}$/.test(pin)) { toast('Name + 4–6 digit PIN'); return; }
     const list = staffList();
     if (list.some(s => s.pin === pin)) { toast('PIN already in use'); return; }
+    const roleEl = document.getElementById('st-role');
+    const role = roleEl && roleEl.value === 'admin' ? 'admin' : 'cashier';
     const maxDiscPct = Math.min(100, Math.max(0, parseFloat(document.getElementById('st-disc').value) || 10));
     const canRefund = !!(document.getElementById('st-refund') && document.getElementById('st-refund').checked);
-    list.push({ id: 'st-' + Date.now(), name, pin, role: 'cashier', maxDiscPct, canRefund });
+    list.push({ id: 'st-' + Date.now(), name, pin, role, maxDiscPct, canRefund });
     saveStaff(list); renderReg(); toast('Staff added');
   }
   function removeStaff(id) { if (!confirm('Remove this staff member?')) return; saveStaff(staffList().filter(s => s.id !== id)); renderReg(); }
@@ -1325,34 +1465,24 @@
     toast('Till history cleared' + (cloud ? ' (' + cloud + ' cloud records)' : ''));
   }
 
-  function saveBankSettings() {
-    const s = {
-      bankName: (document.getElementById('bk-name').value || '').trim(),
-      bankAccountHolder: (document.getElementById('bk-holder').value || '').trim(),
-      bankAccountNo: (document.getElementById('bk-acct').value || '').trim(),
-      bankBranchCode: (document.getElementById('bk-branch').value || '').trim(),
-      bankAccountType: (document.getElementById('bk-type').value || '').trim()
-    };
-    saveSettings(s);
-    // Shared across tills via the settings doc (best-effort).
-    try { fbSet('settings', 'banking', { ...s, updatedAt: new Date().toISOString() }); } catch (e) {}
-    toast(s.bankAccountNo ? 'Banking details saved' : 'Banking details cleared');
+  function saveCompanySettings() {
+    const val = id => (document.getElementById(id).value || '').trim();
+    saveSettings({
+      coName: val('co-name') || 'ReptiCube',
+      coRegNo: val('co-reg'),
+      coAddress: val('co-addr'),
+      coPhone: val('co-phone'),
+      coEmail: val('co-email'),
+      coLogoUrl: val('co-logo'),
+      bankAccName: val('bk-accname'),
+      bankName: val('bk-bank'),
+      bankBranch: val('bk-branch'),
+      bankAccNo: val('bk-accno'),
+      bankAccType: val('bk-acctype')
+    });
+    renderReg();
+    toast('Company details saved');
   }
-  function saveDocSettings() {
-    const s = {
-      shopName: (document.getElementById('doc-shop').value || '').trim() || 'ReptiCube',
-      logoUrl: (document.getElementById('doc-logo').value || '').trim()
-    };
-    saveSettings(s);
-    try { fbSet('settings', 'branding', { ...s, updatedAt: new Date().toISOString() }); } catch (e) {}
-    toast('Document branding saved');
-  }
-  // Pull the shared banking details once Firebase is up, so every till prints
-  // the same account without retyping.
-  window.addEventListener('fb-ready', async () => {
-    try { const b = await fbGet('settings', 'banking'); if (b && b.bankAccountNo != null) saveSettings({ bankName: b.bankName || '', bankAccountHolder: b.bankAccountHolder || '', bankAccountNo: b.bankAccountNo || '', bankBranchCode: b.bankBranchCode || '', bankAccountType: b.bankAccountType || '' }); } catch (e) {}
-    try { const g = await fbGet('settings', 'branding'); if (g && (g.logoUrl != null || g.shopName)) saveSettings({ logoUrl: g.logoUrl || '', shopName: g.shopName || 'ReptiCube' }); } catch (e) {}
-  });
   function saveTaxSettings() {
     const rate = Math.max(0, parseFloat(document.getElementById('tax-rate').value) || 0);
     const label = (document.getElementById('tax-label').value || 'VAT').trim() || 'VAT';
@@ -1360,6 +1490,14 @@
     renderCart(); renderReg();
     toast(rate > 0 ? `Tax set: ${label} ${rate}% (inclusive)` : 'Tax off');
   }
+  function saveEnclosureSettings() {
+    const v = (document.getElementById('enc-types').value || '').trim();
+    saveSettings({ enclosureTypes: v });
+    const n = enclosureTerms().length;
+    renderReg();
+    toast(n ? 'Enclosure link trigger: ' + v : 'Enclosure trigger off — orders and quotes still queue');
+  }
+
   function saveLoyaltySettings() {
     const rate = Math.max(0, parseFloat(document.getElementById('loy-rate').value) || 0);
     saveSettings({ loyaltyPct: rate });
@@ -1383,7 +1521,7 @@
   function zReportHtml(s, countedCents, kind) {
     const exp = expectedCashCents(s);
     const variance = countedCents != null ? countedCents - exp : null;
-    return `<h2 style="text-align:center;margin:.2rem 0">ReptiCube — ${kind}-report</h2>
+    return `<h2 style="text-align:center;margin:.2rem 0">${esc(coName())} — ${kind}-report</h2>
       <div class="c">${new Date().toLocaleString('en-ZA')}</div>
       <div class="c">Opened ${new Date(s.openedAt).toLocaleString('en-ZA')}</div>
       <table>
@@ -1436,7 +1574,11 @@
 
   // ---- Sales history (local log) + reprint ----
   function loadSales() { try { return JSON.parse(localStorage.getItem('reptipos-sales') || '[]'); } catch (e) { return []; } }
-  function openSales() { document.getElementById('sales-modal').classList.add('show'); renderSales(); }
+  function openSales() {
+    if (!managerOnly('Sales history')) return;
+    document.getElementById('sales-modal').classList.add('show');
+    renderSales();
+  }
   function closeSales() { document.getElementById('sales-modal').classList.remove('show'); }
 
   // ---- Money-in (takings) ------------------------------------------------
@@ -1825,7 +1967,7 @@
   function showRefundReceipt(refund) {
     const dt = new Date(refund.datetime).toLocaleString('en-ZA');
     const rows = refund.items.map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">−${money(i.qty * i.unitPriceCents)}</td></tr>`).join('');
-    const html = `<h2 style="text-align:center;margin:.2rem 0">ReptiCube — REFUND</h2>
+    const html = `<h2 style="text-align:center;margin:.2rem 0">${esc(coName())} — REFUND</h2>
       <div class="c">${esc(refund.refundNumber)}</div>
       <div class="c">${esc(dt)}</div>
       <div class="c">Order ${esc(refund.orderName)}</div>
@@ -2125,6 +2267,7 @@
       const out = await api('docSave', { tags: 'pos,quote', customerId: customer ? customer.id : undefined, lineItems: cart.map(l => l.custom ? { custom: true, title: l.name, qty: l.qty, priceCents: l.priceCents } : { variantId: l.variantId, qty: l.qty }), doc });
       printDoc({ ...doc, name: out.name, customer: customer ? { name: customer.name } : null }, 'QUOTE');
       toast('Quote ' + (out.name || '') + ' saved');
+      queueClientLink({ type: 'quote', number: out.name || '', customer, items, totalCents: c.total, status: 'sent' });
       cart = []; cartDiscount = null; renderCart(); renderGrid();
     } catch (e) { toast('Quote failed: ' + (e.message || e)); }
   }
@@ -2179,6 +2322,11 @@
       closeSalesOrder();
       printDoc({ ...doc, name: out.name, customer: { name: cust.name } }, 'SALES ORDER');
       toast('Sales order ' + (out.name || '') + ' created');
+      queueClientLink({
+        type: 'salesorder', number: out.name || '', customer: cust, items,
+        totalCents: total, depositCents: payment ? payment.amountCents : 0,
+        expectedDate: date, status: 'awaiting_stock'
+      });
       cart = []; cartDiscount = null; customer = null; renderCart(); renderCustomer(); renderGrid();
     } catch (e) { toast('Sales order failed: ' + (e.message || e)); }
   }
@@ -2214,6 +2362,7 @@
         <div style="display:flex;gap:0.4rem">
           <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="loadQuote('${d.id}')">To cart</button>
           <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="printDocById('${d.id}','QUOTE')">🖨️</button>
+          <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="shareDoc('${d.id}','quote')" title="Send to the customer">📤 Send</button>
           <button class="rm" onclick="soCancel('${d.id}')">✕</button>
         </div></div>`;
     }
@@ -2229,9 +2378,571 @@
         <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="soSetAddress('${d.id}')" title="Set / change the delivery address">🚚</button>
         <button class="qbtn" style="width:auto;padding:0 0.6rem;background:var(--accent);color:#04210f" onclick="soFulfil('${d.id}')">Fulfil &amp; invoice</button>
         <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="printDocById('${d.id}','SALES ORDER')">🖨️</button>
+        <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="shareDoc('${d.id}','salesorder')" title="Send to the customer">📤 Send</button>
         <button class="rm" onclick="soCancel('${d.id}')">✕</button>
       </div></div>`;
   }
+  // ---- Sharing a document with the customer ------------------------------
+  // A quote or sales order becomes a private link the customer can open, check
+  // the status of, and ask questions on — instead of phoning the shop.
+  const CLIENT_FN = '/.netlify/functions/client-doc';
+
+  async function clientApi(payload) {
+    const token = await firebaseIdToken();
+    const res = await fetch(CLIENT_FN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+      body: JSON.stringify(payload)
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(out.error || 'HTTP ' + res.status);
+    return out;
+  }
+
+  // The company block travels with the document, so the customer's page shows
+  // the same letterhead and banking as the printed copy.
+  function companyPayload() {
+    return { name: coName(), lines: companyLines(), bank: bankLines(), logoUrl: settings().coLogoUrl || '' };
+  }
+
+  function overlay(html) {
+    const el = document.createElement('div');
+    // Above .modal (100): overlays are opened from inside modals, and at a
+    // lower layer the modal underneath swallowed the clicks. Still below the
+    // lock screen (200), which must always win.
+    el.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;padding:16px;z-index:150;overflow:auto';
+    el.innerHTML = `<div style="background:var(--panel);border:1px solid var(--border);border-radius:12px;max-width:460px;width:100%;padding:18px">${html}</div>`;
+    el.addEventListener('mousedown', e => { if (e.target === el) el.remove(); });
+    document.body.appendChild(el);
+    return el;
+  }
+
+  async function shareDoc(id, type) {
+    const d = findDoc(id);
+    if (!d) { toast('Document not found'); return; }
+    if (isDemo()) { toast('Sharing is off in demo mode'); return; }
+    const m = d.doc || {};
+    const total = m.totalCents || 0, dep = m.depositCents || 0;
+    toast('Preparing link…');
+    let out;
+    try {
+      out = await clientApi({
+        action: 'create',
+        doc: {
+          token: m.clientToken, type,
+          number: d.name || '',
+          company: companyPayload(),
+          client: { name: d.customer ? d.customer.name : '', email: (d.customer && d.customer.email) || '', phone: (d.customer && d.customer.phone) || '' },
+          items: (m.items || []).map(i => ({ name: i.name, qty: i.qty, lineTotalCents: i.lineTotalCents != null ? i.lineTotalCents : i.priceCents * i.qty })),
+          totalCents: total, depositCents: dep, balanceCents: total - dep,
+          expectedDate: m.expectedDate || '', status: m.status || (type === 'quote' ? 'sent' : 'awaiting_stock')
+        }
+      });
+    } catch (e) { toast('Could not create link: ' + e.message); return; }
+
+    // Remember the token so re-sending updates the same page and keeps the thread.
+    if (!m.clientToken) {
+      try { await saveSO(d, { ...m, clientToken: out.token }); } catch (e) { /* the link still works */ }
+    }
+
+    const msg = clientLinkMessage(type, d.name, d.customer ? d.customer.name : '', out.url);
+    const el = overlay(`
+      <div style="font-weight:700;margin-bottom:4px">Send ${esc(d.name)}</div>
+      <div style="font-size:0.72rem;color:var(--muted);margin-bottom:12px;word-break:break-all">${esc(out.url)}</div>
+      <label style="font-size:0.75rem;color:var(--muted)">Cellphone number</label>
+      <input id="sh-phone" value="${esc((d.customer && d.customer.phone) || '')}" placeholder="082 123 4567" style="width:100%;margin:0.25rem 0 0.6rem">
+      <div style="display:flex;flex-direction:column;gap:0.5rem">
+        <button class="qbtn" id="sh-wa" style="width:100%;height:44px;background:var(--accent);color:#04210f;font-weight:700">💬 Send on WhatsApp</button>
+        <button class="qbtn" id="sh-copy" style="width:100%;height:42px">🔗 Copy link</button>
+        <button class="qbtn" id="sh-close" style="width:100%;height:42px;background:var(--panel2)">Close</button>
+      </div>
+      <div id="sh-msg" style="font-size:0.75rem;color:var(--muted);margin-top:10px"></div>`);
+
+    const say = t => { el.querySelector('#sh-msg').textContent = t; };
+    el.querySelector('#sh-close').onclick = () => el.remove();
+    el.querySelector('#sh-copy').onclick = async () => {
+      try { await navigator.clipboard.writeText(out.url); say('Link copied.'); } catch (e) { say(out.url); }
+    };
+    el.querySelector('#sh-wa').onclick = () => {
+      const phone = waNumber(el.querySelector('#sh-phone').value);
+      if (!phone) { say('Enter a cellphone number, or copy the link and paste it into WhatsApp yourself.'); return; }
+      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+      say('WhatsApp opened — press send there.');
+    };
+  }
+
+  // South African numbers as staff actually type them: 082…, 082 123 4567,
+  // +27 82…, 0027 82…. WhatsApp wants the country code with no plus or spaces.
+  function waNumber(raw) {
+    let n = String(raw || '').replace(/\D/g, '');
+    if (!n) return '';
+    if (n.startsWith('0027')) n = n.slice(2);
+    else if (n.startsWith('27')) { /* already international */ }
+    else if (n.startsWith('0')) n = '27' + n.slice(1);
+    else if (n.length === 9) n = '27' + n;           // 821234567, leading 0 dropped
+    return n.length >= 10 && n.length <= 15 ? n : '';
+  }
+
+  // Two lines: the link, then why it is worth keeping. Customers otherwise
+  // scroll back through weeks of chat looking for it.
+  function clientLinkMessage(type, number, customerName, url) {
+    const kind = type === 'quote' ? 'quote' : 'order';
+    const first = String(customerName || '').trim().split(' ')[0];
+    return `Hi${first ? ' ' + first : ''}, here is your ${kind} ${number} from ${coName()}:\n${url}\n\n`
+      + `You can check the progress there any time and message us on the same page. `
+      + `Tip: save it to your phone's home screen so you don't have to look for this message again.`;
+  }
+
+  // ---- Cost prices ------------------------------------------------------
+  // They live in the POS, not in Shopify, so a buying price is not readable by
+  // anyone holding a Shopify or Lightspeed login. They are fetched on demand
+  // by the manager-only screens that need them, which means a cashier's till
+  // never downloads a cost at all — rather than merely not displaying one.
+  let costsLoaded = false;
+  async function ensureCosts(force) {
+    if (!isManager()) return false;
+    if (costsLoaded && !force) return true;
+    if (isDemo()) { costsLoaded = true; return true; }
+    try {
+      const { costs } = await callFn({ action: 'getCosts' });
+      catalogue.forEach(p => { const c = costs[String(p.variantId)]; p.costCents = c == null ? 0 : c; });
+      costsLoaded = true;
+      return true;
+    } catch (e) {
+      console.warn('Cost prices failed to load:', e);
+      toast('Cost prices unavailable: ' + (e.message || e));
+      return false;
+    }
+  }
+
+  // ---- Catalogue back office --------------------------------------------
+  // Everything that used to mean opening Shopify or Lightspeed admin: put in a
+  // cost price, fix a retail price, add a line, retire one. Manager-only,
+  // because it is where the buying prices are.
+  //
+  // Products stay in Shopify so the online store and the till cannot drift.
+  // Cost prices do not — they are the POS's own (see ensureCosts).
+  let catEdits = {};        // variantId → { costCents?, priceCents?, ... } not yet saved
+  let catFilter = '';
+  let catShowMissingOnly = false;
+
+  async function openCatalogue() {
+    if (!managerOnly('The catalogue')) return;
+    catEdits = {}; catFilter = ''; catShowMissingOnly = false;
+    document.getElementById('cat-modal').classList.add('show');
+    renderCatalogue();
+    await ensureCosts(true);
+    renderCatalogue();
+  }
+  function closeCatalogue() {
+    if (catDirty() && !confirm('You have unsaved changes. Close anyway?')) return;
+    document.getElementById('cat-modal').classList.remove('show');
+  }
+  const catDirty = () => Object.keys(catEdits).length > 0;
+
+  function catSetFilter(v) { catFilter = v; renderCatalogue(); }
+  function catToggleMissing() { catShowMissingOnly = !catShowMissingOnly; renderCatalogue(); }
+
+  function catRows() {
+    const q = catFilter.trim().toLowerCase();
+    let rows = catalogue.slice();
+    if (q) rows = rows.filter(p => [p.name, p.sku, p.barcode, p.category, p.vendor].some(f => String(f || '').toLowerCase().includes(q)));
+    if (catShowMissingOnly) rows = rows.filter(p => !(Number(p.costCents) > 0));
+    return rows.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  }
+
+  // What the row should show: an unsaved edit if there is one, else the product.
+  const catVal = (p, field) => {
+    const e = catEdits[p.variantId];
+    return e && e[field] != null ? e[field] : (Number(p[field]) || 0);
+  };
+
+  function catEdit(variantId, field, value) {
+    const p = findProduct(variantId);
+    if (!p) return;
+    const cents = toCents(value);
+    const e = catEdits[variantId] || {};
+    if (cents === (Number(p[field]) || 0)) delete e[field]; else e[field] = cents;
+    if (Object.keys(e).length) catEdits[variantId] = e; else delete catEdits[variantId];
+    const badge = document.getElementById('cat-dirty');
+    if (badge) badge.textContent = catDirty() ? Object.keys(catEdits).length + ' unsaved' : '';
+    const m = document.getElementById('cat-margin-' + variantId);
+    if (m) {
+      const price = catVal(p, 'priceCents'), cost = catVal(p, 'costCents');
+      m.textContent = cost > 0 ? money(price - cost) : '—';
+      m.style.color = cost > 0 && price - cost < 0 ? 'var(--danger)' : 'var(--muted)';
+    }
+  }
+
+  async function catSave() {
+    if (!catDirty()) { toast('Nothing to save'); return; }
+    const ids = Object.keys(catEdits);
+    toast('Saving ' + ids.length + '…');
+    // Costs go in one call; a price change is a Shopify write per product.
+    const costs = {};
+    ids.forEach(id => { if (catEdits[id].costCents != null) costs[id] = catEdits[id].costCents; });
+    let failed = 0;
+    try {
+      if (Object.keys(costs).length) await callFn({ action: 'saveCosts', costs });
+    } catch (e) { toast('Costs failed: ' + (e.message || e)); return; }
+    for (const id of ids) {
+      const e = catEdits[id];
+      const p = findProduct(id);
+      if (!p || e.priceCents == null) continue;
+      try { await callFn({ action: 'productUpdate', productId: p.productId, variantId: id, priceCents: e.priceCents }); }
+      catch (err) { failed++; console.warn('Price update failed for ' + id, err); }
+    }
+    // Reflect locally so the grid and tiles agree without a full reload.
+    ids.forEach(id => {
+      const p = findProduct(id); if (!p) return;
+      const e = catEdits[id];
+      if (e.costCents != null) p.costCents = e.costCents;
+      if (e.priceCents != null && !failed) p.priceCents = e.priceCents;
+    });
+    cacheCatalogue();
+    catEdits = {};
+    renderCatalogue(); renderGrid();
+    toast(failed ? 'Saved, but ' + failed + ' price change(s) failed' : 'Saved');
+  }
+
+  function renderCatalogue() {
+    const body = document.getElementById('cat-body');
+    if (!body) return;
+    const rows = catRows();
+    const missing = catalogue.filter(p => !(Number(p.costCents) > 0)).length;
+    const list = rows.length ? rows.map(p => {
+      const price = catVal(p, 'priceCents'), cost = catVal(p, 'costCents');
+      const margin = cost > 0 ? money(price - cost) : '—';
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:0.4rem 0.3rem">
+          <div style="font-weight:600;font-size:0.85rem">${esc(p.name)}</div>
+          <div style="font-size:0.7rem;color:var(--muted)">${esc(p.sku || '')}${p.category ? ' · ' + esc(p.category) : ''} · ${Number(p.qty) || 0} in stock</div>
+        </td>
+        <td style="width:110px"><input type="number" step="0.01" min="0" value="${(price / 100).toFixed(2)}" oninput="catEdit('${esc(p.variantId)}','priceCents',this.value)" style="width:100%;padding:0.35rem" title="Retail price"></td>
+        <td style="width:110px"><input type="number" step="0.01" min="0" value="${cost ? (cost / 100).toFixed(2) : ''}" placeholder="—" oninput="catEdit('${esc(p.variantId)}','costCents',this.value)" style="width:100%;padding:0.35rem;${cost ? '' : 'border-color:var(--warn)'}" title="What you pay"></td>
+        <td id="cat-margin-${esc(p.variantId)}" style="width:90px;text-align:right;font-size:0.8rem;color:var(--muted)">${margin}</td>
+        <td style="width:100px;text-align:right">
+          <button class="qbtn" style="width:auto;padding:0 0.5rem;height:30px;font-size:0.72rem" onclick="catArchive('${esc(p.variantId)}')">Retire</button>
+        </td></tr>`;
+    }).join('') : '<tr><td colspan="5"><div class="empty" style="padding:1.2rem">Nothing matches</div></td></tr>';
+
+    body.innerHTML = `
+      <div style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem">
+        <input id="cat-search" value="${esc(catFilter)}" placeholder="Search name, SKU, barcode, category…" oninput="catSetFilter(this.value)" style="flex:1;min-width:200px">
+        <button class="qbtn" style="width:auto;padding:0 0.7rem" onclick="catNewForm()">+ New product</button>
+        <button class="qbtn" style="width:auto;padding:0 0.7rem;background:${catShowMissingOnly ? 'var(--accent)' : 'var(--panel2)'};${catShowMissingOnly ? 'color:#04210f' : ''}" onclick="catToggleMissing()">No cost (${missing})</button>
+      </div>
+      ${missing ? `<div style="font-size:0.72rem;color:var(--warn);margin-bottom:0.5rem">${missing} of ${catalogue.length} products have no cost price, so their profit is not real yet.</div>` : ''}
+      <div style="max-height:52vh;overflow:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:0.85rem">
+          <thead><tr style="text-align:left;color:var(--muted);font-size:0.72rem">
+            <th style="padding:0.3rem">Product</th><th>Sells for</th><th>Costs you</th><th style="text-align:right">Margin</th><th></th>
+          </tr></thead>
+          <tbody>${list}</tbody>
+        </table>
+      </div>
+      <div style="display:flex;gap:0.5rem;align-items:center;margin-top:0.7rem">
+        <button class="btn btn-pay" style="flex:1" onclick="catSave()">Save changes</button>
+        <span id="cat-dirty" style="font-size:0.75rem;color:var(--warn)">${catDirty() ? Object.keys(catEdits).length + ' unsaved' : ''}</span>
+      </div>
+      <div style="font-size:0.72rem;color:var(--muted);margin-top:0.4rem">Cost prices are kept in the POS and never sent to Shopify. Prices, names and stock stay in Shopify so the online shop and the till always agree.</div>`;
+  }
+
+  function catNewForm() {
+    const el = overlay(`
+      <div style="font-weight:700;margin-bottom:10px">New product</div>
+      <label style="font-size:0.75rem;color:var(--muted)">Name *</label>
+      <input id="np-name" style="width:100%;margin:0.2rem 0 0.5rem">
+      <div style="display:flex;gap:0.5rem">
+        <div style="flex:1"><label style="font-size:0.75rem;color:var(--muted)">Sells for (R) *</label><input id="np-price" type="number" step="0.01" min="0" style="width:100%;margin:0.2rem 0 0.5rem"></div>
+        <div style="flex:1"><label style="font-size:0.75rem;color:var(--muted)">Costs you (R)</label><input id="np-cost" type="number" step="0.01" min="0" style="width:100%;margin:0.2rem 0 0.5rem"></div>
+      </div>
+      <div style="display:flex;gap:0.5rem">
+        <div style="flex:1"><label style="font-size:0.75rem;color:var(--muted)">SKU</label><input id="np-sku" style="width:100%;margin:0.2rem 0 0.5rem"></div>
+        <div style="flex:1"><label style="font-size:0.75rem;color:var(--muted)">Barcode</label><input id="np-barcode" style="width:100%;margin:0.2rem 0 0.5rem"></div>
+      </div>
+      <div style="display:flex;gap:0.5rem">
+        <div style="flex:1"><label style="font-size:0.75rem;color:var(--muted)">Category</label><input id="np-cat" list="np-cats" style="width:100%;margin:0.2rem 0 0.5rem">
+          <datalist id="np-cats">${[...new Set(catalogue.map(p => p.category).filter(Boolean))].map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
+        <div style="flex:1"><label style="font-size:0.75rem;color:var(--muted)">Opening stock</label><input id="np-qty" type="number" step="1" min="0" value="0" style="width:100%;margin:0.2rem 0 0.5rem"></div>
+      </div>
+      <button class="btn btn-pay" id="np-save" style="width:100%;margin-top:0.4rem">Create product</button>
+      <div id="np-msg" style="font-size:0.75rem;color:var(--muted);margin-top:8px"></div>`);
+
+    el.querySelector('#np-save').onclick = async () => {
+      const name = el.querySelector('#np-name').value.trim();
+      const priceCents = toCents(el.querySelector('#np-price').value);
+      const msg = t => { el.querySelector('#np-msg').textContent = t; };
+      if (!name) { msg('Give it a name.'); return; }
+      if (priceCents <= 0) { msg('What does it sell for?'); return; }
+      el.querySelector('#np-save').disabled = true;
+      msg('Creating in Shopify…');
+      try {
+        const out = await callFn({
+          action: 'productCreate', title: name, priceCents,
+          costCents: toCents(el.querySelector('#np-cost').value) || null,
+          sku: el.querySelector('#np-sku').value.trim(),
+          barcode: el.querySelector('#np-barcode').value.trim(),
+          category: el.querySelector('#np-cat').value.trim(),
+          qty: Math.max(0, parseInt(el.querySelector('#np-qty').value, 10) || 0)
+        });
+        el.remove();
+        toast('Added ' + name + (out.warnings && out.warnings.length ? ' · ' + out.warnings.join(' · ') : ''));
+        await refreshCatalogue(false);
+        await ensureCosts(true);
+        renderCatalogue();
+      } catch (e) {
+        el.querySelector('#np-save').disabled = false;
+        msg('Could not create it: ' + (e.message || e));
+      }
+    };
+  }
+
+  // "Retire" is an archive: it leaves the till and the shop but survives, so a
+  // mistake costs nothing. Deleting for good is behind a second question.
+  async function catArchive(variantId) {
+    const p = findProduct(variantId);
+    if (!p) return;
+    if (!confirm('Retire "' + p.name + '"?\n\nIt disappears from the till and the online shop but is kept, so this can be undone in Shopify.')) return;
+    try {
+      await callFn({ action: 'productArchive', productId: p.productId });
+      toast('Retired ' + p.name);
+      if (confirm('Retired.\n\nDelete it permanently instead? This cannot be undone, and images and description go with it.\n\nCancel keeps it archived.')) {
+        await callFn({ action: 'productDelete', productId: p.productId, variantId });
+        toast('Deleted ' + p.name);
+      }
+      await refreshCatalogue(false);
+      renderCatalogue(); renderGrid();
+    } catch (e) { toast('Failed: ' + (e.message || e)); }
+  }
+
+  // ---- To send: links prepared the moment an order is placed -------------
+  // WhatsApp's click-to-chat always needs a person to press send — a link
+  // cannot send itself. So the link is *made* automatically and queued here,
+  // which removes the failure that actually happens: nobody remembering to
+  // create one. Staff press send once, from a list that is already written.
+  //
+  // Queued on: a sales order, a quote, and any sale with an enclosure on it,
+  // since those are built in the factory and the customer wants to follow them.
+  const OUTBOX_KEY = 'reptipos-outbox';
+  const OUTBOX_KEEP_MS = 24 * 60 * 60 * 1000;   // sent rows linger a day, then go
+
+  function outbox() { try { return JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); } catch (e) { return []; } }
+  function outboxPending() { return outbox().filter(e => !e.sentAt); }
+  function saveOutbox(arr) {
+    const cut = Date.now() - OUTBOX_KEEP_MS;
+    const keep = arr.filter(e => !e.sentAt || new Date(e.sentAt).getTime() > cut).slice(0, 100);
+    localStorage.setItem(OUTBOX_KEY, JSON.stringify(keep));
+    renderOutboxBadge();
+  }
+
+  function renderOutboxBadge() {
+    const btn = document.getElementById('btn-outbox');
+    const badge = document.getElementById('outbox-badge');
+    if (!btn || !badge) return;
+    const n = outboxPending().length;
+    btn.style.display = outbox().length ? '' : 'none';
+    badge.style.display = n ? '' : 'none';
+    badge.textContent = n;
+  }
+
+  // Which product types are enclosures. The ranges are "<something> RANGE"
+  // (RC, RCA, RCB, RCV) and a starter kit is built around one, so both count.
+  // "Reptile enclosure decor" has the word enclosure in it and is not one,
+  // which is why this matches on terms rather than on that word. Editable in
+  // Register → settings if the naming ever changes.
+  function enclosureTerms() {
+    const raw = settings().enclosureTypes;
+    const src = raw == null ? DEFAULT_SETTINGS.enclosureTypes : raw;
+    return String(src).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  }
+  function isEnclosureItem(item) {
+    const terms = enclosureTerms();
+    if (!terms.length) return false;
+    const p = item && item.variantId ? findProduct(item.variantId) : null;
+    const cat = String((p && p.category) || '').toLowerCase();
+    if (!cat) return false;
+    return terms.some(t => cat.includes(t));
+  }
+  const hasEnclosure = (items) => (items || []).some(isEnclosureItem);
+
+  // Create the shared link and queue it. Never throws — a till mid-sale must
+  // not be interrupted by this, so a failure is queued with a Retry instead.
+  async function queueClientLink(o) {
+    if (isDemo()) return null;
+    const payload = {
+      type: o.type, number: o.number || '',
+      company: companyPayload(),
+      client: { name: (o.customer && o.customer.name) || '', email: (o.customer && o.customer.email) || '', phone: (o.customer && o.customer.phone) || '' },
+      items: (o.items || []).map(i => ({ name: i.name, qty: i.qty, lineTotalCents: i.lineTotalCents != null ? i.lineTotalCents : i.priceCents * i.qty })),
+      totalCents: o.totalCents || 0, depositCents: o.depositCents || 0,
+      balanceCents: (o.totalCents || 0) - (o.depositCents || 0),
+      expectedDate: o.expectedDate || '', status: o.status || 'sent'
+    };
+    const entry = {
+      id: 'ob-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+      type: o.type, number: o.number || '', reason: o.reason || '',
+      customerName: payload.client.name, phone: payload.client.phone,
+      totalCents: payload.totalCents, at: new Date().toISOString(),
+      url: '', token: '', sentAt: '', error: ''
+    };
+    try {
+      const out = await clientApi({ action: 'create', doc: payload });
+      entry.url = out.url; entry.token = out.token;
+    } catch (e) {
+      entry.error = e.message || String(e);
+      entry.payload = payload;                  // kept only so Retry can try again
+    }
+    const arr = outbox(); arr.unshift(entry); saveOutbox(arr);
+    if (!entry.error) toast('📤 Link ready for ' + (entry.customerName || 'customer') + ' — tap To send');
+    return entry;
+  }
+
+  async function outboxRetry(id) {
+    const arr = outbox();
+    const e = arr.find(x => x.id === id);
+    if (!e || !e.payload) return;
+    toast('Retrying…');
+    try {
+      const out = await clientApi({ action: 'create', doc: e.payload });
+      e.url = out.url; e.token = out.token; e.error = ''; delete e.payload;
+      saveOutbox(arr); openOutbox(true); toast('Link ready');
+    } catch (err) { toast('Still failing: ' + (err.message || err)); }
+  }
+
+  function outboxSend(id) {
+    const arr = outbox();
+    const e = arr.find(x => x.id === id);
+    if (!e || !e.url) return;
+    const input = document.getElementById('ob-phone-' + id);
+    const phone = waNumber(input ? input.value : e.phone);
+    if (!phone) { toast('Enter a cellphone number, or copy the link'); return; }
+    if (input) e.phone = input.value;
+    const msg = clientLinkMessage(e.type, e.number, e.customerName, e.url);
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+    e.sentAt = new Date().toISOString();
+    saveOutbox(arr);
+    openOutbox(true);
+    toast('WhatsApp opened — press send there');
+  }
+
+  async function outboxCopy(id) {
+    const e = outbox().find(x => x.id === id);
+    if (!e || !e.url) return;
+    try { await navigator.clipboard.writeText(e.url); toast('Link copied'); } catch (err) { toast(e.url); }
+  }
+
+  function outboxDismiss(id) {
+    const arr = outbox();
+    const e = arr.find(x => x.id === id);
+    if (!e) return;
+    // Dismiss means "customer took it with them" — the link still exists and can
+    // be re-sent from 📋 Orders, so nothing is lost.
+    if (!confirm('Remove ' + (e.number || 'this') + ' from the send list?')) return;
+    saveOutbox(arr.filter(x => x.id !== id));
+    openOutbox(true);
+  }
+
+  function outboxRow(e) {
+    const when = new Date(e.at).toLocaleString('en-ZA', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+    const head = `<div style="font-weight:600">${esc(e.number || '(no number)')} · ${esc(e.customerName || 'Walk-in')}</div>
+      <div style="font-size:0.72rem;color:var(--muted)">${esc(e.type === 'quote' ? 'Quote' : 'Order')} · ${money(e.totalCents || 0)} · ${esc(when)}${e.reason ? ' · ' + esc(e.reason) : ''}</div>`;
+    if (e.error) {
+      return `<div style="padding:0.6rem 0;border-bottom:1px solid var(--border)">${head}
+        <div style="font-size:0.72rem;color:var(--danger);margin:0.3rem 0">Link not created: ${esc(e.error)}</div>
+        <button class="qbtn" style="width:auto;padding:0 0.7rem;height:34px" onclick="outboxRetry('${esc(e.id)}')">Retry</button>
+        <button class="qbtn" style="width:auto;padding:0 0.7rem;height:34px;background:var(--panel2)" onclick="outboxDismiss('${esc(e.id)}')">Remove</button></div>`;
+    }
+    if (e.sentAt) {
+      return `<div style="padding:0.6rem 0;border-bottom:1px solid var(--border);opacity:0.6">${head}
+        <div style="font-size:0.72rem;color:var(--accent2);margin-top:0.25rem">✓ Sent ${new Date(e.sentAt).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })}
+        · <button class="qbtn" style="width:auto;padding:0 0.5rem;height:26px;font-size:0.7rem" onclick="outboxSend('${esc(e.id)}')">Send again</button></div></div>`;
+    }
+    return `<div style="padding:0.6rem 0;border-bottom:1px solid var(--border)">${head}
+      <input id="ob-phone-${esc(e.id)}" value="${esc(e.phone || '')}" placeholder="082 123 4567" style="width:100%;margin:0.4rem 0 0.4rem">
+      <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
+        <button class="qbtn" style="flex:1;min-width:130px;height:40px;background:var(--accent);color:#04210f;font-weight:700" onclick="outboxSend('${esc(e.id)}')">💬 Send on WhatsApp</button>
+        <button class="qbtn" style="width:auto;padding:0 0.7rem;height:40px" onclick="outboxCopy('${esc(e.id)}')">🔗 Copy</button>
+        <button class="qbtn" style="width:auto;padding:0 0.7rem;height:40px;background:var(--panel2)" onclick="outboxDismiss('${esc(e.id)}')">Not needed</button>
+      </div></div>`;
+  }
+
+  let outboxEl = null;
+  function openOutbox(reuse) {
+    if (isDemo()) { toast('Sharing is off in demo mode'); return; }
+    if (reuse && outboxEl && document.body.contains(outboxEl)) outboxEl.remove();
+    const arr = outbox();
+    const pending = arr.filter(e => !e.sentAt);
+    const done = arr.filter(e => e.sentAt);
+    const body = arr.length
+      ? `${pending.map(outboxRow).join('')}${done.length ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:0.8rem">Sent today</div>${done.map(outboxRow).join('')}` : ''}`
+      : '<div class="empty" style="padding:1.2rem">Nothing waiting. Links appear here on their own when an order, quote or enclosure is rung up.</div>';
+    outboxEl = overlay(`<div style="font-weight:700;margin-bottom:4px">📤 To send${pending.length ? ' · ' + pending.length : ''}</div>
+      <div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px">Prepared automatically. Check the number, then press send in WhatsApp.</div>
+      <div style="max-height:60vh;overflow:auto">${body}</div>`);
+  }
+
+  // ---- Customer messages inbox -------------------------------------------
+  let inboxCache = [];
+
+  async function refreshInbox(quiet) {
+    if (isDemo()) return;
+    try {
+      const token = await firebaseIdToken();
+      const res = await fetch(`${CLIENT_FN}?inbox=1`, { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+      if (!res.ok) return;
+      const data = await res.json();
+      inboxCache = data.docs || [];
+      const badge = document.getElementById('inbox-badge');
+      if (badge) { badge.style.display = data.unread ? '' : 'none'; badge.textContent = data.unread; }
+    } catch (e) { if (!quiet) console.warn('Inbox refresh failed:', e); }
+  }
+
+  async function openInbox() {
+    if (isDemo()) { toast('Messages are off in demo mode'); return; }
+    await refreshInbox();
+    const rows = inboxCache.length ? inboxCache.map(d => `
+      <div class="cust-result" style="cursor:pointer" onclick="openThread('${esc(d.token)}')">
+        <div><div style="font-weight:600">${d.unread ? '🔴 ' : ''}${esc(d.number || '')} · ${esc(d.client || '')}</div>
+        <div style="font-size:0.72rem;color:var(--muted)">${esc(d.type || '')} · ${money(d.totalCents || 0)}${d.lastClientAt ? ' · ' + new Date(d.lastClientAt).toLocaleString('en-ZA') : ''}</div></div>
+      </div>`).join('') : '<div class="empty" style="padding:1.2rem">Nothing shared with customers yet.</div>';
+    overlay(`<div style="font-weight:700;margin-bottom:10px">💬 Customer messages</div>
+      <div style="max-height:60vh;overflow:auto">${rows}</div>`);
+  }
+
+  async function openThread(token) {
+    let doc;
+    try {
+      const res = await fetch(`${CLIENT_FN}?token=${encodeURIComponent(token)}`);
+      doc = await res.json();
+      if (!res.ok) throw new Error(doc.error || 'Could not load');
+    } catch (e) { toast(e.message); return; }
+
+    const msgs = (doc.messages || []).map(m => `<div style="margin-bottom:8px;padding:8px 10px;border-radius:9px;white-space:pre-wrap;overflow-wrap:anywhere;${m.from === 'client' ? 'background:var(--panel2)' : 'background:var(--accent);color:#04210f'}">
+      <div style="font-size:0.68rem;opacity:.7">${esc(m.who || '')} · ${new Date(m.at).toLocaleString('en-ZA')}</div>${esc(m.text)}</div>`).join('')
+      || '<div class="empty" style="padding:0.8rem">No messages yet.</div>';
+
+    const el = overlay(`<div style="font-weight:700">${esc(doc.number || '')} · ${esc((doc.client || {}).name || '')}</div>
+      <div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px">${esc(doc.type || '')} · ${money(doc.totalCents || 0)}</div>
+      <div style="max-height:38vh;overflow:auto;margin-bottom:10px">${msgs}</div>
+      <textarea id="rp-text" rows="3" placeholder="Reply to the customer…" style="width:100%"></textarea>
+      <div style="display:flex;gap:0.5rem;margin-top:8px">
+        <button class="qbtn" id="rp-send" style="flex:1;height:40px">Send reply</button>
+        <button class="qbtn" id="rp-close" style="width:auto;padding:0 0.9rem;height:40px;background:var(--panel2)">Close</button>
+      </div>
+      <div id="rp-msg" style="font-size:0.75rem;color:var(--muted);margin-top:8px"></div>`);
+
+    el.querySelector('#rp-close').onclick = () => { el.remove(); refreshInbox(true); };
+    el.querySelector('#rp-send').onclick = async () => {
+      const text = (el.querySelector('#rp-text').value || '').trim();
+      if (!text) { el.querySelector('#rp-msg').textContent = 'Type a reply first.'; return; }
+      try {
+        await clientApi({ action: 'reply', token, text, who: currentStaff ? currentStaff.name : 'Team' });
+        el.remove(); toast('Reply sent'); refreshInbox(true);
+      } catch (e) { el.querySelector('#rp-msg').textContent = e.message; }
+    };
+  }
+
   async function saveSO(d, doc) {
     return api('docSave', { id: d.id, tags: d.doc.type === 'quote' ? 'pos,quote' : 'pos,sales-order',
       customerId: d.customer ? d.customer.id : undefined, lineItems: (doc.cart || doc.items || []).map(l => ({ variantId: l.variantId, qty: l.qty })), doc });
@@ -2298,6 +3009,7 @@
         staff: currentStaff ? currentStaff.name : null, shopifyOrder: out.orderName || null, synced: true, salesOrder: d.name, depositAppliedCents: dep };
       try { const arr = JSON.parse(localStorage.getItem('reptipos-sales') || '[]'); arr.unshift(sale); localStorage.setItem('reptipos-sales', JSON.stringify(arr.slice(0, 300))); } catch (e) {}
       try { if (window.fb) { const { db, fns } = window.fb; await fns.addDoc(fns.collection(db, 'sales'), sale); } } catch (e) {}
+      syncSaleToXero(sale);
       items.forEach(i => { const p = findProduct(i.variantId); if (p) p.qty = Math.max(0, (Number(p.qty) || 0) - i.qty); });
       cacheCatalogue(); renderGrid();
       toast('Fulfilled ' + d.name + ' · ' + (out.orderName || ''));
@@ -2358,12 +3070,12 @@
       doc.expectedDate ? `<p>Expected: ${esc(doc.expectedDate)}</p>` : '',
       ...(doc.notes || []).map(n => `<p class="sub">${new Date(n.at).toLocaleDateString('en-ZA')}${n.by ? ' · ' + esc(n.by) : ''}: ${esc(n.text)}</p>`)
     ].filter(Boolean).join('');
-    const bankBlock = st.bankAccountNo ? `<div class="bank">
-      <div>${esc(st.bankAccountHolder || st.shopName || 'ReptiCube')}</div>
+    const bankBlock = st.bankAccNo ? `<div class="bank">
+      <div>${esc(st.bankAccName || coName())}</div>
       ${st.bankName ? `<div>${esc(st.bankName)}</div>` : ''}
-      <div>Account Number: ${esc(st.bankAccountNo)}</div>
-      ${st.bankBranchCode ? `<div>Branch code: ${esc(st.bankBranchCode)}</div>` : ''}
-      ${st.bankAccountType ? `<div>Acc type: ${esc(st.bankAccountType)}</div>` : ''}
+      <div>Account Number: ${esc(st.bankAccNo)}</div>
+      ${st.bankBranch ? `<div>Branch code: ${esc(st.bankBranch)}</div>` : ''}
+      ${st.bankAccType ? `<div>Acc type: ${esc(st.bankAccType)}</div>` : ''}
       ${doc.name ? `<div style="margin-top:4px"><b>Reference: ${esc(doc.name)}</b></div>` : ''}
     </div>` : '';
     const title = kind === 'QUOTE' ? 'Quote' : 'Sales order';
@@ -2393,8 +3105,8 @@
         .btns { margin-top:22px; text-align:center }
         .btns button { padding:10px 22px; font-size:15px; border:1px solid #111; border-radius:8px; background:#fff; cursor:pointer }
       </style></head><body>
-      ${(st.logoUrl || DEFAULT_LOGO) ? `<div class="logo"><img src="${esc(st.logoUrl || DEFAULT_LOGO)}" alt=""></div>` : ''}
-      <div class="biz">${esc(st.shopName || 'ReptiCube')}</div>
+      ${(st.coLogoUrl || DEFAULT_LOGO) ? `<div class="logo"><img src="${esc(st.coLogoUrl || DEFAULT_LOGO)}" alt=""></div>` : ''}
+      <div class="biz">${esc(coName())}</div>
       <h1>${esc(title)} ${esc(doc.name || '')}</h1>
       <div class="when">${new Date(doc.createdAt || Date.now()).toLocaleString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}</div>
       ${doc.customer ? `<div class="sub">Customer: ${esc(doc.customer.name)}</div>` : ''}
@@ -2420,7 +3132,7 @@
     const items = doc.items || [];
     const rows = items.map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">${money(i.lineTotalCents != null ? i.lineTotalCents : i.priceCents * i.qty)}</td></tr>`).join('');
     const dep = doc.depositCents || 0; const bal = (doc.totalCents || 0) - dep;
-    let html = `<h2 style="text-align:center;margin:.2rem 0">ReptiCube</h2>
+    let html = `${companyHeaderHtml()}
       <div class="c">${esc(kind)}${doc.name ? ' ' + esc(doc.name) : ''}</div>
       <div class="c">${new Date(doc.createdAt || Date.now()).toLocaleString('en-ZA')}</div>
       ${doc.customer ? `<div class="c">${esc(doc.customer.name)}</div>` : ''}
@@ -2431,25 +3143,21 @@
     if (doc.note) html += `<div class="c">${esc(doc.note)}</div>`;
     if (doc.deliveryAddress) html += `<div class="c" style="font-weight:bold">🚚 Deliver to: ${esc(doc.deliveryAddress)}</div>`;
     if (doc.notes && doc.notes.length) html += doc.notes.map(n => `<div class="c">📝 ${new Date(n.at).toLocaleDateString('en-ZA')}${n.by ? ' ' + esc(n.by) : ''}: ${esc(n.text)}</div>`).join('');
-    // EFT banking block — quotes + sales orders (that's where a balance is owed).
-    const bk = settings();
-    if (bk.bankAccountNo && (kind === 'QUOTE' || kind === 'SALES ORDER')) {
-      html += `<div style="border-top:1px dashed #000; margin-top:8px; padding-top:6px">
-        <div class="c" style="font-weight:bold">Pay by EFT</div>
-        ${bk.bankName ? `<div class="c">${esc(bk.bankName)}</div>` : ''}
-        ${bk.bankAccountHolder ? `<div class="c">${esc(bk.bankAccountHolder)}</div>` : ''}
-        <div class="c">Acc: ${esc(bk.bankAccountNo)}${bk.bankBranchCode ? ' · Branch: ' + esc(bk.bankBranchCode) : ''}</div>
-        ${doc.name ? `<div class="c" style="font-weight:bold">Reference: ${esc(doc.name)}</div>` : ''}
-      </div>`;
-    }
     html += `<div class="c" style="margin-top:6px">${kind === 'QUOTE' ? 'Quote — subject to availability' : 'Thank you!'}</div>`;
+    // Money still owed on both of these, so the customer needs somewhere to pay it.
+    if (kind === 'QUOTE' || bal > 0) html += bankBlockHtml(doc.name || '');
     printReport(html);
   }
 
   // ---- Dashboard ----
   let dashPeriod = 'today';
   let dashCashups = [];   // cash-ups shown on the dashboard, kept for reprint
-  function openDashboard() { document.getElementById('dash-modal').classList.add('show'); renderDashboard(); }
+  async function openDashboard() {
+    if (!managerOnly('The dashboard')) return;
+    document.getElementById('dash-modal').classList.add('show');
+    renderDashboard();
+    if (await ensureCosts()) renderDashboard();   // gross profit needs costs
+  }
   function closeDashboard() { document.getElementById('dash-modal').classList.remove('show'); }
   function setDashPeriod(p) { dashPeriod = p; renderDashboard(); }
   function dashRange(period) {
@@ -2691,11 +3399,11 @@
         <div style="display:flex;gap:0.5rem;margin-top:0.6rem;flex-wrap:wrap">
           <button class="btn btn-ghost" style="padding:0.6rem;flex:1" onclick="exportStockXlsx()">⬇ Export to Excel</button>
           <button class="btn btn-ghost" style="padding:0.6rem;flex:1" onclick="document.getElementById('st-file').click()">⬆ Import counts</button>
-          <button class="btn btn-ghost" style="padding:0.6rem;flex:1" onclick="document.getElementById('st-cost-file').click()">💰 Import cost prices</button>
+          ${isManager() ? `<button class="btn btn-ghost" style="padding:0.6rem;flex:1" onclick="document.getElementById('st-cost-file').click()">💰 Import cost prices</button>` : ''}
         </div>
         <input type="file" id="st-file" accept=".xlsx,.xls,.csv,text/csv" style="display:none" onchange="importStockFile(this)">
         <input type="file" id="st-cost-file" accept=".xlsx,.xls,.csv,text/csv" style="display:none" onchange="importCostsFile(this)">
-        <div style="font-size:0.72rem;color:var(--muted);margin-top:0.3rem">Export to Excel; fill the <b>Count</b> column → <b>Import counts</b> (stock take), or fill the <b>Cost</b> column → <b>Import cost prices</b> (writes Shopify "Cost per item" so profit works).</div>
+        <div style="font-size:0.72rem;color:var(--muted);margin-top:0.3rem">Export to Excel; fill the <b>Count</b> column → <b>Import counts</b> (stock take).${isManager() ? ` Or fill the <b>Cost</b> column → <b>Import cost prices</b> (writes Shopify "Cost per item" so profit works).` : ''}</div>
         ${stHistory()}`;
       return;
     }
@@ -2726,11 +3434,12 @@
   }
   // Export the catalogue to CSV (count offline / records).
   function csvEscape(v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
-  function exportStockCsv() {
+  async function exportStockCsv() {
     if (!catalogue.length) { toast('No catalogue loaded'); return; }
+    await ensureCosts();
     const header = ['SKU', 'Barcode', 'Name', 'Category', 'Vendor', 'OnHand', 'Price', 'Cost', 'Count'];
     const lines = [header.join(',')];
-    catalogue.forEach(p => lines.push([p.sku, p.barcode, p.name, p.category, p.vendor, (Number(p.qty) || 0), ((p.priceCents || 0) / 100).toFixed(2), ((p.costCents || 0) / 100).toFixed(2), ''].map(csvEscape).join(',')));
+    catalogue.forEach(p => lines.push([p.sku, p.barcode, p.name, p.category, p.vendor, (Number(p.qty) || 0), ((p.priceCents || 0) / 100).toFixed(2), isManager() ? ((p.costCents || 0) / 100).toFixed(2) : '', ''].map(csvEscape).join(',')));
     const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = 'reptipos-stock-' + new Date().toISOString().slice(0, 10) + '.csv'; a.click();
@@ -2764,9 +3473,10 @@
   }
   async function exportStockXlsx() {
     if (!catalogue.length) { toast('No catalogue loaded'); return; }
+    await ensureCosts();
     try {
       const XLSX = await loadXlsx();
-      const data = catalogue.map(p => ({ SKU: p.sku || '', Barcode: p.barcode || '', Name: p.name || '', Category: p.category || '', Vendor: p.vendor || '', OnHand: Number(p.qty) || 0, Price: (p.priceCents || 0) / 100, Cost: (p.costCents || 0) / 100, Count: '' }));
+      const data = catalogue.map(p => ({ SKU: p.sku || '', Barcode: p.barcode || '', Name: p.name || '', Category: p.category || '', Vendor: p.vendor || '', OnHand: Number(p.qty) || 0, Price: (p.priceCents || 0) / 100, Cost: isManager() ? (p.costCents || 0) / 100 : '', Count: '' }));
       const ws = XLSX.utils.json_to_sheet(data);
       const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Stock');
       XLSX.writeFile(wb, 'reptipos-stock-' + new Date().toISOString().slice(0, 10) + '.xlsx');
@@ -2836,7 +3546,7 @@
       const nmA = aln(nm);
       const p = catalogue.find(x => (sku && matchNorm(x.sku) === sku) || (bar && matchNorm(x.barcode) === bar) || (nm && matchNorm(x.name) === nm))
         || (nmA ? catalogue.find(x => aln(x.name) === nmA) : null);
-      if (p && p.inventoryItemId) { lineItems.push({ inventoryItemId: p.inventoryItemId, costCents, variantId: p.variantId }); matched++; }
+      if (p && p.variantId) { lineItems.push({ costCents, variantId: p.variantId }); matched++; }
       else unmatched.push(nm || sku || bar || ('row ' + r));
     }
     if (!lineItems.length) { toast('No matching products with a cost found'); return; }
@@ -2849,9 +3559,9 @@
       for (let i = 0; i < lineItems.length; i += chunk) {
         const batch = lineItems.slice(i, i + chunk);
         try {
-          const resp = await callFn({ action: 'setCosts', lineItems: batch.map(b => ({ inventoryItemId: b.inventoryItemId, costCents: b.costCents })) });
-          const failedIds = new Set((resp.failed || []).map(f => String(f.inventoryItemId)));
-          batch.forEach(b => { if (failedIds.has(String(b.inventoryItemId))) failed++; else { const p = findProduct(b.variantId); if (p) p.costCents = b.costCents; done++; } });
+          const resp = await callFn({ action: 'setCosts', lineItems: batch.map(b => ({ variantId: b.variantId, costCents: b.costCents })) });
+          const failedIds = new Set((resp.failed || []).map(f => String(f.variantId)));
+          batch.forEach(b => { if (failedIds.has(String(b.variantId))) failed++; else { const p = findProduct(b.variantId); if (p) p.costCents = b.costCents; done++; } });
         } catch (e) { failed += batch.length; }
       }
       cacheCatalogue();
@@ -2959,7 +3669,7 @@
   }
   function printStocktake(r) {
     const rows = r.items.filter(i => i.counted !== i.expected).map(i => `<tr><td>${esc(i.name)}</td><td style="text-align:right">${i.expected}→${i.counted}</td><td style="text-align:right">${i.counted - i.expected > 0 ? '+' : ''}${i.counted - i.expected}</td></tr>`).join('');
-    const html = `<h2 style="text-align:center;margin:.2rem 0">ReptiCube — Stock take</h2>
+    const html = `<h2 style="text-align:center;margin:.2rem 0">${esc(coName())} — Stock take</h2>
       <div class="c">${new Date(r.finishedAt).toLocaleString('en-ZA')}</div>
       <div class="c">${r.scope ? esc(r.scope) : 'Whole shop'}${r.by ? ' · ' + esc(r.by) : ''}</div>
       <div class="c">${r.countedCount} counted · ${r.varianceCount} with variance</div>
@@ -3010,7 +3720,13 @@
   }
 
   let suppliersCache = [], grvsCache = [], grvLines = [], grvSupplierId = null, grvInFlight = false, grvCurTab = 'new', receivingPoId = null, posCache = [];
-  function openGrv() { receivingPoId = null; grvLines = []; grvSupplierId = null; grvInFlight = false; document.getElementById('grv-modal').classList.add('show'); grvTab('new'); }
+  async function openGrv() {
+    if (!managerOnly('Receiving stock')) return;
+    receivingPoId = null; grvLines = []; grvSupplierId = null; grvInFlight = false;
+    document.getElementById('grv-modal').classList.add('show');
+    grvTab('new');
+    await ensureCosts();                          // margins on each received line
+  }
   function closeGrv() { document.getElementById('grv-modal').classList.remove('show'); }
   function grvTab(t) {
     grvCurTab = t;
@@ -3120,7 +3836,7 @@
     const btn = document.getElementById('grv-confirm'); if (btn) { btn.disabled = true; btn.textContent = 'Receiving…'; }
     const idemKey = uuid();
     try {
-      await callFn({ action: 'receiveStock', idemKey, updateCost, lineItems: lines.map(l => ({ inventoryItemId: l.inventoryItemId, qty: l.qty, costCents: l.costCents })) });
+      await callFn({ action: 'receiveStock', idemKey, updateCost, lineItems: lines.map(l => ({ inventoryItemId: l.inventoryItemId, variantId: l.variantId, qty: l.qty, costCents: l.costCents })) });
       lines.forEach(l => { const p = findProduct(l.variantId); if (p) p.qty = (Number(p.qty) || 0) + l.qty; }); cacheCatalogue(); renderGrid();
       const seq = (parseInt(localStorage.getItem('reptipos-grv-seq') || '0', 10) || 0) + 1; localStorage.setItem('reptipos-grv-seq', String(seq));
       const sup = suppliersCache.find(s => s.id === supId);
@@ -3274,7 +3990,7 @@
   function printGrv(g) {
     const rows = (g.lineItems || []).map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">${money(i.costCents * i.qty)}</td></tr>`).join('');
     const paid = g.amountPaidCents || 0; const bal = (g.totalCents || 0) - paid;
-    const html = `<h2 style="text-align:center;margin:.2rem 0">ReptiCube</h2>
+    const html = `<h2 style="text-align:center;margin:.2rem 0">${esc(coName())}</h2>
       <div class="c">GOODS RECEIVED ${esc(g.grvNumber || '')}</div>
       <div class="c">${esc(g.date || '')}</div>
       <div class="c">Supplier: ${esc(g.supplierName || '')}</div>
@@ -3302,7 +4018,15 @@
     for (const g of grvsCache) { const li = (g.lineItems || []).find(l => l.variantId === variantId); if (li && li.costCents != null) return li.costCents; }
     return 0;
   }
-  async function openReorder() { document.getElementById('reorder-modal').classList.add('show'); await ensureSuppliers(); try { grvsCache = await fbList('grvs', 'createdAt', 'desc'); } catch (e) {} poDraft = null; startBlankPO(); }
+  async function openReorder() {
+    if (!managerOnly('Purchase orders')) return;
+    document.getElementById('reorder-modal').classList.add('show');
+    await ensureCosts();
+    await ensureSuppliers();
+    try { grvsCache = await fbList('grvs', 'createdAt', 'desc'); } catch (e) {}
+    poDraft = null;
+    startBlankPO();
+  }
   function closeReorder() { document.getElementById('reorder-modal').classList.remove('show'); }
   async function renderReorder() {
     const body = document.getElementById('reorder-body');
@@ -3433,9 +4157,9 @@
   function poSetCost(i, v) { poDraft.items[i].costCents = toCents(v); updatePoTotalsUI(); }
   function poRemove(i) { poDraft.items.splice(i, 1); renderPO(); }
   function poText(po, poNumber) {
-    let t = 'ReptiCube — Purchase Order ' + poNumber + '\n' + new Date().toLocaleDateString('en-ZA') + '\nSupplier: ' + po.supplier + '\n\n';
+    let t = coName() + ' — Purchase Order ' + poNumber + '\n' + new Date().toLocaleDateString('en-ZA') + '\nSupplier: ' + po.supplier + '\n\n';
     po.items.forEach(i => { t += i.qty + ' x ' + i.name + (i.sku ? ' (' + i.sku + ')' : '') + '\n'; });
-    t += '\nTotal (excl): ' + money(poTotalCents()) + '\n\nPlease supply the above. Thank you.\nReptiCube';
+    t += '\nTotal (excl): ' + money(poTotalCents()) + '\n\nPlease supply the above. Thank you.\n' + companyBlockText();
     return t;
   }
   async function sendPO(method) {
@@ -3447,11 +4171,11 @@
     const poNumber = 'PO-' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + String(seq).padStart(3, '0');
     const po = { poNumber, supplierId: poDraft.supplierId, supplierName: poDraft.supplier, items: poDraft.items.map(i => ({ variantId: i.variantId, inventoryItemId: i.inventoryItemId || (findProduct(i.variantId) || {}).inventoryItemId || '', name: i.name, sku: i.sku, qty: i.qty, costCents: i.costCents })), totalCents: poTotalCents(), status: method === 'save' ? 'draft' : 'sent', sentVia: method === 'save' ? '' : method, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
     try { if (fbReady()) await fbAdd('purchase_orders', po); } catch (e) {}
-    // Save the entered costs onto the products (Shopify "Cost per item") so they're remembered.
+    // Remember the entered costs in the POS's own cost store (never Shopify).
     try {
-      const costLines = po.items.filter(i => i.costCents > 0 && (i.inventoryItemId || (findProduct(i.variantId) || {}).inventoryItemId));
+      const costLines = po.items.filter(i => i.costCents > 0 && i.variantId);
       if (costLines.length) {
-        await callFn({ action: 'setCosts', lineItems: costLines.map(i => ({ inventoryItemId: i.inventoryItemId || (findProduct(i.variantId) || {}).inventoryItemId, costCents: i.costCents })) });
+        await callFn({ action: 'setCosts', lineItems: costLines.map(i => ({ variantId: i.variantId, costCents: i.costCents })) });
         costLines.forEach(i => { const p = findProduct(i.variantId); if (p) p.costCents = i.costCents; });
         cacheCatalogue();
       }
@@ -3459,7 +4183,7 @@
     const text = poText(poDraft, poNumber);
     if (method === 'email') {
       const to = poDraft.email || '';
-      window.open('mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent('ReptiCube Purchase Order ' + poNumber) + '&body=' + encodeURIComponent(text), '_blank');
+      window.open('mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(coName() + ' Purchase Order ' + poNumber) + '&body=' + encodeURIComponent(text), '_blank');
     } else if (method === 'whatsapp') {
       const ph = (poDraft.phone || '').replace(/[^\d]/g, '');
       window.open('https://wa.me/' + ph + '?text=' + encodeURIComponent(text), '_blank');
@@ -3604,6 +4328,20 @@
       toast('Sale ' + sale.saleNumber + ' saved — queued to sync to Shopify');
     }
 
+    // Push to the books. Deliberately not awaited — the till stays responsive
+    // and a failure queues itself.
+    syncSaleToXero(sale);
+
+    // An enclosure is built in the factory, so the customer gets a page to
+    // follow it on. Paid in full, so no banking details show. If they walked
+    // out with it off the shelf, staff press "Not needed" in the send list.
+    if (hasEnclosure(items)) {
+      queueClientLink({
+        type: 'salesorder', number: sale.saleNumber, customer: loyaltyCust, items,
+        totalCents: total, depositCents: total, status: 'in_production', reason: 'enclosure'
+      });
+    }
+
     // Record against the open register shift (cash-up).
     shiftRecordSale(sale);
     // On-account: post the charge to the customer's account ledger.
@@ -3634,6 +4372,127 @@
     try { const arr = JSON.parse(localStorage.getItem('reptipos-sales') || '[]'); const i = arr.findIndex(s => s.saleNumber === sale.saleNumber); if (i >= 0) { arr[i] = sale; localStorage.setItem('reptipos-sales', JSON.stringify(arr)); } } catch (e) {}
   }
 
+  // ---- Xero: every completed sale becomes a paid invoice (Phase 2) --------
+  // The main production app already does this from its POS tab; this till was
+  // the one sales path that never reached the books. Same Netlify function and
+  // the same idempotency contract — the sale's idemKey is the invoice
+  // Reference, so a retry returns the existing invoice instead of double-billing.
+  const XERO_FN = '/.netlify/functions/xero-invoice';
+  const XERO_BIZ = 'repticube';
+
+  // xero-invoice always settles the invoice against the bank account, so only
+  // tenders where money actually reached the bank at checkout may auto-post.
+  // Deliberately an allow-list: the in-flight till work adds on-account (a
+  // receivable, not a payment), gift cards and store credit (paid for earlier,
+  // so settling again would double-count the cash). Those need their own
+  // treatment before they can sync, and until then they are left for manual
+  // capture rather than posted wrongly.
+  const XERO_AUTO_TENDERS = ['cash', 'card', 'split', 'paid'];
+
+  // Map the till's sale onto the Lightspeed-ish shape xero-invoice expects.
+  // Money changes units here: the till counts integer cents, Xero wants rands.
+  // Unit prices are already post-discount, so they sum to the sale total.
+  function saleToXeroShape(sale) {
+    return {
+      _localId: sale.idemKey,
+      timeStamp: sale.datetime,
+      total: sale.totalCents / 100,
+      SaleLines: {
+        SaleLine: (sale.items || []).map(i => ({
+          _description: i.name,
+          _sku: i.sku,
+          unitQuantity: i.qty,
+          unitPrice: i.priceCents / 100
+        }))
+      },
+      SalePayments: {
+        SalePayment: [{ _cardRef: sale.saleNumber + ' · ' + paymentSummary(sale.payment) }]
+      }
+    };
+  }
+
+  function loadXeroQueue() { try { return JSON.parse(localStorage.getItem('reptipos-xero-queue') || '[]'); } catch (e) { return []; } }
+  function saveXeroQueue(q) { localStorage.setItem('reptipos-xero-queue', JSON.stringify(q)); }
+
+  function markSaleXeroSynced(saleNumber, out) {
+    try {
+      const arr = JSON.parse(localStorage.getItem('reptipos-sales') || '[]');
+      const i = arr.findIndex(s => s.saleNumber === saleNumber);
+      if (i >= 0) {
+        arr[i].xeroInvoiceId = out.invoiceID || null;
+        arr[i].xeroInvoiceNumber = out.invoiceNumber || null;
+        arr[i].xeroSynced = true;
+        localStorage.setItem('reptipos-sales', JSON.stringify(arr));
+      }
+    } catch (e) {}
+  }
+
+  // The kiosk's anonymous sign-in still yields a Firebase ID token, which is
+  // what the function verifies.
+  async function firebaseIdToken() {
+    try {
+      const user = window.fb && window.fb.auth && window.fb.auth.currentUser;
+      return user ? await user.getIdToken() : null;
+    } catch (e) { return null; }
+  }
+
+  async function postSaleToXero(payload) {
+    const token = await firebaseIdToken();
+    const res = await fetch(XERO_FN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+      body: JSON.stringify({ biz: XERO_BIZ, sale: payload })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 140));
+    return res.json();
+  }
+
+  // Never awaited by the till: a slow accounting API must not hold up the next
+  // customer. A failure queues for retry, exactly like the Shopify path.
+  async function syncSaleToXero(sale) {
+    if (isDemo() || !sale || sale.xeroSynced) return;
+    const method = (sale.payment && sale.payment.method) || '';
+    if (!XERO_AUTO_TENDERS.includes(method)) {
+      sale.xeroSkipped = method || 'unknown-tender';
+      console.warn('Not auto-posting to Xero — tender needs manual treatment:', method, sale.saleNumber);
+      return;
+    }
+    const payload = saleToXeroShape(sale);
+    if (!payload.SaleLines.SaleLine.length) return;
+    try {
+      const out = await postSaleToXero(payload);
+      sale.xeroInvoiceId = out.invoiceID || null;
+      sale.xeroInvoiceNumber = out.invoiceNumber || null;
+      sale.xeroSynced = true;
+      markSaleXeroSynced(sale.saleNumber, out);
+    } catch (e) {
+      console.warn('Xero sync failed — queuing for retry:', e);
+      const q = loadXeroQueue();
+      if (!q.some(x => x.payload._localId === payload._localId)) {
+        q.push({ saleNumber: sale.saleNumber, payload });
+        saveXeroQueue(q);
+      }
+      renderQueueBadge();
+    }
+  }
+
+  let flushingXero = false;
+  async function flushXeroQueue() {
+    const q = loadXeroQueue();
+    if (!q.length || !navigator.onLine || flushingXero) return 0;
+    flushingXero = true;
+    const remaining = [];
+    for (const item of q) {
+      try {
+        const out = await postSaleToXero(item.payload);
+        markSaleXeroSynced(item.saleNumber, out);
+      } catch (e) { remaining.push(item); }
+    }
+    saveXeroQueue(remaining); flushingXero = false;
+    renderQueueBadge();
+    return q.length - remaining.length;
+  }
+
   // ---- Offline sync queue: never lose a sale; flush when back online ----
   function loadQueue() { try { return JSON.parse(localStorage.getItem('reptipos-queue') || '[]'); } catch (e) { return []; } }
   function saveQueue(q) { localStorage.setItem('reptipos-queue', JSON.stringify(q)); }
@@ -3650,15 +4509,25 @@
   }
   function renderQueueBadge() {
     const b = document.getElementById('queue-badge'); if (!b) return;
-    const n = loadQueue().length;
+    const n = loadQueue().length + loadXeroQueue().length;
     b.style.display = n ? '' : 'none';
     b.textContent = '⏳ ' + n + ' to sync';
   }
   let flushing = false;
   async function flushQueue(manual) {
     let q = loadQueue();
-    if (!q.length) { if (manual) toast('Nothing to sync'); return; }
+    const xeroPending = loadXeroQueue().length;
+    if (!q.length && !xeroPending) { if (manual) toast('Nothing to sync'); return; }
     if (!navigator.onLine) { if (manual) toast('Still offline'); return; }
+    // Shopify and Xero fail independently, so each retries on its own.
+    const xeroDone = await flushXeroQueue();
+    if (!q.length) {
+      if (manual || xeroDone) {
+        const left = loadXeroQueue().length;
+        toast(left ? `${xeroDone} sent to Xero · ${left} still pending` : `All ${xeroDone} sent to Xero`);
+      }
+      return;
+    }
     if (flushing) return; flushing = true;
     const remaining = [];
     for (const item of q) {
@@ -3672,12 +4541,15 @@
     if (manual || done) toast(remaining.length ? `${done} synced · ${remaining.length} still pending` : `All ${done} synced to Shopify`);
   }
   window.addEventListener('online', () => { setNet(true); flushQueue(false); });
-  setInterval(() => { if (loadQueue().length && navigator.onLine) flushQueue(false); }, 30000);
+  setInterval(() => { if ((loadQueue().length || loadXeroQueue().length) && navigator.onLine) flushQueue(false); }, 30000);
+  // Customer messages: badge on boot, then a light poll.
+  setTimeout(() => refreshInbox(true), 2500);
+  setInterval(() => { if (navigator.onLine) refreshInbox(true); }, 120000);
 
   // ---- Receipt: clean slip, NO VAT. Print (80mm) + WhatsApp ----
   function receiptText(sale) {
     const dt = new Date(sale.datetime).toLocaleString('en-ZA');
-    let t = `ReptiCube\nSale ${sale.saleNumber}\n${dt}\n`;
+    let t = `${companyBlockText()}\nSale ${sale.saleNumber}\n${dt}\n`;
     t += '--------------------------------\n';
     sale.items.forEach(i => { t += `${i.qty} x ${i.name}\n   ${money(i.lineTotalCents)}\n`; });
     t += '--------------------------------\n';
@@ -3692,7 +4564,7 @@
     const dt = new Date(sale.datetime).toLocaleString('en-ZA');
     const rows = sale.items.map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">${money(i.lineTotalCents)}</td></tr>`).join('');
     const waText = encodeURIComponent(receiptText(sale));
-    const emailSubject = encodeURIComponent('ReptiCube invoice ' + sale.saleNumber);
+    const emailSubject = encodeURIComponent(coName() + ' invoice ' + sale.saleNumber);
     const w = window.open('', '_blank', 'width=360,height=640');
     if (!w) { toast('Allow pop-ups to print the slip'); return; }
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(sale.saleNumber)}</title>
@@ -3707,7 +4579,9 @@
         .btns{margin-top:12px; display:flex; gap:8px}
         .btns a,.btns button{flex:1; text-align:center; padding:10px; border:1px solid #000; border-radius:8px; background:#fff; font-size:13px; text-decoration:none; color:#000; cursor:pointer}
       </style></head><body>
-      <h2>ReptiCube</h2>
+      ${logoHtml(60)}
+      <h2>${esc(coName())}</h2>
+      ${companyLines().length ? `<div class="c" style="font-size:11px;line-height:1.35">${companyLines().map(esc).join('<br>')}</div>` : ''}
       <div class="c">Sale ${esc(sale.saleNumber)}</div>
       <div class="c">${esc(dt)}</div>
       ${sale.customer ? `<div class="c">Customer: ${esc(sale.customer.name)}</div>` : ''}
@@ -3752,11 +4626,14 @@
     openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier, loadVendorSuppliers, receivePO, deletePO,
     openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, stAddItem, reconcileStocktake, exportStockCsv, exportStockXlsx, importStockFile, importCostsFile,
     openReorder, closeReorder, setReorderLevel, startPO, startBlankPO, poSetSupplier, poSearch, poAddItem, poBack, poSetQty, poSetCost, poRemove, sendPO,
-    lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings, saveLoyaltySettings,
+    lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings, saveLoyaltySettings, saveEnclosureSettings,
     toggleRedeemPoints,
     flushQueue,
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
-    custOpen, custClose, custClear, custSearch, custAttach, custCreate, custHistory, renderCustBody });
+    custOpen, custClose, custClear, custSearch, custAttach, custCreate, custHistory, renderCustBody,
+    shareDoc, openInbox, openThread,
+    openOutbox, outboxSend, outboxCopy, outboxRetry, outboxDismiss,
+    openCatalogue, closeCatalogue, catSetFilter, catToggleMissing, catEdit, catSave, catNewForm, catArchive });
 
   // ---- Boot ----
   ensureStaffSeed();
@@ -3764,6 +4641,7 @@
   renderCart();
   renderCustomer();
   renderQueueBadge();
+  renderOutboxBadge();
   lockPOS();              // require a staff PIN before selling (default admin PIN 0000)
   refreshCatalogue(false);
   flushQueue(false);      // sync anything queued from a previous offline session

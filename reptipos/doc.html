@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>ReptiCube order</title>
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="ReptiCube">
+<meta property="og:title" content="ReptiCube order">
+<meta property="og:description" content="View it, check its progress, and message us.">
+<meta name="theme-color" content="#0f7b6c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="ReptiCube">
+<meta name="twitter:card" content="summary">
+<style>
+  :root { --ink:#16191d; --muted:#5c6570; --line:#e4e7eb; --accent:#0f7b6c; --bg:#f6f7f9; }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--ink); font-size:16px; line-height:1.5;
+         font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; -webkit-text-size-adjust:100% }
+  .wrap { max-width:640px; margin:0 auto; padding:16px }
+  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:22px; margin-bottom:16px }
+  .co { text-align:center; margin-bottom:18px }
+  .co img { max-height:64px; max-width:60%; object-fit:contain }
+  .co h1 { font-size:20px; margin:8px 0 4px }
+  .co .lines { color:var(--muted); font-size:13px; line-height:1.45 }
+  .kind { text-align:center; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); font-size:13px; margin-bottom:2px }
+  .num { text-align:center; font-size:22px; font-weight:700; margin-bottom:14px }
+  table { width:100%; border-collapse:collapse; margin:14px 0 }
+  td, th { padding:9px 0; border-bottom:1px solid var(--line); text-align:left; vertical-align:top }
+  .right { text-align:right; white-space:nowrap }
+  tfoot td { border-bottom:none; border-top:2px solid var(--ink); font-weight:700; font-size:18px; padding-top:12px }
+  .owing { color:var(--accent) }
+  .status { display:inline-block; padding:5px 13px; border-radius:999px; font-size:14px; font-weight:600; background:#eef6f4; color:var(--accent) }
+  .bank { margin-top:16px; padding:14px; background:var(--bg); border-radius:9px; font-size:14px; line-height:1.6 }
+  .bank strong { display:block; margin-bottom:4px }
+  h2 { font-size:16px; margin:0 0 12px }
+  .msg { padding:11px 14px; border-radius:12px; margin-bottom:10px; max-width:88%; white-space:pre-wrap; overflow-wrap:anywhere }
+  .msg.them { background:var(--bg); border:1px solid var(--line) }
+  .msg.me { background:#16191d; color:#fff; margin-left:auto }
+  .msg .who { display:block; font-size:11px; opacity:.65; margin-bottom:3px }
+  textarea { width:100%; font:inherit; padding:12px; border:1px solid #cfd4da; border-radius:9px; resize:vertical }
+  button { font:inherit; font-weight:600; padding:13px 20px; min-height:46px; border:none; border-radius:9px;
+           background:var(--ink); color:#fff; cursor:pointer; width:100% }
+  button:disabled { opacity:.55; cursor:default }
+  .note { color:var(--muted); font-size:13px; margin-top:10px }
+  .err { background:#fdecea; border:1px solid #f3c7c3; color:#b3261e; padding:11px 14px; border-radius:9px; margin-bottom:14px }
+  .ok { background:#e6f4ec; border:1px solid #b7e0c8; color:#0b7a4b; padding:11px 14px; border-radius:9px; margin-bottom:14px }
+  .center { text-align:center; color:var(--muted); padding:40px 0 }
+  .keep { display:flex; gap:12px; align-items:flex-start; background:#eef6f4; border:1px solid #cfe6e0;
+          border-radius:12px; padding:14px 16px; margin-bottom:16px }
+  .keep .txt { flex:1; font-size:14px; line-height:1.45 }
+  .keep strong { display:block; margin-bottom:2px }
+  .keep .x { background:none; border:none; color:var(--muted); font-size:20px; line-height:1;
+             width:auto; min-height:0; padding:0 2px; cursor:pointer }
+  @media print { body { background:#fff } .card { border:none; padding:0 } .noprint { display:none } }
+</style>
+</head>
+<body>
+<div class="wrap" id="root"><p class="center">Loading…</p></div>
+
+<script>
+  const FN = '/.netlify/functions/client-doc';
+  // Accepts the tidy /o/<token> form and the original ?t=<token> one, so links
+  // already sent to customers keep working.
+  const token = (new URLSearchParams(location.search).get('t')
+    || (location.pathname.match(/\/o\/([a-f0-9]+)/i) || [])[1]
+    || '').toLowerCase();
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  const money = c => 'R' + (Math.round(Number(c) || 0) / 100).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const when = iso => { try { return new Date(iso).toLocaleString('en-ZA', { dateStyle: 'medium', timeStyle: 'short' }); } catch (e) { return ''; } };
+  const KIND = { quote: 'Quote', salesorder: 'Sales order', invoice: 'Invoice' };
+  const STATUS = {
+    sent: 'Sent', accepted: 'Accepted', awaiting_stock: 'Awaiting stock', in_production: 'In production',
+    ready: 'Ready for collection', delivered: 'Delivered', paid: 'Paid', cancelled: 'Cancelled'
+  };
+
+  let doc = null;
+
+  // Android's "Install app" needs a manifest, and it must point at this exact
+  // document — a static one would send every customer to the same page. Built
+  // as a blob at load time. iOS ignores manifests and uses the apple-* meta
+  // tags with whatever URL is open, which is also this document.
+  function installManifest() {
+    try {
+      const manifest = {
+        name: 'ReptiCube order', short_name: 'ReptiCube',
+        start_url: location.href, scope: location.href,
+        display: 'standalone', background_color: '#f6f7f9', theme_color: '#0f7b6c'
+      };
+      const url = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' }));
+      const link = document.createElement('link');
+      link.rel = 'manifest'; link.href = url;
+      document.head.appendChild(link);
+    } catch (e) { /* the page works fine without it */ }
+  }
+
+  // Shown once, then remembered — a customer who has already saved it should
+  // not be nagged every visit.
+  const KEEP_KEY = 'rc-keep-hint-dismissed';
+  function keepHtml() {
+    if (localStorage.getItem(KEEP_KEY)) return '';
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const how = ios
+      ? 'Tap the Share button below, then <strong style="display:inline">Add to Home Screen</strong>.'
+      : 'Tap the ⋮ menu top right, then <strong style="display:inline">Add to Home screen</strong>.';
+    return `<div class="keep">
+      <div style="font-size:20px">📌</div>
+      <div class="txt"><strong>Keep this handy</strong>Save it to your phone so you can check your order any time, without hunting for the message. ${how}</div>
+      <button class="x" id="keep-x" aria-label="Dismiss">×</button></div>`;
+  }
+
+  async function load() {
+    if (!token) return fail('That link is incomplete. Please use the full link we sent you.');
+    try {
+      const res = await fetch(`${FN}?token=${encodeURIComponent(token)}`);
+      const data = await res.json();
+      if (!res.ok) return fail(data.error || 'This link is no longer available.');
+      doc = data;
+      installManifest();
+      render();
+    } catch (e) {
+      fail('Could not load this document. Please check your connection and try again.');
+    }
+  }
+
+  function fail(msg) {
+    document.getElementById('root').innerHTML = `<div class="card"><div class="err">${esc(msg)}</div>
+      <p class="note">If you keep seeing this, reply to the message we sent you and we will send a fresh link.</p></div>`;
+  }
+
+  function companyHtml() {
+    const c = doc.company || {};
+    const logo = /^(https?:|data:image\/)/i.test(c.logoUrl || '') ? `<img src="${esc(c.logoUrl)}" alt="">` : '';
+    const lines = (c.lines || []).map(esc).join('<br>');
+    return `<div class="co">${logo}<h1>${esc(c.name || '')}</h1>${lines ? `<div class="lines">${lines}</div>` : ''}</div>`;
+  }
+
+  function bankHtml() {
+    const c = doc.company || {};
+    const lines = c.bank || [];
+    // Only worth showing while something is still owed.
+    if (!lines.length || (doc.balanceCents || 0) <= 0) return '';
+    return `<div class="bank"><strong>Banking details</strong>${lines.map(esc).join('<br>')}
+      <br>Reference: <strong style="display:inline">${esc(doc.number || '')}</strong></div>`;
+  }
+
+  function messagesHtml() {
+    const msgs = doc.messages || [];
+    if (!msgs.length) return `<p class="note">No messages yet. Ask us anything about this ${esc((KIND[doc.type] || 'document').toLowerCase())} below.</p>`;
+    return msgs.map(m => `<div class="msg ${m.from === 'client' ? 'me' : 'them'}">
+      <span class="who">${esc(m.who || (m.from === 'client' ? 'You' : 'Team'))} · ${esc(when(m.at))}</span>${esc(m.text)}</div>`).join('');
+  }
+
+  function render(flash) {
+    const rows = (doc.items || []).map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td>
+      <td class="right">${money(i.lineTotalCents)}</td></tr>`).join('');
+    const owing = doc.balanceCents || 0;
+
+    document.getElementById('root').innerHTML = `
+      ${keepHtml()}
+      <div class="card">
+        ${companyHtml()}
+        <div class="kind">${esc(KIND[doc.type] || 'Document')}</div>
+        <div class="num">${esc(doc.number || '')}</div>
+        <div style="text-align:center"><span class="status">${esc(STATUS[doc.status] || doc.status || 'Sent')}</span></div>
+        ${doc.statusNote ? `<p class="note" style="text-align:center">${esc(doc.statusNote)}</p>` : ''}
+        ${doc.expectedDate ? `<p class="note" style="text-align:center">Expected: ${esc(doc.expectedDate)}</p>` : ''}
+        <table><tbody>${rows}</tbody>
+          <tfoot>
+            <tr><td>Total</td><td class="right">${money(doc.totalCents)}</td></tr>
+            ${doc.depositCents ? `<tr><td style="font-weight:400;font-size:15px;border-top:none">Deposit paid</td><td class="right" style="font-weight:400;font-size:15px;border-top:none">−${money(doc.depositCents)}</td></tr>` : ''}
+            ${owing > 0 && doc.depositCents ? `<tr><td class="owing" style="border-top:none">Balance owing</td><td class="right owing" style="border-top:none">${money(owing)}</td></tr>` : ''}
+          </tfoot>
+        </table>
+        ${bankHtml()}
+      </div>
+
+      <div class="card noprint">
+        <h2>Questions or need an update?</h2>
+        ${flash ? `<div class="ok">${esc(flash)}</div>` : ''}
+        <div id="thread">${messagesHtml()}</div>
+        <div id="composer" style="margin-top:14px">
+          <textarea id="text" rows="3" placeholder="Ask us anything — for example, when will it be ready?"></textarea>
+          <div id="err"></div>
+          <button id="send" style="margin-top:10px">Send message</button>
+          <p class="note">We will reply here, and you will see the answer on this page.</p>
+        </div>
+      </div>`;
+
+    document.getElementById('send').onclick = send;
+    const keepX = document.getElementById('keep-x');
+    if (keepX) keepX.onclick = () => { try { localStorage.setItem(KEEP_KEY, '1'); } catch (e) {} render(); };
+  }
+
+  async function send() {
+    const box = document.getElementById('text');
+    const btn = document.getElementById('send');
+    const err = document.getElementById('err');
+    const text = (box.value || '').trim();
+    err.innerHTML = '';
+    if (!text) { err.innerHTML = '<div class="err" style="margin:10px 0 0">Please type your message first.</div>'; return; }
+
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      const res = await fetch(FN, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'message', token, text, name: (doc.client || {}).name || '' })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not send your message.');
+      doc.messages = data.messages || doc.messages;
+      render('Thanks — we have your message and will come back to you.');
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'Send message';
+      err.innerHTML = `<div class="err" style="margin:10px 0 0">${esc(e.message)}</div>`;
+    }
+  }
+
+  load();
+</script>
+</body>
+</html>

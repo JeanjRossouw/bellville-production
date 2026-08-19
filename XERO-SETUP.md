@@ -67,6 +67,26 @@ invoice instead of duplicating it. The till auto-syncs on checkout and shows a
 **✓ Xero / ⏳ Xero** badge per sale, with a **Retry Xero sync** button for any
 that failed (e.g. offline at the time).
 
+### Both tills post to Xero
+
+Two sales surfaces exist and both now reach the books:
+
+| Surface | Sale shape | Idempotency key |
+|---------|-----------|-----------------|
+| **🛒 POS** tab in the main app | Lightspeed-shaped already | `sale._localId` |
+| Standalone till at `/reptipos/` | Mapped to that shape on the way out | the sale's `idemKey` (a UUID) |
+
+The standalone till counts money in **integer cents** and converts to rands
+when posting. Its unit prices are already post-discount, so the line items sum
+exactly to the invoice total. A failed post goes to its own retry queue
+(`reptipos-xero-queue`, kept separate from the Shopify one because the two fail
+independently) and is retried when the network returns, or on demand from the
+sync badge.
+
+Both tills need `XERO_BANK_ACCOUNT_REPTICUBE` (or the global
+`XERO_BANK_ACCOUNT`) set, and ReptiCube connected per section 3 — without those
+the function returns a 500 and every sale simply queues.
+
 ## Known limitations (later phases)
 
 - **Voiding a synced sale** doesn't yet reverse it in Xero (a paid invoice needs

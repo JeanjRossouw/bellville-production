@@ -16,7 +16,7 @@
   <!-- Firebase SDK -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
-    import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+    import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
     import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
     
     const firebaseConfig = {
@@ -45,6 +45,7 @@
       createUser: createUserWithEmailAndPassword,
       signOut,
       onAuthStateChanged,
+      signInAnonymously,
       doc, setDoc, getDoc, onSnapshot, collection
     };
     
@@ -285,6 +286,44 @@
   <div style="margin-top:2rem; text-align:center; font-size:11px; color:#555">Live data via Firestore · Updates automatically</div>
 </div>
 
+<!-- CLIENT DELIVERY BOOKING — only shown when URL has ?book=1 (link sent by WhatsApp when an order is done) -->
+<div id="booking-only-view" style="display:none; position:fixed; inset:0; background:#f2f0ec; color:#1c1917; z-index:9000; overflow:auto; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; -webkit-font-smoothing:antialiased">
+  <div id="booking-header" style="background:linear-gradient(135deg,#7c4a21,#a3622e); color:#fff; padding:1.75rem 1.25rem 2.75rem; text-align:center">
+    <div id="booking-biz-name" style="font-size:11px; letter-spacing:0.22em; text-transform:uppercase; opacity:0.85">Delivery booking</div>
+    <div style="font-size:25px; font-weight:800; margin-top:0.45rem; letter-spacing:-0.01em">Book your delivery</div>
+    <div id="booking-order-info" style="display:inline-block; font-size:13px; font-weight:600; margin-top:0.7rem; background:rgba(255,255,255,0.16); border:1px solid rgba(255,255,255,0.25); border-radius:999px; padding:0.3rem 0.9rem"></div>
+  </div>
+  <div style="max-width:560px; margin:-1.6rem auto 0; padding:0 1rem 3rem">
+    <div id="booking-content"><div style="text-align:center; color:#78716c; padding:2.5rem 0">Loading available dates…</div></div>
+    <div style="text-align:center; font-size:11px; color:#a8a29e; margin-top:1.5rem">Trouble booking? Just reply to our WhatsApp message and we'll arrange it for you.</div>
+  </div>
+</div>
+
+<!-- DISPATCH PROMPT — shown when an order is marked DONE: choose delivery / pickup / courier and message the client -->
+<div id="dispatch-prompt" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9500; align-items:center; justify-content:center; padding:1rem">
+  <div style="background:var(--card-bg,#fff); color:var(--text,#111); border-radius:12px; max-width:520px; width:100%; padding:1.25rem; box-shadow:0 20px 60px rgba(0,0,0,0.4)">
+    <div id="dispatch-prompt-content"></div>
+  </div>
+</div>
+
+<!-- BOM LINK MODAL — link an order's free-typed product name to an existing BOM -->
+<div id="bomlink-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9500; align-items:center; justify-content:center; padding:1rem">
+  <div style="background:var(--card-bg,#fff); color:var(--text,#111); border-radius:12px; max-width:480px; width:100%; padding:1.25rem; box-shadow:0 20px 60px rgba(0,0,0,0.4)">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem">
+      <div style="font-size:15px; font-weight:900">🔗 Link to an existing BOM</div>
+      <button class="btn btn-sm" onclick="closeBomLinkModal()">✕</button>
+    </div>
+    <div id="bomlink-product" style="font-size:12px; color:var(--text-muted); margin:0.4rem 0 0.75rem"></div>
+    <label style="font-size:11px; color:var(--text-muted)">This product is built the same as:</label>
+    <select id="bomlink-select" style="width:100%; padding:8px; margin:0.25rem 0 0.9rem"></select>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap">
+      <button class="btn btn-primary" style="flex:1" onclick="bomLinkConfirm()">🔗 Link it</button>
+      <button class="btn" onclick="bomLinkCreateNew()">＋ Create as new BOM instead</button>
+    </div>
+    <div style="font-size:11px; color:var(--text-muted); margin-top:0.6rem">Linked products use the chosen BOM's materials, labour and price everywhere — update the BOM once and every linked name follows.</div>
+  </div>
+</div>
+
 <div id="main-app" style="display:none">
 
 <header>
@@ -319,6 +358,7 @@
     <button class="tab" onclick="showSection('done')">🎁 Done (Ready)</button>
     <button class="tab" onclick="showSection('calendar')">📅 Calendar</button>
     <button class="tab" onclick="showSection('dispatch')">🚚 Dispatch (All)</button>
+    <button class="tab" onclick="showSection('repairs')">🔧 Repairs</button>
     <button class="tab" onclick="showSection('finished')">✅ Finished</button>
     <button class="tab" onclick="showSection('fabric')">Fabric Orders</button>
     <button class="tab" onclick="showSection('bom')">🔧 BOM</button>
@@ -327,6 +367,8 @@
     <button class="tab" onclick="showSection('costing')">💰 Costing</button>
     <button class="tab" onclick="showSection('schedule')">Schedule</button>
     <button class="tab" onclick="showSection('planner')">🗓️ Planner</button>
+    <button class="tab" onclick="showSection('weekplan')">📊 Week Plan</button>
+    <button class="tab" onclick="showSection('stages')">🛋️ Stages</button>
     <button class="tab" onclick="showSection('woodwork')">🪵 Woodwork</button>
     <button class="tab" onclick="showSection('pos')">🛒 POS</button>
   </div>
@@ -396,6 +438,17 @@
       <div class="card-title">📦 LOW STOCK MATERIALS</div>
       <div id="low-stock-list"><div class="empty">All materials in stock</div></div>
     </div>
+    <div class="card" id="dash-new-bookings-card" style="display:none; border:2px solid #16a34a">
+      <div class="card-title">📅 NEW CLIENT BOOKINGS</div>
+      <div id="new-bookings-list"></div>
+    </div>
+    <div class="card" id="dash-week-deliveries-card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>🚚 DELIVERIES THIS WEEK</span>
+        <button class="btn btn-sm" onclick="printWeekDeliveries()">🖨️ Print week</button>
+      </div>
+      <div id="week-deliveries-list"><div class="empty">No deliveries scheduled this week</div></div>
+    </div>
   </div>
   
   <!-- NEW ORDER INTAKE -->
@@ -419,7 +472,8 @@
         </div>
         <div class="f1" id="fabric-row">
           <label>Fabric / Color (optional)</label>
-          <input id="intake-fabric" placeholder="e.g., Full Grain Wild - Tobacco">
+          <input id="intake-fabric" list="intake-fabric-list" placeholder="e.g., Full Grain Wild - Tobacco" oninput="fabricPickHint(this.value, 'intake-fabric-hint')"><datalist id="intake-fabric-list"></datalist>
+          <div id="intake-fabric-hint" style="font-size:11px; color:var(--text-muted); margin-top:2px"></div>
         </div>
       </div>
       <div class="row">
@@ -510,7 +564,7 @@
       <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
         <span>SEARCH ORDERS</span>
         <div style="display:flex; gap:0.5rem; flex-wrap:wrap">
-          <button class="btn" onclick="resetDueDates6wk()" title="Set every active order's due date to 6 weeks after its order date">📅 Reset due dates → 6 weeks</button>
+          <button class="btn" onclick="resetDueDates6wk()" title="Set every active order's due date from its order date: 6 weeks (ReptiCube: 7 days)">📅 Reset due dates → 6 weeks / 7 days</button>
           <button class="btn btn-primary" onclick="printProductionList()">🖨️ Print Production List</button>
         </div>
       </div>
@@ -610,7 +664,15 @@
   <!-- DISPATCH (ALL 3 BUSINESSES COMBINED) -->
   <div id="section-dispatch" class="section">
     <div class="card">
-      <div class="card-title">🚚 DELIVERY SCHEDULE (ALL BUSINESSES)</div>
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>🚚 DELIVERY SCHEDULE (ALL BUSINESSES)</span>
+        <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap">
+          <span id="dispatch-sel-count" style="font-size:11px; color:var(--text-muted)"></span>
+          <button class="btn btn-sm" onclick="dispatchSelectAll()" title="Tick every order in the current filter">☑ Select all</button>
+          <button class="btn btn-sm" onclick="dispatchClearSelection()" title="Untick everything">✕ Clear</button>
+          <button class="btn btn-sm btn-primary" onclick="printDispatchOrders()" title="Print the ticked orders — or the whole current list if none are ticked">🖨️ PRINT</button>
+        </div>
+      </div>
       <div class="row">
         <div class="f1">
           <label>Filter</label>
@@ -631,9 +693,73 @@
       </div>
     </div>
     
+    <div id="dispatch-repairs"></div>
     <div id="dispatch-list"><div class="empty">No orders to dispatch</div></div>
+
+    <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>⚙️ DISPATCH MANAGER SETTINGS</span>
+        <select id="ds-biz" onchange="renderDispatchSettings()" style="font-size:12px; padding:5px">
+          <option value="bellville">Bellville</option>
+          <option value="pinkfoot">PinkFoot</option>
+          <option value="repticube">ReptiCube</option>
+        </select>
+      </div>
+      <p style="font-size:11px; color:var(--text-muted); margin-bottom:0.75rem">
+        Used by the automatic client messages when an order is marked DONE, and by the client booking calendar. Set per business.
+      </p>
+      <div class="row">
+        <div class="f2"><label>Pickup / collection address</label><input id="ds-address" placeholder="e.g. 12 Factory Rd, Bellville" onchange="saveDispatchSettings()"></div>
+        <div class="f2"><label>Google Maps link</label><input id="ds-maps" placeholder="https://maps.app.goo.gl/…" onchange="saveDispatchSettings()"></div>
+      </div>
+      <div class="row">
+        <div class="f2"><label>Opening hours (shown to client)</label><input id="ds-hours" placeholder="e.g. Mon–Fri 08:00–17:00, Sat 08:00–13:00" onchange="saveDispatchSettings()"></div>
+        <div class="f1"><label>Campos email (quotes)</label><input id="ds-campos" placeholder="quotes@campos.co.za" onchange="saveDispatchSettings()"></div>
+        <div class="f1"><label>Business WhatsApp # </label><input id="ds-whatsapp" placeholder="e.g. 0821234567" onchange="saveDispatchSettings()"></div>
+      </div>
+      <div class="row">
+        <div class="f2"><label>Delivery time slots (comma-separated)</label><input id="ds-slots" placeholder="09:00-12:00, 12:00-15:00, 15:00-17:00" onchange="saveDispatchSettings()"></div>
+        <div class="f1"><label>Deliveries per slot (capacity)</label><input id="ds-capacity" type="number" min="1" step="1" placeholder="1" onchange="saveDispatchSettings()"></div>
+        <div class="f1"><label>Days closed for delivery (block a date)</label><input id="ds-block-date" type="date" onchange="addDispatchBlockedDate(this.value)"></div>
+      </div>
+      <div class="row">
+        <div class="f2"><label style="font-size:10px">Delivery days</label>
+          <div id="ds-days" style="display:flex; gap:0.6rem; flex-wrap:wrap; font-size:12px"></div>
+        </div>
+        <div class="f2"><label style="font-size:10px">Blocked dates</label>
+          <div id="ds-blocked" style="display:flex; gap:0.4rem; flex-wrap:wrap; font-size:11px"></div>
+        </div>
+      </div>
+      <div id="ds-status" style="font-size:11px; color:var(--text-muted); margin-top:0.25rem"></div>
+    </div>
   </div>
-  
+
+  <!-- REPAIRS -->
+  <div id="section-repairs" class="section">
+    <div class="card">
+      <div class="card-title">🔧 LOG A REPAIR</div>
+      <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.75rem">
+        Log what came back and why. Dispatch then schedules the pickup and the return delivery on the Dispatch tab, and the workshop marks it done.
+      </p>
+      <div class="row">
+        <div class="f1"><label>Order # (type to search)</label><input id="rep-order" list="rep-order-list" placeholder="Invoice / order number" oninput="repairOrderPicked(this.value)"><datalist id="rep-order-list"></datalist></div>
+        <div class="f1"><label>Customer</label><input id="rep-customer" placeholder="Customer name"></div>
+        <div class="f1"><label>Phone</label><input id="rep-phone" placeholder="Cell number"></div>
+        <div class="f1"><label>Product</label><input id="rep-product" placeholder="e.g. 2 Seater — Amber"></div>
+      </div>
+      <div class="row">
+        <div class="f2"><label>What's wrong (reason)</label><input id="rep-reason" placeholder="e.g. Broken leg / torn seam / cushion collapsed"></div>
+        <div class="f2"><label>Details (optional)</label><input id="rep-details" placeholder="Anything the workshop should know"></div>
+        <div class="f1" style="min-width:140px"><label>&nbsp;</label><button class="btn btn-primary" onclick="logRepair()">LOG REPAIR</button></div>
+      </div>
+      <div id="rep-status" style="font-size:11px; color:var(--text-muted); margin-top:0.25rem"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">🔧 REPAIRS</div>
+      <div id="repair-list"><div class="empty">No repairs logged</div></div>
+    </div>
+  </div>
+
   <!-- FINISHED ORDERS -->
   <div id="section-finished" class="section">
     <div class="card">
@@ -680,7 +806,7 @@
       <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.75rem">Reserve fabric against a sales order number, then email it to admin. It also appears under "Reserved fabric" below and syncs to admin live.</p>
       <div class="row">
         <div class="f1"><label>Open sales order (type # or customer)</label><input id="fr-order" list="fr-order-list" autocomplete="off" placeholder="Type order # or customer…" oninput="onReserveOrderPick()"><datalist id="fr-order-list"></datalist></div>
-        <div class="f1"><label>Fabric</label><input id="fr-fabric" list="fr-fabric-list" placeholder="e.g. Sienna"><datalist id="fr-fabric-list"></datalist></div>
+        <div class="f1"><label>Fabric</label><input id="fr-fabric" list="fr-fabric-list" placeholder="e.g. Sienna" oninput="fabricPickHint(this.value, 'fr-fabric-hint')"><datalist id="fr-fabric-list"></datalist><div id="fr-fabric-hint" style="font-size:11px; color:var(--text-muted); margin-top:2px"></div></div>
         <div class="f1"><label>Colour (optional)</label><input id="fr-colour" placeholder="e.g. Light Grey"></div>
         <div class="f2" style="min-width:90px"><label>Meters</label><input id="fr-meters" type="number" step="0.1" placeholder="0"></div>
       </div>
@@ -701,6 +827,20 @@
         </div>
       </div>
       <div id="fr-list"><div class="empty">No fabric reserved yet</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>🎨 FABRIC PRICE LIST <span id="flib-count" style="font-size:11px; color:var(--text-muted); font-weight:400"></span></span>
+        <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap">
+          <input id="flib-supplier" placeholder="Supplier for this file (e.g. U&G)" style="min-width:170px; margin:0; font-size:12px; padding:5px">
+          <label class="btn btn-sm" style="cursor:pointer; margin:0" title="Import a price list CSV: Fabric, Supplier (optional), Price">⬆️ Import price list<input type="file" id="flib-upload" accept=".csv,text/csv" style="display:none" onchange="importFabricLibraryCSV(this)"></label>
+          <button class="btn btn-sm" onclick="exportFabricLibraryCSV()">⬇️ Export</button>
+        </div>
+      </div>
+      <div id="flib-status" style="font-size:11px; color:var(--text-muted); margin-bottom:0.4rem"></div>
+      <input id="flib-search" placeholder="Search fabrics…" oninput="renderFabricLibrary()" style="width:100%; max-width:340px; margin-bottom:0.5rem">
+      <div id="flib-list"><div class="empty">No fabric price list yet — import your suppliers' lists (any CSV with fabric + price columns).</div></div>
     </div>
 
     <div class="card">
@@ -955,6 +1095,7 @@
             <option value="products">Product costing (labour per piece + selling price)</option>
             <option value="materials">Material unit costs</option>
             <option value="overheads">Overheads</option>
+            <option value="bom">BOM lines (materials per product)</option>
           </select>
           <button class="btn btn-sm" onclick="exportCostingCSV()" title="Download a CSV to edit in Excel / Google Sheets">⬇️ Export CSV</button>
           <label class="btn btn-sm" style="cursor:pointer; margin:0" title="Import an edited CSV back in">⬆️ Import CSV<input type="file" id="costing-csv-upload" accept=".csv,text/csv" style="display:none" onchange="importCostingCSV(this)"></label>
@@ -963,6 +1104,47 @@
       <div id="costing-csv-status" style="font-size:11px; color:var(--text-muted); margin-bottom:0.5rem"></div>
       <div id="costing-products"></div>
     </div>
+  </div>
+
+  <!-- PRODUCTION STAGES -->
+  <div id="section-stages" class="section">
+    <div class="card">
+      <div class="card-title">🛋️ PRODUCTION STAGES</div>
+      <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.5rem">
+        Track each piece through the factory. Tap <strong>▶ Next stage</strong> as it moves, or pick a stage directly.
+        Finishing the last stage marks the order DONE (and opens the dispatch actions).
+      </p>
+      <div id="stages-summary" style="display:flex; gap:0.4rem; flex-wrap:wrap; margin-bottom:0.25rem"></div>
+    </div>
+    <div id="stages-board"><div class="empty">No orders in production</div></div>
+  </div>
+
+  <!-- WEEK PLAN -->
+  <div id="section-weekplan" class="section">
+    <div class="card">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+        <span>📊 WEEK PLAN — <span id="wp-week-label">…</span></span>
+        <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap">
+          <button class="btn btn-sm" onclick="weekPlanShift(-1)">← Prev</button>
+          <button class="btn btn-sm" onclick="weekPlanShift(1)">Next →</button>
+          <button class="btn btn-sm btn-primary" onclick="printWeekPlan()">🖨️ Print plan</button>
+        </div>
+      </div>
+      <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.75rem">
+        Everything for the selected week's production (current business): the orders to build, the raw materials to have ready,
+        the staffing you actually need (short-time suggestion), and what the week costs vs what it brings in.
+        Orders count if they're planned into the week on the Planner, or (unplanned) due that week.
+      </p>
+      <div class="row">
+        <div class="f1"><label>Weekly factory wage bill (R)</label><input id="wp-wages" type="number" step="100" placeholder="e.g. 38000" onchange="weekPlanSetWages(this.value)"></div>
+        <div class="f1"><label>Staff on payroll (auto from Staff tab)</label><input id="wp-staff-count" type="number" step="1" placeholder="auto" onchange="weekPlanSetStaffOverride(this.value)"></div>
+      </div>
+      <div id="wp-warnings"></div>
+    </div>
+    <div class="card"><div class="card-title">🛠️ TO BUILD</div><div id="wp-orders"></div></div>
+    <div class="card"><div class="card-title">📦 RAW MATERIALS NEEDED</div><div id="wp-materials"></div></div>
+    <div class="card"><div class="card-title">👷 STAFFING</div><div id="wp-staffing"></div></div>
+    <div class="card"><div class="card-title">💰 WEEK COSTING</div><div id="wp-costing"></div></div>
   </div>
 
   <!-- SCHEDULE -->
@@ -1130,6 +1312,12 @@
   let lastSyncedPayload = '';
   // Per-business POS doc sync state (shared-data/pos-<biz>).
   let unsubscribePos = {};
+  // Fabric price list lives in its OWN doc (shared-data/fabric-library) so a
+  // big supplier list can never bloat the main production doc (1MB doc limit).
+  let fabricLibrary = [];
+  let unsubscribeFabricLib = null;
+  let lastSyncedFabricPayload = '';
+  let fabricLibSaveTimeout = null;
   let posSaveTimeouts = {};
   let lastSyncedPosPayload = {};
   // ReptiCube till → factory bridge (salesorders collection listener).
@@ -1150,7 +1338,7 @@
   // Tab name array — order MUST match the order of .tab buttons in the DOM.
   // Used by showSection and applyRolePermissions. Declared at top so it's
   // initialized regardless of where in the script execution lands.
-  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'woodwork', 'pos'];
+  const TAB_NAMES = ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'weekplan', 'stages', 'woodwork', 'pos'];
 
   // Categories that never need fabric (wood products). Declared up here so it's
   // initialized BEFORE switchBiz('bellville') → onIntakeCategoryChange() runs at
@@ -1349,6 +1537,9 @@
     if (sec === 'bom') renderBomSection();
     if (sec === 'materials') renderInventory();
     if (sec === 'costing' && typeof renderCosting === 'function') renderCosting();
+    if (sec === 'repairs' && typeof renderRepairs === 'function') renderRepairs();
+    if (sec === 'weekplan' && typeof renderWeekPlan === 'function') renderWeekPlan();
+    if (sec === 'stages' && typeof renderStages === 'function') renderStages();
     if (sec === 'intake') populateProductDatalist();
     if (sec === 'done') renderDoneOrders();
     if (sec === 'planner') renderPlanner();
@@ -1619,7 +1810,7 @@
           fabric: li.fabric || '',
           qty: li.qty,
           orderDate: p.orderDate || today,
-          dueDate: _dueFromLead('', li.product),
+          dueDate: _dueFromLead('', li.product, p.orderDate || today, activeBiz),
           status: 'pending',
           startDate: null,
           paymentStatus: p.paymentStatus || 'deposit',
@@ -2285,14 +2476,15 @@
   window.confirmStockIn = confirmStockIn;
   window.showMaterialReport = showMaterialReport;
   
-  // Lead time (weeks) by product type → due date. Cots/compactums 8, rocking chairs
-  // and couches/chairs 6, everything else 4. Matches on category and product name.
-  function _leadWeeksFor(category, product) {
-    // All products: 6-week lead time.
-    return 6;
+  // Lead time per business → due date, counted from the ORDER date (not from today).
+  // Bellville & PinkFoot: 6 weeks. ReptiCube: out within 7 days.
+  function _leadDaysFor(biz) {
+    return biz === 'repticube' ? 7 : 42;
   }
-  function _dueFromLead(category, product) {
-    return new Date(Date.now() + _leadWeeksFor(category, product) * 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  function _dueFromLead(category, product, orderDateStr, biz) {
+    const base = orderDateStr ? new Date(orderDateStr + 'T00:00:00') : new Date();
+    const d = isNaN(base.getTime()) ? new Date() : base;
+    return new Date(d.getTime() + _leadDaysFor(biz || activeBiz) * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   }
 
   function addOrder() {
@@ -2337,7 +2529,7 @@
       fabric,
       qty,
       orderDate: today,
-      dueDate: _dueFromLead(category, product),
+      dueDate: _dueFromLead(category, product, today, activeBiz),
       status: 'pending',
       startDate: null,
       paymentStatus,
@@ -2346,7 +2538,7 @@
 
     snapshotState();
     currentData().orders.push(order);
-    document.getElementById('order-status').innerHTML = `✓ Order added (Due: ${dueDate})`;
+    document.getElementById('order-status').innerHTML = `✓ Order added (Due: ${order.dueDate})`;
     
     document.getElementById('intake-invoice').value = '';
     document.getElementById('intake-customer').value = '';
@@ -2460,7 +2652,7 @@
             fabricStatus,
             qty,
             orderDate: dateStr || today,
-            dueDate: _dueFromLead(category, product),
+            dueDate: _dueFromLead(category, product, dateStr || today, activeBiz),
             status: status.includes('progress') ? 'in-production' : 'pending',
             startDate: status.includes('progress') ? today : null
           };
@@ -2508,9 +2700,14 @@
       
       saveData();
       render();
+      // Dispatch Manager: the moment an order lands on DONE, ask how it gets to
+      // the client and prep the WhatsApp / Campos actions.
+      if (newStatus === 'done' && oldStatus !== 'done' && typeof openDispatchPrompt === 'function') {
+        openDispatchPrompt(activeBiz, order.id);
+      }
     }
   }
-  
+
   // ============================================
   // SHARED PRODUCTION PRINT ASSETS
   // Used by BOTH printProductionList() (Active Orders → Print Production List)
@@ -2606,27 +2803,27 @@
       `;
   }
 
-  // Recompute every active order's due date to 6 weeks after its order date (all
-  // businesses). One-off cleanup for existing orders when the lead time changed.
+  // Recompute every active order's due date from its ORDER date (all businesses):
+  // Bellville & PinkFoot 6 weeks, ReptiCube 7 days. One-off cleanup when lead times change.
   function resetDueDates6wk() {
     const bizs = ['bellville', 'pinkfoot', 'repticube'];
     const active = o => o && o.status !== 'delivered' && o.status !== 'done';
     let n = 0;
     bizs.forEach(b => ((data[b] && data[b].orders) || []).forEach(o => { if (active(o)) n++; }));
     if (n === 0) { alert('No active orders to update.'); return; }
-    if (!confirm('Set the due date of all ' + n + ' active order(s), across all shops, to 6 weeks after each order\'s order date?\n\nThis overwrites existing due dates (a snapshot is saved — Ctrl+Z reverts).')) return;
+    if (!confirm('Set the due date of all ' + n + ' active order(s) from each order\'s order date?\n\n• Bellville & PinkFoot: 6 weeks\n• ReptiCube: 7 days\n\nThis overwrites existing due dates (a snapshot is saved — Ctrl+Z reverts).')) return;
     snapshotState();
     let changed = 0;
     bizs.forEach(b => ((data[b] && data[b].orders) || []).forEach(o => {
       if (!active(o)) return;
       const base = o.orderDate ? new Date(o.orderDate + 'T00:00:00') : new Date();
       if (isNaN(base.getTime())) return;
-      const due = new Date(base.getTime() + 6 * 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const due = new Date(base.getTime() + _leadDaysFor(b) * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       if (o.dueDate !== due) { o.dueDate = due; changed++; }
     }));
     saveData();
     render();
-    if (typeof toast === 'function') toast('Updated ' + changed + ' order due date(s) to a 6-week lead.', 'success', 3500);
+    if (typeof toast === 'function') toast('Updated ' + changed + ' due date(s) — 6 weeks from order date (ReptiCube 7 days).', 'success', 3500);
   }
   window.resetDueDates6wk = resetDueDates6wk;
 
@@ -3901,6 +4098,11 @@ ${_PRODUCTION_PRINT_STYLES}
   function renderImmediate() {
     // If we're in second-screen dashboard mode, only the standalone dashboard renders.
     // Skip every other per-section renderer — none of their DOM exists in this mode.
+    if (typeof IS_BOOKING_MODE !== 'undefined' && IS_BOOKING_MODE) {
+      // Client booking page — only the booking calendar renders (live slot updates).
+      if (typeof renderBookingPage === 'function') renderBookingPage();
+      return;
+    }
     if (((typeof IS_RESERVED_MODE !== 'undefined' && IS_RESERVED_MODE) || currentRole === 'fabricrep')) {
       // Fabric-rep reserved-sheet portal — only the reserved sheet renders.
       if (typeof renderReservedSheet === 'function') renderReservedSheet();
@@ -3930,6 +4132,20 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof renderWoodwork === 'function') renderWoodwork();
     // Costing self-guards (no-op unless the Costing tab is mounted) — keeps it live on sync.
     if (typeof renderCosting === 'function') renderCosting();
+    // Repairs list stays live on sync too (self-guarded on its element).
+    if (typeof renderRepairs === 'function') renderRepairs();
+    // Dispatch Manager: week-deliveries dashboard card + settings form (self-guarded).
+    if (typeof _renderWeekDeliveriesCard === 'function') _renderWeekDeliveriesCard();
+    if (typeof renderDispatchSettings === 'function') renderDispatchSettings();
+    // New client-booking alerts — card + live toast when a booking lands on sync.
+    if (typeof _renderNewBookingsCard === 'function') _renderNewBookingsCard();
+    // Week Plan stays live on sync (self-guarded on its element).
+    if (typeof renderWeekPlan === 'function') renderWeekPlan();
+    // Fabric price list card + dropdowns (self-guarded, no-op when empty).
+    if (typeof renderFabricLibrary === 'function') renderFabricLibrary();
+    if (typeof _populateFabricDatalists === 'function') _populateFabricDatalists();
+    // Production stages board stays live on sync (self-guarded).
+    if (typeof renderStages === 'function') renderStages();
   }
   
   function renderDoneOrders() {
@@ -4011,6 +4227,1313 @@ ${_PRODUCTION_PRINT_STYLES}
   
   window.renderDoneOrders = renderDoneOrders;
   
+  // ===== Fabric price list (own Firestore doc: shared-data/fabric-library) =====
+  // Records: { id, name, supplier, price } — price is R per metre. Feeds the
+  // fabric dropdowns on New Order + Reserve Fabric with "Name — Supplier".
+  function startSyncFabricLib() {
+    try {
+      const ref = window.firebaseFns.doc(window.firebaseDb, 'shared-data', 'fabric-library');
+      if (unsubscribeFabricLib) { try { unsubscribeFabricLib(); } catch (e) {} }
+      unsubscribeFabricLib = window.firebaseFns.onSnapshot(ref, (snapshot) => {
+        if (!snapshot.exists()) return;
+        const payload = snapshot.data().data || '';
+        if (!payload || payload === lastSyncedFabricPayload) return; // our own echo
+        try {
+          const parsed = JSON.parse(payload);
+          fabricLibrary = Array.isArray(parsed.fabrics) ? parsed.fabrics : [];
+        } catch (e) { console.error('Corrupt fabric library payload, ignoring:', e); return; }
+        lastSyncedFabricPayload = payload;
+        renderFabricLibrary();
+        _populateFabricDatalists();
+      }, (err) => console.error('Fabric library sync error:', err));
+    } catch (e) { console.warn('Fabric library sync not started:', e); }
+  }
+  function cloudSaveFabricLib() {
+    if (!currentUser || !firebaseReady) return;
+    clearTimeout(fabricLibSaveTimeout);
+    fabricLibSaveTimeout = setTimeout(async () => {
+      const serialized = JSON.stringify({ fabrics: fabricLibrary });
+      try {
+        const ref = window.firebaseFns.doc(window.firebaseDb, 'shared-data', 'fabric-library');
+        await window.firebaseFns.setDoc(ref, { data: serialized, updatedAt: new Date().toISOString(), updatedBy: currentUser.email });
+        lastSyncedFabricPayload = serialized;
+      } catch (err) { console.error('Fabric library save failed:', err); }
+    }, 500);
+  }
+  function _fabricByLabel(label) {
+    const s = String(label || '').trim().toLowerCase();
+    if (!s) return null;
+    return fabricLibrary.find(f => f && ((f.name + ' — ' + (f.supplier || '')).toLowerCase() === s || String(f.name || '').toLowerCase() === s)) || null;
+  }
+  function fabricPickHint(value, hintId) {
+    const el = document.getElementById(hintId);
+    if (!el) return;
+    const f = _fabricByLabel(value);
+    el.textContent = f ? ('💰 R' + (parseFloat(f.price) || 0).toFixed(2) + '/m' + (f.supplier ? ' · ' + f.supplier : '')) : '';
+  }
+  window.fabricPickHint = fabricPickHint;
+  function _populateFabricDatalists() {
+    if (!fabricLibrary.length) return; // keep the old order-based suggestions
+    const opts = fabricLibrary.slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))
+      .map(f => `<option value="${_escape(f.name + (f.supplier ? ' — ' + f.supplier : ''))}"></option>`).join('');
+    ['intake-fabric-list', 'fr-fabric-list'].forEach(id => { const dl = document.getElementById(id); if (dl) dl.innerHTML = opts; });
+  }
+  function renderFabricLibrary() {
+    const list = document.getElementById('flib-list');
+    if (!list) return;
+    const cnt = document.getElementById('flib-count');
+    if (cnt) cnt.textContent = fabricLibrary.length ? '(' + fabricLibrary.length + ' fabrics)' : '';
+    if (!fabricLibrary.length) { list.innerHTML = '<div class="empty">No fabric price list yet — import your suppliers\' lists (any CSV with fabric + price columns).</div>'; return; }
+    const q = (document.getElementById('flib-search') || {}).value || '';
+    const ql = q.trim().toLowerCase();
+    const matches = ql
+      ? fabricLibrary.filter(f => String(f.name || '').toLowerCase().includes(ql) || String(f.supplier || '').toLowerCase().includes(ql))
+      : fabricLibrary;
+    const shown = matches.slice(0, 60);
+    list.innerHTML = `
+      <div style="overflow-x:auto"><table style="width:100%; border-collapse:collapse; font-size:12px">
+        <thead><tr style="text-align:left; border-bottom:2px solid var(--border,#ddd)"><th style="padding:4px 6px">Fabric</th><th style="padding:4px 6px">Supplier</th><th style="padding:4px 6px; text-align:right">R / m</th><th></th></tr></thead>
+        <tbody>${shown.map(f => `<tr style="border-bottom:1px solid var(--border,#eee)">
+          <td style="padding:3px 6px; font-weight:600">${_escape(f.name || '')}</td>
+          <td style="padding:3px 6px">${_escape(f.supplier || '')}</td>
+          <td style="padding:3px 6px; text-align:right">${(parseFloat(f.price) || 0).toFixed(2)}</td>
+          <td style="padding:3px 6px; text-align:center"><button class="btn btn-sm btn-danger" onclick="deleteFabricLibItem('${_jsq(f.id)}')">✕</button></td></tr>`).join('')}</tbody>
+      </table></div>
+      ${matches.length > shown.length ? `<div style="font-size:11px; color:var(--text-muted); margin-top:4px">Showing ${shown.length} of ${matches.length} — refine the search.</div>` : ''}`;
+  }
+  window.renderFabricLibrary = renderFabricLibrary;
+  function deleteFabricLibItem(id) {
+    fabricLibrary = fabricLibrary.filter(f => f && f.id !== id);
+    cloudSaveFabricLib();
+    renderFabricLibrary();
+    _populateFabricDatalists();
+  }
+  window.deleteFabricLibItem = deleteFabricLibItem;
+  function importFabricLibraryCSV(input) {
+    const file = input && input.files && input.files[0];
+    if (!file) return;
+    const st = document.getElementById('flib-status');
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const rows = _parseCsv(e.target.result);
+        if (rows.length < 2) { if (st) st.textContent = '✗ Empty or header-only CSV.'; input.value = ''; return; }
+        const header = rows[0].map(h => String(h).trim().toLowerCase());
+        const col = (names) => header.findIndex(h => names.some(n => h.indexOf(n) >= 0));
+        const nameIdx = col(['fabric', 'name', 'description', 'design']);
+        const supIdx = col(['supplier', 'vendor', 'brand']);
+        const priceIdx = col(['price', 'cost', 'r/m', 'rate']);
+        if (nameIdx < 0 || priceIdx < 0) { if (st) st.textContent = '✗ Need at least a fabric/name column and a price column.'; input.value = ''; return; }
+        const fileSupplier = ((document.getElementById('flib-supplier') || {}).value || '').trim();
+        const num = (v) => { const n = parseFloat(String(v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? null : n; };
+        let added = 0, updated = 0, skipped = 0;
+        for (let i = 1; i < rows.length; i++) {
+          const name = String(rows[i][nameIdx] || '').trim();
+          const price = num(rows[i][priceIdx]);
+          if (!name || price == null) { skipped++; continue; }
+          const supplier = (supIdx >= 0 ? String(rows[i][supIdx] || '').trim() : '') || fileSupplier;
+          const existing = fabricLibrary.find(f => f && String(f.name || '').toLowerCase() === name.toLowerCase() && String(f.supplier || '').toLowerCase() === supplier.toLowerCase());
+          if (existing) { existing.price = price; updated++; }
+          else { fabricLibrary.push({ id: 'FB-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6), name: name, supplier: supplier, price: price }); added++; }
+        }
+        cloudSaveFabricLib();
+        renderFabricLibrary();
+        _populateFabricDatalists();
+        if (st) st.textContent = '✓ Imported: added ' + added + ', updated ' + updated + ', skipped ' + skipped + '. Total ' + fabricLibrary.length + ' fabrics.';
+      } catch (err) {
+        if (st) st.textContent = '✗ Import failed: ' + (err && err.message ? err.message : err);
+      }
+      input.value = '';
+    };
+    reader.readAsText(file);
+  }
+  window.importFabricLibraryCSV = importFabricLibraryCSV;
+  function exportFabricLibraryCSV() {
+    if (!fabricLibrary.length) { alert('The fabric price list is empty.'); return; }
+    const rows = [['Fabric', 'Supplier', 'Price']];
+    fabricLibrary.slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))).forEach(f => rows.push([f.name || '', f.supplier || '', (f.price != null ? f.price : '')]));
+    _downloadCsvRows('fabric-price-list-' + new Date().toISOString().slice(0, 10) + '.csv', rows);
+  }
+  window.exportFabricLibraryCSV = exportFabricLibraryCSV;
+
+  // ===== Production stages — track each piece through the factory =====
+  // o.prodStage holds the current stage name; o.stageLog records every move
+  // ({ stage, at, by }). Advancing off the last stage marks the order DONE
+  // (which fires the dispatch prompt); starting the first stage on a pending
+  // order moves it to in-production (which deducts materials as usual).
+  const PROD_STAGES = ['Frame', 'Webbing & Springs', 'Foam', 'Cut Fabric', 'Sewing', 'Upholstery', 'Finishing & QC'];
+  function setProdStage(orderId, stage) {
+    const o = currentData().orders.find(x => x && x.id === orderId);
+    if (!o) return;
+    snapshotState();
+    o.prodStage = stage;
+    if (!Array.isArray(o.stageLog)) o.stageLog = [];
+    o.stageLog.push({ stage: stage, at: new Date().toISOString(), by: (typeof currentUser !== 'undefined' && currentUser && currentUser.email) ? currentUser.email.split('@')[0] : 'staff' });
+    saveData();
+    renderStages();
+    if (typeof render === 'function') render();
+  }
+  window.setProdStage = setProdStage;
+  function advanceProdStage(orderId) {
+    const o = currentData().orders.find(x => x && x.id === orderId);
+    if (!o) return;
+    const idx = PROD_STAGES.indexOf(o.prodStage);
+    if (idx === -1) {
+      // Not started → first stage; a pending order goes into production (deducts materials).
+      if (o.status === 'pending') updateOrderStatus(orderId, 'in-production');
+      setProdStage(orderId, PROD_STAGES[0]);
+    } else if (idx >= PROD_STAGES.length - 1) {
+      // Last stage finished → the order is DONE (fires the dispatch prompt).
+      updateOrderStatus(orderId, 'done');
+    } else {
+      setProdStage(orderId, PROD_STAGES[idx + 1]);
+    }
+  }
+  window.advanceProdStage = advanceProdStage;
+  function renderStages() {
+    const board = document.getElementById('stages-board');
+    if (!board) return;
+    const orders = (currentData().orders || []).filter(o => o && (o.status === 'pending' || o.status === 'in-production'));
+    const summary = document.getElementById('stages-summary');
+    const buckets = { '': [] };
+    PROD_STAGES.forEach(st => { buckets[st] = []; });
+    orders.forEach(o => {
+      const st = PROD_STAGES.includes(o.prodStage) ? o.prodStage : '';
+      buckets[st].push(o);
+    });
+    if (summary) {
+      summary.innerHTML = [['', 'Not started'], ...PROD_STAGES.map(st => [st, st])].map(([key, label]) =>
+        `<span style="border:1px solid var(--border,#ddd); border-radius:12px; padding:2px 10px; font-size:11px; ${buckets[key].length ? 'font-weight:700' : 'color:var(--text-muted,#888)'}">${_escape(label)}: ${buckets[key].length}</span>`).join('');
+    }
+    if (!orders.length) { board.innerHTML = '<div class="empty">No active orders — add orders or check the Active Orders tab.</div>'; return; }
+    const stageSel = (o) => `
+      <select onchange="setProdStage('${o.id}', this.value)" style="width:150px; padding:4px 6px; font-size:11px">
+        <option value="" ${!PROD_STAGES.includes(o.prodStage) ? 'selected' : ''}>— Not started —</option>
+        ${PROD_STAGES.map(st => `<option value="${_escape(st)}" ${o.prodStage === st ? 'selected' : ''}>${_escape(st)}</option>`).join('')}
+      </select>`;
+    const cardFor = (o, idx) => {
+      const last = idx === PROD_STAGES.length - 1;
+      const lastLog = Array.isArray(o.stageLog) && o.stageLog.length ? o.stageLog[o.stageLog.length - 1] : null;
+      return `
+      <div style="border:1px solid var(--border,#ddd); border-radius:8px; padding:8px 10px; margin-bottom:6px; background:#fff">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:0.75rem; flex-wrap:wrap">
+          <div>
+            <div style="font-weight:700">#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}${o.fabric ? ' <span style="color:var(--text-muted,#888); font-weight:400">· ' + _escape(o.fabric) + '</span>' : ''}</div>
+            <div style="font-size:11px; color:var(--text-muted,#888)">${_escape(o.customer || '')} · qty ${_escape(o.qty || 1)}${o.dueDate ? ' · due ' + _escape(o.dueDate) : ''}${lastLog ? ' · ' + _escape(String(lastLog.at || '').slice(0, 10)) + (lastLog.by ? ' by ' + _escape(lastLog.by) : '') : ''}</div>
+          </div>
+          <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap">
+            ${stageSel(o)}
+            <button class="btn btn-sm ${last ? '' : 'btn-primary'}" style="${last ? 'background:var(--success,#16a34a); color:#fff; border-color:var(--success,#16a34a)' : ''}" onclick="advanceProdStage('${o.id}')">${idx === -1 ? '▶ Start' : last ? '✓ Finished → DONE' : '▶ Next stage'}</button>
+          </div>
+        </div>
+      </div>`;
+    };
+    const sections = [];
+    const notStarted = buckets[''];
+    if (notStarted.length) {
+      sections.push(`<div class="card"><div class="card-title" style="font-size:12px">⚪ NOT STARTED (${notStarted.length})</div>${notStarted.map(o => cardFor(o, -1)).join('')}</div>`);
+    }
+    PROD_STAGES.forEach((st, i) => {
+      if (!buckets[st].length) return;
+      sections.push(`<div class="card"><div class="card-title" style="font-size:12px">🛠️ ${_escape(st.toUpperCase())} (${buckets[st].length})</div>${buckets[st].map(o => cardFor(o, i)).join('')}</div>`);
+    });
+    board.innerHTML = sections.join('') || '<div class="empty">No active orders</div>';
+  }
+  window.renderStages = renderStages;
+
+  // ===== Week Plan — materials, staffing (short-time) and cost for one week =====
+  // Reads the Planner (planWeek) + unplanned orders due that week, the BOMs +
+  // cutting lists for material needs vs stock, labour-per-piece for the wage
+  // load, and the Costing overheads for the week's cost vs revenue.
+  let _weekPlanOffset = 1; // 0 = this week, 1 = next week (default)
+  function weekPlanShift(dir) { _weekPlanOffset += dir; renderWeekPlan(); }
+  window.weekPlanShift = weekPlanShift;
+  function weekPlanSetWages(v) {
+    snapshotState();
+    _costing().weeklyWages = parseFloat(v) || 0;
+    saveData();
+    renderWeekPlan();
+  }
+  window.weekPlanSetWages = weekPlanSetWages;
+  function weekPlanSetStaffOverride(v) {
+    snapshotState();
+    _costing().staffOverride = parseInt(v) || 0;
+    saveData();
+    renderWeekPlan();
+  }
+  window.weekPlanSetStaffOverride = weekPlanSetStaffOverride;
+  function _weekPlanWeekIso() {
+    const mon = getMondayOf(new Date());
+    return _addDaysIso(mon, _weekPlanOffset * 7);
+  }
+  // Order product names are free-typed on invoices ("2 SEATER ANNE"), while BOM
+  // keys are structured ("2 Seater — Anne") — match them loosely: exact →
+  // case-insensitive → punctuation-normalized → all BOM words present in the
+  // order name (longest such BOM wins). Returns { key, prod } or null.
+  function _wpNorm(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  }
+  function _wpFindBom(biz, productName) {
+    if (!biz.productBoms || !productName) return null;
+    if (biz.productBoms[productName]) return { key: productName, prod: biz.productBoms[productName] };
+    const keys = Object.keys(biz.productBoms);
+    let k = keys.find(x => x.toLowerCase() === String(productName).toLowerCase());
+    if (k) return { key: k, prod: biz.productBoms[k] };
+    // Staff-made links: "this order name is built like that BOM" (Week Plan 🔗).
+    const alias = (biz.bomAliases || {})[_wpNorm(productName)];
+    if (alias && biz.productBoms[alias]) return { key: alias, prod: biz.productBoms[alias] };
+    const target = _wpNorm(productName);
+    k = keys.find(x => _wpNorm(x) === target);
+    if (k) return { key: k, prod: biz.productBoms[k] };
+    // Word-subset fallback: every word of the BOM name appears in the order name.
+    const targetWords = new Set(target.split(' ').filter(Boolean));
+    let best = null, bestCount = 0;
+    keys.forEach(x => {
+      const w = _wpNorm(x).split(' ').filter(Boolean);
+      if (w.length >= 2 && w.every(t => targetWords.has(t)) && w.length > bestCount) { best = x; bestCount = w.length; }
+    });
+    return best ? { key: best, prod: biz.productBoms[best] } : null;
+  }
+  function _weekPlanData() {
+    const biz = currentData();
+    const mon = _weekPlanWeekIso();
+    const sun = _addDaysIso(mon, 6);
+    // Orders in the week: planner-scheduled to this Monday, or unplanned and due this week.
+    const orders = (biz.orders || []).filter(o => {
+      if (!o || o.status === 'delivered' || o.status === 'done') return false;
+      if (o.planWeek) return o.planWeek === mon;
+      return o.dueDate && o.dueDate >= mon && o.dueDate <= sun;
+    });
+    const matById = {};
+    (biz.materialsLibrary || []).forEach(m => { if (m && m.id) matById[m.id] = m; });
+    const need = {}; // matId -> qty
+    const missingBom = new Set(), missingLabour = new Set(), missingPrice = new Set();
+    let labourNeeded = 0, materialsCost = 0, revenue = 0;
+    const fabricIssues = [];
+    orders.forEach(o => {
+      const qty = parseInt(o.qty) || 1;
+      const found = _wpFindBom(biz, o.product);
+      const prod = found && found.prod;
+      if (!prod || ((!prod.materials || !Object.keys(prod.materials).length) && (!prod.cutList || !prod.cutList.length))) missingBom.add(o.product || ('#' + (o.invoice || o.id)));
+      if (prod) {
+        Object.entries(prod.materials || {}).forEach(([id, q]) => { need[id] = (need[id] || 0) + qty * (parseFloat(q) || 0); });
+        if (typeof _cutListConsumption === 'function') {
+          const cc = _cutListConsumption(prod, biz);
+          Object.entries(cc || {}).forEach(([id, q]) => { need[id] = (need[id] || 0) + qty * (parseFloat(q) || 0); });
+        }
+        const lc = parseFloat(prod.labourCost);
+        if (!isNaN(lc) && lc > 0) labourNeeded += qty * lc; else missingLabour.add(o.product || ('#' + (o.invoice || o.id)));
+        const sp = parseFloat(prod.sellingPrice);
+        if (!isNaN(sp) && sp > 0) revenue += qty * sp; else missingPrice.add(o.product || ('#' + (o.invoice || o.id)));
+        materialsCost += qty * _productMaterialsCost(found.key, biz);
+      }
+      if (o.fabric && (o.fabricOOS || (o.fabricStatus || 'waiting') === 'waiting')) {
+        fabricIssues.push({ orderNo: o.invoice || o.id, fabric: o.fabric, oos: !!o.fabricOOS, eta: o.fabricStockETA || '' });
+      }
+    });
+    const matRows = Object.entries(need).map(([id, q]) => {
+      const m = matById[id];
+      return { name: (m && m.name) || id, unit: (m && m.unit) || '', need: q, needCost: q * ((m && parseFloat(m.cost)) || 0) };
+    }).filter(r => r.need > 0.0001).sort((a, b) => a.name.localeCompare(b.name));
+    const c = _costing();
+    const weeklyWages = parseFloat(c.weeklyWages) || 0;
+    const staffAuto = (biz.staff || []).length;
+    const staffCount = (parseInt(c.staffOverride) || 0) > 0 ? parseInt(c.staffOverride) : staffAuto;
+    const utilization = weeklyWages > 0 ? labourNeeded / weeklyWages : 0;
+    const staffNeeded = staffCount > 0 ? Math.min(staffCount, Math.ceil(utilization * staffCount)) : 0;
+    const shortTime = Math.max(0, staffCount - staffNeeded);
+    const overheadWeek = _costingTotalOverhead(c) * 12 / 52;
+    const weekCost = materialsCost + Math.min(labourNeeded, weeklyWages || labourNeeded) + overheadWeek;
+    return {
+      mon, sun, orders, matRows, fabricIssues,
+      missingBom: [...missingBom], missingLabour: [...missingLabour], missingPrice: [...missingPrice],
+      labourNeeded, weeklyWages, staffAuto, staffCount, utilization, staffNeeded, shortTime,
+      materialsCost, overheadWeek, revenue, weekCost, profit: revenue - weekCost
+    };
+  }
+  function renderWeekPlan() {
+    const host = document.getElementById('wp-orders');
+    if (!host) return;
+    const d = _weekPlanData();
+    const R = v => 'R' + (Math.round(v * 100) / 100).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const lbl = document.getElementById('wp-week-label');
+    if (lbl) {
+      const md = new Date(d.mon + 'T00:00:00'), sd = new Date(d.sun + 'T00:00:00');
+      lbl.textContent = md.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) + ' – ' + sd.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) + (_weekPlanOffset === 1 ? ' (next week)' : _weekPlanOffset === 0 ? ' (this week)' : '');
+    }
+    const wEl = document.getElementById('wp-wages');
+    if (wEl && document.activeElement !== wEl) wEl.value = d.weeklyWages || '';
+    const scEl = document.getElementById('wp-staff-count');
+    if (scEl && document.activeElement !== scEl) scEl.value = d.staffCount || '';
+    // Data-quality warnings — the plan is only as good as the data.
+    const warn = document.getElementById('wp-warnings');
+    if (warn) {
+      const w = [];
+      // Each product name is a click-through: BOM issues open that product in the
+      // BOM editor; labour/price issues jump to (and highlight) its Costing row.
+      const nameList = (arr, fixFn) => {
+        const shown = arr.slice(0, 8).map(n =>
+          `<a style="font-weight:700; text-decoration:underline; cursor:pointer; color:inherit" onclick="${fixFn}('${_escape(_jsq(n))}')" title="Open ${_escape(n)} to fill this in">${_escape(n)}</a>`
+        ).join(', ');
+        return shown + (arr.length > 8 ? ' +' + (arr.length - 8) + ' more' : '');
+      };
+      if (d.missingBom.length) w.push('No BOM (materials NOT counted): ' + nameList(d.missingBom, 'weekPlanFixBom'));
+      if (d.missingLabour.length) w.push('No labour cost per piece: ' + nameList(d.missingLabour, 'weekPlanFixCosting'));
+      if (d.missingPrice.length) w.push('No selling price (revenue understated): ' + nameList(d.missingPrice, 'weekPlanFixCosting'));
+      if (!d.weeklyWages) w.push('Set the weekly factory wage bill above to get staffing + labour numbers');
+      warn.innerHTML = w.length ? `<div style="background:#FEF3C7; border-left:3px solid #F59E0B; padding:0.5rem 0.75rem; font-size:12px; border-radius:4px">${w.map(x => '⚠️ ' + x).join('<br>')}</div>` : '';
+    }
+    host.innerHTML = d.orders.length === 0
+      ? '<div class="empty">Nothing planned or due this week — schedule orders on the Planner.</div>'
+      : `<div style="overflow-x:auto"><table style="width:100%; border-collapse:collapse; font-size:12px">
+          <thead><tr style="text-align:left; border-bottom:2px solid var(--border,#ddd)"><th style="padding:5px 6px">Order</th><th style="padding:5px 6px">Product</th><th style="padding:5px 6px; text-align:right">Qty</th><th style="padding:5px 6px">Fabric</th><th style="padding:5px 6px">Due</th></tr></thead>
+          <tbody>${d.orders.map(o => `<tr style="border-bottom:1px solid var(--border,#eee)">
+            <td style="padding:4px 6px; font-weight:700">#${_escape(o.invoice || o.id)}</td>
+            <td style="padding:4px 6px">${_escape(o.product || '')}</td>
+            <td style="padding:4px 6px; text-align:right">${_escape(o.qty || 1)}</td>
+            <td style="padding:4px 6px">${o.fabric ? _escape(o.fabric) + (o.fabricOOS ? ' <span style="color:#991b1b; font-weight:700">OOS' + (o.fabricStockETA ? ' → ' + _escape(o.fabricStockETA) : '') + '</span>' : (o.fabricStatus === 'received' ? ' ✅' : o.fabricStatus === 'ordered' ? ' 📦' : ' ⏳')) : '—'}</td>
+            <td style="padding:4px 6px">${_escape(o.dueDate || '')}</td></tr>`).join('')}</tbody>
+        </table></div>`;
+    const matEl = document.getElementById('wp-materials');
+    if (matEl) {
+      const totNeed = d.matRows.reduce((s, r) => s + r.needCost, 0);
+      matEl.innerHTML = d.matRows.length === 0
+        ? '<div class="empty">No material needs computed — check the orders have BOMs.</div>'
+        : `<div style="overflow-x:auto"><table style="width:100%; border-collapse:collapse; font-size:12px">
+            <thead><tr style="text-align:left; border-bottom:2px solid var(--border,#ddd)"><th style="padding:5px 6px">Material</th><th style="padding:5px 6px; text-align:right">Needed for the week</th><th style="padding:5px 6px; text-align:right">Cost</th></tr></thead>
+            <tbody>${d.matRows.map(r => `<tr style="border-bottom:1px solid var(--border,#eee)">
+              <td style="padding:4px 6px; font-weight:600">${_escape(r.name)}</td>
+              <td style="padding:4px 6px; text-align:right; font-weight:700">${r.need.toFixed(2)} ${_escape(r.unit)}</td>
+              <td style="padding:4px 6px; text-align:right">${R(r.needCost)}</td></tr>`).join('')}
+            <tr style="border-top:2px solid var(--border,#ddd)"><td colspan="2" style="padding:5px 6px; font-weight:700">Total material for the week</td><td style="padding:5px 6px; text-align:right; font-weight:900">${R(totNeed)}</td></tr></tbody>
+          </table></div>
+          ${d.fabricIssues.length ? `<div style="margin-top:0.5rem; font-size:12px; color:#991b1b"><strong>Fabric to chase:</strong> ${d.fabricIssues.map(f => '#' + _escape(f.orderNo) + ' ' + _escape(f.fabric) + (f.oos ? ' (OUT OF STOCK' + (f.eta ? ', ETA ' + _escape(f.eta) : '') + ')' : ' (not ordered yet)')).join(' · ')}</div>` : ''}`;
+    }
+    const stEl = document.getElementById('wp-staffing');
+    if (stEl) {
+      stEl.innerHTML = !d.weeklyWages
+        ? '<div class="empty">Enter the weekly factory wage bill above.</div>'
+        : `<div style="display:flex; gap:1.5rem; flex-wrap:wrap; font-size:13px">
+            <div><div style="font-size:11px; color:var(--text-muted)">Labour needed (week)</div><div style="font-size:20px; font-weight:900">${R(d.labourNeeded)}</div></div>
+            <div><div style="font-size:11px; color:var(--text-muted)">Weekly wage bill</div><div style="font-size:20px; font-weight:900">${R(d.weeklyWages)}</div></div>
+            <div><div style="font-size:11px; color:var(--text-muted)">Team busy</div><div style="font-size:20px; font-weight:900; color:${d.utilization >= 0.9 ? 'var(--success,#166534)' : d.utilization >= 0.6 ? '#b45309' : '#991b1b'}">${Math.round(d.utilization * 100)}%</div></div>
+            <div><div style="font-size:11px; color:var(--text-muted)">Staff needed / on payroll</div><div style="font-size:20px; font-weight:900">${d.staffNeeded} / ${d.staffCount}</div></div>
+          </div>
+          <div style="margin-top:0.75rem; padding:0.6rem 0.8rem; border-radius:8px; font-size:13px; font-weight:600; background:${d.shortTime > 0 ? '#FEF3C7' : '#f0fdf4'}; border-left:3px solid ${d.shortTime > 0 ? '#F59E0B' : 'var(--success,#16a34a)'}">
+            ${d.shortTime > 0
+              ? '💡 This week only needs <strong>' + d.staffNeeded + '</strong> of your <strong>' + d.staffCount + '</strong> staff — you could put <strong>' + d.shortTime + '</strong> on short time (± ' + R(d.weeklyWages / (d.staffCount || 1) * d.shortTime) + ' wage saving), or pull more orders into the week on the Planner.'
+              : '✅ The full team is needed this week' + (d.utilization > 1 ? ' — in fact the load is ' + Math.round(d.utilization * 100) + '% of capacity: consider overtime or moving some orders out.' : '.')}
+          </div>`;
+    }
+    const cEl = document.getElementById('wp-costing');
+    if (cEl) {
+      const labourUsed = Math.min(d.labourNeeded, d.weeklyWages || d.labourNeeded);
+      const pcol = d.profit >= 0 ? 'var(--success,#166534)' : '#991b1b';
+      cEl.innerHTML = `
+        <table style="width:100%; max-width:460px; border-collapse:collapse; font-size:13px">
+          <tr><td style="padding:4px 6px">Materials used (week's builds)</td><td style="padding:4px 6px; text-align:right; font-weight:700">${R(d.materialsCost)}</td></tr>
+          <tr><td style="padding:4px 6px">Labour (per-piece total)</td><td style="padding:4px 6px; text-align:right; font-weight:700">${R(labourUsed)}</td></tr>
+          <tr><td style="padding:4px 6px">Overheads (week share)</td><td style="padding:4px 6px; text-align:right; font-weight:700">${R(d.overheadWeek)}</td></tr>
+          <tr style="border-top:2px solid var(--border,#ddd)"><td style="padding:5px 6px; font-weight:800">Week cost</td><td style="padding:5px 6px; text-align:right; font-weight:900">${R(d.weekCost)}</td></tr>
+          <tr><td style="padding:4px 6px">Expected revenue (selling prices)</td><td style="padding:4px 6px; text-align:right; font-weight:700">${R(d.revenue)}</td></tr>
+          <tr style="border-top:2px solid var(--border,#ddd)"><td style="padding:5px 6px; font-weight:800">Week profit</td><td style="padding:5px 6px; text-align:right; font-weight:900; color:${pcol}">${R(d.profit)}</td></tr>
+        </table>`;
+    }
+  }
+  window.renderWeekPlan = renderWeekPlan;
+  // Click-through from a Week Plan warning to the place where it gets fixed.
+  let _bomLinkTarget = null;
+  function weekPlanFixBom(product) {
+    const biz = currentData();
+    const found = _wpFindBom(biz, product);
+    if (found) {
+      // BOM exists (or is linked) — open it in the editor.
+      showSection('bom');
+      const cat = document.getElementById('prod-editor-cat');
+      if (cat) cat.value = '';
+      if (typeof renderProductEditor === 'function') renderProductEditor();
+      const sel = document.getElementById('prod-editor-product');
+      if (sel) { sel.value = found.key; if (typeof renderProductEditor === 'function') renderProductEditor(); }
+      return;
+    }
+    // No BOM under this name — offer to LINK it to an existing BOM (no duplicate
+    // BOMs to maintain), or create it as a new product.
+    _bomLinkTarget = product;
+    const info = document.getElementById('bomlink-product');
+    if (info) info.textContent = '"' + product + '" has no BOM of its own yet.';
+    const sel = document.getElementById('bomlink-select');
+    if (sel) {
+      sel.innerHTML = Object.keys(biz.productBoms || {}).sort()
+        .map(k => `<option value="${_escape(k).replace(/"/g, '&quot;')}">${_escape(k)}</option>`).join('');
+    }
+    const modal = document.getElementById('bomlink-modal');
+    if (modal) modal.style.display = 'flex';
+  }
+  window.weekPlanFixBom = weekPlanFixBom;
+  function closeBomLinkModal() {
+    const modal = document.getElementById('bomlink-modal');
+    if (modal) modal.style.display = 'none';
+    _bomLinkTarget = null;
+  }
+  window.closeBomLinkModal = closeBomLinkModal;
+  function bomLinkConfirm() {
+    const sel = document.getElementById('bomlink-select');
+    if (!sel || !sel.value || !_bomLinkTarget) { closeBomLinkModal(); return; }
+    const biz = currentData();
+    snapshotState();
+    if (!biz.bomAliases || typeof biz.bomAliases !== 'object') biz.bomAliases = {};
+    biz.bomAliases[_wpNorm(_bomLinkTarget)] = sel.value;
+    saveData();
+    if (typeof toast === 'function') toast('🔗 "' + _bomLinkTarget + '" now uses the BOM of "' + sel.value + '".', 'success', 4000);
+    closeBomLinkModal();
+    renderWeekPlan();
+  }
+  window.bomLinkConfirm = bomLinkConfirm;
+  function bomLinkCreateNew() {
+    const product = _bomLinkTarget;
+    closeBomLinkModal();
+    showSection('bom');
+    if (typeof toast === 'function') toast('Use ＋ New Product and name it "' + product + '", then add its materials.', 'info', 5000);
+  }
+  window.bomLinkCreateNew = bomLinkCreateNew;
+  function weekPlanFixCosting(product) {
+    showSection('costing');
+    if (typeof renderCosting === 'function') renderCosting();
+    setTimeout(() => {
+      const escd = (window.CSS && CSS.escape) ? CSS.escape(product) : product.replace(/"/g, '\\"');
+      const row = document.querySelector('#costing-products tr[data-prod="' + escd + '"]');
+      if (row) {
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        row.style.transition = 'background 0.4s';
+        row.style.background = '#FEF3C7';
+        setTimeout(() => { row.style.background = ''; }, 2600);
+      }
+    }, 150);
+  }
+  window.weekPlanFixCosting = weekPlanFixCosting;
+  function printWeekPlan() {
+    const wpSection = document.getElementById('section-weekplan');
+    if (!wpSection) return;
+    renderWeekPlan();
+    const d = _weekPlanData();
+    const esc = (typeof _escape === 'function') ? _escape : (s => String(s == null ? '' : s));
+    const grab = id => (document.getElementById(id) || {}).innerHTML || '';
+    const html = `<!DOCTYPE html><html><head><title>Week plan ${esc(d.mon)}</title>
+<style>
+  @page { size: A4; margin: 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; color: #000; }
+  body { padding: 8px; font-size: 12px; } h1 { font-size: 18px; } h2 { font-size: 14px; margin: 14px 0 6px; border-bottom: 2px solid #000; padding-bottom: 2px }
+  table { width: 100%; border-collapse: collapse; } th, td { border: 1px solid #bbb; padding: 4px 6px; text-align: left; font-size: 11px }
+  .no-print { padding: 10px; text-align: right; background: #f0f0f0; margin-bottom: 10px }
+  @media print { .no-print { display: none } }
+</style></head><body>
+  <div class="no-print"><button onclick="window.print()" style="padding:8px 16px; font-weight:bold; background:#000; color:#fff; border:none; cursor:pointer">🖨️ PRINT</button>
+  <button onclick="window.close()" style="padding:8px 16px; margin-left:8px; cursor:pointer">CLOSE</button></div>
+  <h1>📊 WEEK PLAN — ${esc(d.mon)} to ${esc(d.sun)}</h1>
+  <h2>To build (${d.orders.length})</h2>${grab('wp-orders')}
+  <h2>Raw materials needed</h2>${grab('wp-materials')}
+  <h2>Staffing</h2>${grab('wp-staffing')}
+  <h2>Week costing</h2>${grab('wp-costing')}
+</body></html>`;
+    const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Allow pop-ups for this site, then try again.'); return; }
+    win.document.write(html);
+    win.document.close();
+  }
+  window.printWeekPlan = printWeekPlan;
+
+  // ===== Dispatch Manager — settings, done-prompt, client booking, week report =====
+  const DISPATCH_DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const BIZ_DISPLAY = { bellville: 'Bellville Furniture', pinkfoot: 'PinkFoot Boutique', repticube: 'ReptiCube' };
+  function _dispatchSettingsFor(biz) {
+    const d = data[biz];
+    if (!d) return null;
+    if (!d.dispatchSettings || typeof d.dispatchSettings !== 'object') d.dispatchSettings = {};
+    const s = d.dispatchSettings;
+    if (typeof s.address !== 'string') s.address = '';
+    if (typeof s.mapsLink !== 'string') s.mapsLink = '';
+    if (typeof s.hours !== 'string') s.hours = '';
+    if (typeof s.camposEmail !== 'string') s.camposEmail = '';
+    if (typeof s.whatsapp !== 'string') s.whatsapp = '';
+    if (typeof s.slots !== 'string' || !s.slots.trim()) s.slots = '09:00-12:00, 12:00-15:00, 15:00-17:00';
+    // Default: one delivery per slot — a booked slot disappears for the next
+    // client. Raise "Deliveries per slot" in settings if you do multiple drops.
+    if (typeof s.capacity !== 'number' || s.capacity < 1) s.capacity = 1;
+    if (!Array.isArray(s.openDays)) s.openDays = [1, 2, 3, 4, 5];
+    if (!Array.isArray(s.closedDates)) s.closedDates = [];
+    return s;
+  }
+  function _dispatchSlotList(s) {
+    return String(s.slots || '').split(',').map(x => x.trim()).filter(Boolean);
+  }
+  function _dsActiveBiz() {
+    const sel = document.getElementById('ds-biz');
+    return (sel && sel.value) || 'bellville';
+  }
+  function renderDispatchSettings() {
+    const b = _dsActiveBiz();
+    const s = _dispatchSettingsFor(b);
+    if (!s) return;
+    const set = (fid, v) => { const el = document.getElementById(fid); if (el && document.activeElement !== el) el.value = v; };
+    set('ds-address', s.address); set('ds-maps', s.mapsLink); set('ds-hours', s.hours);
+    set('ds-campos', s.camposEmail); set('ds-whatsapp', s.whatsapp);
+    set('ds-slots', s.slots); set('ds-capacity', s.capacity);
+    const daysEl = document.getElementById('ds-days');
+    if (daysEl) {
+      daysEl.innerHTML = [1, 2, 3, 4, 5, 6, 0].map(d => `
+        <label style="display:flex; align-items:center; gap:4px; margin:0; cursor:pointer">
+          <input type="checkbox" ${s.openDays.includes(d) ? 'checked' : ''} onchange="toggleDispatchDay(${d}, this.checked)"> ${DISPATCH_DAY_NAMES[d]}
+        </label>`).join('');
+    }
+    const blockedEl = document.getElementById('ds-blocked');
+    if (blockedEl) {
+      blockedEl.innerHTML = s.closedDates.length
+        ? s.closedDates.slice().sort().map(dt => `<span style="border:1px solid var(--border,#ddd); border-radius:12px; padding:2px 8px">${_escape(dt)} <a style="cursor:pointer; color:var(--danger,#991b1b)" onclick="removeDispatchBlockedDate('${_escape(dt)}')">✕</a></span>`).join('')
+        : '<span style="color:var(--text-muted,#888)">None — deliveries allowed on all open days</span>';
+    }
+  }
+  window.renderDispatchSettings = renderDispatchSettings;
+  function saveDispatchSettings() {
+    const b = _dsActiveBiz();
+    const s = _dispatchSettingsFor(b);
+    if (!s) return;
+    snapshotState();
+    const val = (fid) => { const el = document.getElementById(fid); return el ? el.value.trim() : ''; };
+    s.address = val('ds-address'); s.mapsLink = val('ds-maps'); s.hours = val('ds-hours');
+    s.camposEmail = val('ds-campos'); s.whatsapp = val('ds-whatsapp');
+    s.slots = val('ds-slots') || s.slots;
+    s.capacity = Math.max(1, parseInt(val('ds-capacity')) || s.capacity);
+    saveData();
+    const st = document.getElementById('ds-status');
+    if (st) st.textContent = '✓ Saved for ' + (BIZ_DISPLAY[b] || b);
+  }
+  window.saveDispatchSettings = saveDispatchSettings;
+  function toggleDispatchDay(day, on) {
+    const s = _dispatchSettingsFor(_dsActiveBiz());
+    if (!s) return;
+    snapshotState();
+    s.openDays = on ? [...new Set([...s.openDays, day])] : s.openDays.filter(d => d !== day);
+    saveData();
+    renderDispatchSettings();
+  }
+  window.toggleDispatchDay = toggleDispatchDay;
+  function addDispatchBlockedDate(dateStr) {
+    if (!dateStr) return;
+    const s = _dispatchSettingsFor(_dsActiveBiz());
+    if (!s) return;
+    snapshotState();
+    if (!s.closedDates.includes(dateStr)) s.closedDates.push(dateStr);
+    saveData();
+    const el = document.getElementById('ds-block-date'); if (el) el.value = '';
+    renderDispatchSettings();
+  }
+  window.addDispatchBlockedDate = addDispatchBlockedDate;
+  function removeDispatchBlockedDate(dateStr) {
+    const s = _dispatchSettingsFor(_dsActiveBiz());
+    if (!s) return;
+    snapshotState();
+    s.closedDates = s.closedDates.filter(d => d !== dateStr);
+    saveData();
+    renderDispatchSettings();
+  }
+  window.removeDispatchBlockedDate = removeDispatchBlockedDate;
+
+  // Booking link the client receives — carries fallback info (slots/days/whatsapp)
+  // so the page still works even when live availability can't load.
+  function _bookingLinkFor(biz, order) {
+    const s = _dispatchSettingsFor(biz) || {};
+    const p = new URLSearchParams();
+    p.set('book', '1'); p.set('b', biz); p.set('o', order.id);
+    p.set('inv', order.invoice || order.id);
+    p.set('s', s.slots || ''); p.set('d', (s.openDays || []).join(','));
+    if (s.whatsapp) p.set('w', s.whatsapp);
+    // Carry upcoming blocked dates so even the no-auth fallback page hides them.
+    const todayIso = new Date().toISOString().split('T')[0];
+    const blocked = (s.closedDates || []).filter(d => d >= todayIso).sort().slice(0, 15);
+    if (blocked.length) p.set('x', blocked.join(','));
+    return window.location.origin + '/?' + p.toString();
+  }
+  function _dispatchClientMsg(biz, order, method) {
+    const s = _dispatchSettingsFor(biz) || {};
+    const name = BIZ_DISPLAY[biz] || biz;
+    const head = `Hi ${order.customer},\n\nThis is ${name}. Great news — your order #${order.invoice || order.id} (${order.product}) is DONE! 🎉\n\n`;
+    if (method === 'pickup') {
+      return head + `You're welcome to collect it:\n📍 ${s.address || '(collection address — ask us)'}${s.mapsLink ? '\n🗺️ ' + s.mapsLink : ''}\n🕒 ${s.hours || 'Please contact us for opening hours'}\n\nSee you soon!`;
+    }
+    if (method === 'campos') {
+      return head + `We'll be shipping it to you with Campos Couriers within the next 2 working days. We'll send you the tracking details as soon as it's collected.\n\nThanks!`;
+    }
+    return head + `Please choose the delivery date & time slot that suits you best here:\n📅 ${_bookingLinkFor(biz, order)}\n\nIf the link gives any trouble, just reply here and we'll book it for you.`;
+  }
+
+  // Prompt shown the moment an order is marked DONE.
+  let _dispatchPromptCtx = null;
+  function openDispatchPrompt(biz, orderId) {
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    if (!order) return;
+    _dispatchPromptCtx = { biz: biz, orderId: orderId, method: order.fulfillment || null };
+    _renderDispatchPrompt();
+    const el = document.getElementById('dispatch-prompt');
+    if (el) el.style.display = 'flex';
+  }
+  window.openDispatchPrompt = openDispatchPrompt;
+  function closeDispatchPrompt() {
+    const el = document.getElementById('dispatch-prompt');
+    if (el) el.style.display = 'none';
+    _dispatchPromptCtx = null;
+  }
+  window.closeDispatchPrompt = closeDispatchPrompt;
+  function _renderDispatchPrompt() {
+    const host = document.getElementById('dispatch-prompt-content');
+    if (!host || !_dispatchPromptCtx) return;
+    const { biz, orderId, method } = _dispatchPromptCtx;
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    if (!order) { closeDispatchPrompt(); return; }
+    const mBtn = (m, icon, label) => `<button class="btn" style="flex:1; min-width:130px; ${method === m ? 'background:var(--accent,#b45309); color:#fff; border-color:var(--accent,#b45309)' : ''}" onclick="dispatchPromptChoose('${m}')">${icon} ${label}</button>`;
+    let actions = '';
+    if (method) {
+      const canWa = !!order.phone;
+      actions = `
+        <div style="margin-top:0.9rem; border-top:1px solid var(--border,#ddd); padding-top:0.9rem; display:flex; flex-direction:column; gap:0.5rem">
+          ${canWa
+            ? `<button class="btn btn-primary" onclick="dispatchPromptWhatsApp()">📱 WhatsApp the client${method === 'delivery' ? ' (with booking link)' : method === 'pickup' ? ' (collection details)' : ' (Campos notice)'}</button>`
+            : '<div style="font-size:12px; color:var(--warn,#b45309)">⚠️ No phone number on this order — add one to WhatsApp the client.</div>'}
+          ${method === 'campos' ? `<button class="btn" onclick="dispatchPromptCamposEmail()">📧 Email Campos for a quote</button>` : ''}
+          ${method === 'delivery' ? `<button class="btn" onclick="dispatchPromptCopyLink()">🔗 Copy booking link</button>` : ''}
+        </div>`;
+    }
+    host.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem">
+        <div>
+          <div style="font-size:16px; font-weight:900">✅ Order #${_escape(order.invoice || order.id)} is DONE</div>
+          <div style="font-size:12px; color:var(--text-muted,#888); margin-top:2px">${_escape(order.customer || '')} · ${_escape(order.product || '')}</div>
+        </div>
+        <button class="btn btn-sm" onclick="closeDispatchPrompt()">✕</button>
+      </div>
+      <div style="font-size:12px; color:var(--text-muted,#888); margin:0.75rem 0 0.5rem">How is it getting to the client?</div>
+      <div style="display:flex; gap:0.5rem; flex-wrap:wrap">
+        ${mBtn('delivery', '🚚', 'Our delivery')}
+        ${mBtn('pickup', '🏬', 'Client picks up')}
+        ${mBtn('campos', '📦', 'Campos courier')}
+      </div>
+      ${actions}`;
+  }
+  function dispatchPromptChoose(method) {
+    if (!_dispatchPromptCtx) return;
+    const { biz, orderId } = _dispatchPromptCtx;
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    if (!order) return;
+    snapshotState();
+    order.fulfillment = method;
+    saveData();
+    _dispatchPromptCtx.method = method;
+    _renderDispatchPrompt();
+  }
+  window.dispatchPromptChoose = dispatchPromptChoose;
+  function dispatchPromptWhatsApp() {
+    if (!_dispatchPromptCtx) return;
+    const { biz, orderId, method } = _dispatchPromptCtx;
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    if (!order || !order.phone) return;
+    const msg = _dispatchClientMsg(biz, order, method || 'delivery');
+    window.open(`https://wa.me/${formatPhone(order.phone)}?text=${encodeURIComponent(msg)}`, '_blank');
+  }
+  window.dispatchPromptWhatsApp = dispatchPromptWhatsApp;
+  function dispatchPromptCamposEmail() {
+    if (!_dispatchPromptCtx) return;
+    const { biz, orderId } = _dispatchPromptCtx;
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    if (!order) return;
+    const s = _dispatchSettingsFor(biz) || {};
+    const to = s.camposEmail || '';
+    if (!to) { alert('Set the Campos email first (Dispatch tab → Dispatch Manager Settings).'); return; }
+    const subject = `Quote request — order #${order.invoice || order.id} (${BIZ_DISPLAY[biz] || biz})`;
+    const body = `Hi Campos team,\n\nPlease quote us for the following shipment:\n\nOrder: #${order.invoice || order.id}\nItem: ${order.product}${order.fabric ? ' — ' + order.fabric : ''} × ${order.qty || 1}\nClient: ${order.customer}${order.phone ? ' · ' + order.phone : ''}\n\nCollection from: ${s.address || BIZ_DISPLAY[biz] || biz}\n\nWe'd like it collected within the next 2 working days.\n\nThanks!`;
+    const a = document.createElement('a');
+    a.href = 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+    a.style.display = 'none';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { try { a.remove(); } catch (e) {} }, 200);
+  }
+  window.dispatchPromptCamposEmail = dispatchPromptCamposEmail;
+  function dispatchPromptCopyLink() {
+    if (!_dispatchPromptCtx) return;
+    const { biz, orderId } = _dispatchPromptCtx;
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    if (!order) return;
+    const url = _bookingLinkFor(biz, order);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(
+        () => { if (typeof toast === 'function') toast('🔗 Booking link copied', 'success', 2500); else alert('Copied:\n' + url); },
+        () => { prompt('Copy this booking link:', url); }
+      );
+    } else { prompt('Copy this booking link:', url); }
+  }
+  window.dispatchPromptCopyLink = dispatchPromptCopyLink;
+
+  // ---- Weekly deliveries report (dashboard card + print) ----
+  function _weekDeliveries() {
+    const now = new Date(); now.setHours(0, 0, 0, 0);
+    const mon = new Date(now); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7));
+    const days = [];
+    for (let i = 0; i < 7; i++) { const d = new Date(mon); d.setDate(mon.getDate() + i); days.push(d.toISOString().split('T')[0]); }
+    const byDay = Object.fromEntries(days.map(d => [d, []]));
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      ((data[b] && data[b].orders) || []).forEach(o => {
+        if (o && o.status !== 'delivered' && o.deliveryScheduled && byDay[o.deliveryScheduled]) byDay[o.deliveryScheduled].push({ ...o, _biz: b });
+      });
+      ((data[b] && data[b].repairs) || []).forEach(r => {
+        if (!r || r.status === 'returned') return;
+        if (r.pickupDate && byDay[r.pickupDate]) byDay[r.pickupDate].push({ _repair: 'pickup', _biz: b, ...r });
+        if (r.returnDate && byDay[r.returnDate]) byDay[r.returnDate].push({ _repair: 'return', _biz: b, ...r });
+      });
+    });
+    return { days, byDay };
+  }
+  function _renderWeekDeliveriesCard() {
+    const host = document.getElementById('week-deliveries-list');
+    if (!host) return;
+    const { days, byDay } = _weekDeliveries();
+    const total = days.reduce((n, d) => n + byDay[d].length, 0);
+    if (!total) { host.innerHTML = '<div class="empty">No deliveries scheduled this week</div>'; return; }
+    const dayName = d => new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'short' });
+    const todayStr = new Date().toISOString().split('T')[0];
+    host.innerHTML = days.filter(d => byDay[d].length).map(d => `
+      <div style="margin-bottom:0.5rem">
+        <div style="font-size:11px; font-weight:700; ${d === todayStr ? 'color:var(--accent,#b45309)' : 'color:var(--text-muted,#888)'}; text-transform:uppercase; letter-spacing:0.05em">${d === todayStr ? '👉 ' : ''}${_escape(dayName(d))} (${byDay[d].length})</div>
+        ${byDay[d].map(x => x._repair
+          ? `<div style="font-size:12px; padding:2px 0 2px 10px">🔧 ${x._repair === 'pickup' ? 'Repair pickup' : 'Repair return'} — ${_escape(x.customer || '')}${x.orderNo ? ' (#' + _escape(x.orderNo) + ')' : ''}</div>`
+          : `<div style="font-size:12px; padding:2px 0 2px 10px">🚚 #${_escape(x.invoice || x.id)} — ${_escape(x.customer || '')} · ${_escape(x.product || '')}${x.deliveryTimeFrom ? ' · ' + _escape(x.deliveryTimeFrom) + (x.deliveryTimeTo ? '–' + _escape(x.deliveryTimeTo) : '') : ''}${x.fulfillment === 'pickup' ? ' · 🏬 pickup' : x.fulfillment === 'campos' ? ' · 📦 Campos' : ''}</div>`).join('')}
+      </div>`).join('');
+  }
+  // ---- New client-booking alerts (dashboard card + live toast) ----
+  // A booking made on the client booking page sets deliveryBookedByClient; it
+  // stays "new" until staff tap OK (bookingAck). First render seeds the baseline
+  // so opening the app doesn't toast for old bookings — only live arrivals do.
+  let _bookingAlertBaseline = null;
+  function _unackedClientBookings() {
+    const out = [];
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      ((data[b] && data[b].orders) || []).forEach(o => {
+        if (o && o.deliveryBookedByClient && !o.bookingAck && o.status !== 'delivered') out.push({ ...o, _biz: b });
+      });
+    });
+    return out;
+  }
+  function _renderNewBookingsCard() {
+    const card = document.getElementById('dash-new-bookings-card');
+    const list = document.getElementById('new-bookings-list');
+    if (!card || !list) return;
+    const items = _unackedClientBookings();
+    const keys = new Set(items.map(x => x._biz + '|' + x.id));
+    if (_bookingAlertBaseline !== null) {
+      items.forEach(x => {
+        const k = x._biz + '|' + x.id;
+        if (!_bookingAlertBaseline.has(k) && typeof toast === 'function') {
+          toast('📅 ' + (x.customer || 'A client') + ' booked delivery: ' + (x.deliveryScheduled || '') + (x.deliveryTimeFrom ? ' ' + x.deliveryTimeFrom : ''), 'success', 6000);
+        }
+      });
+    }
+    _bookingAlertBaseline = keys;
+    if (!items.length) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    const bizLabel = { bellville: 'Bellville', pinkfoot: 'PinkFoot', repticube: 'ReptiCube' };
+    items.sort((a, b) => String(a.deliveryScheduled || '').localeCompare(String(b.deliveryScheduled || '')));
+    list.innerHTML = items.map(x => `
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:0.75rem; flex-wrap:wrap; border:1px solid var(--border,#ddd); border-radius:8px; padding:8px 10px; margin-bottom:6px; background:#f0fdf4">
+        <div>
+          <div style="font-weight:700">📅 ${_escape(x.deliveryScheduled || '')}${x.deliveryTimeFrom ? ' · ' + _escape(x.deliveryTimeFrom) + (x.deliveryTimeTo ? '–' + _escape(x.deliveryTimeTo) : '') : ''} <span style="font-size:10px; color:var(--text-muted,#888)">${_escape(bizLabel[x._biz] || x._biz)}</span></div>
+          <div style="font-size:11px; color:var(--text-muted,#888)">#${_escape(x.invoice || x.id)} — ${_escape(x.customer || '')} · ${_escape(x.product || '')}${x.phone ? ' · 📱 ' + _escape(x.phone) : ''}</div>
+        </div>
+        <button class="btn btn-sm" style="background:var(--success,#16a34a); color:#fff; border-color:var(--success,#16a34a)" onclick="ackClientBooking('${x._biz}', '${x.id}')">✓ OK, seen</button>
+      </div>`).join('');
+  }
+  function ackClientBooking(biz, orderId) {
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    if (!order) return;
+    snapshotState();
+    order.bookingAck = true;
+    saveData();
+    _renderNewBookingsCard();
+    if (typeof renderDispatch === 'function') renderDispatch();
+  }
+  window.ackClientBooking = ackClientBooking;
+
+  function printWeekDeliveries() {
+    const { days, byDay } = _weekDeliveries();
+    const total = days.reduce((n, d) => n + byDay[d].length, 0);
+    if (!total) { alert('No deliveries scheduled this week.'); return; }
+    const esc = (typeof _escape === 'function') ? _escape : (s => String(s == null ? '' : s));
+    const dayName = d => new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' });
+    const rows = days.filter(d => byDay[d].length).map(d => `
+      <h2>${esc(dayName(d))} — ${byDay[d].length}</h2>
+      <table><tr><th>Order</th><th>Client</th><th>Item / repair</th><th>Time</th><th>Type</th><th>Phone</th></tr>
+      ${byDay[d].map(x => x._repair
+        ? `<tr><td>${esc(x.orderNo || '—')}</td><td>${esc(x.customer || '')}</td><td>🔧 ${x._repair === 'pickup' ? 'Repair pickup' : 'Repair return'}: ${esc(x.reason || '')}</td><td></td><td>REPAIR</td><td>${esc(x.phone || '')}</td></tr>`
+        : `<tr><td>#${esc(x.invoice || x.id)}</td><td>${esc(x.customer || '')}</td><td>${esc(x.product || '')}${x.fabric ? ' — ' + esc(x.fabric) : ''} × ${esc(x.qty || 1)}</td><td>${esc(x.deliveryTimeFrom || '')}${x.deliveryTimeTo ? '–' + esc(x.deliveryTimeTo) : ''}</td><td>${x.fulfillment === 'pickup' ? 'PICKUP' : x.fulfillment === 'campos' ? 'CAMPOS' : 'DELIVERY'}</td><td>${esc(x.phone || '')}</td></tr>`).join('')}
+      </table>`).join('');
+    const html = `<!DOCTYPE html><html><head><title>Deliveries this week</title>
+<style>
+  @page { size: A4; margin: 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; color: #000; }
+  body { padding: 8px; } h1 { font-size: 20px; } .sub { font-size: 11px; color: #555; margin: 4px 0 10px }
+  h2 { font-size: 14px; margin: 14px 0 4px; border-bottom: 2px solid #000; padding-bottom: 2px }
+  table { width: 100%; border-collapse: collapse; font-size: 11px }
+  th, td { border: 1px solid #999; padding: 4px 6px; text-align: left }
+  th { background: #eee; font-size: 10px; text-transform: uppercase }
+  .no-print { padding: 10px; text-align: right; background: #f0f0f0; margin-bottom: 10px }
+  @media print { .no-print { display: none } }
+</style></head><body>
+  <div class="no-print"><button onclick="window.print()" style="padding:8px 16px; font-weight:bold; background:#000; color:#fff; border:none; cursor:pointer">🖨️ PRINT</button>
+  <button onclick="window.close()" style="padding:8px 16px; margin-left:8px; cursor:pointer">CLOSE</button></div>
+  <h1>🚚 DELIVERIES THIS WEEK</h1>
+  <div class="sub">Printed ${esc(new Date().toISOString().slice(0, 10))} · ${total} stop${total === 1 ? '' : 's'} (all businesses, incl. repair pickups/returns)</div>
+  ${rows}
+</body></html>`;
+    const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Allow pop-ups for this site, then try again.'); return; }
+    win.document.write(html);
+    win.document.close();
+  }
+  window.printWeekDeliveries = printWeekDeliveries;
+
+  // ---- Client booking page (?book=1&b=<biz>&o=<orderId>) ----
+  function _bookingParams() {
+    try { return new URLSearchParams(window.location.search); } catch (e) { return new URLSearchParams(); }
+  }
+  // Per-business accent for the client booking page.
+  function _bookingAccent() {
+    const b = _bookingParams().get('b');
+    if (b === 'pinkfoot') return { g1: '#be2f6c', g2: '#e0498d', solid: '#be2f6c' };
+    if (b === 'repticube') return { g1: '#0b7f6a', g2: '#12a88d', solid: '#0b7f6a' };
+    return { g1: '#7c4a21', g2: '#a3622e', solid: '#8a5426' };
+  }
+  function _bookingDayCard(dateObj, slotsHtml) {
+    const wd = dateObj.toLocaleDateString('en-ZA', { weekday: 'long' });
+    const dm = dateObj.toLocaleDateString('en-ZA', { day: 'numeric', month: 'long' });
+    return `
+      <div style="background:#fff; border-radius:14px; padding:14px 16px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,0.07)">
+        <div style="display:flex; align-items:baseline; gap:8px; margin-bottom:10px">
+          <span style="font-size:15px; font-weight:800">${_escape(wd)}</span>
+          <span style="font-size:12.5px; color:#78716c">${_escape(dm)}</span>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap">${slotsHtml}</div>
+      </div>`;
+  }
+  function _bookingSlotBtn(onclickAttr, slotLabel, accent) {
+    return `<button onclick="${onclickAttr}" style="padding:9px 15px; border-radius:999px; border:1.5px solid ${accent}; background:#fff; color:${accent}; font-size:13.5px; font-weight:700; cursor:pointer; font-family:inherit">${_escape(slotLabel)}</button>`;
+  }
+  function _bookingSlotFull(slotLabel) {
+    return `<span style="padding:9px 15px; border-radius:999px; background:#f5f5f4; color:#a8a29e; font-size:13.5px; text-decoration:line-through">${_escape(slotLabel)}</span>`;
+  }
+  function enterBookingOnlyMode() {
+    ['main-app', 'login-overlay', 'dashboard-only-view', 'reserved-only-view'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    const view = document.getElementById('booking-only-view');
+    if (view) view.style.display = 'block';
+    const p = _bookingParams();
+    const ac = _bookingAccent();
+    const hd = document.getElementById('booking-header');
+    if (hd) hd.style.background = `linear-gradient(135deg, ${ac.g1}, ${ac.g2})`;
+    const bn = document.getElementById('booking-biz-name');
+    if (bn) bn.textContent = BIZ_DISPLAY[p.get('b')] || 'Delivery booking';
+    const oi = document.getElementById('booking-order-info');
+    if (oi && p.get('inv')) oi.textContent = 'Order #' + p.get('inv');
+    document.title = 'Book your delivery';
+    renderBookingPage();
+  }
+  window.enterBookingOnlyMode = enterBookingOnlyMode;
+  let _bookingDone = false;
+  let _bookingLiveShown = false;
+  let _bookingFallbackShown = false;
+  function renderBookingPage() {
+    const host = document.getElementById('booking-content');
+    if (!host || _bookingDone) return;
+    const p = _bookingParams();
+    const biz = p.get('b'), orderId = p.get('o');
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    // No live data yet — keep whatever is showing (loading note or the static
+    // fallback slots); never clobber a usable fallback with a spinner.
+    if (!order) {
+      if (!_bookingFallbackShown) host.innerHTML = '<div style="text-align:center; color:#64748b; padding:2rem">Loading available dates…</div>';
+      return;
+    }
+    _bookingLiveShown = true;
+    _bookingFallbackShown = false;
+    if (order.deliveryScheduled && order.deliveryBookedByClient) { _renderBookingThanks(order); return; }
+    const s = _dispatchSettingsFor(biz) || {};
+    const slots = _dispatchSlotList(s);
+    const cap = s.capacity || 3;
+    // Count existing bookings per date+slot to close full slots.
+    const taken = {};
+    ((data[biz] && data[biz].orders) || []).forEach(o => {
+      if (o && o.deliveryScheduled && o.status !== 'delivered') {
+        const k = o.deliveryScheduled + '|' + (o.deliveryTimeFrom || '');
+        taken[k] = (taken[k] || 0) + 1;
+      }
+    });
+    const ac = _bookingAccent();
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const daysHtml = [];
+    for (let i = 1; i <= 21; i++) {
+      const d = new Date(today); d.setDate(today.getDate() + i);
+      const iso = d.toISOString().split('T')[0];
+      if (!(s.openDays || []).includes(d.getDay())) continue;
+      if ((s.closedDates || []).includes(iso)) continue;
+      const slotBtns = slots.map(sl => {
+        const from = sl.split('-')[0].trim();
+        const full = (taken[iso + '|' + from] || 0) >= cap;
+        return full ? _bookingSlotFull(sl) : _bookingSlotBtn(`bookingChooseSlot('${iso}', '${_escape(sl)}')`, sl, ac.solid);
+      }).join(' ');
+      daysHtml.push(_bookingDayCard(d, slotBtns));
+    }
+    host.innerHTML = daysHtml.length
+      ? `<div style="text-align:center; font-size:13.5px; color:#57534e; margin-bottom:1rem; background:#fff; border-radius:14px; padding:0.85rem 1rem; box-shadow:0 1px 3px rgba(0,0,0,0.07)">Tap a time that suits you for<br><strong style="font-size:14.5px; color:#1c1917">${_escape(order.product || 'your order')}</strong></div>` + daysHtml.join('')
+      : '<div style="text-align:center; color:#78716c; padding:2.5rem 0">No delivery slots are open right now — please reply to our WhatsApp message and we\'ll arrange a date.</div>';
+  }
+  window.renderBookingPage = renderBookingPage;
+  function bookingChooseSlot(dateIso, slot) {
+    const p = _bookingParams();
+    const biz = p.get('b'), orderId = p.get('o');
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    if (!order) return;
+    const nice = new Date(dateIso + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' });
+    if (!confirm('Book delivery for ' + nice + ', ' + slot + '?')) return;
+    const parts = slot.split('-').map(x => x.trim());
+    snapshotState();
+    order.deliveryScheduled = dateIso;
+    order.deliveryTimeFrom = parts[0] || '';
+    order.deliveryTimeTo = parts[1] || '';
+    order.deliveryBookedByClient = true;
+    saveData();
+    _renderBookingThanks(order);
+  }
+  window.bookingChooseSlot = bookingChooseSlot;
+  function _renderBookingThanks(order) {
+    _bookingDone = true;
+    const host = document.getElementById('booking-content');
+    if (!host) return;
+    const ac = _bookingAccent();
+    const nice = order.deliveryScheduled ? new Date(order.deliveryScheduled + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' }) : '';
+    host.innerHTML = `
+      <div style="background:#fff; border-radius:16px; padding:2rem 1.5rem; text-align:center; box-shadow:0 1px 3px rgba(0,0,0,0.07)">
+        <div style="width:64px; height:64px; margin:0 auto; border-radius:50%; background:linear-gradient(135deg, ${ac.g1}, ${ac.g2}); display:flex; align-items:center; justify-content:center; font-size:30px; color:#fff">✓</div>
+        <div style="font-size:20px; font-weight:800; margin-top:1rem">Delivery booked!</div>
+        <div style="font-size:15px; color:#44403c; margin-top:0.6rem"><strong>${_escape(nice)}</strong>${order.deliveryTimeFrom ? '<br><span style="color:' + ac.solid + '; font-weight:700">' + _escape(order.deliveryTimeFrom) + (order.deliveryTimeTo ? ' – ' + _escape(order.deliveryTimeTo) : '') + '</span>' : ''}</div>
+        <div style="font-size:12.5px; color:#78716c; margin-top:0.9rem">We'll WhatsApp you before the driver leaves. Thank you!</div>
+      </div>`;
+  }
+  // Fallback when live availability can't load (anonymous sign-in disabled):
+  // offer the slots from the link itself and confirm via WhatsApp to the business.
+  function bookingStaticFallback() {
+    const host = document.getElementById('booking-content');
+    if (!host || _bookingDone || _bookingLiveShown) return;
+    _bookingFallbackShown = true;
+    const p = _bookingParams();
+    const slots = String(p.get('s') || '09:00-12:00, 12:00-15:00, 15:00-17:00').split(',').map(x => x.trim()).filter(Boolean);
+    const days = String(p.get('d') || '1,2,3,4,5').split(',').map(Number);
+    const blockedDates = String(p.get('x') || '').split(',').filter(Boolean);
+    const waRaw = p.get('w') || '';
+    const inv = p.get('inv') || '';
+    const ac = _bookingAccent();
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const daysHtml = [];
+    for (let i = 1; i <= 21; i++) {
+      const d = new Date(today); d.setDate(today.getDate() + i);
+      if (!days.includes(d.getDay())) continue;
+      const iso = d.toISOString().split('T')[0];
+      if (blockedDates.includes(iso)) continue;
+      const label = d.toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' });
+      const slotBtns = slots.map(sl => _bookingSlotBtn(`bookingFallbackChoose('${iso}', '${_escape(sl)}', '${_escape(label)}')`, sl, ac.solid)).join(' ');
+      daysHtml.push(_bookingDayCard(d, slotBtns));
+    }
+    window._bookingFallbackWa = waRaw; window._bookingFallbackInv = inv;
+    host.innerHTML = `<div style="text-align:center; font-size:13.5px; color:#57534e; margin-bottom:1rem; background:#fff; border-radius:14px; padding:0.85rem 1rem; box-shadow:0 1px 3px rgba(0,0,0,0.07)">Tap a time that suits you —<br>we'll confirm your booking on WhatsApp</div>` + daysHtml.join('');
+  }
+  window.bookingStaticFallback = bookingStaticFallback;
+  function bookingFallbackChoose(dateIso, slot, label) {
+    const wa = window._bookingFallbackWa || '';
+    const inv = window._bookingFallbackInv || '';
+    const msg = `Hi! ${inv ? 'Order #' + inv + ' — ' : ''}I'd like my delivery on ${label}, ${slot} please.`;
+    if (wa && typeof formatPhone === 'function') {
+      window.open(`https://wa.me/${formatPhone(wa)}?text=${encodeURIComponent(msg)}`, '_blank');
+    } else {
+      prompt('Send us this message on WhatsApp to confirm:', msg);
+    }
+  }
+  window.bookingFallbackChoose = bookingFallbackChoose;
+
+  // ===== Repairs — staff log a repair; dispatch schedules pickup + return =====
+  // Record: { id, orderNo, customer, phone, product, reason, details, status,
+  //           pickupDate, returnDate, by, at } stored per business (currentData().repairs).
+  // Lifecycle: logged → in-repair → done → returned.
+  function _repairsFor(bizData) {
+    if (!Array.isArray(bizData.repairs)) bizData.repairs = [];
+    return bizData.repairs;
+  }
+  function _repairs() { return _repairsFor(currentData()); }
+  function _findRepair(id) {
+    const bizs = ['bellville', 'pinkfoot', 'repticube'];
+    for (let i = 0; i < bizs.length; i++) {
+      const r = ((data[bizs[i]] && data[bizs[i]].repairs) || []).find(x => x && x.id === id);
+      if (r) return { r: r, biz: bizs[i] };
+    }
+    return null;
+  }
+  let _repOrderIndex = {};
+  function repairOrderPicked(label) {
+    const o = _repOrderIndex[label];
+    if (!o) return;
+    const set = (fid, v) => { const el = document.getElementById(fid); if (el && v) el.value = v; };
+    set('rep-customer', o.customer);
+    set('rep-phone', o.phone);
+    set('rep-product', (o.category ? '[' + o.category + '] ' : '') + (o.product || '') + (o.fabric ? ' — ' + o.fabric : ''));
+  }
+  window.repairOrderPicked = repairOrderPicked;
+
+  function logRepair() {
+    const val = (fid) => (document.getElementById(fid) ? document.getElementById(fid).value : '').trim();
+    const st = document.getElementById('rep-status');
+    const orderNo = val('rep-order');
+    const reason = val('rep-reason');
+    if (!reason) { if (st) st.textContent = '✗ Say what is wrong (the reason) before logging.'; return; }
+    if (!orderNo && !val('rep-customer')) { if (st) st.textContent = '✗ Give an order # or at least the customer name.'; return; }
+    snapshotState();
+    _repairs().unshift({
+      id: 'REP-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5),
+      orderNo: orderNo, customer: val('rep-customer'), phone: val('rep-phone'), product: val('rep-product'),
+      reason: reason, details: val('rep-details'),
+      status: 'logged', pickupDate: '', returnDate: '',
+      by: (typeof currentUser !== 'undefined' && currentUser && currentUser.email) ? currentUser.email.split('@')[0] : 'staff',
+      at: new Date().toISOString()
+    });
+    saveData();
+    ['rep-order', 'rep-customer', 'rep-phone', 'rep-product', 'rep-reason', 'rep-details'].forEach(fid => { const el = document.getElementById(fid); if (el) el.value = ''; });
+    if (st) st.textContent = '✓ Repair logged — dispatch can now schedule the pickup.';
+    renderRepairs();
+    if (typeof renderDispatch === 'function') renderDispatch();
+  }
+  window.logRepair = logRepair;
+
+  function repairSetStatus(id, status) {
+    const found = _findRepair(id);
+    if (!found) return;
+    snapshotState();
+    found.r.status = status;
+    saveData();
+    renderRepairs();
+    if (typeof renderDispatch === 'function') renderDispatch();
+  }
+  window.repairSetStatus = repairSetStatus;
+  function repairSetDate(id, field, dateStr) {
+    const found = _findRepair(id);
+    if (!found) return;
+    snapshotState();
+    found.r[field] = dateStr || '';
+    saveData();
+    renderRepairs();
+    if (typeof renderDispatch === 'function') renderDispatch();
+  }
+  window.repairSetDate = repairSetDate;
+  function deleteRepair(id) {
+    if (!confirm('Remove this repair?')) return;
+    const found = _findRepair(id);
+    if (!found) return;
+    snapshotState();
+    data[found.biz].repairs = data[found.biz].repairs.filter(x => x.id !== id);
+    saveData();
+    renderRepairs();
+    if (typeof renderDispatch === 'function') renderDispatch();
+  }
+  window.deleteRepair = deleteRepair;
+
+  const _REPAIR_BADGE = {
+    logged: '<span style="color:#991b1b; font-weight:700">🔴 LOGGED</span>',
+    'in-repair': '<span style="color:#92400e; font-weight:700">🔧 IN REPAIR</span>',
+    done: '<span style="color:#166534; font-weight:700">✅ DONE</span>',
+    returned: '<span style="color:#6b7280; font-weight:700">🏠 RETURNED</span>'
+  };
+  function _repairActionButtons(r) {
+    const b = [];
+    if (r.status === 'logged') b.push(`<button class="btn btn-sm" onclick="repairSetStatus('${r.id}','in-repair')">Picked up → in repair</button>`);
+    if (r.status === 'in-repair') b.push(`<button class="btn btn-sm" style="background:var(--success,#16a34a); color:#fff; border-color:var(--success,#16a34a)" onclick="repairSetStatus('${r.id}','done')">✓ Repair done</button>`);
+    if (r.status === 'done') b.push(`<button class="btn btn-sm" onclick="repairSetStatus('${r.id}','returned')">🏠 Returned to customer</button>`);
+    if (r.status === 'returned') b.push(`<button class="btn btn-sm" onclick="repairSetStatus('${r.id}','done')">Reopen</button>`);
+    return b.join('');
+  }
+  function _repairRowHtml(r, bizTag) {
+    const bg = r.status === 'returned' ? '#f3f4f6' : r.status === 'done' ? '#f0fdf4' : r.status === 'in-repair' ? '#fffbeb' : '#fef2f2';
+    return `
+      <div style="border:1px solid var(--border,#ddd); border-radius:8px; padding:8px 10px; margin-bottom:6px; background:${bg}">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px">
+          <div style="min-width:220px; flex:1">
+            <div style="font-weight:700">${bizTag || ''}${r.orderNo ? '#' + _escape(r.orderNo) + ' — ' : ''}${_escape(r.customer || 'No name')}${r.phone ? ' <span style="color:var(--text-muted,#888); font-weight:400">· 📱 ' + _escape(r.phone) + '</span>' : ''}</div>
+            ${r.product ? `<div style="font-size:12px; margin-top:2px">${_escape(r.product)}</div>` : ''}
+            <div style="font-size:12px; color:#991b1b; font-weight:600; margin-top:2px">⚠️ ${_escape(r.reason || '')}</div>
+            ${r.details ? `<div style="font-size:11px; color:var(--text-muted,#888); margin-top:2px">${_escape(r.details)}</div>` : ''}
+            <div style="font-size:11px; color:var(--text-muted,#888); margin-top:3px">${_REPAIR_BADGE[r.status] || r.status} · logged ${_escape(String(r.at || '').slice(0, 10))}${r.by ? ' by ' + _escape(r.by) : ''}</div>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:0.35rem; align-items:flex-end">
+            <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
+              <label style="margin:0; font-size:10px; color:var(--text-muted)">Pickup:</label>
+              <input type="date" value="${_escape(r.pickupDate || '')}" onchange="repairSetDate('${r.id}','pickupDate',this.value)" style="width:140px; padding:4px 8px; margin:0">
+              <label style="margin:0; font-size:10px; color:var(--text-muted)">Return:</label>
+              <input type="date" value="${_escape(r.returnDate || '')}" onchange="repairSetDate('${r.id}','returnDate',this.value)" style="width:140px; padding:4px 8px; margin:0">
+            </div>
+            <div style="display:flex; gap:0.4rem; flex-wrap:wrap; justify-content:flex-end">
+              ${_repairActionButtons(r)}
+              <button class="btn btn-sm btn-danger" onclick="deleteRepair('${r.id}')">✕</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }
+  function renderRepairs() {
+    const list = document.getElementById('repair-list');
+    if (!list) return;
+    // Order picker: every order across all shops (incl. finished) — repairs come back on old orders too.
+    const dl = document.getElementById('rep-order-list');
+    if (dl) {
+      _repOrderIndex = {};
+      const opts = [];
+      ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+        ((data[b] && data[b].orders) || []).forEach(o => {
+          if (!o) return;
+          const label = '#' + (o.invoice || o.id) + ' — ' + (o.customer || '') + (o.product ? ' — ' + o.product : '');
+          _repOrderIndex[label] = o;
+          opts.push(`<option value="${_escape(label)}"></option>`);
+        });
+      });
+      dl.innerHTML = opts.join('');
+    }
+    const items = _repairs();
+    if (!items.length) { list.innerHTML = '<div class="empty">No repairs logged</div>'; return; }
+    const rank = { logged: 0, 'in-repair': 1, done: 2, returned: 3 };
+    const sorted = items.slice().sort((a, b) => ((rank[a.status] || 0) - (rank[b.status] || 0)) || String(b.at || '').localeCompare(String(a.at || '')));
+    list.innerHTML = sorted.map(r => _repairRowHtml(r, '')).join('');
+  }
+  window.renderRepairs = renderRepairs;
+  // Active repairs across ALL businesses on the Dispatch tab, so pickups and
+  // returns get scheduled alongside deliveries.
+  function _renderDispatchRepairs() {
+    const host = document.getElementById('dispatch-repairs');
+    if (!host) return;
+    const bizLabel = { bellville: 'Bellville', pinkfoot: 'PinkFoot', repticube: 'ReptiCube' };
+    const active = [];
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      ((data[b] && data[b].repairs) || []).forEach(r => { if (r && r.status !== 'returned') active.push({ r: r, biz: b }); });
+    });
+    if (!active.length) { host.innerHTML = ''; return; }
+    const rank = { logged: 0, 'in-repair': 1, done: 2 };
+    active.sort((a, b) => ((rank[a.r.status] || 0) - (rank[b.r.status] || 0)) || String(a.r.pickupDate || a.r.at || '').localeCompare(String(b.r.pickupDate || b.r.at || '')));
+    host.innerHTML = `
+      <div class="card">
+        <div class="card-title">🔧 REPAIRS — PICKUPS &amp; RETURNS (${active.length})</div>
+        ${active.map(x => _repairRowHtml(x.r, `<span style="font-size:10px; font-weight:700; letter-spacing:0.05em; color:var(--text-muted,#888)">${bizLabel[x.biz].toUpperCase()}</span> `)).join('')}
+      </div>`;
+  }
+
+  // Dispatch print selection — keys are "biz|orderId". Survives re-renders (live sync
+  // repaints the list); initialized here but only used from user events / rAF renders.
+  let _dispatchSelected = new Set();
+  let _dispatchLastFiltered = [];
+  function toggleDispatchSelect(key, on) {
+    if (on) _dispatchSelected.add(key); else _dispatchSelected.delete(key);
+    _updateDispatchSelCount();
+  }
+  window.toggleDispatchSelect = toggleDispatchSelect;
+  function _updateDispatchSelCount() {
+    const el = document.getElementById('dispatch-sel-count');
+    if (el) el.textContent = _dispatchSelected.size ? _dispatchSelected.size + ' selected' : '';
+  }
+  function dispatchSelectAll() {
+    _dispatchLastFiltered.forEach(k => _dispatchSelected.add(k));
+    renderDispatch();
+  }
+  window.dispatchSelectAll = dispatchSelectAll;
+  function dispatchClearSelection() {
+    _dispatchSelected.clear();
+    renderDispatch();
+  }
+  window.dispatchClearSelection = dispatchClearSelection;
+
+  function setOrderFulfillment(biz, orderId, method) {
+    const order = ((data[biz] && data[biz].orders) || []).find(o => o && o.id === orderId);
+    if (!order) return;
+    snapshotState();
+    order.fulfillment = method || '';
+    saveData();
+    renderDispatch();
+  }
+  window.setOrderFulfillment = setOrderFulfillment;
+
+  function printDispatchOrders() {
+    // Ticked orders, or the whole current filtered list if nothing is ticked.
+    const keys = _dispatchSelected.size ? [..._dispatchSelected] : _dispatchLastFiltered.slice();
+    if (!keys.length) { alert('Nothing to print — the current filter has no orders.'); return; }
+    const bizNames = { bellville: 'BELLVILLE', pinkfoot: 'PINKFOOT', repticube: 'REPTICUBE' };
+    const orders = [];
+    keys.forEach(k => {
+      const [b, id] = String(k).split('|');
+      const o = ((data[b] && data[b].orders) || []).find(x => x && x.id === id);
+      if (o) orders.push({ ...o, _biz: b });
+    });
+    if (!orders.length) { alert('The selected orders could not be found — refresh and try again.'); return; }
+    orders.sort((a, b) => String(a.deliveryScheduled || a.dueDate || '').localeCompare(String(b.deliveryScheduled || b.dueDate || '')));
+    const esc = (typeof _escape === 'function') ? _escape : (s => String(s == null ? '' : s));
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const blocks = orders.map(o => `
+      <div class="dnote">
+        <div class="dhead">
+          <span class="dbiz">${esc(bizNames[o._biz] || o._biz)}</span>
+          <span class="dinv">#${esc(o.invoice || o.id)}</span>
+          <span class="ddate">${o.deliveryScheduled ? 'Delivery: ' + esc(o.deliveryScheduled) + (o.deliveryTimeFrom || o.deliveryTimeTo ? ' (' + esc(o.deliveryTimeFrom || '?') + ' – ' + esc(o.deliveryTimeTo || '?') + ')' : '') : (o.dueDate ? 'Due: ' + esc(o.dueDate) : '')}</span>
+        </div>
+        <table class="dtab">
+          <tr><td class="dl">Customer</td><td class="dv">${esc(o.customer || '')}${o.phone ? ' &nbsp;·&nbsp; ' + esc(o.phone) : ''}</td></tr>
+          <tr><td class="dl">Item</td><td class="dv">${o.category ? '[' + esc(o.category) + '] ' : ''}${esc(o.product || '')}${o.fabric ? ' — ' + esc(o.fabric) : ''} &nbsp;×&nbsp; ${esc(o.qty || 1)}</td></tr>
+          ${o.notes ? `<tr><td class="dl">Notes</td><td class="dv">${esc(o.notes)}</td></tr>` : ''}
+        </table>
+        <div class="dsig">
+          <span>Received by: ____________________</span>
+          <span>Signature: ____________________</span>
+          <span>Date: ____________</span>
+        </div>
+      </div>`).join('');
+    const html = `<!DOCTYPE html><html><head><title>Dispatch sheet ${esc(todayStr)}</title>
+<style>
+  @page { size: A4; margin: 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; color: #000; }
+  body { background: #fff; padding: 8px; }
+  .no-print { padding: 10px; text-align: right; background: #f0f0f0; margin-bottom: 10px; }
+  h1 { font-size: 20px; letter-spacing: 0.04em; }
+  .sub { font-size: 11px; color: #555; margin: 4px 0 14px }
+  .dnote { border: 2px solid #000; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; break-inside: avoid; page-break-inside: avoid; }
+  .dhead { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; border-bottom: 1px solid #000; padding-bottom: 6px; margin-bottom: 6px; }
+  .dbiz { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; background: #000; color: #fff; padding: 2px 8px; }
+  .dinv { font-size: 18px; font-weight: 900; }
+  .ddate { font-size: 12px; font-weight: 700; margin-left: auto; }
+  .dtab { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .dtab td { padding: 3px 4px; vertical-align: top; }
+  .dl { width: 90px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: #555; }
+  .dv { font-weight: 600; }
+  .dsig { display: flex; gap: 18px; flex-wrap: wrap; font-size: 11px; color: #333; margin-top: 12px; }
+  @media print { .no-print { display: none; } }
+</style></head><body>
+  <div class="no-print">
+    <button onclick="window.print()" style="padding:8px 16px; font-weight:bold; background:#000; color:#fff; border:none; cursor:pointer">🖨️ PRINT ${orders.length} ORDER${orders.length === 1 ? '' : 'S'}</button>
+    <button onclick="window.close()" style="padding:8px 16px; margin-left:8px; cursor:pointer">CLOSE</button>
+  </div>
+  <h1>🚚 DISPATCH / DELIVERY SHEET</h1>
+  <div class="sub">Printed ${esc(todayStr)} · ${orders.length} order${orders.length === 1 ? '' : 's'}</div>
+  ${blocks}
+</body></html>`;
+    const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Allow pop-ups for this site, then tap PRINT again.'); return; }
+    win.document.write(html);
+    win.document.close();
+  }
+  window.printDispatchOrders = printDispatchOrders;
+
   function renderDispatch() {
     // Combine orders from ALL 3 businesses
     const allOrders = [];
@@ -4077,19 +5600,24 @@ ${_PRODUCTION_PRINT_STYLES}
       pinkfoot: { name: 'PinkFoot', color: '#ff1493' },
       repticube: { name: 'ReptiCube', color: '#00d4aa' }
     };
-    
+
+    _dispatchLastFiltered = filtered.map(o => o._biz + '|' + o.id);
+    _updateDispatchSelCount();
+
     const html = filtered.map(o => {
       const biz = bizLabels[o._biz];
+      const selKey = o._biz + '|' + o.id;
       const due = new Date(o.dueDate);
       const daysLeft = isNaN(due.getTime()) ? 0 : Math.ceil((due - today) / (1000 * 60 * 60 * 24));
       const isUrgent = daysLeft <= 7 && daysLeft >= 0;
       const isOverdue = daysLeft < 0;
-      
+
       return `
         <div class="order-card">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap">
             <div style="flex:1; min-width:250px">
               <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.5rem">
+                <input type="checkbox" ${_dispatchSelected.has(selKey) ? 'checked' : ''} onchange="toggleDispatchSelect('${selKey}', this.checked)" title="Tick to include in the printed dispatch sheet" style="width:20px; height:20px; cursor:pointer; flex-shrink:0">
                 <span style="background:${biz.color}; color:#fff; padding:3px 10px; font-size:10px; font-weight:700; letter-spacing:0.05em">${biz.name}</span>
                 <span style="font-size:18px; font-weight:700; color:var(--accent)">#${o.invoice || o.id}</span>
               </div>
@@ -4103,6 +5631,7 @@ ${_PRODUCTION_PRINT_STYLES}
               ${o.deliveryScheduled ? `
                 <div style="margin-top:0.5rem; padding:0.5rem; background:rgba(34, 197, 94, 0.1); border-left:3px solid var(--success); font-size:12px">
                   📅 <strong>DELIVERY: ${o.deliveryScheduled}${o.deliveryTimeFrom || o.deliveryTimeTo ? ' · ' + (o.deliveryTimeFrom || '?') + ' – ' + (o.deliveryTimeTo || '?') : ''}</strong>
+                  ${o.deliveryBookedByClient ? `<span style="margin-left:0.5rem; background:${o.bookingAck ? '#e5e7eb; color:#374151' : '#16a34a; color:#fff'}; font-size:10px; font-weight:700; padding:2px 8px; border-radius:10px">📅 BOOKED BY CLIENT${o.bookingAck ? '' : ' — NEW'}</span>` : ''}
                 </div>
               ` : ''}
               ${o.notes ? `
@@ -4118,6 +5647,13 @@ ${_PRODUCTION_PRINT_STYLES}
                 <option value="done" ${o.status === 'done' ? 'selected' : ''}>✓ READY/DONE</option>
                 <option value="delivered" ${o.status === 'delivered' ? 'selected' : ''}>🚚 DELIVERED</option>
               </select>
+              <select onchange="setOrderFulfillment('${o._biz}', '${o.id}', this.value)" style="width:160px" title="How this order gets to the client">
+                <option value="" ${!o.fulfillment ? 'selected' : ''}>— How to client? —</option>
+                <option value="delivery" ${o.fulfillment === 'delivery' ? 'selected' : ''}>🚚 Our delivery</option>
+                <option value="pickup" ${o.fulfillment === 'pickup' ? 'selected' : ''}>🏬 Client pickup</option>
+                <option value="campos" ${o.fulfillment === 'campos' ? 'selected' : ''}>📦 Campos courier</option>
+              </select>
+              ${o.status === 'done' ? `<button class="btn btn-sm" onclick="openDispatchPrompt('${o._biz}', '${o.id}')" title="Re-open the done actions (WhatsApp / booking link / Campos)">📣 Notify client</button>` : ''}
               <div style="display:flex; flex-direction:column; gap:0.25rem; align-items:flex-end">
                 <label style="margin:0; font-size:10px; color:var(--text-muted)">Delivery Date:</label>
                 <input type="date" value="${o.deliveryScheduled || ''}" onchange="setDeliveryDate('${o._biz}', '${o.id}', this.value)" style="width:160px; padding:4px 8px; margin:0">
@@ -4166,6 +5702,7 @@ ${_PRODUCTION_PRINT_STYLES}
     
     const list = document.getElementById('dispatch-list');
     if (list) list.innerHTML = html || '<div class="empty">No orders match this filter</div>';
+    _renderDispatchRepairs();
   }
   
   let calCurrentDate = new Date();
@@ -4209,7 +5746,8 @@ ${_PRODUCTION_PRINT_STYLES}
         }
         if (showDelivery && o.deliveryScheduled) {
           events[o.deliveryScheduled] = events[o.deliveryScheduled] || [];
-          events[o.deliveryScheduled].push({ biz, type: 'delivery', order: o, icon: '🚚' });
+          // Client-booked deliveries get 📅 so they stand out from staff-scheduled 🚚.
+          events[o.deliveryScheduled].push({ biz, type: 'delivery', order: o, icon: o.deliveryBookedByClient ? '📅' : '🚚', time: o.deliveryTimeFrom || '' });
         }
         if (showStart && o.startDate) {
           events[o.startDate] = events[o.startDate] || [];
@@ -4243,8 +5781,8 @@ ${_PRODUCTION_PRINT_STYLES}
       const dayEvents = events[dateStr] || [];
       
       const eventsHtml = dayEvents.slice(0, 4).map(e => `
-        <div onclick="searchToOrder('${e.order.invoice}')" style="background:${bizColors[e.biz]}; color:#fff; padding:2px 5px; margin-bottom:2px; border-radius:3px; font-size:10px; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${e.icon} ${e.type.toUpperCase()}: #${e.order.invoice} - ${e.order.customer} - ${e.order.product}">
-          ${e.icon} #${e.order.invoice} ${e.order.customer.split(' ')[0]}
+        <div onclick="searchToOrder('${e.order.invoice}')" style="background:${bizColors[e.biz]}; color:#fff; padding:2px 5px; margin-bottom:2px; border-radius:3px; font-size:10px; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${e.icon} ${e.type.toUpperCase()}: #${e.order.invoice} - ${e.order.customer} - ${e.order.product}${e.time ? ' @ ' + e.time : ''}">
+          ${e.icon} #${e.order.invoice} ${e.order.customer.split(' ')[0]}${e.time ? ' · ' + e.time : ''}
         </div>
       `).join('');
       
@@ -5058,7 +6596,7 @@ ${_PRODUCTION_PRINT_STYLES}
       const profit = sell - trueCost;
       const margin = sell > 0 ? (profit / sell * 100) : 0;
       const pcol = profit >= 0 ? 'var(--success,#166534)' : 'var(--danger,#991b1b)';
-      return `<tr style="border-bottom:1px solid var(--border,#eee)">
+      return `<tr data-prod="${_escape(key)}" style="border-bottom:1px solid var(--border,#eee)">
         <td style="padding:5px 6px">${_escape(key)}</td>
         <td style="padding:5px 6px; text-align:right">R${mat.toFixed(2)}</td>
         <td style="padding:5px 6px; text-align:right"><input type="number" step="1" value="${!isNaN(directLabour) ? directLabour : ''}" placeholder="${(hrs * rate) ? (hrs * rate).toFixed(0) : '0'}" onchange="costingSetProduct('${_q(key)}','labourCost',this.value)" style="width:96px; padding:3px; text-align:right" title="Labour cost per piece (Rand)"></td>
@@ -5188,6 +6726,28 @@ ${_PRODUCTION_PRINT_STYLES}
           if (o) rows.push([b, o.name || '', (o.monthly != null ? o.monthly : '')]);
         });
       });
+    } else if (type === 'bom') {
+      // One row per product-material line. Products with no BOM lines still get a
+      // row (blank material columns) so the full product list is visible in the sheet.
+      rows.push(['Business', 'Product', 'Material Id', 'Material', 'Qty', 'Unit', 'Unit Cost', 'Line Cost']);
+      COSTING_BIZ.forEach(b => {
+        const biz = data[b];
+        if (!biz) return;
+        const matById = {};
+        (biz.materialsLibrary || []).forEach(m => { if (m && m.id) matById[m.id] = m; });
+        Object.keys(biz.productBoms || {}).sort().forEach(key => {
+          const p = biz.productBoms[key] || {};
+          const entries = Object.entries(p.materials || {}).filter(([, q]) => parseFloat(q) > 0);
+          if (entries.length === 0) { rows.push([b, key, '', '', '', '', '', '']); return; }
+          entries
+            .map(([matId, qty]) => ({ matId, qty, m: matById[matId] }))
+            .sort((x, y) => String((x.m && x.m.name) || x.matId).localeCompare(String((y.m && y.m.name) || y.matId)))
+            .forEach(({ matId, qty, m }) => {
+              const cost = m ? (parseFloat(m.cost) || 0) : 0;
+              rows.push([b, key, matId, (m && m.name) || '', qty, (m && m.unit) || '', cost, (parseFloat(qty) * cost).toFixed(2)]);
+            });
+        });
+      });
     } else {
       rows.push(['Business', 'Product', 'Material Cost (auto)', 'Labour Per Piece', 'Selling Price']);
       COSTING_BIZ.forEach(b => {
@@ -5240,6 +6800,30 @@ ${_PRODUCTION_PRINT_STYLES}
             if (!m) { skipped++; continue; }
             const cv = costIdx >= 0 ? num(cells[costIdx]) : null;
             if (cv != null) { m.cost = cv; updated++; } else skipped++;
+          } else if (type === 'bom') {
+            // Header names overlap ("Material Id" contains "Material"), so match exactly.
+            const exact = (name) => header.findIndex(h => h === name);
+            const prodIdx = exact('product');
+            const matIdIdx = exact('material id');
+            const matNameIdx = exact('material');
+            const qtyIdx = col(['qty', 'quantity']);
+            const key = prodIdx >= 0 ? String(cells[prodIdx] || '').trim() : '';
+            if (!key || !biz.productBoms) { skipped++; continue; }
+            const realKey = biz.productBoms[key] ? key : Object.keys(biz.productBoms).find(k => k.toLowerCase() === key.toLowerCase());
+            if (!realKey) { skipped++; continue; }
+            const mid = matIdIdx >= 0 ? String(cells[matIdIdx] || '').trim() : '';
+            const mnm = matNameIdx >= 0 ? String(cells[matNameIdx] || '').trim() : '';
+            if (!mid && !mnm) { skipped++; continue; } // placeholder row for a product with no BOM yet
+            const lib = biz.materialsLibrary || [];
+            let m = mid ? lib.find(x => x && x.id === mid) : null;
+            if (!m && mnm) m = lib.find(x => x && String(x.name || '').toLowerCase() === mnm.toLowerCase());
+            if (!m) { skipped++; continue; }
+            const qv = qtyIdx >= 0 ? num(cells[qtyIdx]) : null;
+            if (qv == null) { skipped++; continue; }
+            const p = biz.productBoms[realKey];
+            if (!p.materials || typeof p.materials !== 'object') p.materials = {};
+            if (qv <= 0) { if (p.materials[m.id] != null) { delete p.materials[m.id]; updated++; } else skipped++; }
+            else { if (p.materials[m.id] == null) added++; else updated++; p.materials[m.id] = qv; }
           } else if (type === 'overheads') {
             const nameIdx = col(['overhead', 'name']);
             const monIdx = col(['monthly', 'amount', 'month']);
@@ -6239,9 +7823,13 @@ ${_PRODUCTION_PRINT_STYLES}
       if (oldStatus === 'in-production' && newStatus === 'pending') {
         try { restoreMaterialsForOrder(biz, order); } catch (e) { console.warn('Restoration failed:', e); }
       }
-      
+
       saveData();
       render();
+      // Dispatch Manager prompt on DONE (same as updateOrderStatus).
+      if (newStatus === 'done' && oldStatus !== 'done' && typeof openDispatchPrompt === 'function') {
+        openDispatchPrompt(biz, order.id);
+      }
     }
   }
   
@@ -6488,6 +8076,24 @@ ${_PRODUCTION_PRINT_STYLES}
     try { return new URLSearchParams(window.location.search).get('reserved') === '1'; }
     catch (e) { return false; }
   })();
+
+  // Client delivery-booking mode (?book=1&b=<biz>&o=<orderId>) — the link a client
+  // gets on WhatsApp when their order is done. Full-screen booking calendar only.
+  const IS_BOOKING_MODE = (function () {
+    try { return new URLSearchParams(window.location.search).get('book') === '1'; }
+    catch (e) { return false; }
+  })();
+  // Enter booking mode IMMEDIATELY — the client must never see the staff login
+  // screen. This runs at script load (before Firebase resolves); if live
+  // availability hasn't arrived within a few seconds (slow phone, Firebase
+  // blocked, anonymous sign-in disabled), show the link-encoded slots so the
+  // client can always pick a time.
+  if (IS_BOOKING_MODE) {
+    try {
+      enterBookingOnlyMode();
+      setTimeout(() => { try { bookingStaticFallback(); } catch (e) {} }, 4000);
+    } catch (e) { console.warn('Booking boot failed:', e); }
+  }
 
   // Open the current app URL with ?dashboard=1 in a new browser window the user
   // can drag onto a second monitor. Sized large by default — they can resize / move.
@@ -7353,6 +8959,7 @@ ${_PRODUCTION_PRINT_STYLES}
           ${colLabels[i]}
           <span class="col-sub">${_formatWeekShort(w)}</span>
           <span class="col-sub">${buckets[w].length} order${buckets[w].length !== 1 ? 's' : ''}</span>
+          <button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px; margin-top:2px" title="Print just this week (use Save as PDF in the print dialog)" onclick="printPlannerSheet('${w}')">🖨️ Print week</button>
         </div>
         <div class="plan-col-body">
           ${buckets[w].map(o => planItemCard(o)).join('') || '<div class="empty" style="padding:0.75rem 0; font-size:11px">—</div>'}
@@ -7985,12 +9592,21 @@ ${_PRODUCTION_PRINT_STYLES}
         badge = `<span style="font-weight:700; color:#991b1b">⏳ WAITING</span>`;
         bgStyle = 'background:#fffbeb;'; // yellow tint — needs action
       }
+      // One-tap fabric actions straight from the planner card (drag-safe).
+      const fabBtn = (label, status, title) => `<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px" title="${title}"
+        onclick="event.stopPropagation(); planSetFabricStatus('${_escape(o.id)}', '${status}')"
+        onmousedown="event.stopPropagation()" ondragstart="event.preventDefault(); event.stopPropagation()" draggable="false">${label}</button>`;
+      let fabricAction = '';
+      if (o.fabricStatus === 'received') fabricAction = '';
+      else if (o.fabricStatus === 'ordered') fabricAction = fabBtn('✅ Received', 'received', 'Fabric has arrived');
+      else fabricAction = fabBtn('📦 Ordered', 'ordered', 'I have ordered this fabric');
       fabricRowHtml = `
           <div class="pc-fabric" style="font-size:11px; margin-top:4px; display:flex; align-items:center; gap:4px; flex-wrap:wrap; line-height:1.3">
             <span style="color:var(--text-muted)">🧵</span>
             <span style="color:var(--text); font-weight:500">${_escape(o.fabric)}</span>
             <span style="color:var(--text-muted)">·</span>
             ${badge}
+            ${fabricAction}
           </div>`;
     }
 
@@ -8004,6 +9620,7 @@ ${_PRODUCTION_PRINT_STYLES}
           <div class="pc-inv">#${inv}</div>
           <div class="pc-prod">${_escape(prodLabel)}</div>
           <div class="pc-cust">👤 ${_escape(o.customer)}</div>
+          ${o.orderDate ? `<div class="pc-due" style="color:var(--text-muted)">🗓️ Ordered ${_escape(o.orderDate)}</div>` : ''}
           ${dueText ? `<div class="pc-due">${_escape(dueText)}</div>` : ''}
           ${fabricRowHtml}
           ${showPlanDate ? `<div class="pc-due">📅 Week of ${_escape(o.planWeek)}</div>` : ''}
@@ -8017,6 +9634,23 @@ ${_PRODUCTION_PRINT_STYLES}
     `;
   }
   window.planItemCard = planItemCard;
+
+  // Fabric status straight from a planner card. Searches ALL businesses because
+  // Bellville's planner also shows PinkFoot rocking-chair/foot-stool orders.
+  function planSetFabricStatus(orderId, status) {
+    let order = null;
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      if (!order) order = ((data[b] && data[b].orders) || []).find(o => o && o.id === orderId);
+    });
+    if (!order) return;
+    snapshotState();
+    order.fabricStatus = status;
+    if (status === 'received') { order.fabricOOS = false; order.fabricStockETA = ''; }
+    saveData();
+    if (typeof render === 'function') render();
+    if (typeof toast === 'function') toast('🧵 ' + (order.fabric || 'Fabric') + ' marked ' + status.toUpperCase() + ' for #' + (order.invoice || order.id), 'success', 2500);
+  }
+  window.planSetFabricStatus = planSetFabricStatus;
 
   // ----- Drag handlers (desktop) -----
   function planDragStart(e, orderId) {
@@ -8186,13 +9820,19 @@ ${_PRODUCTION_PRINT_STYLES}
   //   - Title says "PRODUCTION PLAN" instead of "PRODUCTION STATUS"
   //   - Orders are grouped by planWeek with a heading row "📅 WEEK OF YYYY-MM-DD"
   //   - Unscheduled orders go under a final "📥 UNSCHEDULED" heading row
-  function printPlannerSheet() {
+  function printPlannerSheet(weekIso) {
     const biz = activeBiz;
     const bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
 
     let orders = _plannerOrders().filter(o => o.status !== 'delivered' && o.status !== 'done');
+    if (weekIso) {
+      // One week only. The CURRENT week also collects past-scheduled orders,
+      // matching what the on-screen planner shows in the Current column.
+      const curMon = getMondayOf(new Date());
+      orders = orders.filter(o => o.planWeek && (o.planWeek === weekIso || (weekIso === curMon && o.planWeek < curMon)));
+    }
     if (orders.length === 0) {
-      alert('No active orders to print.');
+      alert(weekIso ? 'No orders scheduled in that week.' : 'No active orders to print.');
       return;
     }
 
@@ -8236,7 +9876,7 @@ ${_PRODUCTION_PRINT_STYLES}
         bodyParts.push(_productionRowHtml(o, seq, today));
       });
     });
-    if (unscheduled.length > 0) {
+    if (unscheduled.length > 0 && !weekIso) {
       bodyParts.push(`<tr class="week-group"><td colspan="${COLSPAN}" class="unscheduled-head">📥 UNSCHEDULED &nbsp;·&nbsp; ${unscheduled.length} order${unscheduled.length !== 1 ? 's' : ''}</td></tr>`);
       unscheduled.forEach(o => {
         seq++;
@@ -8255,7 +9895,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const html = `<!DOCTYPE html>
 <html>
 <head>
-<title>Production Plan — ${bizNames[biz]}</title>
+<title>Production Plan${weekIso ? ' — week of ' + weekIso : ''} — ${bizNames[biz]}</title>
 ${_PRODUCTION_PRINT_STYLES}
 </head>
 <body>
@@ -8267,7 +9907,7 @@ ${_PRODUCTION_PRINT_STYLES}
   <div class="header">
     <div>
       <div class="biz-name">${bizNames[biz]}</div>
-      <div class="date">Production Plan · ${todayStr}</div>
+      <div class="date">Production Plan${weekIso ? ' · WEEK OF ' + weekIso : ''} · ${todayStr}</div>
     </div>
     <div class="title">PRODUCTION PLAN</div>
   </div>
@@ -9746,13 +11386,13 @@ ${totalsSection}
   // currentRole declared at top of script (TDZ safety)
   // Role permissions: which tabs each role can see
   const ROLE_PERMISSIONS = {
-    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'woodwork', 'pos'],
-    sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'woodwork', 'pos'],
-    factory: ['dashboard', 'orders', 'done', 'calendar', 'fabric', 'bom', 'schedule', 'planner'],
-    dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'finished', 'fabric'],
+    admin: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'weekplan', 'stages', 'woodwork', 'pos'],
+    sales: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'stages', 'woodwork', 'pos'],
+    factory: ['dashboard', 'orders', 'done', 'calendar', 'repairs', 'fabric', 'bom', 'schedule', 'planner', 'stages'],
+    dispatch: ['dashboard', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric'],
     fabric: ['dashboard', 'calendar', 'fabric'],
     cashier: ['dashboard', 'fabric', 'pos'],
-    manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'pos']
+    manager: ['dashboard', 'intake', 'orders', 'done', 'calendar', 'dispatch', 'repairs', 'finished', 'fabric', 'bom', 'staff', 'materials', 'costing', 'schedule', 'planner', 'weekplan', 'stages', 'pos']
   };
   
   // Roles that should NOT see fabric ordering info on dashboard or order cards
@@ -9830,7 +11470,10 @@ ${totalsSection}
         }
         
         document.getElementById('login-overlay').style.display = 'none';
-        if (IS_RESERVED_MODE || currentRole === 'fabricrep') {
+        if (IS_BOOKING_MODE) {
+          // Client booking link — full-screen calendar only (works for anonymous sign-ins too)
+          enterBookingOnlyMode();
+        } else if (IS_RESERVED_MODE || currentRole === 'fabricrep') {
           // Fabric-rep portal — view-only reserved sheet with out-of-stock + ETA
           enterReservedOnlyMode();
         } else if (IS_DASHBOARD_MODE) {
@@ -9847,15 +11490,32 @@ ${totalsSection}
         startSync();
         startSyncPos();
         startSyncSalesOrders();
+        startSyncFabricLib();
       } else {
         currentUser = null;
         currentRole = null;
+        if (IS_BOOKING_MODE) {
+          // Client with a booking link — no account. Try anonymous sign-in so the
+          // calendar can show LIVE availability; if that's disabled in Firebase,
+          // fall back to the link-encoded slots + WhatsApp confirmation.
+          document.getElementById('login-overlay').style.display = 'none';
+          enterBookingOnlyMode();
+          if (window.firebaseFns && window.firebaseFns.signInAnonymously) {
+            window.firebaseFns.signInAnonymously(window.firebaseAuth).catch(() => {
+              if (typeof bookingStaticFallback === 'function') bookingStaticFallback();
+            });
+          } else if (typeof bookingStaticFallback === 'function') {
+            bookingStaticFallback();
+          }
+          return;
+        }
         document.getElementById('login-overlay').style.display = 'flex';
         document.getElementById('main-app').style.display = 'none';
         const _rv = document.getElementById('reserved-only-view'); if (_rv) _rv.style.display = 'none';
         if (unsubscribe) { unsubscribe(); unsubscribe = null; }
         Object.keys(unsubscribePos).forEach(b => { try { unsubscribePos[b](); } catch (e) {} });
         unsubscribePos = {};
+        if (unsubscribeFabricLib) { try { unsubscribeFabricLib(); } catch (e) {} unsubscribeFabricLib = null; }
         if (unsubscribeSalesOrders) { try { unsubscribeSalesOrders(); } catch (e) {} unsubscribeSalesOrders = null; }
         productionLoaded = false;
         _rcPendingSOs = [];
