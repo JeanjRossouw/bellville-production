@@ -9,7 +9,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
   import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
-  import { getFirestore, doc, setDoc, getDoc, collection, addDoc, getDocs, query, where, orderBy, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+  import { getFirestore, doc, setDoc, getDoc, deleteDoc, collection, addDoc, getDocs, query, where, orderBy, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   // Reuses the existing Firebase project (separate Firestore collections for the till).
   const firebaseConfig = {
@@ -30,7 +30,7 @@
 
   window.fb = {
     db, auth,
-    fns: { doc, setDoc, getDoc, collection, addDoc, getDocs, query, where, orderBy, onAuthStateChanged }
+    fns: { doc, setDoc, getDoc, deleteDoc, collection, addDoc, getDocs, query, where, orderBy, onAuthStateChanged }
   };
   window.dispatchEvent(new Event('fb-ready'));
 </script>
@@ -1194,6 +1194,14 @@
         <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveDocSettings()">Save</button>
       </div>
       <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">The logo prints at the top of quotes &amp; sales orders. Any public image URL (e.g. your logo on repticube.com).</div>
+      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">🗄 History</div>
+      <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center">
+        <label class="qbtn" style="width:auto; padding:0 0.7rem; display:flex; align-items:center; cursor:pointer">📥 Import Lightspeed sales CSV<input type="file" accept=".csv,text/csv" style="display:none" onchange="importLsSales(this)"></label>
+        <span style="color:var(--muted); font-size:0.8rem">since</span>
+        <input id="ls-since" type="date" value="${new Date(Date.now() - 62 * 24 * 3600 * 1000).toISOString().slice(0, 10)}" style="width:auto; padding:0.3rem 0.5rem">
+        <button class="qbtn" style="width:auto; padding:0 0.7rem; border-color:var(--danger); color:var(--danger)" onclick="clearTillHistory()">🧹 Clear till test history</button>
+      </div>
+      <div id="ls-status" style="font-size:0.75rem; color:var(--muted); margin-top:0.3rem">Import creates backdated, paid Shopify orders (tag <b>lightspeed-import</b>) — stock is never touched, and re-importing the same file can't duplicate. Clear wipes this till's local test logs + the cloud test logs; it never touches Shopify.</div>
       ${isDemo() ? `<div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.3rem">Demo mode</div>
       <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="toggleDemo()">Turn demo OFF (use real Shopify)</button>
       <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Demo only ever starts from an explicit ?demo=1 link — the till is real by default.</div>` : ''}`;
@@ -1210,6 +1218,113 @@
     saveStaff(list); renderReg(); toast('Staff added');
   }
   function removeStaff(id) { if (!confirm('Remove this staff member?')) return; saveStaff(staffList().filter(s => s.id !== id)); renderReg(); }
+  // ---- Lightspeed history import + till-history reset --------------------
+  // Proper CSV parsing (quoted fields can contain commas/newlines).
+  function parseCsvFull(text) {
+    const rows = []; let row = [], field = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) {
+        if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; }
+        else field += c;
+      } else if (c === '"') q = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && text[i + 1] === '\n') i++;
+        row.push(field); field = '';
+        if (row.length > 1 || row[0] !== '') rows.push(row);
+        row = [];
+      } else field += c;
+    }
+    if (field !== '' || row.length) { row.push(field); rows.push(row); }
+    return rows;
+  }
+  let lsImportBusy = false;
+  async function importLsSales(input) {
+    const file = input.files && input.files[0];
+    input.value = '';
+    if (!file || lsImportBusy) return;
+    if (isDemo()) { toast('Turn demo OFF first — the import writes real Shopify orders'); return; }
+    if (!(currentStaff && currentStaff.role === 'admin') && !adminOverride('import Lightspeed sales history into Shopify')) return;
+    const sinceStr = document.getElementById('ls-since').value;
+    if (!sinceStr) { toast('Pick the "since" date first (e.g. 2 months back)'); return; }
+    const st = document.getElementById('ls-status');
+    const text = await file.text();
+    const rows = parseCsvFull(text);
+    const head = rows[0].map(h => h.trim());
+    const col = n => head.indexOf(n);
+    const iDate = col('Date'), iRc = col('Receipt Number'), iType = col('Line Type'), iQty = col('Quantity'),
+      iTot = col('Total'), iDet = col('Details'), iStatus = col('Status'), iCust = col('Customer Name');
+    if (iDate < 0 || iRc < 0 || iType < 0) { toast('That does not look like a Lightspeed sales export'); return; }
+    // Group: each Sale row starts a receipt; Sale Line rows belong to it;
+    // Payment rows name the tender.
+    const receipts = []; let cur = null;
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r]; if (!row[iType]) continue;
+      const type = row[iType].trim();
+      if (type === 'Sale') {
+        cur = { receipt: row[iRc], date: row[iDate], status: (row[iStatus] || '').trim(),
+          customer: (row[iCust] || '').trim(), totalCents: Math.round((parseFloat(row[iTot]) || 0) * 100), lines: [], pay: [] };
+        receipts.push(cur);
+      } else if (type === 'Sale Line' && cur) {
+        const qty = Math.round(parseFloat(row[iQty]) || 1);
+        cur.lines.push({ qty, title: (row[iDet] || 'Item').trim(), lineTotalCents: Math.round((parseFloat(row[iTot]) || 0) * 100) });
+      } else if (type === 'Payment' && cur) {
+        cur.pay.push((row[iDet] || '').trim());
+      }
+    }
+    const todo = receipts.filter(x => x.date.slice(0, 10) >= sinceStr && !['VOIDED', 'SAVED'].includes(x.status) && x.lines.length);
+    if (!todo.length) { toast('No importable receipts on/after ' + sinceStr); return; }
+    const totalR = todo.reduce((t, x) => t + x.totalCents, 0);
+    if (!confirm('Import ' + todo.length + ' Lightspeed receipts (' + money(totalR) + ') since ' + sinceStr + ' into Shopify as backdated paid orders?\n\nStock is not touched. Re-importing cannot duplicate.')) return;
+    lsImportBusy = true;
+    let done = 0, failed = 0;
+    for (const x of todo) {
+      st.textContent = 'Importing ' + (done + failed + 1) + '/' + todo.length + ' — receipt ' + x.receipt + '…';
+      try {
+        await apiX('importHistoric', {
+          receipt: x.receipt,
+          processedAt: new Date(x.date.replace(' ', 'T')).toISOString(),
+          lineItems: x.lines.map(l => ({ title: (l.qty !== 1 ? l.qty + ' × ' : '') + l.title, priceCents: l.lineTotalCents })),
+          note: 'Lightspeed receipt ' + x.receipt + (x.customer ? ' · ' + x.customer : '') + (x.pay.length ? ' · ' + x.pay.join(' + ') : '') + ' · status ' + x.status
+        });
+        done++;
+      } catch (e) { failed++; console.warn('LS import failed for receipt ' + x.receipt + ':', e); }
+      await new Promise(r => setTimeout(r, 300));   // stay friendly to Shopify's rate limit
+    }
+    lsImportBusy = false;
+    st.textContent = 'Lightspeed import: ' + done + ' imported' + (failed ? ', ' + failed + ' FAILED (see console; re-run the same file to retry just the failures)' : ' — all done') + '. See them under 📊 Sales → 🛍 Shopify orders.';
+    toast('Imported ' + done + ' of ' + todo.length + ' receipts');
+  }
+
+  // Wipe this till's LOCAL test logs + the shared cloud test logs. Shopify is
+  // never touched — real orders/products stay exactly as they are.
+  async function clearTillHistory() {
+    if (!(currentStaff && currentStaff.role === 'admin') && !adminOverride('clear the till history')) return;
+    const word = prompt('This clears the till\'s local sales/deposits/refunds/shifts logs AND the shared cloud copies (sales, refunds, payments, cashups, accounts, salesorders, stocktakes).\n\nShopify is NOT touched.\n\nType CLEAR to continue:');
+    if (word !== 'CLEAR') { toast('Cancelled'); return; }
+    ['reptipos-sales', 'reptipos-deposits', 'reptipos-refunds-log', 'reptipos-giftcards-sold',
+     'reptipos-acct-payments', 'reptipos-accounts', 'reptipos-shifts', 'reptipos-queue', 'reptipos-shift', 'reptipos-seq']
+      .forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+    let cloud = 0;
+    if (!isDemo() && window.fb && window.fb.fns.deleteDoc) {
+      const st = document.getElementById('ls-status');
+      for (const coll of ['sales', 'refunds', 'payments', 'cashups', 'accounts', 'salesorders', 'stocktakes']) {
+        try {
+          const { db, fns } = window.fb;
+          const snap = await fns.getDocs(fns.collection(db, coll));
+          const ids = []; snap.forEach(d => ids.push(d.id));
+          for (const id of ids) { try { await fns.deleteDoc(fns.doc(db, coll, id)); cloud++; } catch (e) {} }
+          if (st) st.textContent = 'Clearing cloud logs… ' + coll + ' done (' + cloud + ' docs so far)';
+        } catch (e) { console.warn('Cloud clear failed for ' + coll + ':', e); }
+      }
+    } else if (isDemo()) {
+      Object.keys(localStorage).filter(k => k.startsWith('reptipos-demo-')).forEach(k => localStorage.removeItem(k));
+    }
+    renderReg();
+    toast('Till history cleared' + (cloud ? ' (' + cloud + ' cloud records)' : ''));
+  }
+
   function saveBankSettings() {
     const s = {
       bankName: (document.getElementById('bk-name').value || '').trim(),

@@ -598,6 +598,45 @@ async function customerOrders(customerId) {
   }));
 }
 
+// One historic (Lightspeed) receipt → a backdated Shopify order. Custom line
+// items only (no variants), so stock is NEVER touched; processed_at carries
+// the original sale date so Shopify reports place it correctly. Idempotent
+// per receipt number, so re-running an import can't duplicate orders.
+async function importHistoric({ receipt, processedAt, lineItems, note, paymentMethod }) {
+  if (!receipt || !processedAt || !Array.isArray(lineItems) || !lineItems.length) {
+    const e = new Error('receipt, processedAt and lineItems are required'); e.status = 400; throw e;
+  }
+  let store = null;
+  const key = 'ls-' + String(receipt);
+  try {
+    store = getStore('reptipos-lsimport');
+    const prior = await store.get(key, { type: 'json' });
+    if (prior) return { ...prior, idempotent: true };
+  } catch (e) { store = null; }
+  const payload = {
+    order: {
+      line_items: lineItems.map(li => ({
+        title: String(li.title || 'Item').slice(0, 255),
+        quantity: 1,                                        // qty folded into the title; price is the LINE total → order total exact
+        price: (Number(li.priceCents) / 100).toFixed(2)
+      })),
+      financial_status: 'paid',
+      fulfillment_status: 'fulfilled',
+      processed_at: processedAt,                            // the original Lightspeed sale date
+      tags: 'lightspeed-import',
+      source_name: 'lightspeed',
+      note: note || ('Lightspeed receipt ' + receipt),
+      send_receipt: false,
+      send_fulfillment_receipt: false
+      // NO inventory_behaviour → inventory is bypassed entirely
+    }
+  };
+  const { json } = await shopify('/orders.json', { method: 'POST', body: payload });
+  const out = { orderId: String(json.order.id), orderName: json.order.name };
+  if (store) { try { await store.set(key, JSON.stringify(out)); } catch (e) {} }
+  return out;
+}
+
 // Compact order list for a date range — the till's "Shopify" sales view.
 // Includes ALL orders (till + online web orders), newest first, capped at 500.
 async function listOrders({ since, until }) {
@@ -680,6 +719,7 @@ export const handler = async (event) => {
     if (body.action === 'customerOrders') return json(200, { orders: await customerOrders(body.customerId) });
     if (body.action === 'salesReport') return json(200, await salesReport(body));
     if (body.action === 'listOrders') return json(200, await listOrders(body));
+    if (body.action === 'importHistoric') return json(200, await importHistoric(body));
     if (body.action === 'receiveStock') return json(200, await receiveStock(body));
     if (body.action === 'setStock') return json(200, await setStock(body));
     if (body.action === 'setCosts') return json(200, await setCosts(body));
