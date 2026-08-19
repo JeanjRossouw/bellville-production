@@ -68,6 +68,110 @@ async function shopify(path, { method = 'GET', body } = {}, _retry = 0) {
   return { json, headers: res.headers };
 }
 
+// GraphQL Admin API — used for gift cards + store credit, which have no REST
+// equivalent on current API versions. Newer version than the REST calls because
+// giftCardDebit/storeCreditAccount* don't exist on 2024-10.
+const GQL_API_VERSION = '2025-07';
+async function gql(query, variables) {
+  const c = cfg();
+  const token = await accessToken();
+  const res = await fetch(`https://${c.domain}/admin/api/${GQL_API_VERSION}/graphql.json`, {
+    method: 'POST',
+    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ query, variables })
+  });
+  const j = await res.json().catch(() => null);
+  if (!res.ok || !j) { const e = new Error(`Shopify GraphQL (${res.status})`); e.status = res.status; throw e; }
+  if (j.errors && j.errors.length) {
+    const msg = j.errors.map(x => x.message).join('; ');
+    const e = new Error(msg.includes('access') ? msg + ' — the app is missing a scope (gift cards need read/write_gift_cards, which Shopify Support must enable; store credit needs read_store_credit_accounts + write_store_credit_account_transactions).' : msg);
+    e.status = 400; throw e;
+  }
+  return j.data;
+}
+const centsToDec = (c) => (Number(c) / 100).toFixed(2);
+const decToCents = (d) => Math.round(Number(d) * 100);
+const CURRENCY = process.env.SHOPIFY_CURRENCY || 'ZAR';
+function userErrs(node) {
+  const errs = (node && node.userErrors) || [];
+  if (errs.length) { const e = new Error(errs.map(x => x.message).join('; ')); e.status = 400; throw e; }
+}
+
+// ---- Gift cards (GraphQL) ----
+// We generate the code client-side and keep a hashed map in Firestore, because
+// Shopify never returns a gift card's code after creation (last 4 chars only).
+async function gcCreate({ amountCents, code, customerId, note }) {
+  if (!amountCents || amountCents <= 0) { const e = new Error('No amount'); e.status = 400; throw e; }
+  const d = await gql(`mutation($input: GiftCardCreateInput!) {
+    giftCardCreate(input: $input) {
+      giftCard { id lastCharacters balance { amount } }
+      userErrors { message }
+    }}`, { input: {
+      initialValue: centsToDec(amountCents),
+      ...(code ? { code } : {}),
+      ...(customerId ? { customerId: `gid://shopify/Customer/${customerId}` } : {}),
+      note: note || 'Sold at ReptiCube POS'
+    } });
+  userErrs(d.giftCardCreate);
+  const gc = d.giftCardCreate.giftCard;
+  return { id: gc.id, last4: gc.lastCharacters, balanceCents: decToCents(gc.balance.amount) };
+}
+async function gcBalance({ id }) {
+  const d = await gql(`query($id: ID!) { node(id: $id) { ... on GiftCard {
+    id lastCharacters enabled expiresOn balance { amount } } } }`, { id });
+  const gc = d.node;
+  if (!gc) { const e = new Error('Gift card not found'); e.status = 404; throw e; }
+  return { id: gc.id, last4: gc.lastCharacters, enabled: !!gc.enabled, expiresOn: gc.expiresOn || null, balanceCents: decToCents(gc.balance.amount) };
+}
+// Fallback lookup for cards not in our map (e.g. sold online): search by the
+// LAST characters of the code — Shopify can't search the full code.
+async function gcFind({ last4 }) {
+  const d = await gql(`query($q: String!) { giftCards(first: 5, query: $q) {
+    nodes { id lastCharacters enabled balance { amount } } } }`, { q: `code:${last4} status:enabled` });
+  return { cards: (d.giftCards.nodes || []).map(gc => ({ id: gc.id, last4: gc.lastCharacters, enabled: !!gc.enabled, balanceCents: decToCents(gc.balance.amount) })) };
+}
+async function gcDebit({ id, amountCents }) {
+  if (!amountCents || amountCents <= 0) { const e = new Error('No amount'); e.status = 400; throw e; }
+  const d = await gql(`mutation($id: ID!, $debitInput: GiftCardDebitInput!) {
+    giftCardDebit(id: $id, debitInput: $debitInput) {
+      giftCardDebitTransaction { giftCard { balance { amount } } }
+      userErrors { message }
+    }}`, { id, debitInput: { debitAmount: { amount: centsToDec(amountCents), currencyCode: CURRENCY } } });
+  userErrs(d.giftCardDebit);
+  return { balanceCents: decToCents(d.giftCardDebit.giftCardDebitTransaction.giftCard.balance.amount) };
+}
+
+// ---- Store credit (GraphQL) ----
+async function scBalance({ customerId }) {
+  const d = await gql(`query($id: ID!) { customer(id: $id) {
+    storeCreditAccounts(first: 10) { nodes { id balance { amount currencyCode } } } } }`,
+    { id: `gid://shopify/Customer/${customerId}` });
+  const accts = (d.customer && d.customer.storeCreditAccounts.nodes) || [];
+  const acct = accts.find(a => a.balance.currencyCode === CURRENCY) || accts[0];
+  return acct ? { accountId: acct.id, balanceCents: decToCents(acct.balance.amount) } : { accountId: null, balanceCents: 0 };
+}
+async function scCredit({ customerId, amountCents }) {
+  if (!amountCents || amountCents <= 0) { const e = new Error('No amount'); e.status = 400; throw e; }
+  const d = await gql(`mutation($id: ID!, $creditInput: StoreCreditAccountCreditInput!) {
+    storeCreditAccountCredit(id: $id, creditInput: $creditInput) {
+      storeCreditAccountTransaction { account { id balance { amount } } }
+      userErrors { message }
+    }}`, { id: `gid://shopify/Customer/${customerId}`,
+      creditInput: { creditAmount: { amount: centsToDec(amountCents), currencyCode: CURRENCY } } });
+  userErrs(d.storeCreditAccountCredit);
+  return { balanceCents: decToCents(d.storeCreditAccountCredit.storeCreditAccountTransaction.account.balance.amount) };
+}
+async function scDebit({ accountId, amountCents }) {
+  if (!amountCents || amountCents <= 0) { const e = new Error('No amount'); e.status = 400; throw e; }
+  const d = await gql(`mutation($id: ID!, $debitInput: StoreCreditAccountDebitInput!) {
+    storeCreditAccountDebit(id: $id, debitInput: $debitInput) {
+      storeCreditAccountTransaction { account { id balance { amount } } }
+      userErrors { message }
+    }}`, { id: accountId, debitInput: { debitAmount: { amount: centsToDec(amountCents), currencyCode: CURRENCY } } });
+  userErrs(d.storeCreditAccountDebit);
+  return { balanceCents: decToCents(d.storeCreditAccountDebit.storeCreditAccountTransaction.account.balance.amount) };
+}
+
 async function primaryLocationId() {
   const { json } = await shopify('/locations.json');
   const loc = (json.locations || []).find(l => l.active) || (json.locations || [])[0];
@@ -109,6 +213,23 @@ async function getProducts() {
     const m = link.match(/<([^>]+)>;\s*rel="next"/);
     url = m ? m[1].replace(/^https?:\/\/[^/]+\/admin\/api\/[^/]+/, '') : null;
   }
+
+  // Attach each product's Shopify COLLECTIONS so the till can show the same
+  // catalogue structure as the online store (a product can sit in several).
+  // Best-effort: if this fails the till falls back to product_type.
+  try {
+    const collMap = {};
+    let after = null;
+    for (let page = 0; page < 30; page++) {
+      const d = await gql(`query($after: String) { products(first: 50, after: $after, query: "status:active") {
+        nodes { legacyResourceId collections(first: 15) { nodes { title } } }
+        pageInfo { hasNextPage endCursor } } }`, { after });
+      d.products.nodes.forEach(n => { collMap[String(n.legacyResourceId)] = n.collections.nodes.map(c => c.title); });
+      if (!d.products.pageInfo.hasNextPage) break;
+      after = d.products.pageInfo.endCursor;
+    }
+    out.forEach(r => { r.collections = collMap[r.productId] || []; });
+  } catch (e) { /* collections are an enhancement — the catalogue still works without them */ }
   // Cost prices deliberately do NOT come down with the catalogue. They live in
   // the POS (see getCosts) and are fetched only by the manager-only screens
   // that need them, so a cashier's till never receives a buying price at all.
@@ -118,7 +239,7 @@ async function getProducts() {
 // Create a paid + (best-effort) fulfilled Shopify order for a walk-in sale, so
 // inventory decrements. lineItems: [{ variantId, qty }]. idemKey makes retries
 // return the SAME order instead of creating duplicates. Returns the order name.
-async function createOrder({ lineItems, note, idemKey, customerId }) {
+async function createOrder({ lineItems, note, idemKey, customerId, onAccount }) {
   if (!Array.isArray(lineItems) || lineItems.length === 0) { const e = new Error('No line items'); e.status = 400; throw e; }
 
   // Idempotency: if we've already created an order for this key, return it.
@@ -134,6 +255,9 @@ async function createOrder({ lineItems, note, idemKey, customerId }) {
   const payload = {
     order: {
       line_items: lineItems.map(li => {
+        // Custom (open) line: title + price only — no product exists, so no
+        // variant and no stock movement. Everything else sells by variant.
+        if (li.custom) return { title: String(li.title || 'Custom item').slice(0, 255), quantity: Number(li.qty) || 1, price: (Number(li.priceCents) / 100).toFixed(2) };
         const li2 = { variant_id: Number(li.variantId), quantity: Number(li.qty) || 1 };
         // Discounted unit price (cents) overrides the variant price so the order
         // total matches what the customer actually paid. Inventory still
@@ -141,9 +265,11 @@ async function createOrder({ lineItems, note, idemKey, customerId }) {
         if (li.priceCents != null) li2.price = (Number(li.priceCents) / 100).toFixed(2);
         return li2;
       }),
-      financial_status: 'paid',
+      // On-account sales are recorded as PENDING in Shopify — the money hasn't
+      // arrived yet; the till's account ledger tracks the debt.
+      financial_status: onAccount ? 'pending' : 'paid',
       inventory_behaviour: 'decrement_obeying_policy', // decrement stock
-      tags: 'walk-in',
+      tags: onAccount ? 'walk-in, on-account' : 'walk-in',
       source_name: 'reptipos',
       note: note || 'ReptiCube walk-in POS',
       send_receipt: false,
@@ -433,7 +559,9 @@ function parseDocNote(note) {
 }
 async function docSave({ id, lineItems, customerId, tags, doc }) {
   const draft = {
-    line_items: (lineItems || []).map(li => ({ variant_id: Number(li.variantId), quantity: Number(li.qty) || 1 })),
+    line_items: (lineItems || []).map(li => li.custom
+      ? { title: String(li.title || 'Custom item').slice(0, 255), quantity: Number(li.qty) || 1, price: (Number(li.priceCents) / 100).toFixed(2) }
+      : { variant_id: Number(li.variantId), quantity: Number(li.qty) || 1 }),
     tags: tags || 'pos',
     note: buildDocNote(doc),
     ...(customerId ? { customer: { id: Number(customerId) } } : {})
@@ -572,6 +700,74 @@ async function customerOrders(customerId) {
   }));
 }
 
+// One historic (Lightspeed) receipt → a backdated Shopify order. Custom line
+// items only (no variants), so stock is NEVER touched; processed_at carries
+// the original sale date so Shopify reports place it correctly. Idempotent
+// per receipt number, so re-running an import can't duplicate orders.
+async function importHistoric({ receipt, processedAt, lineItems, note, paymentMethod }) {
+  if (!receipt || !processedAt || !Array.isArray(lineItems) || !lineItems.length) {
+    const e = new Error('receipt, processedAt and lineItems are required'); e.status = 400; throw e;
+  }
+  let store = null;
+  const key = 'ls-' + String(receipt);
+  try {
+    store = getStore('reptipos-lsimport');
+    const prior = await store.get(key, { type: 'json' });
+    if (prior) return { ...prior, idempotent: true };
+  } catch (e) { store = null; }
+  const payload = {
+    order: {
+      line_items: lineItems.map(li => ({
+        title: String(li.title || 'Item').slice(0, 255),
+        quantity: 1,                                        // qty folded into the title; price is the LINE total → order total exact
+        price: (Number(li.priceCents) / 100).toFixed(2)
+      })),
+      financial_status: 'paid',
+      fulfillment_status: 'fulfilled',
+      processed_at: processedAt,                            // the original Lightspeed sale date
+      tags: 'lightspeed-import',
+      source_name: 'lightspeed',
+      note: note || ('Lightspeed receipt ' + receipt),
+      send_receipt: false,
+      send_fulfillment_receipt: false
+      // NO inventory_behaviour → inventory is bypassed entirely
+    }
+  };
+  const { json } = await shopify('/orders.json', { method: 'POST', body: payload });
+  const out = { orderId: String(json.order.id), orderName: json.order.name };
+  if (store) { try { await store.set(key, JSON.stringify(out)); } catch (e) {} }
+  return out;
+}
+
+// Compact order list for a date range — the till's "Shopify" sales view.
+// Includes ALL orders (till + online web orders), newest first, capped at 500.
+async function listOrders({ since, until }) {
+  if (!since) { const e = new Error('No date range'); e.status = 400; throw e; }
+  let url = `/orders.json?status=any&created_at_min=${encodeURIComponent(since)}${until ? `&created_at_max=${encodeURIComponent(until)}` : ''}&limit=250&fields=id,name,created_at,total_price,financial_status,cancelled_at,source_name,customer,line_items`;
+  const orders = [];
+  let guard = 0;
+  while (url && guard < 2) {   // 2 pages = 500 orders, plenty for a period view
+    guard++;
+    const { json, headers } = await shopify(url);
+    for (const o of json.orders || []) {
+      orders.push({
+        id: String(o.id), name: o.name, createdAt: o.created_at,
+        totalCents: Math.round((Number(o.total_price) || 0) * 100),
+        financialStatus: o.financial_status || '',
+        cancelled: !!o.cancelled_at,
+        source: o.source_name || '',
+        customerName: o.customer ? [o.customer.first_name, o.customer.last_name].filter(Boolean).join(' ') : '',
+        itemCount: (o.line_items || []).reduce((n, li) => n + (Number(li.quantity) || 0), 0)
+      });
+    }
+    const link = (headers.get('link') || headers.get('Link') || '');
+    const m = link.match(/<([^>]+)>;\s*rel="next"/);
+    url = m ? m[1].replace(/^https?:\/\/[^/]+\/admin\/api\/[^/]+/, '') : null;
+  }
+  orders.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return { orders };
+}
+
 // Sales report for a date range: totals + per-variant breakdown + points for a chart.
 async function salesReport({ since, until }) {
   if (!since) { const e = new Error('No date range'); e.status = 400; throw e; }
@@ -624,9 +820,18 @@ export const handler = async (event) => {
     if (body.action === 'createCustomer') return json(200, { customer: await createCustomer(body) });
     if (body.action === 'customerOrders') return json(200, { orders: await customerOrders(body.customerId) });
     if (body.action === 'salesReport') return json(200, await salesReport(body));
+    if (body.action === 'listOrders') return json(200, await listOrders(body));
+    if (body.action === 'importHistoric') return json(200, await importHistoric(body));
     if (body.action === 'receiveStock') return json(200, await receiveStock(body));
     if (body.action === 'setStock') return json(200, await setStock(body));
     if (body.action === 'setCosts') return json(200, await setCosts(body));
+    if (body.action === 'gcCreate') return json(200, await gcCreate(body));
+    if (body.action === 'gcBalance') return json(200, await gcBalance(body));
+    if (body.action === 'gcFind') return json(200, await gcFind(body));
+    if (body.action === 'gcDebit') return json(200, await gcDebit(body));
+    if (body.action === 'scBalance') return json(200, await scBalance(body));
+    if (body.action === 'scCredit') return json(200, await scCredit(body));
+    if (body.action === 'scDebit') return json(200, await scDebit(body));
     if (body.action === 'getCosts') return json(200, await getCosts());
     if (body.action === 'saveCosts') return json(200, await saveCosts(body));
     if (body.action === 'productCreate') return json(200, await productCreate(body));

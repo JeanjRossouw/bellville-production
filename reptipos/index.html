@@ -9,7 +9,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
   import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
-  import { getFirestore, doc, setDoc, getDoc, collection, addDoc, getDocs, query, where, orderBy, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+  import { getFirestore, doc, setDoc, getDoc, deleteDoc, collection, addDoc, getDocs, query, where, orderBy, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   // Reuses the existing Firebase project (separate Firestore collections for the till).
   const firebaseConfig = {
@@ -30,7 +30,7 @@
 
   window.fb = {
     db, auth,
-    fns: { doc, setDoc, getDoc, collection, addDoc, getDocs, query, where, orderBy, onAuthStateChanged }
+    fns: { doc, setDoc, getDoc, deleteDoc, collection, addDoc, getDocs, query, where, orderBy, onAuthStateChanged }
   };
   window.dispatchEvent(new Event('fb-ready'));
 </script>
@@ -202,6 +202,7 @@
     <div style="display:flex; gap:0.5rem">
       <input id="scan" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="🔍 Scan barcode or search by name / SKU…" style="flex:1">
       <button class="qbtn" title="Scan with camera" onclick="openCamScan()" style="width:56px; border-radius:12px; font-size:1.3rem">📷</button>
+      <button class="qbtn" id="qk-btn" title="Edit quick keys (pin favourites)" onclick="toggleQkEdit()" style="width:56px; border-radius:12px; font-size:1.3rem">⭐</button>
     </div>
     <div id="cat-bar" class="cat-bar"></div>
     <div id="grid"></div>
@@ -217,6 +218,8 @@
       <div style="display:flex; gap:0.5rem; margin-top:0.5rem">
         <button class="btn btn-ghost" style="padding:0.6rem" onclick="openSalesOrder()" title="Order an out-of-stock item; invoice when it arrives">📋 Sales order</button>
         <button class="btn btn-ghost" style="padding:0.6rem" onclick="saveQuote()" title="Save a price quote for the customer">📝 Quote</button>
+        <button class="btn btn-ghost" style="padding:0.6rem" onclick="openGiftCard()" title="Sell a gift card (any amount)">🎁 Gift card</button>
+        <button class="btn btn-ghost" style="padding:0.6rem" onclick="addCustomItem()" title="One-off item: type a description + price — no product is created">➕ Custom item</button>
       </div>
     </div>
   </div>
@@ -236,6 +239,9 @@
       <button onclick="payPick('card')">💳 Card — paid</button>
       <button onclick="payPick('eft')">🏦 EFT — paid</button>
       <button onclick="payPick('split')">↔ Split</button>
+      <button onclick="payPick('giftcard')">🎁 Gift card</button>
+      <button onclick="payPick('storecredit')">🪙 Store credit</button>
+      <button onclick="payPick('account')">📒 On account</button>
     </div>
     <div id="pay-detail"></div>
   </div>
@@ -297,6 +303,20 @@
   <div class="modal-card">
     <h2><span>New sales order</span><button class="rm" onclick="closeSalesOrder()">✕</button></h2>
     <div id="so-body"></div>
+  </div>
+</div>
+
+<div class="modal" id="quote-modal">
+  <div class="modal-card">
+    <h2><span>📝 New quote</span><button class="rm" onclick="closeQuoteModal()">✕</button></h2>
+    <div id="quote-body"></div>
+  </div>
+</div>
+
+<div class="modal" id="gc-modal">
+  <div class="modal-card">
+    <h2><span>🎁 Sell gift card</span><button class="rm" onclick="closeGiftCard()">✕</button></h2>
+    <div id="gc-body"></div>
   </div>
 </div>
 
@@ -395,6 +415,10 @@
   // Plumbed so a rate can be switched on later without code changes. Prices are
   // treated as tax-INCLUSIVE (the Shopify price is final), so a non-zero rate
   // just surfaces the tax portion already inside the price — it never adds on top.
+  // ReptiCube logo, embedded so the A4 quote/sales-order document prints
+  // branded even before a logo URL is set in Settings (no banking data here —
+  // banking is typed into Settings per till and never committed).
+  const DEFAULT_LOGO = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASwBLAAD/2wBDAAIBAQIBAQICAgICAgICAwUDAwMDAwYEBAMFBwYHBwcGBwcICQsJCAgKCAcHCg0KCgsMDAwMBwkODw0MDgsMDAz/2wBDAQICAgMDAwYDAwYMCAcIDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAz/wAARCAIcAhwDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD9/KKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAoooJxQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUjNtGa8p8cft2/BP4ZeKLvRPEfxf+F+gazYOY7qw1HxVY2t1bMP4XjklDKfYgUAer0V4n/w8p/Z3x/yXj4Nj/udNN/8Aj1If+Cln7OgP/Jevgz/4Wum//HqAPbaK8S/4eW/s6Y/5L18Gf/C103/49SD/AIKXfs6H/mvXwZ/8LXTf/j1AHt1FeJf8PK/2dT/zXr4M/wDha6b/APHqP+Hln7On/Revgz/4Wum//HqAPbaK8SP/AAUt/Z0H/Nevgz/4Wum//HqT/h5f+zn/ANF6+DP/AIWum/8Ax6gD26ivEf8Ah5f+zn/0Xr4M/wDha6b/APHqD/wUw/ZzH/Ne/gz/AOFrpv8A8eoA9uorxH/h5h+zn/0Xv4Mf+Frpv/x6gf8ABS/9nM/817+DP/ha6b/8eoA9uorx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FFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFAH/9k=';
   const DEFAULT_SETTINGS = {
     taxRatePct: 0, taxLabel: 'VAT', loyaltyPct: 5,
     // Company identity and banking, printed on customer documents. Blank
@@ -506,7 +530,11 @@
   }
 
   // ---- Demo mode: try the whole system with NO Shopify (simulated locally) ----
-  function isDemo() { return localStorage.getItem('reptipos-demo') === '1' || /[?&]demo=1/.test(location.search); }
+  // Demo is URL-only: the till is REAL unless opened with an explicit ?demo=1
+  // link. No sticky localStorage flag and no staff-facing toggle, so a shop
+  // till can never accidentally sit in demo (where sales don't reach Shopify).
+  function isDemo() { return /[?&]demo=1/.test(location.search); }
+  try { localStorage.removeItem('reptipos-demo'); } catch (e) {}   // clear any old sticky flag
   // Sample reptile catalogue (prices in rands; barcodes are type-able to test scanning).
   const DEMO_CATALOGUE = [
     { productId: 'd1', variantId: 'dv1', inventoryItemId: 'di1', name: 'Exo Terra Glass Terrarium 60×45', sku: 'TERR-6045', barcode: '6009800010011', price: 2499, qty: 4, category: 'Terrariums', vendor: 'Exo Terra SA', imageUrl: '' },
@@ -597,21 +625,71 @@
         });
         return { orderCount, salesCents, itemCount, items: Object.values(byV), points };
       }
+      case 'listOrders': {
+        const since = new Date(p.since).getTime(); const until = p.until ? new Date(p.until).getTime() : Date.now();
+        const orders = (JSON.parse(localStorage.getItem('reptipos-sales') || '[]'))
+          .filter(s => { const t = new Date(s.datetime).getTime(); return t >= since && t <= until; })
+          .map(s => ({ id: s.saleNumber, name: s.shopifyOrder || s.saleNumber, createdAt: s.datetime, totalCents: s.totalCents || 0,
+            financialStatus: (s.payment && s.payment.method === 'account') ? 'pending' : 'paid', cancelled: false, source: 'reptipos',
+            customerName: s.customer ? s.customer.name : '', itemCount: (s.items || []).reduce((n, i) => n + i.qty, 0) }));
+        return { orders };
+      }
+      // Gift cards + store credit — simulated with local balances.
+      case 'gcCreate': {
+        const list = demoGet('reptipos-demo-giftcards');
+        const gc = { id: 'demo-gc-' + demoSeq('reptipos-demo-gcseq'), code: p.code || ('DEMO' + Date.now()), balanceCents: p.amountCents };
+        list.push(gc); demoPut('reptipos-demo-giftcards', list);
+        return { id: gc.id, last4: gc.code.slice(-4), balanceCents: gc.balanceCents };
+      }
+      case 'gcBalance': {
+        const gc = demoGet('reptipos-demo-giftcards').find(g => g.id === p.id);
+        if (!gc) return { error: 'Gift card not found' };
+        return { id: gc.id, last4: gc.code.slice(-4), enabled: true, balanceCents: gc.balanceCents };
+      }
+      case 'gcFind': {
+        const cards = demoGet('reptipos-demo-giftcards').filter(g => g.code.toUpperCase().endsWith(String(p.last4 || '').toUpperCase()) && g.balanceCents > 0);
+        return { cards: cards.map(g => ({ id: g.id, last4: g.code.slice(-4), enabled: true, balanceCents: g.balanceCents })) };
+      }
+      case 'gcDebit': {
+        const list = demoGet('reptipos-demo-giftcards');
+        const gc = list.find(g => g.id === p.id);
+        if (!gc || gc.balanceCents < p.amountCents) return { error: 'Insufficient gift card balance' };
+        gc.balanceCents -= p.amountCents; demoPut('reptipos-demo-giftcards', list);
+        return { balanceCents: gc.balanceCents };
+      }
+      case 'scBalance': {
+        const sc = demoGet('reptipos-demo-storecredit').find(a => String(a.customerId) === String(p.customerId));
+        return { accountId: sc ? 'demo-sc-' + p.customerId : null, balanceCents: sc ? sc.balanceCents : 0 };
+      }
+      case 'scCredit': {
+        const list = demoGet('reptipos-demo-storecredit');
+        let sc = list.find(a => String(a.customerId) === String(p.customerId));
+        if (!sc) { sc = { customerId: String(p.customerId), balanceCents: 0 }; list.push(sc); }
+        sc.balanceCents += p.amountCents; demoPut('reptipos-demo-storecredit', list);
+        return { balanceCents: sc.balanceCents };
+      }
+      case 'scDebit': {
+        const list = demoGet('reptipos-demo-storecredit');
+        const sc = list.find(a => 'demo-sc-' + a.customerId === p.accountId);
+        if (!sc || sc.balanceCents < p.amountCents) return { error: 'Insufficient store credit' };
+        sc.balanceCents -= p.amountCents; demoPut('reptipos-demo-storecredit', list);
+        return { balanceCents: sc.balanceCents };
+      }
       default:
         return { error: 'demo: unknown action ' + p.action };
     }
   }
+  // Demo is entered/left by navigating with or without ?demo=1 — the cached
+  // catalogue is cleared so the two modes never mix data.
   function setDemo(on) {
-    localStorage.setItem('reptipos-demo', on ? '1' : '0');
     localStorage.removeItem('reptipos-catalogue');
-    catalogue = []; cart = []; cartDiscount = null; customer = null;
-    renderCart(); renderCustomer();
-    renderLockDemo();
-    toast(on ? 'Demo mode ON — nothing touches Shopify' : 'Demo mode OFF — using Shopify');
-    refreshCatalogue(false);
+    const url = new URL(location.href);
+    if (on) url.searchParams.set('demo', '1'); else url.searchParams.delete('demo');
+    location.href = url.toString();
   }
   function toggleDemo() { setDemo(!isDemo()); }
-  function renderLockDemo() { const b = document.getElementById('lock-demo'); if (b) b.textContent = isDemo() ? '🧪 Demo mode is ON — tap to switch to real Shopify' : '🧪 Try demo mode (no Shopify needed)'; }
+  // Lock screen: only a way OUT of demo — never an invitation in.
+  function renderLockDemo() { const b = document.getElementById('lock-demo'); if (b) b.textContent = isDemo() ? '🧪 DEMO MODE — tap to switch to the real store' : ''; }
 
   function setNet(online) {
     document.getElementById('net-dot').classList.toggle('off', !online);
@@ -661,7 +739,14 @@
            catalogue.find(p => (p.sku || '').toLowerCase() === c) || null;
   }
   // Distinct Shopify categories (product_type) present in the catalogue, sorted.
-  function catList() { return [...new Set(catalogue.map(p => p.category).filter(Boolean))].sort((a, b) => a.localeCompare(b)); }
+  // Categories mirror the Shopify storefront: a product's COLLECTIONS (it can
+  // sit in several, exactly like online). Falls back to product_type for
+  // products in no collection (or if the collections fetch ever fails).
+  function catsOf(p) {
+    if (Array.isArray(p.collections) && p.collections.length) return p.collections;
+    return p.category ? [p.category] : [];
+  }
+  function catList() { return [...new Set(catalogue.flatMap(catsOf))].sort((a, b) => a.localeCompare(b)); }
   function setCat(c) { currentCat = (c == null ? '__home__' : c); renderCatBar(); renderGrid(); }
   function renderCatBar() {
     const bar = document.getElementById('cat-bar'); if (!bar) return;
@@ -674,12 +759,56 @@
   }
   // The category landing: one big picture tile per Shopify category. Tapping a
   // tile drills into that category (e.g. tap "Substrate" → see all substrate).
+  // ---- Quick keys (pinned favourites) ------------------------------------
+  // Shared across tills via the Firestore settings doc; localStorage keeps them
+  // working offline. Toggle edit mode with the ⭐ button, then star tiles.
+  let quickKeys = [];
+  let qkEdit = false;
+  try { quickKeys = JSON.parse(localStorage.getItem('reptipos-quickkeys') || '[]'); } catch (e) {}
+  // Cloud copy loads once Firebase is up (the module script runs after this one).
+  window.addEventListener('fb-ready', async () => {
+    try { const s = await fbGet('settings', 'quickkeys'); if (s && Array.isArray(s.variantIds)) { quickKeys = s.variantIds; localStorage.setItem('reptipos-quickkeys', JSON.stringify(quickKeys)); renderGrid(); } } catch (e) {}
+  });
+  function toggleQkEdit() {
+    qkEdit = !qkEdit;
+    const b = document.getElementById('qk-btn');
+    if (b) { b.style.background = qkEdit ? 'var(--accent)' : ''; }
+    toast(qkEdit ? 'Quick keys: tap the ☆ on a product to pin it, ⭐ again to finish' : 'Quick keys saved', undefined);
+    renderGrid();
+  }
+  function toggleQuickKey(variantId) {
+    const i = quickKeys.indexOf(variantId);
+    if (i >= 0) quickKeys.splice(i, 1); else quickKeys.push(variantId);
+    localStorage.setItem('reptipos-quickkeys', JSON.stringify(quickKeys));
+    try { fbSet('settings', 'quickkeys', { variantIds: quickKeys, updatedAt: new Date().toISOString() }); } catch (e) {}
+    renderGrid();
+  }
+  function productTile(p, withStar) {
+    const oos = (Number(p.qty) || 0) <= 0;
+    const thumb = p.imageUrl ? `<div class="thumb" style="background-image:url('${esc(p.imageUrl)}')"></div>` : `<div class="thumb">📦</div>`;
+    const pinned = quickKeys.includes(p.variantId);
+    const star = withStar ? `<div onclick="event.stopPropagation();toggleQuickKey('${p.variantId}')" style="position:absolute;top:4px;right:4px;font-size:1.2rem;padding:2px 6px;cursor:pointer">${pinned ? '⭐' : '☆'}</div>` : '';
+    return `<button class="tile" style="position:relative" ${oos && !withStar ? 'disabled' : ''} onclick="${withStar ? '' : `addToCart('${p.variantId}')`}">
+      ${star}${thumb}
+      <div class="nm">${esc(p.name)}</div>
+      <div class="pr">${money(p.priceCents)}</div>
+      <div class="st">${oos ? '<span style="color:var(--danger)">out of stock</span>' : 'stock ' + (Number(p.qty) || 0)}</div>
+    </button>`;
+  }
+  function quickKeyStrip() {
+    const pins = quickKeys.map(v => findProduct(v)).filter(Boolean);
+    if (!pins.length) return '';
+    return `<div style="grid-column:1/-1;font-size:0.8rem;font-weight:700;margin:0.2rem 0 0">⭐ Quick keys</div>`
+      + pins.map(p => productTile(p, false)).join('')
+      + `<div style="grid-column:1/-1;border-bottom:1px solid var(--border);margin:0.3rem 0"></div>`;
+  }
+
   function renderCategoryTiles() {
     const grid = document.getElementById('grid');
     const cats = catList();
     if (!cats.length) { currentCat = ''; renderGrid(); return; }
-    grid.innerHTML = cats.map(c => {
-      const inCat = catalogue.filter(p => p.category === c);
+    grid.innerHTML = quickKeyStrip() + cats.map(c => {
+      const inCat = catalogue.filter(p => catsOf(p).includes(c));
       const withImg = inCat.find(p => p.imageUrl);
       const count = inCat.length;
       const thumb = withImg
@@ -697,6 +826,13 @@
     const q = document.getElementById('scan').value.trim().toLowerCase();
     // Rebuild the category bar only when the set of categories changes (keeps scroll position).
     if (catList().join('|') !== catBarSig) renderCatBar();
+    // Quick-key edit mode: every product shows a ☆/⭐ to pin/unpin.
+    if (qkEdit) {
+      let ed = catalogue;
+      if (q) ed = ed.filter(p => (p.name || '').toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q) || (p.barcode || '').toLowerCase().includes(q));
+      grid.innerHTML = `<div style="grid-column:1/-1;font-size:0.85rem;color:var(--warn)">Quick-key edit — tap ☆ to pin, ⭐ button to finish</div>` + ed.slice(0, 300).map(p => productTile(p, true)).join('');
+      return;
+    }
     // Category landing page (no active search): show the picture tiles.
     if (currentCat === '__home__' && !q) { renderCategoryTiles(); return; }
     let items = catalogue;
@@ -705,7 +841,7 @@
       (p.name || '').toLowerCase().includes(q) ||
       (p.sku || '').toLowerCase().includes(q) ||
       (p.barcode || '').toLowerCase().includes(q));
-    else if (currentCat && currentCat !== '__home__') items = items.filter(p => p.category === currentCat);
+    else if (currentCat && currentCat !== '__home__') items = items.filter(p => catsOf(p).includes(currentCat));
     if (items.length === 0) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1">${catalogue.length ? 'No matches' + (currentCat && currentCat !== '__home__' ? ' in ' + esc(currentCat) : '') : 'Catalogue loading…'}</div>`; return; }
     grid.innerHTML = items.slice(0, 300).map(p => {
       const oos = (Number(p.qty) || 0) <= 0;
@@ -738,7 +874,25 @@
   }
 
   // ---- Cart ----
-  function findProduct(variantId) { return catalogue.find(p => p.variantId === variantId) || null; }
+  function findProduct(variantId) {
+    const p = catalogue.find(x => x.variantId === variantId);
+    if (p) return p;
+    // Custom (open) line: the cart line itself carries the name + price, so a
+    // one-off job never needs a Shopify product. Effectively unlimited stock.
+    const l = cart.find(x => x.variantId === variantId && x.custom);
+    return l ? { variantId, name: l.name, priceCents: l.priceCents, price: l.priceCents / 100, qty: 9999, sku: '', barcode: '', category: 'Custom', custom: true, inventoryItemId: '' } : null;
+  }
+  // One-off item: description + price typed at the till; sold as a Shopify
+  // CUSTOM line item (no product created, no stock touched).
+  function addCustomItem() {
+    const name = (prompt('Custom item — description (shows on the slip & Shopify order):') || '').trim();
+    if (!name) return;
+    const priceCents = toCents(prompt('Price (R):', ''));
+    if (priceCents <= 0) { toast('Enter a price'); return; }
+    cart.push({ variantId: 'custom-' + Date.now(), qty: 1, custom: true, name, priceCents });
+    renderCart();
+    toast(name);
+  }
   function addToCart(variantId) {
     const p = findProduct(variantId);
     if (!p) return;
@@ -773,12 +927,21 @@
     const l = cart.find(x => x.variantId === variantId); if (!l) return;
     const v = prompt('Line discount — e.g. "10%" or "50" (R off). Blank to clear:', l.disc ? (l.disc.type === 'pct' ? l.disc.value + '%' : (l.disc.value / 100).toFixed(2)) : '');
     if (v === null) return;
-    l.disc = parseDiscount(v); renderCart();
+    const d = parseDiscount(v);
+    const p = findProduct(variantId);
+    const base = p ? p.priceCents * l.qty : 0;
+    const pct = discPctOf(d, base);
+    if (pct > staffMaxDiscPct() && !adminOverride(`${Math.round(pct)}% discount is over ${currentStaff ? currentStaff.name : 'this till'}'s ${staffMaxDiscPct()}% limit`)) return;
+    l.disc = d; renderCart();
   }
   function setCartDiscount() {
     const v = prompt('Cart discount — e.g. "10%" or "50" (R off). Blank to clear:', cartDiscount ? (cartDiscount.type === 'pct' ? cartDiscount.value + '%' : (cartDiscount.value / 100).toFixed(2)) : '');
     if (v === null) return;
-    cartDiscount = parseDiscount(v); renderCart();
+    const d = parseDiscount(v);
+    const base = cart.reduce((t, l) => { const p = findProduct(l.variantId); return t + (p ? p.priceCents * l.qty : 0); }, 0);
+    const pct = discPctOf(d, base);
+    if (pct > staffMaxDiscPct() && !adminOverride(`${Math.round(pct)}% cart discount is over ${currentStaff ? currentStaff.name : 'this till'}'s ${staffMaxDiscPct()}% limit`)) return;
+    cartDiscount = d; renderCart();
   }
 
   // Compute the whole cart in integer cents, applying line then cart discounts.
@@ -978,6 +1141,30 @@
     if (b) b.textContent = currentStaff ? '👤 ' + currentStaff.name + (isManager() ? '' : ' · cashier') : '';
   }
 
+  // ---- Per-staff limits ---------------------------------------------------
+  // Admin: no limits. Others: maxDiscPct caps discounts (default 10%), and
+  // refunds / pay-outs need canRefund or an admin PIN override.
+  function staffMaxDiscPct() {
+    if (!currentStaff) return 0;
+    if (currentStaff.role === 'admin') return 100;
+    return Math.max(0, Number(currentStaff.maxDiscPct != null ? currentStaff.maxDiscPct : 10));
+  }
+  function adminOverride(what) {
+    const pin = prompt('Admin PIN needed — ' + what);
+    if (pin === null) return false;
+    const s = staffList().find(x => x.pin === String(pin).trim() && x.role === 'admin');
+    if (!s) { toast('Not an admin PIN'); return false; }
+    toast('Approved by ' + s.name);
+    return true;
+  }
+  // Effective % of a discount against a base amount (for limit checks).
+  function discPctOf(disc, baseCents) {
+    if (!disc) return 0;
+    if (disc.type === 'pct') return disc.value;
+    return baseCents > 0 ? (disc.value / baseCents) * 100 : 100;
+  }
+
+
   // ---- What a cashier may not see ---------------------------------------
   // Cost prices and the takings figures are the owner's business, so they are
   // limited to managers. Everything needed to serve a customer stays open.
@@ -1035,6 +1222,17 @@
     else if (p.method === 'card') s.cardSalesCents += sale.totalCents;
     else if (p.method === 'eft') s.eftSalesCents += sale.totalCents;
     else if (p.method === 'split') { s.cashSalesCents += (p.cashAmountCents || 0); s.cardSalesCents += (p.cardAmountCents || 0); }
+    else if (p.method === 'giftcard') {
+      // Redemption moves no money (it arrived when the card was sold); any
+      // remainder collected by a normal tender does.
+      s.giftCardRedeemedCents = (s.giftCardRedeemedCents || 0) + (p.giftCardCents || 0);
+      if (p.otherMethod) { if (p.otherMethod === 'cash') s.cashSalesCents += (p.otherCents || 0); else if (p.otherMethod === 'card') s.cardSalesCents += (p.otherCents || 0); else if (p.otherMethod === 'eft') s.eftSalesCents += (p.otherCents || 0); }
+    }
+    else if (p.method === 'storecredit') {
+      s.storeCreditRedeemedCents = (s.storeCreditRedeemedCents || 0) + (p.storeCreditCents || 0);
+      if (p.otherMethod) { if (p.otherMethod === 'cash') s.cashSalesCents += (p.otherCents || 0); else if (p.otherMethod === 'card') s.cardSalesCents += (p.otherCents || 0); else if (p.otherMethod === 'eft') s.eftSalesCents += (p.otherCents || 0); }
+    }
+    // 'account': no tender now — the charge is tracked via accountChargesCents.
     s.salesCount += 1;
     s.byStaff = s.byStaff || {};
     const who = sale.staff || '—';
@@ -1071,19 +1269,22 @@
       <label>Count the cash drawer (R)</label>
       <input id="reg-count" type="number" step="0.01" value="${(exp / 100).toFixed(2)}" oninput="document.getElementById('reg-var').textContent='Variance: '+money(toCents(this.value)-${exp})">
       <div class="change" id="reg-var">Variance: R0.00</div>
-      <button class="btn btn-pay" style="margin-top:0.7rem; background:var(--danger); color:#fff" onclick="closeRegister()">Close register (Z-report)</button>`;
+      <button class="btn btn-pay" style="margin-top:0.7rem; background:var(--danger); color:#fff" onclick="closeRegister()">Close register (Z-report)</button>
+      <div style="border-top:1px solid var(--border); margin-top:0.9rem; padding-top:0.7rem">${staffAdmin()}</div>`;
   }
   function staffAdmin() {
     if (!currentStaff || currentStaff.role !== 'admin') return '';
     const list = staffList();
     return `<div style="font-size:0.8rem; font-weight:700; margin-bottom:0.4rem">Staff</div>
-      ${list.map(s => `<div style="display:flex; justify-content:space-between; padding:0.25rem 0; font-size:0.85rem"><span>${esc(s.name)} <span style="color:var(--muted)">(${s.role})</span></span>${s.id !== 'admin' ? `<button class="rm" onclick="removeStaff('${s.id}')">✕</button>` : ''}</div>`).join('')}
+      ${list.map(s => `<div style="display:flex; justify-content:space-between; padding:0.25rem 0; font-size:0.85rem"><span>${esc(s.name)} <span style="color:var(--muted)">(${s.role}${s.role === 'admin' ? '' : ' · disc ≤' + (s.maxDiscPct != null ? s.maxDiscPct : 10) + '% · ' + (s.canRefund ? 'refunds ✓' : 'no refunds')})</span></span>${s.id !== 'admin' ? `<button class="rm" onclick="removeStaff('${s.id}')">✕</button>` : ''}</div>`).join('')}
       <div style="display:flex; gap:0.4rem; margin-top:0.4rem">
         <input id="st-name" placeholder="Name" style="flex:1">
         <input id="st-pin" placeholder="PIN" style="width:80px">
         <select id="st-role" style="width:110px"><option value="cashier">Cashier</option><option value="admin">Manager</option></select>
+        <input id="st-disc" type="number" min="0" max="100" placeholder="disc %" title="Max discount % without manager approval" style="width:80px">
+        <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.8rem;cursor:pointer"><input id="st-refund" type="checkbox" style="width:auto">refunds</label>
       </div>
-      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Cashiers can sell, refund and handle customers. Cost prices, the dashboard, receiving and purchase orders are managers only.</div>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Cashiers can sell, refund and handle customers. Cost prices, the dashboard, receiving and purchase orders are managers only. Over-limit discounts, refunds and pay-outs ask for a manager PIN.</div>
       <button class="qbtn" style="width:auto; padding:0 0.7rem; margin-top:0.4rem" onclick="addStaff()">+ Add staff</button>
       <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">Company details (printed on documents)</div>
       <div style="display:flex; flex-direction:column; gap:0.35rem">
@@ -1124,6 +1325,14 @@
         <button class="qbtn" style="width:auto; padding:0 0.7rem" onclick="saveLoyaltySettings()">Save</button>
       </div>
       <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">1 point = R1 off a future sale. Account is keyed on the customer's cellphone number. Set 0 to turn earning off. (e.g. 5% = R100 spent earns 5 points = R5.)</div>
+      <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">🗄 History</div>
+      <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center">
+        <label class="qbtn" style="width:auto; padding:0 0.7rem; display:flex; align-items:center; cursor:pointer">📥 Import Lightspeed sales CSV<input type="file" accept=".csv,text/csv" style="display:none" onchange="importLsSales(this)"></label>
+        <span style="color:var(--muted); font-size:0.8rem">since</span>
+        <input id="ls-since" type="date" value="${new Date(Date.now() - 62 * 24 * 3600 * 1000).toISOString().slice(0, 10)}" style="width:auto; padding:0.3rem 0.5rem">
+        <button class="qbtn" style="width:auto; padding:0 0.7rem; border-color:var(--danger); color:var(--danger)" onclick="clearTillHistory()">🧹 Clear till test history</button>
+      </div>
+      <div id="ls-status" style="font-size:0.75rem; color:var(--muted); margin-top:0.3rem">Import creates backdated, paid Shopify orders (tag <b>lightspeed-import</b>) — stock is never touched, and re-importing the same file can't duplicate. Clear wipes this till's local test logs + the cloud test logs; it never touches Shopify.</div>
       <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">📤 Customer links</div>
       <div style="display:flex; gap:0.4rem; align-items:center">
         <span style="color:var(--muted); font-size:0.85rem">Enclosure types</span>
@@ -1143,10 +1352,119 @@
     if (list.some(s => s.pin === pin)) { toast('PIN already in use'); return; }
     const roleEl = document.getElementById('st-role');
     const role = roleEl && roleEl.value === 'admin' ? 'admin' : 'cashier';
-    list.push({ id: 'st-' + Date.now(), name, pin, role });
+    const maxDiscPct = Math.min(100, Math.max(0, parseFloat(document.getElementById('st-disc').value) || 10));
+    const canRefund = !!(document.getElementById('st-refund') && document.getElementById('st-refund').checked);
+    list.push({ id: 'st-' + Date.now(), name, pin, role, maxDiscPct, canRefund });
     saveStaff(list); renderReg(); toast('Staff added');
   }
   function removeStaff(id) { if (!confirm('Remove this staff member?')) return; saveStaff(staffList().filter(s => s.id !== id)); renderReg(); }
+  // ---- Lightspeed history import + till-history reset --------------------
+  // Proper CSV parsing (quoted fields can contain commas/newlines).
+  function parseCsvFull(text) {
+    const rows = []; let row = [], field = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) {
+        if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; }
+        else field += c;
+      } else if (c === '"') q = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && text[i + 1] === '\n') i++;
+        row.push(field); field = '';
+        if (row.length > 1 || row[0] !== '') rows.push(row);
+        row = [];
+      } else field += c;
+    }
+    if (field !== '' || row.length) { row.push(field); rows.push(row); }
+    return rows;
+  }
+  let lsImportBusy = false;
+  async function importLsSales(input) {
+    const file = input.files && input.files[0];
+    input.value = '';
+    if (!file || lsImportBusy) return;
+    if (isDemo()) { toast('Turn demo OFF first — the import writes real Shopify orders'); return; }
+    if (!(currentStaff && currentStaff.role === 'admin') && !adminOverride('import Lightspeed sales history into Shopify')) return;
+    const sinceStr = document.getElementById('ls-since').value;
+    if (!sinceStr) { toast('Pick the "since" date first (e.g. 2 months back)'); return; }
+    const st = document.getElementById('ls-status');
+    const text = await file.text();
+    const rows = parseCsvFull(text);
+    const head = rows[0].map(h => h.trim());
+    const col = n => head.indexOf(n);
+    const iDate = col('Date'), iRc = col('Receipt Number'), iType = col('Line Type'), iQty = col('Quantity'),
+      iTot = col('Total'), iDet = col('Details'), iStatus = col('Status'), iCust = col('Customer Name');
+    if (iDate < 0 || iRc < 0 || iType < 0) { toast('That does not look like a Lightspeed sales export'); return; }
+    // Group: each Sale row starts a receipt; Sale Line rows belong to it;
+    // Payment rows name the tender.
+    const receipts = []; let cur = null;
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r]; if (!row[iType]) continue;
+      const type = row[iType].trim();
+      if (type === 'Sale') {
+        cur = { receipt: row[iRc], date: row[iDate], status: (row[iStatus] || '').trim(),
+          customer: (row[iCust] || '').trim(), totalCents: Math.round((parseFloat(row[iTot]) || 0) * 100), lines: [], pay: [] };
+        receipts.push(cur);
+      } else if (type === 'Sale Line' && cur) {
+        const qty = Math.round(parseFloat(row[iQty]) || 1);
+        cur.lines.push({ qty, title: (row[iDet] || 'Item').trim(), lineTotalCents: Math.round((parseFloat(row[iTot]) || 0) * 100) });
+      } else if (type === 'Payment' && cur) {
+        cur.pay.push((row[iDet] || '').trim());
+      }
+    }
+    const todo = receipts.filter(x => x.date.slice(0, 10) >= sinceStr && !['VOIDED', 'SAVED'].includes(x.status) && x.lines.length);
+    if (!todo.length) { toast('No importable receipts on/after ' + sinceStr); return; }
+    const totalR = todo.reduce((t, x) => t + x.totalCents, 0);
+    if (!confirm('Import ' + todo.length + ' Lightspeed receipts (' + money(totalR) + ') since ' + sinceStr + ' into Shopify as backdated paid orders?\n\nStock is not touched. Re-importing cannot duplicate.')) return;
+    lsImportBusy = true;
+    let done = 0, failed = 0;
+    for (const x of todo) {
+      st.textContent = 'Importing ' + (done + failed + 1) + '/' + todo.length + ' — receipt ' + x.receipt + '…';
+      try {
+        await apiX('importHistoric', {
+          receipt: x.receipt,
+          processedAt: new Date(x.date.replace(' ', 'T')).toISOString(),
+          lineItems: x.lines.map(l => ({ title: (l.qty !== 1 ? l.qty + ' × ' : '') + l.title, priceCents: l.lineTotalCents })),
+          note: 'Lightspeed receipt ' + x.receipt + (x.customer ? ' · ' + x.customer : '') + (x.pay.length ? ' · ' + x.pay.join(' + ') : '') + ' · status ' + x.status
+        });
+        done++;
+      } catch (e) { failed++; console.warn('LS import failed for receipt ' + x.receipt + ':', e); }
+      await new Promise(r => setTimeout(r, 300));   // stay friendly to Shopify's rate limit
+    }
+    lsImportBusy = false;
+    st.textContent = 'Lightspeed import: ' + done + ' imported' + (failed ? ', ' + failed + ' FAILED (see console; re-run the same file to retry just the failures)' : ' — all done') + '. See them under 📊 Sales → 🛍 Shopify orders.';
+    toast('Imported ' + done + ' of ' + todo.length + ' receipts');
+  }
+
+  // Wipe this till's LOCAL test logs + the shared cloud test logs. Shopify is
+  // never touched — real orders/products stay exactly as they are.
+  async function clearTillHistory() {
+    if (!(currentStaff && currentStaff.role === 'admin') && !adminOverride('clear the till history')) return;
+    const word = prompt('This clears the till\'s local sales/deposits/refunds/shifts logs AND the shared cloud copies (sales, refunds, payments, cashups, accounts, salesorders, stocktakes).\n\nShopify is NOT touched.\n\nType CLEAR to continue:');
+    if (word !== 'CLEAR') { toast('Cancelled'); return; }
+    ['reptipos-sales', 'reptipos-deposits', 'reptipos-refunds-log', 'reptipos-giftcards-sold',
+     'reptipos-acct-payments', 'reptipos-accounts', 'reptipos-shifts', 'reptipos-queue', 'reptipos-shift', 'reptipos-seq']
+      .forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+    let cloud = 0;
+    if (!isDemo() && window.fb && window.fb.fns.deleteDoc) {
+      const st = document.getElementById('ls-status');
+      for (const coll of ['sales', 'refunds', 'payments', 'cashups', 'accounts', 'salesorders', 'stocktakes']) {
+        try {
+          const { db, fns } = window.fb;
+          const snap = await fns.getDocs(fns.collection(db, coll));
+          const ids = []; snap.forEach(d => ids.push(d.id));
+          for (const id of ids) { try { await fns.deleteDoc(fns.doc(db, coll, id)); cloud++; } catch (e) {} }
+          if (st) st.textContent = 'Clearing cloud logs… ' + coll + ' done (' + cloud + ' docs so far)';
+        } catch (e) { console.warn('Cloud clear failed for ' + coll + ':', e); }
+      }
+    } else if (isDemo()) {
+      Object.keys(localStorage).filter(k => k.startsWith('reptipos-demo-')).forEach(k => localStorage.removeItem(k));
+    }
+    renderReg();
+    toast('Till history cleared' + (cloud ? ' (' + cloud + ' cloud records)' : ''));
+  }
+
   function saveCompanySettings() {
     const val = id => (document.getElementById(id).value || '').trim();
     saveSettings({
@@ -1193,6 +1511,8 @@
   }
   function payInOut(dir) {
     const s = getShift(); if (!s) return;
+    // Taking cash OUT of the drawer needs permission (pay-ins stay open).
+    if (dir === 'out' && !(currentStaff && (currentStaff.role === 'admin' || currentStaff.canRefund)) && !adminOverride('pay-out from the drawer')) return;
     const v = toCents(prompt((dir === 'in' ? 'Pay-IN' : 'Pay-OUT') + ' amount (R):', '0'));
     if (v <= 0) return;
     if (dir === 'in') s.payInsCents += v; else s.payOutsCents += v;
@@ -1216,6 +1536,11 @@
         <tr><td>Sales count</td><td style="text-align:right">${s.salesCount}</td></tr>
         <tr><td>Refunds count</td><td style="text-align:right">${s.refundsCount || 0}</td></tr>
         ${s.depositsCents ? `<tr><td>Deposits taken (incl. above)</td><td style="text-align:right">${money(s.depositsCents)}</td></tr>` : ''}
+        ${s.giftCardSoldCents ? `<tr><td>Gift cards sold (incl. above)</td><td style="text-align:right">${money(s.giftCardSoldCents)}</td></tr>` : ''}
+        ${s.giftCardRedeemedCents ? `<tr><td>Gift card redemptions (no drawer)</td><td style="text-align:right">${money(s.giftCardRedeemedCents)}</td></tr>` : ''}
+        ${s.storeCreditRedeemedCents ? `<tr><td>Store credit redemptions (no drawer)</td><td style="text-align:right">${money(s.storeCreditRedeemedCents)}</td></tr>` : ''}
+        ${s.accountChargesCents ? `<tr><td>On-account charges (not banked)</td><td style="text-align:right">${money(s.accountChargesCents)}</td></tr>` : ''}
+        ${s.accountPaymentsCents ? `<tr><td>Account payments (incl. above)</td><td style="text-align:right">${money(s.accountPaymentsCents)}</td></tr>` : ''}
         <tr class="tot"><td>Expected cash</td><td style="text-align:right">${money(exp)}</td></tr>
         ${countedCents != null ? `<tr><td>Counted</td><td style="text-align:right">${money(countedCents)}</td></tr><tr class="tot"><td>Variance</td><td style="text-align:right">${money(variance)}</td></tr>` : ''}
       </table>
@@ -1228,13 +1553,20 @@
     w.document.close();
   }
   function printXZ(kind) { const s = getShift(); if (!s) return; printReport(zReportHtml(s, null, kind)); }
+  // Reprint a past Z-report from the dashboard's cash-up list.
+  function reprintCashup(i) {
+    const r = dashCashups[i]; if (!r) return;
+    printReport(zReportHtml(r, r.countedCents != null ? r.countedCents : null, 'Z'));
+  }
   function closeRegister() {
     const s = getShift(); if (!s) return;
     const counted = toCents(document.getElementById('reg-count').value);
     if (!confirm('Close the register and print the Z-report?')) return;
     const record = { ...s, closedAt: new Date().toISOString(), closedBy: currentStaff ? currentStaff.name : '', countedCents: counted, varianceCents: counted - expectedCashCents(s) };
     try { const arr = JSON.parse(localStorage.getItem('reptipos-shifts') || '[]'); arr.unshift(record); localStorage.setItem('reptipos-shifts', JSON.stringify(arr.slice(0, 200))); } catch (e) {}
-    try { if (window.fb) { const { db, fns } = window.fb; fns.addDoc(fns.collection(db, 'cashups'), record); } } catch (e) {}
+    // fbAdd routes demo cash-ups to demo storage — play data must not appear on
+    // the real dashboard's cash-up report.
+    try { fbAdd('cashups', record).catch(() => {}); } catch (e) {}
     printReport(zReportHtml(s, counted, 'Z'));
     saveShift(null);
     closeReg(); renderReg(); toast('Register closed');
@@ -1270,19 +1602,38 @@
     const inRange = iso => { const t = new Date(iso); return t >= since && (!until || t <= until); };
     const events = [];
     loadSales().filter(s => inRange(s.datetime)).forEach(s => {
-      const net = (s.totalCents || 0) - (s.depositAppliedCents || 0);   // fulfilled SO: only the balance arrived today
-      events.push({ at: s.datetime, kind: 'sale', amountCents: net, method: (s.payment && s.payment.method) || '', sale: s });
+      // Money that actually ARRIVED with this sale:
+      //   fulfilled SO   → only the balance (deposit counted on its own day)
+      //   gift card      → only the non-gift-card remainder (money came in when the card was sold)
+      //   store credit   → only the remainder (credit was funded by an earlier refund)
+      //   on account     → nothing now; the account payment counts when received
+      const p = s.payment || {};
+      let net = (s.totalCents || 0) - (s.depositAppliedCents || 0);
+      let method = p.method || '';
+      if (p.method === 'giftcard' || p.method === 'storecredit') { net = p.otherCents || 0; method = p.otherMethod || p.method; }
+      else if (p.method === 'account') net = 0;
+      events.push({ at: s.datetime, kind: 'sale', amountCents: net, method, sale: s });
     });
     loadDeposits().filter(d => inRange(d.at)).forEach(d =>
       events.push({ at: d.at, kind: 'deposit', amountCents: d.amountCents || 0, method: d.method || '', ref: d.ref }));
-    loadRefundsLog().filter(r => inRange(r.datetime)).forEach(r =>
-      events.push({ at: r.datetime, kind: 'refund', amountCents: -(r.totalCents || 0), method: r.method || '', ref: r.orderName }));
+    loadGiftcardsSold().filter(g => inRange(g.at)).forEach(g =>
+      events.push({ at: g.at, kind: 'giftcard', amountCents: g.amountCents || 0, method: g.method || '', ref: '…' + (g.last4 || '') }));
+    loadAcctPayments().filter(a => inRange(a.at)).forEach(a =>
+      events.push({ at: a.at, kind: 'acctpay', amountCents: a.amountCents || 0, method: a.method || '', ref: a.customer }));
+    loadRefundsLog().filter(r => inRange(r.datetime)).forEach(r => {
+      // A refund issued as store credit moves no money out of the till.
+      if (r.method === 'storecredit') return;
+      events.push({ at: r.datetime, kind: 'refund', amountCents: -(r.totalCents || 0), method: r.method || '', ref: r.orderName });
+    });
     events.sort((a, b) => new Date(b.at) - new Date(a.at));
     return events;
   }
 
   let salesPeriod = 'today';
   let salesDate = '';
+  let salesSource = 'till';   // 'till' = money-in events · 'shopify' = Shopify orders (till + online)
+  let _salesLoadToken = 0;
+  function setSalesSource(s) { salesSource = s; renderSales(); }
   function setSalesPeriod(p) { salesPeriod = p; if (p !== 'date') salesDate = ''; renderSales(); }
   function setSalesDate(v) { if (!v) return; salesDate = v; salesPeriod = 'date'; renderSales(); }
   function salesRange() {
@@ -1294,9 +1645,19 @@
     return { since, until };
   }
 
+  function salesHeaderHtml() {
+    const tabs = [['today', 'Today'], ['week', 'This week'], ['month', 'This month']].map(([p, l]) =>
+      `<button class="qbtn" style="width:auto;padding:0 0.8rem;background:${salesPeriod === p ? 'var(--accent)' : 'var(--panel2)'};${salesPeriod === p ? 'color:#04210f' : ''}" onclick="setSalesPeriod('${p}')">${l}</button>`).join('');
+    const src = [['till', '🧾 Till (money in)'], ['shopify', '🛍 Shopify orders']].map(([s, l]) =>
+      `<button class="qbtn" style="width:auto;padding:0 0.8rem;background:${salesSource === s ? 'var(--accent)' : 'var(--panel2)'};${salesSource === s ? 'color:#04210f' : ''}" onclick="setSalesSource('${s}')">${l}</button>`).join('');
+    return `<div style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center;margin-bottom:0.4rem">${src}</div>
+      <div style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem">${tabs}
+        <input type="date" value="${salesDate}" onchange="setSalesDate(this.value)" style="width:auto;padding:0.3rem 0.5rem;background:${salesPeriod === 'date' ? 'var(--accent)' : 'var(--panel2)'};border:1px solid var(--border);border-radius:8px;color:${salesPeriod === 'date' ? '#04210f' : 'var(--text)'};font-size:0.8rem"></div>`;
+  }
   function renderSales() {
     const body = document.getElementById('sales-body');
     const { since, until } = salesRange();
+    if (salesSource === 'shopify') { renderSalesShopify(body, since, until); return; }
     const events = moneyInEvents(since, until);
     const total = events.reduce((t, e) => t + e.amountCents, 0);
     const by = { cash: 0, card: 0, eft: 0 };
@@ -1308,15 +1669,17 @@
     const deps = events.filter(e => e.kind === 'deposit');
     const depTotal = deps.reduce((t, e) => t + e.amountCents, 0);
 
-    const tabs = [['today', 'Today'], ['week', 'This week'], ['month', 'This month']].map(([p, l]) =>
-      `<button class="qbtn" style="width:auto;padding:0 0.8rem;background:${salesPeriod === p ? 'var(--accent)' : 'var(--panel2)'};${salesPeriod === p ? 'color:#04210f' : ''}" onclick="setSalesPeriod('${p}')">${l}</button>`).join('');
     const stat = (label, val, accent) => `<div style="background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.45rem 0.6rem;min-width:90px">
       <div style="font-size:0.68rem;color:var(--muted)">${label}</div><div style="font-weight:800;${accent ? 'color:var(--accent2)' : ''}">${val}</div></div>`;
 
     const rows = events.slice(0, 150).map(e => {
       if (e.kind === 'sale') {
         const s = e.sale;
-        const depNote = s.depositAppliedCents ? ` · deposit ${money(s.depositAppliedCents)} counted earlier` : '';
+        let depNote = s.depositAppliedCents ? ` · deposit ${money(s.depositAppliedCents)} counted earlier` : '';
+        const sp = s.payment || {};
+        if (sp.method === 'giftcard') depNote += ` · gift card ${money(sp.giftCardCents || 0)} (counted when sold)`;
+        else if (sp.method === 'storecredit') depNote += ` · store credit ${money(sp.storeCreditCents || 0)}`;
+        else if (sp.method === 'account') depNote += ' · ON ACCOUNT — money counts when the account is paid';
         return `<div class="cust-result" style="cursor:default">
           <div><div style="font-weight:600">${esc(s.saleNumber)}${s.synced ? '' : ' <span style="color:var(--warn)">⏳</span>'}${s.salesOrder ? ' <span style="font-size:0.68rem;color:var(--muted)">SO ' + esc(s.salesOrder) + '</span>' : ''}</div>
             <div style="font-size:0.72rem;color:var(--muted)">${new Date(s.datetime).toLocaleString('en-ZA')} · ${(s.items || []).reduce((n, i) => n + i.qty, 0)} item(s) · ${esc((s.payment && s.payment.method) || '')}${s.customer ? ' · ' + esc(s.customer.name) : ''}${depNote}</div></div>
@@ -1331,6 +1694,18 @@
             <div style="font-size:0.72rem;color:var(--muted)">${new Date(e.at).toLocaleString('en-ZA')} · ${esc(e.method)}</div></div>
           <span style="font-weight:700;color:var(--accent2)">${money(e.amountCents)}</span></div>`;
       }
+      if (e.kind === 'giftcard') {
+        return `<div class="cust-result" style="cursor:default">
+          <div><div style="font-weight:600">🎁 Gift card sold${e.ref ? ' · ' + esc(e.ref) : ''}</div>
+            <div style="font-size:0.72rem;color:var(--muted)">${new Date(e.at).toLocaleString('en-ZA')} · ${esc(e.method)}</div></div>
+          <span style="font-weight:700;color:var(--accent2)">${money(e.amountCents)}</span></div>`;
+      }
+      if (e.kind === 'acctpay') {
+        return `<div class="cust-result" style="cursor:default">
+          <div><div style="font-weight:600">📒 Account payment${e.ref ? ' · ' + esc(e.ref) : ''}</div>
+            <div style="font-size:0.72rem;color:var(--muted)">${new Date(e.at).toLocaleString('en-ZA')} · ${esc(e.method)}</div></div>
+          <span style="font-weight:700;color:var(--accent2)">${money(e.amountCents)}</span></div>`;
+      }
       return `<div class="cust-result" style="cursor:default">
         <div><div style="font-weight:600">↩ Refund${e.ref ? ' · ' + esc(e.ref) : ''}</div>
           <div style="font-size:0.72rem;color:var(--muted)">${new Date(e.at).toLocaleString('en-ZA')} · ${esc(e.method)}</div></div>
@@ -1338,8 +1713,7 @@
     }).join('');
 
     body.innerHTML = `
-      <div style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem">${tabs}
-        <input type="date" value="${salesDate}" onchange="setSalesDate(this.value)" style="width:auto;padding:0.3rem 0.5rem;background:${salesPeriod === 'date' ? 'var(--accent)' : 'var(--panel2)'};border:1px solid var(--border);border-radius:8px;color:${salesPeriod === 'date' ? '#04210f' : 'var(--text)'};font-size:0.8rem"></div>
+      ${salesHeaderHtml()}
       <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem">
         ${stat('Money in', money(total), true)}
         ${stat('💵 Cash', money(by.cash))}
@@ -1349,6 +1723,48 @@
       </div>
       ${events.length ? `<div style="max-height:46vh; overflow:auto">${rows}</div>` : '<div class="empty" style="padding:1.5rem">No money in for this period</div>'}`;
   }
+  // The "Shopify orders" source: every order Shopify has for the period —
+  // till sales AND online web orders — straight from the store, newest first.
+  async function renderSalesShopify(body, since, until) {
+    const token = ++_salesLoadToken;
+    body.innerHTML = salesHeaderHtml() + '<div class="empty" style="padding:1.5rem">Loading Shopify orders…</div>';
+    let orders = [];
+    try {
+      const out = await apiX('listOrders', { since: since.toISOString(), until: (until || new Date()).toISOString() });
+      orders = out.orders || [];
+    } catch (e) {
+      if (token !== _salesLoadToken) return;
+      body.innerHTML = salesHeaderHtml() + `<div class="empty" style="padding:1.5rem;color:var(--warn)">${esc(String(e.message || e))}</div>`;
+      return;
+    }
+    if (token !== _salesLoadToken) return;   // user switched view while loading
+    const live = orders.filter(o => !o.cancelled);
+    const total = live.reduce((t, o) => t + o.totalCents, 0);
+    const tillN = live.filter(o => o.source === 'reptipos').length;
+    const onlineN = live.length - tillN;
+    const pending = live.filter(o => o.financialStatus !== 'paid');
+    const stat = (label, val, accent) => `<div style="background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.45rem 0.6rem;min-width:90px">
+      <div style="font-size:0.68rem;color:var(--muted)">${label}</div><div style="font-weight:800;${accent ? 'color:var(--accent2)' : ''}">${val}</div></div>`;
+    const rows = orders.slice(0, 200).map(o => {
+      const src = o.source === 'reptipos' ? '🧾 till' : (o.source === 'web' || o.source === 'online_store' ? '🌐 online' : esc(o.source || ''));
+      const fs = o.cancelled ? '<span style="color:var(--danger)">cancelled</span>' : (o.financialStatus === 'paid' ? 'paid' : `<span style="color:var(--warn)">${esc(o.financialStatus)}</span>`);
+      return `<div class="cust-result" style="cursor:default">
+        <div><div style="font-weight:600">${esc(o.name)} <span style="font-size:0.7rem;color:var(--muted)">${src}</span></div>
+          <div style="font-size:0.72rem;color:var(--muted)">${new Date(o.createdAt).toLocaleString('en-ZA')} · ${o.itemCount} item(s)${o.customerName ? ' · ' + esc(o.customerName) : ''} · ${fs}</div></div>
+        <span style="font-weight:700${o.cancelled ? ';text-decoration:line-through;color:var(--muted)' : ''}">${money(o.totalCents)}</span></div>`;
+    }).join('');
+    body.innerHTML = `
+      ${salesHeaderHtml()}
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem">
+        ${stat('Shopify sales', money(total), true)}
+        ${stat('Orders', live.length)}
+        ${stat('🧾 Till', tillN)}
+        ${stat('🌐 Online', onlineN)}
+        ${stat('⏳ Unpaid', pending.length ? pending.length + ' · ' + money(pending.reduce((t, o) => t + o.totalCents, 0)) : '—')}
+      </div>
+      ${orders.length ? `<div style="max-height:46vh; overflow:auto">${rows}</div>` : '<div class="empty" style="padding:1.5rem">No Shopify orders for this period</div>'}`;
+  }
+
   function reprintSale(saleNumber) {
     const s = loadSales().find(x => x.saleNumber === saleNumber);
     if (s) showReceipt(s); else toast('Sale not found');
@@ -1486,6 +1902,7 @@
           <option value="cash">💵 Cash (from drawer)</option>
           <option value="card">💳 Card (reverse on speedpoint)</option>
           <option value="eft">🏦 EFT (send back)</option>
+          <option value="storecredit">🪙 Store credit (attach the customer first)</option>
         </select></div>
       <div class="field"><label>Reason (optional)</label><input id="rf-reason" placeholder="e.g. faulty, wrong item"></div>
       <div class="total" style="font-size:1.3rem; margin-top:0.7rem"><span>REFUND</span><span class="accent" id="rf-total">${money(refundTotalCents())}</span></div>
@@ -1502,12 +1919,21 @@
     const reason = (document.getElementById('rf-reason').value || '').trim();
     const lines = refundOrder.lineItems.filter(li => (refundQty[li.lineItemId] || 0) > 0)
       .map(li => ({ lineItemId: li.lineItemId, qty: refundQty[li.lineItemId], name: li.name, unitPriceCents: li.unitPriceCents }));
-    if (!confirm(`Refund ${money(total)} via ${method} for ${refundOrder.name}?`)) return;
+    // Store-credit refunds credit the attached customer instead of moving money.
+    if (method === 'storecredit' && !customer) { toast('Attach the customer first (👥) — the credit goes onto their account'); return; }
+    // Refunds need permission (or a one-off admin approval).
+    if (!(currentStaff && (currentStaff.role === 'admin' || currentStaff.canRefund)) && !adminOverride('refund ' + money(total))) return;
+    if (!confirm(`Refund ${money(total)} via ${method === 'storecredit' ? 'store credit to ' + customer.name : method} for ${refundOrder.name}?`)) return;
     refundInFlight = true;
     const idemKey = uuid();
     try {
       const out = await api('refundCreate', { orderId: refundOrder.orderId, idemKey, restock: refundRestock, reason,
         refundLineItems: lines.map(l => ({ lineItemId: l.lineItemId, qty: l.qty })) });
+      // Only after the Shopify refund succeeds does the credit land on the account.
+      if (method === 'storecredit') {
+        try { await apiX('scCredit', { customerId: customer.id, amountCents: out.amountCents || total }); }
+        catch (e) { toast('Refund done but store credit failed: ' + (e.message || e) + ' — credit it manually in Shopify admin.'); }
+      }
       const refund = {
         type: 'refund', refundNumber: 'RF-' + refundOrder.name.replace(/^#/, ''), idemKey,
         datetime: new Date().toISOString(), orderName: refundOrder.name,
@@ -1602,19 +2028,243 @@
     shiftAddTender(method, amount);
   }
 
+  // ---- Gift cards, store credit & customer accounts ---------------------
+  // api() returns {error} without throwing (demo path); this wrapper throws so
+  // the new flows can use one try/catch for both live and demo.
+  async function apiX(action, extra) {
+    const out = await api(action, extra);
+    if (out && out.error) throw new Error(out.error);
+    return out;
+  }
+  async function sha256Hex(s) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(s).trim().toUpperCase()));
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  // Unambiguous alphabet (no 0/O/1/I) — 14 chars + RC prefix = 16, within
+  // Shopify's 8–20 limit. Typed or scanned at redemption.
+  function genGiftCode() {
+    const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let c = 'RC';
+    const r = new Uint8Array(14); crypto.getRandomValues(r);
+    r.forEach(x => { c += A[x % A.length]; });
+    return c;
+  }
+
+  // Durable logs (money-in + Z-report): gift cards sold, account payments.
+  function loadGiftcardsSold() { try { return JSON.parse(localStorage.getItem('reptipos-giftcards-sold') || '[]'); } catch (e) { return []; } }
+  function recordGiftcardSold(method, amountCents, last4) {
+    const entry = { at: new Date().toISOString(), method, amountCents, last4, staff: currentStaff ? currentStaff.name : null };
+    try { const arr = loadGiftcardsSold(); arr.unshift(entry); localStorage.setItem('reptipos-giftcards-sold', JSON.stringify(arr.slice(0, 500))); } catch (e) {}
+    try { if (window.fb && !isDemo()) { const { db, fns } = window.fb; fns.addDoc(fns.collection(db, 'payments'), { kind: 'giftcard_sale', ...entry }); } } catch (e) {}
+    const s = getShift(); if (s) { s.giftCardSoldCents = (s.giftCardSoldCents || 0) + amountCents; saveShift(s); }
+    shiftAddTender(method, amountCents);
+  }
+  function loadAcctPayments() { try { return JSON.parse(localStorage.getItem('reptipos-acct-payments') || '[]'); } catch (e) { return []; } }
+
+  // Customer account ledger (on-account charges & payments). Firestore is the
+  // shared source; a local mirror keeps profile balances working offline.
+  function loadAcctLocal() { try { return JSON.parse(localStorage.getItem('reptipos-accounts') || '[]'); } catch (e) { return []; } }
+  async function recordAcctEntry(entry) {
+    const e2 = { at: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null, ...entry };
+    try { const arr = loadAcctLocal(); arr.unshift(e2); localStorage.setItem('reptipos-accounts', JSON.stringify(arr.slice(0, 1000))); } catch (e) {}
+    try { await fbAdd('accounts', e2); } catch (e) { console.warn('Account ledger cloud write failed:', e); }
+    if (e2.kind === 'payment') {
+      const p = { at: e2.at, method: e2.method, amountCents: e2.amountCents, customer: e2.name, staff: e2.staff };
+      try { const arr = loadAcctPayments(); arr.unshift(p); localStorage.setItem('reptipos-acct-payments', JSON.stringify(arr.slice(0, 500))); } catch (e) {}
+      try { if (window.fb && !isDemo()) { const { db, fns } = window.fb; fns.addDoc(fns.collection(db, 'payments'), { kind: 'account_payment', ...p }); } } catch (e) {}
+      const s = getShift(); if (s) { s.accountPaymentsCents = (s.accountPaymentsCents || 0) + e2.amountCents; saveShift(s); }
+      shiftAddTender(e2.method, e2.amountCents);
+    } else if (e2.kind === 'charge') {
+      const s = getShift(); if (s) { s.accountChargesCents = (s.accountChargesCents || 0) + e2.amountCents; saveShift(s); }
+    }
+  }
+  async function acctBalanceCents(customerId) {
+    let entries = [];
+    try { entries = (await fbList('accounts')).filter(a => String(a.customerId) === String(customerId)); }
+    catch (e) { entries = loadAcctLocal().filter(a => String(a.customerId) === String(customerId)); }
+    return entries.reduce((t, a) => t + (a.kind === 'charge' ? (a.amountCents || 0) : -(a.amountCents || 0)), 0);
+  }
+
+  // ---- Sell a gift card --------------------------------------------------
+  function openGiftCard() {
+    document.getElementById('gc-modal').classList.add('show');
+    document.getElementById('gc-body').innerHTML = `
+      <div class="field"><label>Gift card amount (R)</label>
+        <input id="gc-amount" type="number" inputmode="decimal" step="0.01" placeholder="e.g. 500"></div>
+      ${customer ? `<div style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">Will be linked to ${esc(customer.name)}</div>` : '<div style="font-size:0.85rem;color:var(--muted);margin-bottom:0.5rem">Tip: attach a customer (👥) to link the card to them.</div>'}
+      <button class="btn btn-pay" onclick="confirmGiftCardSale()">Take payment &amp; issue card</button>`;
+    setTimeout(() => { const i = document.getElementById('gc-amount'); if (i) i.focus(); }, 60);
+  }
+  function closeGiftCard() { document.getElementById('gc-modal').classList.remove('show'); }
+  let gcSaleInFlight = false;
+  async function confirmGiftCardSale() {
+    if (gcSaleInFlight) return;
+    const amountCents = toCents(document.getElementById('gc-amount').value);
+    if (amountCents <= 0) { toast('Enter the gift card amount'); return; }
+    closeGiftCard();
+    const payment = await takeTender({ title: 'Gift card ' + money(amountCents), amountCents, editable: false });
+    if (!payment) { openGiftCard(); return; }
+    gcSaleInFlight = true;
+    const code = genGiftCode();
+    try {
+      const out = await apiX('gcCreate', { amountCents, code, customerId: customer ? customer.id : undefined });
+      // Hashed code → gift card id map (Shopify never returns the code again).
+      try { if (!isDemo()) await fbSet('giftcards', await sha256Hex(code), { gcId: out.id, last4: out.last4, at: new Date().toISOString(), soldBy: currentStaff ? currentStaff.name : null }); } catch (e) { console.warn('Gift card map write failed:', e); }
+      recordGiftcardSold(payment.method, amountCents, out.last4);
+      toast('Gift card issued — ' + money(amountCents));
+      printGiftCardSlip(code, amountCents);
+    } catch (e) {
+      toast('Gift card failed: ' + (e.message || e) + ' — the payment was NOT banked; hand it back or retry.');
+    } finally { gcSaleInFlight = false; }
+  }
+  function printGiftCardSlip(code, amountCents) {
+    printReport(`<h2 style="text-align:center;margin:.2rem 0">ReptiCube — GIFT CARD</h2>
+      <div class="c">${new Date().toLocaleString('en-ZA')}</div>
+      <div style="text-align:center;font-size:26px;font-weight:bold;margin:12px 0;letter-spacing:2px">${esc(code)}</div>
+      <table><tr class="tot"><td>Value</td><td style="text-align:right">${money(amountCents)}</td></tr></table>
+      <div class="c">Treat this slip like cash. The code is needed to redeem — it cannot be recovered if lost.</div>`);
+  }
+
+  // ---- Redeem tenders (gift card / store credit / on account) ------------
+  // Shared: apply up to the balance; any remainder is collected via a normal
+  // tender FIRST, and only then is the gift card / credit debited — so a
+  // cancelled remainder never leaves a half-debited card.
+  async function payGiftcardStart() {
+    const total = cartTotal();
+    const d = document.getElementById('pay-detail');
+    d.innerHTML = `<div class="field"><label>Gift card code (scan or type)</label>
+      <input id="gc-code" autocomplete="off" placeholder="RC…">
+      <button class="btn btn-pay" style="margin-top:0.6rem" onclick="payGiftcardCheck()">Check balance</button>
+      <div id="gc-check" style="margin-top:0.5rem;font-size:0.9rem"></div></div>`;
+    const i = document.getElementById('gc-code'); i.focus();
+  }
+  let _gcResolved = null;
+  async function payGiftcardCheck() {
+    const code = (document.getElementById('gc-code').value || '').trim();
+    const box = document.getElementById('gc-check');
+    if (code.length < 4) { box.textContent = 'Enter the code (or at least its last 4 characters)'; return; }
+    box.textContent = 'Checking…';
+    _gcResolved = null;
+    try {
+      let gc = null;
+      if (isDemo()) {
+        const hit = demoGet('reptipos-demo-giftcards').find(g => g.code.toUpperCase() === code.toUpperCase());
+        if (hit) gc = { id: hit.id, last4: hit.code.slice(-4), balanceCents: hit.balanceCents };
+      } else {
+        // Exact: hashed-code map (cards we sold). Fallback: last-4 search
+        // (cards sold online — Shopify can't verify the full code, so staff
+        // must eyeball that the last 4 match the customer's card).
+        try {
+          const map = await fbGet('giftcards', await sha256Hex(code));
+          if (map) { const b = await apiX('gcBalance', { id: map.gcId }); gc = b; }
+        } catch (e) {}
+        if (!gc) {
+          const found = await apiX('gcFind', { last4: code.slice(-4) });
+          if ((found.cards || []).length === 1) gc = found.cards[0];
+          else if ((found.cards || []).length > 1) { box.textContent = 'More than one card matches those characters — enter the full code.'; return; }
+        }
+      }
+      if (!gc) { box.textContent = 'Gift card not found.'; return; }
+      if (gc.balanceCents <= 0) { box.textContent = 'This gift card has no balance left.'; return; }
+      const total = cartTotal();
+      const use = Math.min(gc.balanceCents, total);
+      _gcResolved = { ...gc, useCents: use };
+      box.innerHTML = `Balance <b>${money(gc.balanceCents)}</b> (…${esc(gc.last4)}) — will cover <b>${money(use)}</b>${use < total ? `, remainder ${money(total - use)} by another method` : ''}.<br>
+        <button class="btn btn-pay" style="margin-top:0.5rem" onclick="payGiftcardConfirm()">✓ Use gift card${use < total ? ' + collect remainder' : ''}</button>`;
+    } catch (e) { box.textContent = 'Check failed: ' + (e.message || e); }
+  }
+  async function payGiftcardConfirm() {
+    const gc = _gcResolved; if (!gc) return;
+    const total = cartTotal();
+    const remainder = total - gc.useCents;
+    let other = null;
+    if (remainder > 0) {
+      payClose();
+      other = await takeTender({ title: 'Remainder ' + money(remainder), amountCents: remainder, editable: false });
+      if (!other) { payOpen(); return; }
+    }
+    try {
+      const out = await apiX('gcDebit', { id: gc.id, amountCents: gc.useCents });
+      completeSale({ method: 'giftcard', giftCardCents: gc.useCents, gcLast4: gc.last4, gcBalanceAfterCents: out.balanceCents,
+        ...(other ? { otherMethod: other.method, otherCents: other.amountCents, otherDetail: other } : {}) });
+    } catch (e) { toast('Gift card debit failed: ' + (e.message || e) + (other ? ' — hand back the remainder payment.' : '')); }
+  }
+
+  async function payStoreCreditStart() {
+    const d = document.getElementById('pay-detail');
+    if (!customer) { d.innerHTML = '<div style="font-size:0.9rem;color:var(--warn)">Attach the customer first (👥) — store credit lives on their account.</div>'; return; }
+    d.innerHTML = '<div style="font-size:0.9rem;color:var(--muted)">Checking ' + esc(customer.name) + '’s store credit…</div>';
+    try {
+      const sc = await apiX('scBalance', { customerId: customer.id });
+      const total = cartTotal();
+      const use = Math.min(sc.balanceCents, total);
+      if (use <= 0) { d.innerHTML = '<div style="font-size:0.9rem;color:var(--warn)">' + esc(customer.name) + ' has no store credit.</div>'; return; }
+      d.innerHTML = `<div style="font-size:0.9rem">Store credit balance <b>${money(sc.balanceCents)}</b> — will cover <b>${money(use)}</b>${use < total ? `, remainder ${money(total - use)} by another method` : ''}.</div>
+        <button class="btn btn-pay" style="margin-top:0.6rem" onclick='payStoreCreditConfirm(${JSON.stringify(sc.accountId)},${use})'>✓ Use store credit${use < total ? ' + collect remainder' : ''}</button>`;
+    } catch (e) { d.innerHTML = '<div style="font-size:0.9rem;color:var(--warn)">Store credit check failed: ' + esc(String(e.message || e)) + '</div>'; }
+  }
+  async function payStoreCreditConfirm(accountId, useCents) {
+    const total = cartTotal();
+    const remainder = total - useCents;
+    let other = null;
+    if (remainder > 0) {
+      payClose();
+      other = await takeTender({ title: 'Remainder ' + money(remainder), amountCents: remainder, editable: false });
+      if (!other) { payOpen(); return; }
+    }
+    try {
+      const out = await apiX('scDebit', { accountId, amountCents: useCents });
+      completeSale({ method: 'storecredit', storeCreditCents: useCents, scBalanceAfterCents: out.balanceCents,
+        ...(other ? { otherMethod: other.method, otherCents: other.amountCents, otherDetail: other } : {}) });
+    } catch (e) { toast('Store credit debit failed: ' + (e.message || e) + (other ? ' — hand back the remainder payment.' : '')); }
+  }
+
+  function payAccountStart() {
+    const d = document.getElementById('pay-detail');
+    if (!customer) { d.innerHTML = '<div style="font-size:0.9rem;color:var(--warn)">Attach the customer first (👥) — an account sale needs to know whose account.</div>'; return; }
+    const total = cartTotal();
+    d.innerHTML = `<div style="font-size:0.9rem">Charge <b>${money(total)}</b> to <b>${esc(customer.name)}</b>'s account. No money changes hands now; collect it later via their profile.</div>
+      <button class="btn btn-pay" style="margin-top:0.6rem" onclick="completeSale({method:'account'})">✓ Charge to account</button>`;
+  }
+
+  // Receive a payment against a customer's account (from the client profile).
+  async function acctReceivePayment(customerId, name) {
+    const bal = await acctBalanceCents(customerId);
+    const payment = await takeTender({ title: 'Account payment — ' + name + ' (owes ' + money(Math.max(0, bal)) + ')', amountCents: Math.max(0, bal), editable: true });
+    if (!payment) return;
+    await recordAcctEntry({ customerId: String(customerId), name, kind: 'payment', method: payment.method, amountCents: payment.amountCents });
+    toast('Account payment ' + money(payment.amountCents) + ' received');
+    if (profileClient && String(profileClient.id) === String(customerId)) openProfile(profileClient);
+  }
+
   // ---- Quotes & Sales orders (Shopify draft orders) ----
   let docsType = 'salesorder';
   let docsCache = [];
   function findDoc(id) { return docsCache.find(d => d.id === id); }
 
-  async function saveQuote() {
+  // Quote: opens a modal for an optional multi-line note (it prints on the
+  // document, e.g. "Please see attached… Kind regards, Amoré").
+  function saveQuote() {
     if (cart.length === 0) { toast('Cart is empty'); return; }
+    document.getElementById('quote-modal').classList.add('show');
+    document.getElementById('quote-body').innerHTML = `
+      <div class="pay-total">${money(cartTotal())}</div>
+      <div style="font-size:0.85rem;color:var(--muted);text-align:center;margin-bottom:0.6rem">${customer ? 'For ' + esc(customer.name) : 'No customer attached (optional)'}</div>
+      <div class="field"><label>Note (optional — prints on the quote)</label>
+        <textarea id="q-note" rows="4" placeholder="e.g. Please see attached. The pricing did go up…&#10;&#10;Kind regards&#10;Amoré" style="width:100%;padding:0.6rem;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font:inherit;resize:vertical"></textarea></div>
+      <button class="btn btn-pay" onclick="confirmQuote()">Create quote</button>`;
+    setTimeout(() => { const t = document.getElementById('q-note'); if (t) t.focus(); }, 60);
+  }
+  function closeQuoteModal() { document.getElementById('quote-modal').classList.remove('show'); }
+  async function confirmQuote() {
+    const note = (document.getElementById('q-note').value || '').trim();
+    closeQuoteModal();
     const c = computeCart();
-    const items = c.lines.map(x => ({ variantId: x.variantId, name: x.p ? x.p.name : x.variantId, sku: x.p ? x.p.sku : '', priceCents: x.finalUnit, qty: x.qty, lineTotalCents: x.finalLine }));
-    const doc = { type: 'quote', cart, cartDiscount, items, totalCents: c.total, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
+    const items = c.lines.map(x => ({ variantId: x.variantId, name: x.p ? x.p.name : x.variantId, sku: x.p ? x.p.sku : '', priceCents: x.finalUnit, qty: x.qty, lineTotalCents: x.finalLine, custom: !!(x.p && x.p.custom) || undefined }));
+    const doc = { type: 'quote', cart, cartDiscount, items, totalCents: c.total, note, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
     toast('Saving quote…');
     try {
-      const out = await api('docSave', { tags: 'pos,quote', customerId: customer ? customer.id : undefined, lineItems: cart.map(l => ({ variantId: l.variantId, qty: l.qty })), doc });
+      const out = await api('docSave', { tags: 'pos,quote', customerId: customer ? customer.id : undefined, lineItems: cart.map(l => l.custom ? { custom: true, title: l.name, qty: l.qty, priceCents: l.priceCents } : { variantId: l.variantId, qty: l.qty }), doc });
       printDoc({ ...doc, name: out.name, customer: customer ? { name: customer.name } : null }, 'QUOTE');
       toast('Quote ' + (out.name || '') + ' saved');
       queueClientLink({ type: 'quote', number: out.name || '', customer, items, totalCents: c.total, status: 'sent' });
@@ -1634,7 +2284,8 @@
         <input id="so-deposit" type="number" step="0.01" value="0.00" oninput="soBalancePreview(${total})"></div>
       <div class="change" id="so-balance">Balance owing: ${money(total)}</div>
       <div class="field"><label>Expected stock date (optional)</label><input id="so-date" type="date"></div>
-      <div class="field"><label>Note (optional)</label><input id="so-note" placeholder="e.g. 60×45 terrarium, custom build"></div>
+      <div class="field"><label>Note (optional — prints on the document)</label><textarea id="so-note" rows="3" placeholder="e.g. 60×45 terrarium, custom build&#10;&#10;Kind regards" style="width:100%;padding:0.6rem;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font:inherit;resize:vertical"></textarea></div>
+      <div class="field"><label>Delivery address (optional)</label><input id="so-address" placeholder="Street, suburb — blank = collection"></div>
       <label style="display:flex;align-items:center;gap:0.5rem;margin:0.2rem 0 0.5rem;font-size:0.9rem;cursor:pointer">
         <input id="so-factory" type="checkbox" style="width:auto;margin:0"> Made in our factory (send to the production board)
       </label>
@@ -1647,9 +2298,10 @@
     if (deposit > total) { toast('Deposit is more than the total'); return; }
     const date = document.getElementById('so-date').value || '';
     const note = (document.getElementById('so-note').value || '').trim();
+    const deliveryAddress = (document.getElementById('so-address').value || '').trim();
     const factory = !!(document.getElementById('so-factory') && document.getElementById('so-factory').checked);
     const c = computeCart();
-    const items = c.lines.map(x => ({ variantId: x.variantId, name: x.p ? x.p.name : x.variantId, sku: x.p ? x.p.sku : '', priceCents: x.finalUnit, qty: x.qty, lineTotalCents: x.finalLine }));
+    const items = c.lines.map(x => ({ variantId: x.variantId, name: x.p ? x.p.name : x.variantId, sku: x.p ? x.p.sku : '', priceCents: x.finalUnit, qty: x.qty, lineTotalCents: x.finalLine, custom: !!(x.p && x.p.custom) || undefined }));
     const cust = customer;
     let payment = null;
     if (deposit > 0) {
@@ -1660,9 +2312,9 @@
     const doc = { type: 'salesorder', status: 'awaiting_stock', cart, cartDiscount, items, totalCents: total,
       depositCents: payment ? payment.amountCents : 0,
       payments: payment ? [{ ...payment, kind: 'deposit', at: new Date().toISOString() }] : [],
-      expectedDate: date, note, factory, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
+      expectedDate: date, note, deliveryAddress, factory, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
     try {
-      const out = await api('docSave', { tags: 'pos,sales-order', customerId: cust.id, lineItems: cart.map(l => ({ variantId: l.variantId, qty: l.qty })), doc });
+      const out = await api('docSave', { tags: 'pos,sales-order', customerId: cust.id, lineItems: cart.map(l => l.custom ? { custom: true, title: l.name, qty: l.qty, priceCents: l.priceCents } : { variantId: l.variantId, qty: l.qty }), doc });
       if (payment) { shiftRecordDeposit(payment.method, payment.amountCents); recordDeposit(payment.method, payment.amountCents, out.name); }
       // Never in demo: a demo sales order must not reach the shared salesorders
       // collection (the Production Manager would turn it into a REAL factory job).
@@ -1718,10 +2370,12 @@
     const statusLabel = { awaiting_stock: '⏳ awaiting stock', ready: '✅ ready' }[m.status] || (m.status || '');
     return `<div class="cust-result" style="cursor:default; flex-direction:column; align-items:stretch; gap:0.35rem">
       <div style="display:flex;justify-content:space-between"><div style="font-weight:600">${esc(d.name)} · ${esc(cust)}</div><div style="font-weight:700">${money(total)}</div></div>
-      <div style="font-size:0.72rem;color:var(--muted)">${when} · deposit ${money(dep)} · balance ${money(bal)} · ${esc(statusLabel)}${m.expectedDate ? ' · exp ' + esc(m.expectedDate) : ''}${m.note ? ' · ' + esc(m.note) : ''}${m.factory ? ' · 🏭 factory' : ''}</div>
+      <div style="font-size:0.72rem;color:var(--muted)">${when} · deposit ${money(dep)} · balance ${money(bal)} · ${esc(statusLabel)}${m.expectedDate ? ' · exp ' + esc(m.expectedDate) : ''}${m.note ? ' · ' + esc(m.note) : ''}${m.factory ? ' · 🏭 factory' : ''}${m.deliveryAddress ? ' · 🚚 ' + esc(m.deliveryAddress) : ''}${(m.notes && m.notes.length) ? ' · 📝 ' + esc(m.notes[m.notes.length - 1].text) + (m.notes.length > 1 ? ' (+' + (m.notes.length - 1) + ' more)' : '') : ''}</div>
       <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
         ${bal > 0 ? `<button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="soAddPayment('${d.id}')">+ Deposit</button>` : ''}
         ${m.status !== 'ready' ? `<button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="soMarkReady('${d.id}')">Mark ready</button>` : ''}
+        <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="soAddNote('${d.id}')" title="Add a timestamped note">📝 Note</button>
+        <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="soSetAddress('${d.id}')" title="Set / change the delivery address">🚚</button>
         <button class="qbtn" style="width:auto;padding:0 0.6rem;background:var(--accent);color:#04210f" onclick="soFulfil('${d.id}')">Fulfil &amp; invoice</button>
         <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="printDocById('${d.id}','SALES ORDER')">🖨️</button>
         <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="shareDoc('${d.id}','salesorder')" title="Send to the customer">📤 Send</button>
@@ -2315,6 +2969,21 @@
     try { await saveSO(d, doc); shiftRecordDeposit(payment.method, payment.amountCents); recordDeposit(payment.method, payment.amountCents, d.name); toast('Deposit added'); } catch (e) { toast('Failed: ' + (e.message || e)); }
     openDocs('salesorder');
   }
+  // Append a timestamped note to an existing sales order (kept forever on the
+  // order — e.g. "customer called, wants black trim").
+  async function soAddNote(id) {
+    const d = findDoc(id); if (!d) return;
+    const text = (prompt('Add a note to ' + d.name + ':') || '').trim();
+    if (!text) return;
+    const notes = [...(d.doc.notes || []), { at: new Date().toISOString(), by: currentStaff ? currentStaff.name : null, text }];
+    try { await saveSO(d, { ...d.doc, notes }); toast('Note added'); renderDocs(); } catch (e) { toast('Failed: ' + (e.message || e)); }
+  }
+  async function soSetAddress(id) {
+    const d = findDoc(id); if (!d) return;
+    const v = prompt('Delivery address for ' + d.name + ' (blank = collection):', d.doc.deliveryAddress || '');
+    if (v === null) return;
+    try { await saveSO(d, { ...d.doc, deliveryAddress: v.trim() }); toast(v.trim() ? 'Delivery address saved' : 'Set to collection'); renderDocs(); } catch (e) { toast('Failed: ' + (e.message || e)); }
+  }
   async function soMarkReady(id) {
     const d = findDoc(id); if (!d) return;
     try { await saveSO(d, { ...d.doc, status: 'ready' }); toast('Marked ready — tell the customer'); renderDocs(); } catch (e) { toast('Failed'); }
@@ -2331,7 +3000,7 @@
     const items = (m.items || []).map(i => ({ ...i, lineTotalCents: i.lineTotalCents != null ? i.lineTotalCents : i.priceCents * i.qty }));
     const note = saleNumber + ' · SO ' + d.name + ' · deposit ' + money(dep) + (balPayment ? ' · balance ' + paymentSummary(balPayment) : ' · paid in full on deposit');
     try {
-      const out = await callFn({ action: 'createOrder', idemKey, customerId: d.customer ? d.customer.id : undefined, lineItems: items.map(i => ({ variantId: i.variantId, qty: i.qty, priceCents: i.priceCents })), note });
+      const out = await callFn({ action: 'createOrder', idemKey, customerId: d.customer ? d.customer.id : undefined, lineItems: items.map(orderLineOf), note });
       try { await api('docDelete', { id: d.id }); } catch (e) {}
       if (balPayment) shiftAddTender(balPayment.method, balPayment.amountCents);
       const s = getShift(); if (s) { s.salesCount += 1; saveShift(s); }
@@ -2357,7 +3026,109 @@
   }
 
   function printDocById(id, kind) { const d = findDoc(id); if (d) printDoc({ ...d.doc, name: d.name, customer: d.customer }, kind); }
+  // ---- Code 128-B barcode as inline SVG (no library, print-safe) ---------
+  const C128 = '212222,222122,222221,121223,121322,131222,122213,122312,132212,221213,221312,231212,112232,122132,122231,113222,123122,123221,223211,221132,221231,213212,223112,312131,311222,321122,321221,312212,322112,322211,212123,212321,232121,111323,131123,131321,112313,132113,132311,211313,231113,231311,112133,112331,132131,113123,113321,133121,313121,211331,231131,213113,213311,213131,311123,311321,331121,312113,312311,332111,314111,221411,431111,111224,111422,121124,121421,141122,141221,112214,112412,122114,122411,142112,142211,241211,221114,413111,241112,134111,111242,121142,121241,114212,124112,124211,411212,421112,421211,212141,214121,412121,111143,111341,131141,114113,114311,411113,411311,113141,114131,311141,411131,211412,211214,211232,2331112'.split(',');
+  function barcodeSvg(text, h) {
+    const s = String(text || '').replace(/[^\x20-\x7e]/g, '');
+    if (!s) return '';
+    const codes = [104];                                  // Start B
+    for (const ch of s) codes.push(ch.charCodeAt(0) - 32);
+    let sum = 104; codes.slice(1).forEach((v, i) => { sum += v * (i + 1); });
+    codes.push(sum % 103, 106);                           // checksum + Stop
+    let x = 0, bars = '';
+    codes.forEach(c => {
+      const pat = C128[c] || '';
+      for (let i = 0; i < pat.length; i++) {
+        const w = Number(pat[i]);
+        if (i % 2 === 0) bars += `<rect x="${x}" y="0" width="${w}" height="${h || 40}"/>`;
+        x += w;
+      }
+    });
+    return `<svg viewBox="0 0 ${x} ${h || 40}" width="${Math.min(360, x * 1.6)}" height="${h || 40}" preserveAspectRatio="none" shape-rendering="crispEdges">${bars}</svg>`;
+  }
+
+  // ---- A4 document (quotes & sales orders) ------------------------------
+  // A proper branded document — logo, priced lines, note, totals, barcode and
+  // banking footer. (Till receipts stay on the 80mm slip.)
+  function printDocA4(doc, kind) {
+    const st = settings();
+    const items = doc.items || [];
+    const dep = doc.depositCents || 0, bal = (doc.totalCents || 0) - dep;
+    const nItems = items.reduce((n, i) => n + (Number(i.qty) || 0), 0);
+    const rows = items.map(i => {
+      const unit = i.priceCents != null ? i.priceCents : 0;
+      const line = i.lineTotalCents != null ? i.lineTotalCents : unit * i.qty;
+      return `<tr>
+        <td class="q">${esc(i.qty)}</td>
+        <td class="n"><b>${esc(i.name)}</b>${i.sku ? `<div class="sub">${esc(i.sku)}</div>` : ''}</td>
+        <td class="u">@ ${money(unit)}</td>
+        <td class="t">${money(line)}</td></tr>`;
+    }).join('');
+    const noteBlock = [
+      doc.note ? `<p>${esc(doc.note).replace(/\n/g, '<br>')}</p>` : '',
+      doc.deliveryAddress ? `<p><b>🚚 Deliver to:</b> ${esc(doc.deliveryAddress)}</p>` : '',
+      doc.expectedDate ? `<p>Expected: ${esc(doc.expectedDate)}</p>` : '',
+      ...(doc.notes || []).map(n => `<p class="sub">${new Date(n.at).toLocaleDateString('en-ZA')}${n.by ? ' · ' + esc(n.by) : ''}: ${esc(n.text)}</p>`)
+    ].filter(Boolean).join('');
+    const bankBlock = st.bankAccNo ? `<div class="bank">
+      <div>${esc(st.bankAccName || coName())}</div>
+      ${st.bankName ? `<div>${esc(st.bankName)}</div>` : ''}
+      <div>Account Number: ${esc(st.bankAccNo)}</div>
+      ${st.bankBranch ? `<div>Branch code: ${esc(st.bankBranch)}</div>` : ''}
+      ${st.bankAccType ? `<div>Acc type: ${esc(st.bankAccType)}</div>` : ''}
+      ${doc.name ? `<div style="margin-top:4px"><b>Reference: ${esc(doc.name)}</b></div>` : ''}
+    </div>` : '';
+    const title = kind === 'QUOTE' ? 'Quote' : 'Sales order';
+    const w = window.open('', '_blank', 'width=820,height=900');
+    if (!w) { toast('Allow pop-ups to print'); return; }
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} ${esc(doc.name || '')}</title>
+      <style>
+        @media print { @page { size: A4; margin: 14mm } .noprint { display:none } }
+        body { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; color:#111; max-width:760px; margin:0 auto; padding:24px; }
+        .logo { text-align:center; margin-bottom:6px }
+        .logo img { max-height:120px; max-width:260px }
+        .biz { text-align:center; font-weight:700; font-size:17px; margin-bottom:22px }
+        h1 { font-size:20px; margin:0 0 2px }
+        .when { font-weight:700; font-size:13px; margin-bottom:2px }
+        .sub { color:#666; font-size:11.5px }
+        table { width:100%; border-collapse:collapse; margin:16px 0 0 }
+        thead td { border-bottom:1px solid #ddd }
+        tbody tr td { padding:7px 0; border-bottom:1px solid #f0f0f0; vertical-align:top; font-size:13.5px }
+        td.q { width:36px } td.u { text-align:right; color:#555; white-space:nowrap; padding-right:14px }
+        td.t { text-align:right; font-weight:700; white-space:nowrap }
+        .note { margin:16px 0; font-size:13px; line-height:1.5 } .note p { margin:0 0 8px }
+        .totals { border-top:1px solid #ddd; margin-top:8px; padding-top:10px }
+        .totals div { display:flex; justify-content:space-between; font-size:15px; margin-bottom:6px }
+        .totals .big { font-weight:800; font-size:17px }
+        .bc { text-align:center; margin:22px 0 8px }
+        .bank { text-align:center; font-size:12px; color:#333; line-height:1.7 }
+        .btns { margin-top:22px; text-align:center }
+        .btns button { padding:10px 22px; font-size:15px; border:1px solid #111; border-radius:8px; background:#fff; cursor:pointer }
+      </style></head><body>
+      ${(st.coLogoUrl || DEFAULT_LOGO) ? `<div class="logo"><img src="${esc(st.coLogoUrl || DEFAULT_LOGO)}" alt=""></div>` : ''}
+      <div class="biz">${esc(coName())}</div>
+      <h1>${esc(title)} ${esc(doc.name || '')}</h1>
+      <div class="when">${new Date(doc.createdAt || Date.now()).toLocaleString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}</div>
+      ${doc.customer ? `<div class="sub">Customer: ${esc(doc.customer.name)}</div>` : ''}
+      <div class="sub">Served by: ${esc(doc.staff || '—')}</div>
+      <table><tbody>${rows}</tbody></table>
+      ${noteBlock ? `<div class="note">${noteBlock}</div>` : ''}
+      <div class="totals">
+        <div class="big"><span>TOTAL <span class="sub">${nItems} item${nItems === 1 ? '' : 's'}</span></span><span>${money(doc.totalCents || 0)}</span></div>
+        ${kind === 'SALES ORDER' ? `<div><span>Deposit paid</span><span>${money(dep)}</span></div>
+        <div class="big"><span>TO PAY</span><span>${money(bal)}</span></div>` : `<div class="big"><span>TO PAY</span><span>${money(doc.totalCents || 0)}</span></div>`}
+      </div>
+      <div class="bc">${barcodeSvg(doc.name || '', 46)}</div>
+      ${bankBlock}
+      <div class="btns noprint"><button onclick="window.print()">🖨️ Print / Save as PDF</button></div>
+      </body></html>`);
+    w.document.close();
+  }
+
   function printDoc(doc, kind) {
+    // Quotes and sales orders print as a proper A4 document; everything else
+    // (receipts, reports) stays on the 80mm slip.
+    if (kind === 'QUOTE' || kind === 'SALES ORDER') return printDocA4(doc, kind);
     const items = doc.items || [];
     const rows = items.map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">${money(i.lineTotalCents != null ? i.lineTotalCents : i.priceCents * i.qty)}</td></tr>`).join('');
     const dep = doc.depositCents || 0; const bal = (doc.totalCents || 0) - dep;
@@ -2370,6 +3141,8 @@
     html += `</table>`;
     if (doc.expectedDate) html += `<div class="c">Expected stock: ${esc(doc.expectedDate)}</div>`;
     if (doc.note) html += `<div class="c">${esc(doc.note)}</div>`;
+    if (doc.deliveryAddress) html += `<div class="c" style="font-weight:bold">🚚 Deliver to: ${esc(doc.deliveryAddress)}</div>`;
+    if (doc.notes && doc.notes.length) html += doc.notes.map(n => `<div class="c">📝 ${new Date(n.at).toLocaleDateString('en-ZA')}${n.by ? ' ' + esc(n.by) : ''}: ${esc(n.text)}</div>`).join('');
     html += `<div class="c" style="margin-top:6px">${kind === 'QUOTE' ? 'Quote — subject to availability' : 'Thank you!'}</div>`;
     // Money still owed on both of these, so the customer needs somewhere to pay it.
     if (kind === 'QUOTE' || bal > 0) html += bankBlockHtml(doc.name || '');
@@ -2378,6 +3151,7 @@
 
   // ---- Dashboard ----
   let dashPeriod = 'today';
+  let dashCashups = [];   // cash-ups shown on the dashboard, kept for reprint
   async function openDashboard() {
     if (!managerOnly('The dashboard')) return;
     document.getElementById('dash-modal').classList.add('show');
@@ -2429,6 +3203,33 @@
     // counts when paid, a fulfilled order only adds its balance.
     const moneyIn = moneyInEvents(new Date(since), new Date(until)).reduce((t, e) => t + e.amountCents, 0);
     let poWaiting = 0; try { if (fbReady()) { const pos = await fbList('purchase_orders'); poWaiting = pos.filter(x => x.status === 'sent' || x.status === 'partial').length; } } catch (e) {}
+    // Cash-ups (register closes) in this period: cloud copy merged with this
+    // device's local log, deduped on closedAt, so every till's Z-reports appear.
+    dashCashups = [];
+    try {
+      let cloud = []; try { if (fbReady()) cloud = await fbList('cashups'); } catch (e) {}
+      let local = []; try { local = JSON.parse(localStorage.getItem('reptipos-shifts') || '[]'); } catch (e) {}
+      const seen = new Set();
+      [...cloud, ...local].forEach(r => {
+        if (r && r.closedAt && !seen.has(r.closedAt)) { seen.add(r.closedAt); dashCashups.push(r); }
+      });
+      dashCashups = dashCashups.filter(r => r.closedAt >= since && r.closedAt <= until)
+        .sort((a, b) => (a.closedAt < b.closedAt ? 1 : -1));
+    } catch (e) {}
+    const cashupRows = dashCashups.map((r, i) => {
+      const salesTot = (r.cashSalesCents || 0) + (r.cardSalesCents || 0) + (r.eftSalesCents || 0);
+      const v = r.varianceCents;
+      const vStr = v == null ? '—'
+        : v === 0 ? '<span style="color:var(--accent2)">balanced ✓</span>'
+        : `<span style="color:var(--warn)">${v > 0 ? 'over +' : 'short −'}${money(Math.abs(v))}</span>`;
+      return `<div class="cust-result" style="cursor:default">
+        <div><div style="font-weight:600">${new Date(r.closedAt).toLocaleString('en-ZA')}${r.closedBy ? ' · ' + esc(r.closedBy) : ''}</div>
+          <div style="font-size:0.72rem;color:var(--muted)">💵 ${money(r.cashSalesCents || 0)} · 💳 ${money(r.cardSalesCents || 0)} · 🏦 ${money(r.eftSalesCents || 0)}${r.countedCents != null ? ' · counted ' + money(r.countedCents) : ''} · ${vStr}</div></div>
+        <div style="display:flex;align-items:center;gap:0.5rem">
+          <span style="font-weight:700">${money(salesTot)}</span>
+          <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="reprintCashup(${i})">🖨️</button>
+        </div></div>`;
+    }).join('');
     document.getElementById('dash-content').innerHTML = `
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:0.6rem">
         ${dashCard('Sales', money(sales))}
@@ -2446,6 +3247,11 @@
       <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;margin-top:0.8rem;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.6rem 0.7rem">
         <div style="font-size:0.9rem"><b>${poWaiting}</b> purchase order${poWaiting === 1 ? '' : 's'} waiting to be received</div>
         <button class="qbtn" style="width:auto;padding:0 0.7rem" onclick="closeDashboard();openGrv();setTimeout(()=>grvTab('po'),60)">View</button>
+      </div>
+      <div style="margin-top:0.8rem">
+        <div style="font-size:0.8rem;font-weight:700;margin-bottom:0.3rem">Cash-ups (register closes)</div>
+        ${dashCashups.length ? `<div style="max-height:30vh;overflow:auto">${cashupRows}</div>`
+          : '<div class="empty" style="padding:0.6rem">No cash-ups in this period — closing the register (🧾 Register) files its Z-report here.</div>'}
       </div>
       ${cost === 0 && sales > 0 ? '<div style="font-size:0.72rem;color:var(--muted);margin-top:0.4rem">Tip: gross profit needs cost prices — import them (📦 Count → 💰 Import cost prices) for accurate profit.</div>' : ''}`;
   }
@@ -2482,13 +3288,26 @@
           <div style="flex:1;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.6rem;text-align:center"><div style="font-size:0.72rem;color:var(--muted)">Balance owing</div><div style="font-weight:800;color:var(--warn)">${money(balanceOwing)}</div></div>
           <div style="flex:1;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.6rem;text-align:center"><div style="font-size:0.72rem;color:var(--muted)">⭐ Points</div><div style="font-weight:800">${pts} <span style="font-size:0.72rem;color:var(--muted)">(${money(pts * 100)})</span></div></div>
         </div>
+        <div style="display:flex;gap:0.6rem;margin-bottom:0.3rem">
+          <div style="flex:1;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.6rem;text-align:center"><div style="font-size:0.72rem;color:var(--muted)">🪙 Store credit</div><div style="font-weight:800;color:var(--accent2)" id="prof-sc">…</div></div>
+          <div style="flex:1;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.6rem;text-align:center"><div style="font-size:0.72rem;color:var(--muted)">📒 Account owes</div><div style="font-weight:800;color:var(--warn)" id="prof-acct-bal">…</div></div>
+          <div style="flex:1;display:flex;align-items:center"><button class="qbtn" style="width:100%;height:100%;min-height:52px" onclick='acctReceivePayment(${JSON.stringify(String(pc.id))},${JSON.stringify(pc.name)})'>💵 Receive account payment</button></div>
+        </div>
         ${sectionList('Open sales orders', sos.map(d => `${esc(d.name)} · ${money(d.doc.totalCents || 0)} · bal ${money((d.doc.totalCents || 0) - (d.doc.depositCents || 0))} · ${esc(d.doc.status || '')}`))}
+        ${sectionList('Account activity', loadAcctLocal().filter(a => String(a.customerId) === String(pc.id)).slice(0, 8).map(a => `${new Date(a.at).toLocaleDateString('en-ZA')} · ${a.kind === 'charge' ? 'Charge ' + esc(a.ref || '') : 'Payment (' + esc(a.method || '') + ')'} · ${a.kind === 'charge' ? '' : '−'}${money(a.amountCents || 0)}`))}
         ${sectionList('Open quotes', quotes.map(d => `${esc(d.name)} · ${money(d.doc.totalCents || 0)}`))}
         ${sectionList('Recent purchases', orders.map(o => `${esc(o.name)} · ${new Date(o.createdAt).toLocaleDateString('en-ZA')} · ${o.items} item(s) · ${money(o.totalCents)}`))}
         <div style="display:flex;gap:0.5rem;margin-top:0.9rem">
           ${attached ? '' : `<button class="btn btn-pay" onclick='profileAttach()'>Attach to sale</button>`}
           <button class="btn btn-ghost" onclick="closeProfile();openDocs('salesorder')">Manage orders</button>
         </div>`;
+      // Store-credit + account balances load after paint (each is best-effort).
+      apiX('scBalance', { customerId: pc.id })
+        .then(sc => { const el = document.getElementById('prof-sc'); if (el) el.textContent = money(sc.balanceCents || 0); })
+        .catch(() => { const el = document.getElementById('prof-sc'); if (el) el.textContent = '—'; });
+      acctBalanceCents(pc.id)
+        .then(bal => { const el = document.getElementById('prof-acct-bal'); if (el) el.textContent = money(Math.max(0, bal)); })
+        .catch(() => { const el = document.getElementById('prof-acct-bal'); if (el) el.textContent = '—'; });
     } catch (e) { const el = document.getElementById('prof-acct'); if (el) el.textContent = 'Could not load account: ' + (e.message || e); }
   }
   function profileAttach() { if (profileClient) { customer = { id: profileClient.id, name: profileClient.name, phone: profileClient.phone || '', email: profileClient.email || '' }; renderCustomer(); refreshCustomerPoints(); } closeProfile(); toast('Customer attached to sale'); }
@@ -2546,9 +3365,9 @@
   function noCountSet() { try { return new Set(JSON.parse(localStorage.getItem('reptipos-nocount') || '[]')); } catch (e) { return new Set(); } }
   function addNoCount(ids) { if (!ids || !ids.length) return; const s = noCountSet(); ids.forEach(i => s.add(i)); localStorage.setItem('reptipos-nocount', JSON.stringify([...s])); }
   function isBundleish(p) { return /starter kit|\bbundle\b/i.test((p.category || '') + ' ' + (p.name || '')) || noCountSet().has(p.variantId); }
-  function stCategories() { return [...new Set(catalogue.map(p => p.category).filter(Boolean))].sort(); }
+  function stCategories() { return [...new Set(catalogue.flatMap(catsOf))].sort(); }
   function stItems(s) {
-    const base = s.mode === 'selected' ? catalogue.filter(p => s.counts[p.variantId] != null) : catalogue.filter(p => !s.scope || p.category === s.scope);
+    const base = s.mode === 'selected' ? catalogue.filter(p => s.counts[p.variantId] != null) : catalogue.filter(p => !s.scope || catsOf(p).includes(s.scope));
     // Hide bundles / un-settable items, unless they're already counted in this session.
     return base.filter(p => s.counts[p.variantId] != null || !isBundleish(p));
   }
@@ -2732,6 +3551,8 @@
     }
     if (!lineItems.length) { toast('No matching products with a cost found'); return; }
     if (unmatched.length) console.warn('Cost import — ' + unmatched.length + ' rows did not match:', unmatched);
+    // Bulk-overwrites cost prices in Shopify (the master system) — admin only.
+    if (!(currentStaff && currentStaff.role === 'admin') && !adminOverride('import cost prices — this overwrites costs in Shopify')) return;
     toast('Setting ' + matched + ' cost prices…');
     let done = 0, failed = 0; const chunk = 20;
     try {
@@ -2795,6 +3616,8 @@
     const s = loadStocktake(); if (!s) return;
     const items = stItems(s).filter(p => s.counts[p.variantId] != null);
     if (!items.length) { toast('Nothing counted to reconcile'); return; }
+    // Reconcile OVERWRITES Shopify stock (the master system) — admin only.
+    if (!(currentStaff && currentStaff.role === 'admin') && !adminOverride('reconcile the stock take — this sets Shopify stock counts')) return;
     // Two-tap confirm on the button (no browser dialog — survives dialog suppression).
     if (!reconcileArmed) {
       const varied = items.filter(p => Math.round(Number(s.counts[p.variantId])) !== (Number(p.qty) || 0));
@@ -3393,6 +4216,12 @@
         <div class="change" id="cash-change">Change: R0.00</div>
         <button class="btn btn-pay" style="margin-top:0.7rem" onclick="confirmCash()">✓ Complete cash sale</button></div>`;
       const inp = document.getElementById('cash-in'); inp.focus(); inp.select(); cashChange();
+    } else if (method === 'giftcard') {
+      payGiftcardStart();
+    } else if (method === 'storecredit') {
+      payStoreCreditStart();
+    } else if (method === 'account') {
+      payAccountStart();
     } else {
       d.innerHTML = `<div class="field"><label>Cash portion</label>
         <input id="split-cash" type="number" inputmode="decimal" step="0.01" value="0.00" oninput="splitCalc()">
@@ -3438,11 +4267,20 @@
     const ymd = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
     return 'RC-' + ymd + '-' + String(seq).padStart(4, '0');
   }
+  // A cart/doc item → the proxy's order-line shape. Custom (open) items carry
+  // their own title + price and become Shopify custom line items.
+  function orderLineOf(i) {
+    return i.custom ? { custom: true, title: i.name, qty: i.qty, priceCents: i.priceCents }
+      : { variantId: i.variantId, qty: i.qty, priceCents: i.priceCents };
+  }
   function paymentSummary(p) {
     if (p.method === 'cash') return `Cash (tendered ${money(p.cashTenderedCents)}, change ${money(p.changeCents)})`;
     if (p.method === 'card') return 'Card (Capitec — paid)';
     if (p.method === 'eft') return 'EFT (paid)';
     if (p.method === 'paid' || p.method === 'deposit') return 'Paid by deposit';
+    if (p.method === 'giftcard') return `Gift card …${p.gcLast4 || ''} ${money(p.giftCardCents || 0)}${p.otherMethod ? ' + ' + p.otherMethod + ' ' + money(p.otherCents || 0) : ''}`;
+    if (p.method === 'storecredit') return `Store credit ${money(p.storeCreditCents || 0)}${p.otherMethod ? ' + ' + p.otherMethod + ' ' + money(p.otherCents || 0) : ''}`;
+    if (p.method === 'account') return 'ON ACCOUNT — balance owing';
     return `Split: cash ${money(p.cashAmountCents)} + card ${money(p.cardAmountCents)}`;
   }
 
@@ -3452,7 +4290,7 @@
     saleInFlight = true;
     const c = computeCart();
     const total = c.total; // cents (after discounts + points)
-    const items = c.lines.map(x => ({ variantId: x.variantId, name: x.p.name, sku: x.p.sku, listPriceCents: x.p.priceCents, priceCents: x.finalUnit, qty: x.qty, lineTotalCents: x.finalLine }));
+    const items = c.lines.map(x => ({ variantId: x.variantId, name: x.p.name, sku: x.p.sku, listPriceCents: x.p.priceCents, priceCents: x.finalUnit, qty: x.qty, lineTotalCents: x.finalLine, custom: !!(x.p && x.p.custom) || undefined }));
     // Loyalty: redeem what was applied, earn on what's paid (1 pt = R1).
     const loyaltyCust = customer;
     const redeemedCents = pointsRedeemCents;
@@ -3479,7 +4317,7 @@
     // Write the sale back to Shopify (paid → stock decrements). idemKey makes a
     // retry return the SAME order instead of creating a duplicate.
     try {
-      const out = await callFn({ action: 'createOrder', idemKey: sale.idemKey, customerId: customer ? customer.id : undefined, lineItems: items.map(i => ({ variantId: i.variantId, qty: i.qty, priceCents: i.priceCents })), note: sale.saleNumber + ' · ' + paymentSummary(payment) });
+      const out = await callFn({ action: 'createOrder', idemKey: sale.idemKey, customerId: customer ? customer.id : undefined, lineItems: items.map(orderLineOf), note: sale.saleNumber + ' · ' + paymentSummary(payment), ...(payment.method === 'account' ? { onAccount: true } : {}) });
       sale.shopifyOrder = out.orderName || null; sale.synced = true;
       updateLocalSale(sale);
       toast('Sale ' + sale.saleNumber + ' · Shopify ' + (out.orderName || 'created'));
@@ -3506,6 +4344,10 @@
 
     // Record against the open register shift (cash-up).
     shiftRecordSale(sale);
+    // On-account: post the charge to the customer's account ledger.
+    if (payment.method === 'account' && sale.customer) {
+      recordAcctEntry({ customerId: String(sale.customer.id), name: sale.customer.name, kind: 'charge', amountCents: total, ref: sale.saleNumber });
+    }
     // Loyalty: update the balance (subtract redeemed, add earned).
     if (loyaltyCust && (redeemedCents > 0 || earnedPoints > 0)) {
       const newBal = Math.max(0, customerPoints - Math.round(redeemedCents / 100) + earnedPoints);
@@ -3657,8 +4499,9 @@
   function enqueueSale(sale, items, payment) {
     const q = loadQueue();
     q.push({ idemKey: sale.idemKey, saleNumber: sale.saleNumber, customerId: sale.customer ? sale.customer.id : undefined,
-      lineItems: items.map(i => ({ variantId: i.variantId, qty: i.qty, priceCents: i.priceCents })),
-      note: sale.saleNumber + ' · ' + paymentSummary(payment) });
+      lineItems: items.map(orderLineOf),
+      note: sale.saleNumber + ' · ' + paymentSummary(payment),
+      ...(payment.method === 'account' ? { onAccount: true } : {}) });
     saveQueue(q);
   }
   function markSaleSynced(saleNumber, orderName) {
