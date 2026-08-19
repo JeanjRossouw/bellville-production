@@ -296,6 +296,18 @@ async function createOrder({ lineItems, note, idemKey, customerId, onAccount }) 
   return result;
 }
 
+// Mark an EXISTING order fulfilled (hand-over of a pre-paid web order that the
+// till tracks as an imported sales order). No new order, no stock movement —
+// the original order already decremented stock and holds the revenue.
+async function fulfillOrder({ orderId }) {
+  if (!orderId) { const e = new Error('No orderId'); e.status = 400; throw e; }
+  const fo = await shopify(`/orders/${Number(orderId)}/fulfillment_orders.json`);
+  const ids = (fo.json.fulfillment_orders || []).filter(f => f.status !== 'closed').map(f => ({ fulfillment_order_id: f.id }));
+  if (!ids.length) return { fulfilled: false, note: 'Nothing left to fulfil on that order' };
+  await shopify('/fulfillments.json', { method: 'POST', body: { fulfillment: { line_items_by_fulfillment_order: ids, notify_customer: false } } });
+  return { fulfilled: true };
+}
+
 // Receive goods into stock: increment Shopify inventory at the primary location
 // for each line (GRV). idemKey makes a retry a no-op instead of double-adding.
 // lineItems: [{ inventoryItemId, qty, costCents? }]. Optionally update the
@@ -813,6 +825,7 @@ export const handler = async (event) => {
       const out = await createOrder(body);
       return json(200, out);
     }
+    if (body.action === 'fulfillOrder') return json(200, await fulfillOrder(body));
     if (body.action === 'parkSale') return json(200, await draftCreate(body));
     if (body.action === 'listParked') return json(200, { parked: await draftList() });
     if (body.action === 'deleteParked') return json(200, await draftDelete(body.id));
