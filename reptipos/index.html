@@ -2370,7 +2370,7 @@
     const statusLabel = { awaiting_stock: '⏳ awaiting stock', ready: '✅ ready' }[m.status] || (m.status || '');
     return `<div class="cust-result" style="cursor:default; flex-direction:column; align-items:stretch; gap:0.35rem">
       <div style="display:flex;justify-content:space-between"><div style="font-weight:600">${esc(d.name)} · ${esc(cust)}</div><div style="font-weight:700">${money(total)}</div></div>
-      <div style="font-size:0.72rem;color:var(--muted)">${when} · deposit ${money(dep)} · balance ${money(bal)} · ${esc(statusLabel)}${m.expectedDate ? ' · exp ' + esc(m.expectedDate) : ''}${m.note ? ' · ' + esc(m.note) : ''}${m.factory ? ' · 🏭 factory' : ''}${m.deliveryAddress ? ' · 🚚 ' + esc(m.deliveryAddress) : ''}${(m.notes && m.notes.length) ? ' · 📝 ' + esc(m.notes[m.notes.length - 1].text) + (m.notes.length > 1 ? ' (+' + (m.notes.length - 1) + ' more)' : '') : ''}</div>
+      <div style="font-size:0.72rem;color:var(--muted)">${when} · deposit ${money(dep)} · balance ${money(bal)} · ${esc(statusLabel)}${m.expectedDate ? ' · exp ' + esc(m.expectedDate) : ''}${m.note ? ' · ' + esc(m.note) : ''}${m.factory ? ' · 🏭 factory' : ''}${m.originalOrderName ? ' · 🌐 web order ' + esc(m.originalOrderName) + ' (paid)' : ''}${m.deliveryAddress ? ' · 🚚 ' + esc(m.deliveryAddress) : ''}${(m.notes && m.notes.length) ? ' · 📝 ' + esc(m.notes[m.notes.length - 1].text) + (m.notes.length > 1 ? ' (+' + (m.notes.length - 1) + ' more)' : '') : ''}</div>
       <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
         ${bal > 0 ? `<button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="soAddPayment('${d.id}')">+ Deposit</button>` : ''}
         ${m.status !== 'ready' ? `<button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="soMarkReady('${d.id}')">Mark ready</button>` : ''}
@@ -2945,7 +2945,12 @@
 
   async function saveSO(d, doc) {
     return api('docSave', { id: d.id, tags: d.doc.type === 'quote' ? 'pos,quote' : 'pos,sales-order',
-      customerId: d.customer ? d.customer.id : undefined, lineItems: (doc.cart || doc.items || []).map(l => ({ variantId: l.variantId, qty: l.qty })), doc });
+      customerId: d.customer ? d.customer.id : undefined,
+      // Custom lines (one-off items, imported web orders) carry title + price;
+      // catalogue lines go by variant.
+      lineItems: (doc.cart || doc.items || []).map(l => (l.custom || !l.variantId)
+        ? { custom: true, title: l.name || l.title || 'Item', qty: l.qty, priceCents: l.priceCents != null ? l.priceCents : Math.round((l.lineTotalCents || 0) / (l.qty || 1)) }
+        : { variantId: l.variantId, qty: l.qty }), doc });
   }
   async function loadQuote(id) {
     const d = findDoc(id); if (!d) return;
@@ -2991,6 +2996,19 @@
   async function soFulfil(id) {
     const d = findDoc(id); if (!d) return;
     const m = d.doc; const total = m.totalCents || 0; const dep = m.depositCents || 0; const bal = Math.max(0, total - dep);
+    // Imported pre-paid web order: the Shopify order already exists and holds
+    // the revenue + stock movement. Fulfil = mark THAT order fulfilled and
+    // clear the sales order — never create a second order.
+    if (m.originalOrderId) {
+      if (!confirm('Hand over ' + (m.originalOrderName || d.name) + ' (already paid online)? This marks the Shopify order fulfilled.')) return;
+      try {
+        await apiX('fulfillOrder', { orderId: m.originalOrderId });
+        try { await api('docDelete', { id: d.id }); } catch (e) {}
+        toast((m.originalOrderName || d.name) + ' handed over — Shopify order fulfilled');
+        renderDocs();
+      } catch (e) { toast('Fulfil failed: ' + (e.message || e)); }
+      return;
+    }
     closeDocs();
     let balPayment = null;
     if (bal > 0) { balPayment = await takeTender({ title: 'Collect balance ' + money(bal), amountCents: bal, editable: false }); if (!balPayment) { openDocs('salesorder'); return; } }
