@@ -197,6 +197,15 @@
     .toast.error { border-left-color: var(--accent); }
 
     /* Read-only mode for managers */
+    /* Planner view-only mode (?planner=1): hide every planner control. */
+    body.planner-view .plan-menu-trigger,
+    body.planner-view .pc-fabric .btn,
+    body.planner-view .pc-builder select,
+    body.planner-view .pc-builder .btn,
+    body.planner-view .mfg-lane .btn,
+    body.planner-view .plan-col-header .btn { display: none !important; }
+    body.planner-view .pc-builder-badge { display: inline !important; }
+    body.planner-view .plan-card { cursor: default; }
     body.readonly-mode .btn-danger { display: none !important; }
     body.readonly-mode .btn-primary { opacity: 0.5; pointer-events: none; }
     body.readonly-mode input:not([type="checkbox"]):not([type="search"]):not(#order-search):not(#finished-search):not(#dispatch-search),
@@ -1165,12 +1174,43 @@
           <button class="btn" id="planner-mat-btn" onclick="printWeeklyMaterialRequirements()" title="Per-week raw materials forecast based on each order's BOM">📊 Materials by Week</button>
           <button class="btn" onclick="printPlannerSheetByWeek()" title="One A4 portrait page per week — for handing to individual foremen">🖨️ Print Per Week</button>
           <button class="btn btn-primary" onclick="printPlannerSheet()" title="All 4 weeks on one A4 landscape page — overview">🖨️ Print Plan</button>
+          <button class="btn" onclick="copyPlannerLink()" title="Copy a view-only planner link — staff sign in and see ONLY the live planner, no editing">🔗 Share view-only</button>
         </div>
       </div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:1rem">
         Active orders only (pending and in-production). Orders scheduled to a past week show in <strong>Current</strong>.
       </p>
       <div id="planner-grid"></div>
+    </div>
+    <div class="card" style="margin-top:1rem">
+      <div class="card-title">🏭 COUCH MANUFACTURERS (OUTSOURCE)</div>
+      <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.5rem">
+        Partners who build couches for you (e.g. Couch Potato). Pick a builder on any planner card to place the order with them —
+        outsourced orders stay on the plan but are left OUT of your own materials and labour numbers.
+      </p>
+      <div class="row">
+        <div class="f1"><label>Name</label><input id="mfg-name" placeholder="e.g. Couch Potato"></div>
+        <div class="f1"><label>Order email</label><input id="mfg-email" placeholder="orders@couchpotato.co.za"></div>
+        <div class="f1" style="min-width:120px"><label>&nbsp;</label><button class="btn btn-primary" onclick="addManufacturer()">+ Add</button></div>
+      </div>
+      <div id="mfg-list"></div>
+      <div style="border-top:1px solid var(--border); margin-top:0.9rem; padding-top:0.9rem">
+        <div style="font-weight:700; font-size:12px; letter-spacing:0.04em; margin-bottom:0.4rem">📦 BULK COUCH ORDER</div>
+        <p style="font-size:11px; color:var(--text-muted); margin-bottom:0.5rem">
+          Order a batch in one email. Each line also lands on your board as a stock order (builder set, excluded from your own materials/labour).
+        </p>
+        <div class="row">
+          <div class="f1"><label>Manufacturer</label><select id="bulk-mfg"></select></div>
+          <div class="f1"><label>Needed by</label><input id="bulk-due" type="date"></div>
+          <div class="f2"><label>Note (optional)</label><input id="bulk-note" placeholder="e.g. all in Sienna fabric unless marked"></div>
+        </div>
+        <div id="bulk-lines"></div>
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.4rem">
+          <button class="btn btn-sm" onclick="addBulkLine()">+ Add line</button>
+          <button class="btn btn-primary" onclick="sendBulkOrder()">📧 Send bulk order</button>
+        </div>
+        <div id="bulk-status" style="font-size:11px; color:var(--text-muted); margin-top:0.3rem"></div>
+      </div>
     </div>
   </div>
 
@@ -2943,7 +2983,7 @@ ${_PRODUCTION_PRINT_STYLES}
 
   // One job card's body, wrapped in .jobcard so each lands on its own A4 page when
   // several are printed together. Includes the linked product's cutting list.
-  function _jobCardBodyHtml(order) {
+  function _jobCardBodyHtml(order, scrubClient) {
     // Cutting list block — only rendered if the linked product has a cutList.
     // Uses getBomKeyForOrder so it works whether the order is linked via
     // order.bomKey (explicit picker selection) or by direct product-name match.
@@ -3033,6 +3073,7 @@ ${_PRODUCTION_PRINT_STYLES}
   </div>
 
   <div class="grid">
+    ${scrubClient ? '' : `
     <div class="field half-width">
       <div class="field-label">Customer</div>
       <div class="field-value">${order.customer}</div>
@@ -3040,7 +3081,7 @@ ${_PRODUCTION_PRINT_STYLES}
     <div class="field half-width">
       <div class="field-label">Phone</div>
       <div class="field-value">${order.phone || '—'}</div>
-    </div>
+    </div>`}
     <div class="field full-width">
       <div class="field-label">Product${order.category ? ' — ' + order.category : ''}</div>
       <div class="field-value">${order.product}</div>
@@ -4146,6 +4187,12 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof _populateFabricDatalists === 'function') _populateFabricDatalists();
     // Production stages board stays live on sync (self-guarded).
     if (typeof renderStages === 'function') renderStages();
+    // Manufacturers list (self-guarded).
+    if (typeof renderManufacturers === 'function') renderManufacturers();
+    if (typeof renderBulkForm === 'function') {
+      const bl = document.getElementById('bulk-lines');
+      if (bl && !bl.contains(document.activeElement)) renderBulkForm();
+    }
   }
   
   function renderDoneOrders() {
@@ -4441,6 +4488,227 @@ ${_PRODUCTION_PRINT_STYLES}
   }
   window.renderStages = renderStages;
 
+  // ===== Outsource manufacturers (e.g. Couch Potato) =====
+  // Per business list of partners who BUILD pieces for you. An order with
+  // o.builder set is outsourced: it stays on the plan/stages but is excluded
+  // from your own materials + labour numbers in the Week Plan.
+  function _manufacturers() {
+    const d = currentData();
+    if (!Array.isArray(d.manufacturers)) d.manufacturers = [];
+    return d.manufacturers;
+  }
+  function addManufacturer() {
+    const name = ((document.getElementById('mfg-name') || {}).value || '').trim();
+    const email = ((document.getElementById('mfg-email') || {}).value || '').trim();
+    if (!name) { alert('Give the manufacturer a name (e.g. Couch Potato).'); return; }
+    snapshotState();
+    _manufacturers().push({ id: 'MFG-' + Date.now(), name: name, email: email });
+    saveData();
+    ['mfg-name', 'mfg-email'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    renderManufacturers();
+    if (typeof renderPlanner === 'function') renderPlanner();
+  }
+  window.addManufacturer = addManufacturer;
+  function deleteManufacturer(id) {
+    if (!confirm('Remove this manufacturer? (Orders already placed with them keep their builder name.)')) return;
+    snapshotState();
+    currentData().manufacturers = _manufacturers().filter(m => m.id !== id);
+    saveData();
+    renderManufacturers();
+    if (typeof renderPlanner === 'function') renderPlanner();
+  }
+  window.deleteManufacturer = deleteManufacturer;
+  function renderManufacturers() {
+    const list = document.getElementById('mfg-list');
+    if (!list) return;
+    const items = _manufacturers();
+    list.innerHTML = items.length
+      ? items.map(m => `
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; border:1px solid var(--border,#ddd); border-radius:8px; padding:6px 10px; margin-bottom:4px">
+          <div><span style="font-weight:700">🏭 ${_escape(m.name)}</span>${m.email ? ' <span style="font-size:11px; color:var(--text-muted,#888)">· ' + _escape(m.email) + '</span>' : ' <span style="font-size:11px; color:var(--warn,#b45309)">· no email — add one to place orders</span>'}</div>
+          <button class="btn btn-sm btn-danger" onclick="deleteManufacturer('${m.id}')">✕</button>
+        </div>`).join('')
+      : '<div class="empty" style="padding:0.5rem">No manufacturers yet — add Couch Potato above.</div>';
+  }
+  window.renderManufacturers = renderManufacturers;
+  // ---- Bulk couch order: several lines → one email + stock orders on the board ----
+  let _bulkLines = [{ product: '', qty: 1, fabric: '' }];
+  function renderBulkForm() {
+    const sel = document.getElementById('bulk-mfg');
+    if (sel) {
+      const cur = sel.value;
+      sel.innerHTML = _manufacturers().map(m => `<option value="${_escape(m.name)}" ${m.name === cur ? 'selected' : ''}>${_escape(m.name)}</option>`).join('') || '<option value="">— add a manufacturer above —</option>';
+    }
+    const host = document.getElementById('bulk-lines');
+    if (!host) return;
+    host.innerHTML = _bulkLines.map((l, i) => `
+      <div class="row" style="align-items:flex-end">
+        <div class="f2"><label style="font-size:10px">Product</label><input list="bom-products-list" value="${_escape(l.product)}" placeholder="e.g. 2 Seater — Isabella" onchange="updateBulkLine(${i}, 'product', this.value)"></div>
+        <div class="f1"><label style="font-size:10px">Fabric (optional)</label><input list="fr-fabric-list" value="${_escape(l.fabric)}" placeholder="fabric" onchange="updateBulkLine(${i}, 'fabric', this.value)"></div>
+        <div style="width:80px"><label style="font-size:10px">Qty</label><input type="number" min="1" step="1" value="${l.qty}" onchange="updateBulkLine(${i}, 'qty', this.value)"></div>
+        <div><button class="btn btn-sm btn-danger" onclick="removeBulkLine(${i})">✕</button></div>
+      </div>`).join('');
+  }
+  window.renderBulkForm = renderBulkForm;
+  function addBulkLine() { _bulkLines.push({ product: '', qty: 1, fabric: '' }); renderBulkForm(); }
+  window.addBulkLine = addBulkLine;
+  function removeBulkLine(i) { _bulkLines.splice(i, 1); if (!_bulkLines.length) _bulkLines.push({ product: '', qty: 1, fabric: '' }); renderBulkForm(); }
+  window.removeBulkLine = removeBulkLine;
+  function updateBulkLine(i, field, val) {
+    if (!_bulkLines[i]) return;
+    _bulkLines[i][field] = field === 'qty' ? Math.max(1, parseInt(val) || 1) : String(val || '').trim();
+  }
+  window.updateBulkLine = updateBulkLine;
+  function sendBulkOrder() {
+    const st = document.getElementById('bulk-status');
+    const mfgName = ((document.getElementById('bulk-mfg') || {}).value || '').trim();
+    const mfg = _manufacturers().find(m => m.name === mfgName);
+    if (!mfg) { if (st) st.textContent = '✗ Add a manufacturer first (name + email above).'; return; }
+    if (!mfg.email) { if (st) st.textContent = '✗ ' + mfgName + ' has no order email — delete and re-add it with one.'; return; }
+    const lines = _bulkLines.filter(l => l.product);
+    if (!lines.length) { if (st) st.textContent = '✗ Add at least one product line.'; return; }
+    const due = ((document.getElementById('bulk-due') || {}).value || '').trim();
+    const note = ((document.getElementById('bulk-note') || {}).value || '').trim();
+    const today = new Date().toISOString().split('T')[0];
+    const batch = 'BULK-' + today.replace(/-/g, '').slice(2);
+    snapshotState();
+    // One stock order per line so the batch is trackable on the planner/stages.
+    lines.forEach((l, i) => {
+      currentData().orders.push({
+        id: 'BULKORD-' + Date.now() + '-' + i,
+        invoice: batch + '-' + (i + 1),
+        customer: 'Stock — ' + mfgName,
+        phone: '',
+        product: l.product,
+        category: '',
+        fabric: l.fabric || '',
+        qty: l.qty,
+        orderDate: today,
+        dueDate: due || _dueFromLead('', l.product, today, activeBiz),
+        status: 'pending',
+        startDate: null,
+        builder: mfgName,
+        builderOrderedAt: today,
+        paymentStatus: 'stock',
+        outstanding: 0
+      });
+    });
+    saveData();
+    const bodyLines = lines.map((l, i) => '  ' + (i + 1) + '. ' + l.product + (l.fabric ? ' — fabric: ' + l.fabric : '') + '  ×  ' + l.qty);
+    const body = 'Hi ' + mfgName + ' team,\n\nPlease build the following bulk order for us (ref ' + batch + '):\n\n'
+      + bodyLines.join('\n') + '\n\n'
+      + (due ? 'Needed by: ' + due + '\n' : '')
+      + (note ? 'Note: ' + note + '\n' : '')
+      + '\nPlease confirm the price and delivery date.\n\nThanks!';
+    const a = document.createElement('a');
+    a.href = 'mailto:' + encodeURIComponent(mfg.email) + '?subject=' + encodeURIComponent('Bulk order ' + batch + ' — ' + lines.reduce((n, l) => n + l.qty, 0) + ' pieces') + '&body=' + encodeURIComponent(body);
+    a.style.display = 'none';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { try { a.remove(); } catch (e) {} }, 200);
+    _bulkLines = [{ product: '', qty: 1, fabric: '' }];
+    const dueEl = document.getElementById('bulk-due'); if (dueEl) dueEl.value = '';
+    const noteEl = document.getElementById('bulk-note'); if (noteEl) noteEl.value = '';
+    renderBulkForm();
+    if (typeof render === 'function') render();
+    if (st) st.textContent = '✓ ' + lines.length + ' line(s) sent to ' + mfgName + ' and added to the board as ' + batch + '-…';
+  }
+  window.sendBulkOrder = sendBulkOrder;
+  function _findOrderAnyBiz(orderId) {
+    let order = null;
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      if (!order) order = ((data[b] && data[b].orders) || []).find(o => o && o.id === orderId);
+    });
+    return order;
+  }
+  function setOrderBuilder(orderId, name) {
+    const order = _findOrderAnyBiz(orderId);
+    if (!order) return;
+    snapshotState();
+    order.builder = name || '';
+    saveData();
+    if (typeof render === 'function') render();
+    if (name) {
+      if (typeof toast === 'function') toast('🏭 #' + (order.invoice || order.id) + ' set to build at ' + name + ' — tap 📧 to place the order.', 'success', 3500);
+    }
+  }
+  window.setOrderBuilder = setOrderBuilder;
+  function placeOrderWithBuilder(orderId) {
+    const order = _findOrderAnyBiz(orderId);
+    if (!order || !order.builder) return;
+    const mfg = _manufacturers().find(m => m.name === order.builder);
+    if (!mfg || !mfg.email) { alert('Add an order email for ' + order.builder + ' (Planner → Couch Manufacturers), then try again.'); return; }
+    const subject = 'Order #' + (order.invoice || order.id) + ' — ' + (order.product || '');
+    const body = 'Hi ' + order.builder + ' team,\n\nPlease build the following for us:\n\n'
+      + 'Order: #' + (order.invoice || order.id) + '\n'
+      + 'Item: ' + (order.product || '') + (order.fabric ? ' — fabric: ' + order.fabric : '') + '\n'
+      + 'Qty: ' + (order.qty || 1) + '\n'
+      + (order.dueDate ? 'Needed by: ' + order.dueDate + '\n' : '')
+      + (order.notes ? 'Notes: ' + order.notes + '\n' : '')
+      + '\nPlease confirm the price and delivery date.\n\nThanks!';
+    const a = document.createElement('a');
+    a.href = 'mailto:' + encodeURIComponent(mfg.email) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+    a.style.display = 'none';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { try { a.remove(); } catch (e) {} }, 200);
+    if (!order.builderOrderedAt) {
+      snapshotState();
+      order.builderOrderedAt = new Date().toISOString().split('T')[0];
+      saveData();
+      if (typeof render === 'function') render();
+    }
+    // Client-scrubbed job card to attach (order number only).
+    try {
+      _openJobCardWindow('Job card #' + (order.invoice || order.id) + ' — ' + order.builder, _jobCardBodyHtml(order, true), 'PRINT / SAVE AS PDF → attach to the email');
+    } catch (x) { console.warn('Job card window failed:', x); }
+  }
+  window.placeOrderWithBuilder = placeOrderWithBuilder;
+  // Drag an order into a manufacturer lane → outsource it there.
+  function planDropBuilder(e, name) {
+    if (typeof IS_PLANNER_MODE !== 'undefined' && IS_PLANNER_MODE) { try { e.preventDefault(); } catch (x) {} return; }
+    e.preventDefault();
+    try { e.currentTarget.classList.remove('drag-over'); } catch (x) {}
+    const orderId = e.dataTransfer.getData('text/plain');
+    if (!orderId) return;
+    setOrderBuilder(orderId, name);
+  }
+  window.planDropBuilder = planDropBuilder;
+  // One email with EVERY order currently in the manufacturer's lane; stamps
+  // builderOrderedAt on the ones not emailed before.
+  function emailBuilderList(name) {
+    const mfg = _manufacturers().find(m => m.name === name);
+    if (!mfg || !mfg.email) { alert('Add an order email for ' + name + ' in the Couch Manufacturers card first.'); return; }
+    const lane = [];
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      ((data[b] && data[b].orders) || []).forEach(o => {
+        if (o && o.builder === name && o.status !== 'delivered' && o.status !== 'done') lane.push(o);
+      });
+    });
+    if (!lane.length) { alert('No orders in the ' + name + ' lane.'); return; }
+    lane.sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')));
+    const today = new Date().toISOString().split('T')[0];
+    const bodyLines = lane.map((o, i) =>
+      '  ' + (i + 1) + '. #' + (o.invoice || o.id) + ' — ' + (o.product || '') + (o.fabric ? ' — fabric: ' + o.fabric : '') + '  ×  ' + (o.qty || 1) + (o.dueDate ? '  (needed by ' + o.dueDate + ')' : ''));
+    const body = 'Hi ' + name + ' team,\n\nPlease build the following for us:\n\n' + bodyLines.join('\n')
+      + '\n\nPlease confirm prices and delivery dates.\n\nThanks!';
+    const a = document.createElement('a');
+    a.href = 'mailto:' + encodeURIComponent(mfg.email) + '?subject=' + encodeURIComponent('Order list — ' + lane.length + ' piece' + (lane.length === 1 ? '' : 's') + ' (' + today + ')') + '&body=' + encodeURIComponent(body);
+    a.style.display = 'none';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { try { a.remove(); } catch (x) {} }, 200);
+    snapshotState();
+    lane.forEach(o => { if (!o.builderOrderedAt) o.builderOrderedAt = today; });
+    saveData();
+    if (typeof render === 'function') render();
+    // Client-scrubbed job cards for the batch (sales order number only, no
+    // customer/phone) — Save as PDF in the print dialog and attach to the email.
+    try {
+      const cards = lane.map(o => _jobCardBodyHtml(o, true)).join('');
+      _openJobCardWindow('Job cards — ' + name + ' (' + lane.length + ')', cards, 'PRINT / SAVE AS PDF → attach to the email');
+    } catch (x) { console.warn('Job cards window failed:', x); }
+    if (typeof toast === 'function') toast('📧 ' + lane.length + ' order(s) emailed to ' + name + ' — job cards opened, Save as PDF and attach.', 'success', 4500);
+  }
+  window.emailBuilderList = emailBuilderList;
+
   // ===== Week Plan — materials, staffing (short-time) and cost for one week =====
   // Reads the Planner (planWeek) + unplanned orders due that week, the BOMs +
   // cutting lists for material needs vs stock, labour-per-piece for the wage
@@ -4501,6 +4769,7 @@ ${_PRODUCTION_PRINT_STYLES}
     // Orders in the week: planner-scheduled to this Monday, or unplanned and due this week.
     const orders = (biz.orders || []).filter(o => {
       if (!o || o.status === 'delivered' || o.status === 'done') return false;
+      if (o.builder) return false; // outsourced (e.g. Couch Potato) — not our factory's week
       if (o.planWeek) return o.planWeek === mon;
       return o.dueDate && o.dueDate >= mon && o.dueDate <= sun;
     });
@@ -4510,12 +4779,16 @@ ${_PRODUCTION_PRINT_STYLES}
     const missingBom = new Set(), missingLabour = new Set(), missingPrice = new Set();
     let labourNeeded = 0, materialsCost = 0, revenue = 0;
     const fabricIssues = [];
+    let outsourcedCount = 0;
     orders.forEach(o => {
       const qty = parseInt(o.qty) || 1;
+      // Outsourced builds (o.builder, e.g. Couch Potato): keep them on the plan
+      // but out of OUR materials and labour — the partner supplies both.
+      if (o.builder) { outsourcedCount++; }
       const found = _wpFindBom(biz, o.product);
       const prod = found && found.prod;
-      if (!prod || ((!prod.materials || !Object.keys(prod.materials).length) && (!prod.cutList || !prod.cutList.length))) missingBom.add(o.product || ('#' + (o.invoice || o.id)));
-      if (prod) {
+      if (!o.builder && (!prod || ((!prod.materials || !Object.keys(prod.materials).length) && (!prod.cutList || !prod.cutList.length)))) missingBom.add(o.product || ('#' + (o.invoice || o.id)));
+      if (prod && !o.builder) {
         Object.entries(prod.materials || {}).forEach(([id, q]) => { need[id] = (need[id] || 0) + qty * (parseFloat(q) || 0); });
         if (typeof _cutListConsumption === 'function') {
           const cc = _cutListConsumption(prod, biz);
@@ -4525,6 +4798,9 @@ ${_PRODUCTION_PRINT_STYLES}
         if (!isNaN(lc) && lc > 0) labourNeeded += qty * lc; else missingLabour.add(o.product || ('#' + (o.invoice || o.id)));
         const sp = parseFloat(prod.sellingPrice);
         if (!isNaN(sp) && sp > 0) revenue += qty * sp; else missingPrice.add(o.product || ('#' + (o.invoice || o.id)));
+      } else if (prod && o.builder) {
+        const sp = parseFloat(prod.sellingPrice);
+        if (!isNaN(sp) && sp > 0) revenue += qty * sp;
         materialsCost += qty * _productMaterialsCost(found.key, biz);
       }
       if (o.fabric && (o.fabricOOS || (o.fabricStatus || 'waiting') === 'waiting')) {
@@ -4589,7 +4865,7 @@ ${_PRODUCTION_PRINT_STYLES}
           <thead><tr style="text-align:left; border-bottom:2px solid var(--border,#ddd)"><th style="padding:5px 6px">Order</th><th style="padding:5px 6px">Product</th><th style="padding:5px 6px; text-align:right">Qty</th><th style="padding:5px 6px">Fabric</th><th style="padding:5px 6px">Due</th></tr></thead>
           <tbody>${d.orders.map(o => `<tr style="border-bottom:1px solid var(--border,#eee)">
             <td style="padding:4px 6px; font-weight:700">#${_escape(o.invoice || o.id)}</td>
-            <td style="padding:4px 6px">${_escape(o.product || '')}</td>
+            <td style="padding:4px 6px">${_escape(o.product || '')}${o.builder ? ' <span style="font-size:10px; font-weight:700; color:#7c3aed">🏭 ' + _escape(o.builder) + '</span>' : ''}</td>
             <td style="padding:4px 6px; text-align:right">${_escape(o.qty || 1)}</td>
             <td style="padding:4px 6px">${o.fabric ? _escape(o.fabric) + (o.fabricOOS ? ' <span style="color:#991b1b; font-weight:700">OOS' + (o.fabricStockETA ? ' → ' + _escape(o.fabricStockETA) : '') + '</span>' : (o.fabricStatus === 'received' ? ' ✅' : o.fabricStatus === 'ordered' ? ' 📦' : ' ⏳')) : '—'}</td>
             <td style="padding:4px 6px">${_escape(o.dueDate || '')}</td></tr>`).join('')}</tbody>
@@ -8095,6 +8371,33 @@ ${_PRODUCTION_PRINT_STYLES}
     } catch (e) { console.warn('Booking boot failed:', e); }
   }
 
+  // View-only planner mode (?planner=1) — a link to share with staff: they sign
+  // in and see ONLY the live planner, no tabs, no editing, no dragging.
+  const IS_PLANNER_MODE = (function () {
+    try { return new URLSearchParams(window.location.search).get('planner') === '1'; }
+    catch (e) { return false; }
+  })();
+  function enterPlannerOnlyMode() {
+    ['login-overlay', 'dashboard-only-view', 'reserved-only-view', 'booking-only-view'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    const m = document.getElementById('main-app'); if (m) m.style.display = 'block';
+    const hd = document.querySelector('header'); if (hd) hd.style.display = 'none';
+    const tabs = document.querySelector('.tabs'); if (tabs) tabs.style.display = 'none';
+    document.body.classList.add('readonly-mode', 'planner-view');
+    document.title = 'Production Planner';
+    showSection('planner');
+  }
+  window.enterPlannerOnlyMode = enterPlannerOnlyMode;
+  function copyPlannerLink() {
+    const url = window.location.origin + '/?planner=1';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(
+        () => { if (typeof toast === 'function') toast('🔗 View-only planner link copied — send it to the staff', 'success', 3200); else alert('Copied: ' + url); },
+        () => { prompt('Copy this view-only planner link:', url); }
+      );
+    } else { prompt('Copy this view-only planner link:', url); }
+  }
+  window.copyPlannerLink = copyPlannerLink;
+
   // Open the current app URL with ?dashboard=1 in a new browser window the user
   // can drag onto a second monitor. Sized large by default — they can resize / move.
   function openDashboardWindow() {
@@ -8930,7 +9233,11 @@ ${_PRODUCTION_PRINT_STYLES}
     const buckets = Object.fromEntries(weeks.map(w => [w, []]));
     const beyond = [];
     const unscheduled = [];
+    // Outsourced orders live in their manufacturer's lane, not in the week columns.
+    const builderLanes = {};
+    ((typeof _manufacturers === 'function') ? _manufacturers() : []).forEach(m => { builderLanes[m.name] = []; });
     orders.forEach(o => {
+      if (o.builder) { (builderLanes[o.builder] = builderLanes[o.builder] || []).push(o); return; }
       if (!o.planWeek) { unscheduled.push(o); return; }
       if (buckets[o.planWeek]) { buckets[o.planWeek].push(o); return; }
       if (o.planWeek < weeks[0]) {
@@ -8967,6 +9274,23 @@ ${_PRODUCTION_PRINT_STYLES}
       </div>
     `).join('');
 
+    const laneNames = Object.keys(builderLanes).sort();
+    const lanesHtml = laneNames.map(name => {
+      const lane = builderLanes[name].sort(byDue);
+      const unplaced = lane.filter(o => !o.builderOrderedAt).length;
+      return `
+      <div class="card mfg-lane" style="margin-bottom:1rem; border:2px dashed #7c3aed"
+           ondragover="planDragOver(event)" ondragleave="planDragLeave(event)" ondrop="planDropBuilder(event, '${_escape(name).replace(/'/g, '&#39;')}')">
+        <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+          <span>🏭 ${_escape(name.toUpperCase())} (${lane.length})${unplaced ? ` <span style="font-size:11px; color:var(--warn,#b45309)">· ${unplaced} not emailed yet</span>` : ''}</span>
+          ${lane.length ? `<button class="btn btn-sm btn-primary" onclick="emailBuilderList('${_escape(name).replace(/'/g, '&#39;')}')">📧 Email the list (${lane.length})</button>` : ''}
+        </div>
+        <div class="plan-pool">
+          ${lane.map(o => planItemCard(o, true)).join('') || '<div class="empty" style="padding:0.75rem 0; font-size:11px">Drag orders here to build them at ' + _escape(name) + '</div>'}
+        </div>
+      </div>`;
+    }).join('');
+
     const beyondHtml = beyond.length ? `
       <div class="card" style="margin-bottom:1rem">
         <div class="card-title">📆 SCHEDULED BEYOND 3 WEEKS (${beyond.length})</div>
@@ -8978,6 +9302,7 @@ ${_PRODUCTION_PRINT_STYLES}
 
     const html = `
       <div class="plan-grid">${colsHtml}</div>
+      ${lanesHtml}
       ${beyondHtml}
       <div class="card">
         <div class="card-title">📥 UNSCHEDULED (${unscheduled.length})</div>
@@ -9610,6 +9935,25 @@ ${_PRODUCTION_PRINT_STYLES}
           </div>`;
     }
 
+    // Builder row: outsource to a manufacturer (e.g. Couch Potato) and place the order.
+    let builderRowHtml = '';
+    const mfgs = (typeof _manufacturers === 'function') ? _manufacturers() : [];
+    if (mfgs.length || o.builder) {
+      const opts = ['<option value="">🏠 In-house</option>']
+        .concat(mfgs.map(m => `<option value="${_escape(m.name)}" ${o.builder === m.name ? 'selected' : ''}>🏭 ${_escape(m.name)}</option>`));
+      if (o.builder && !mfgs.some(m => m.name === o.builder)) opts.push(`<option value="${_escape(o.builder)}" selected>🏭 ${_escape(o.builder)}</option>`);
+      builderRowHtml = `
+          <div class="pc-builder" style="font-size:11px; margin-top:4px; display:flex; align-items:center; gap:4px; flex-wrap:wrap">
+            ${o.builder ? `<span class="pc-builder-badge" style="display:none; font-weight:700; color:#7c3aed">🏭 ${_escape(o.builder)}</span>` : ''}
+            <select onchange="event.stopPropagation(); setOrderBuilder('${_escape(o.id)}', this.value)"
+              onmousedown="event.stopPropagation()" style="font-size:10px; padding:2px 4px; max-width:130px">${opts.join('')}</select>
+            ${o.builder ? `<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px" title="Email the order to ${_escape(o.builder)}"
+              onclick="event.stopPropagation(); placeOrderWithBuilder('${_escape(o.id)}')"
+              onmousedown="event.stopPropagation()" ondragstart="event.preventDefault(); event.stopPropagation()" draggable="false">📧 Place order</button>` : ''}
+            ${o.builderOrderedAt ? `<span style="color:var(--success,#166534); font-weight:700">✓ placed ${_escape(o.builderOrderedAt)}</span>` : ''}
+          </div>`;
+    }
+
     return `
       <div class="plan-card ${overdueCls} ${statusCls}" draggable="true"
            data-order-id="${_escape(o.id)}"
@@ -9623,7 +9967,8 @@ ${_PRODUCTION_PRINT_STYLES}
           ${o.orderDate ? `<div class="pc-due" style="color:var(--text-muted)">🗓️ Ordered ${_escape(o.orderDate)}</div>` : ''}
           ${dueText ? `<div class="pc-due">${_escape(dueText)}</div>` : ''}
           ${fabricRowHtml}
-          ${showPlanDate ? `<div class="pc-due">📅 Week of ${_escape(o.planWeek)}</div>` : ''}
+          ${builderRowHtml}
+          ${showPlanDate && o.planWeek ? `<div class="pc-due">📅 Week of ${_escape(o.planWeek)}</div>` : ''}
         </div>
         <button type="button" class="plan-menu-trigger" title="Schedule" aria-label="Schedule options"
                 onclick="event.stopPropagation(); openPlanMenu('${_escape(o.id)}', this)"
@@ -9654,6 +9999,7 @@ ${_PRODUCTION_PRINT_STYLES}
 
   // ----- Drag handlers (desktop) -----
   function planDragStart(e, orderId) {
+    if (typeof IS_PLANNER_MODE !== 'undefined' && IS_PLANNER_MODE) { try { e.preventDefault(); } catch (x) {} return; }
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', orderId);
     e.currentTarget.classList.add('dragging');
@@ -9673,10 +10019,17 @@ ${_PRODUCTION_PRINT_STYLES}
     }
   }
   function planDrop(e, weekIso) {
+    if (typeof IS_PLANNER_MODE !== 'undefined' && IS_PLANNER_MODE) { try { e.preventDefault(); } catch (x) {} return; }
     e.preventDefault();
     e.currentTarget.classList.remove('drag-over');
     const orderId = e.dataTransfer.getData('text/plain');
     if (!orderId) return;
+    // Dragging a card out of a manufacturer lane into a week = build in-house again.
+    const dropOrder = (typeof _findOrderAnyBiz === 'function') ? _findOrderAnyBiz(orderId) : null;
+    if (dropOrder && dropOrder.builder) {
+      dropOrder.builder = '';
+      if (typeof toast === 'function') toast('🏠 #' + (dropOrder.invoice || dropOrder.id) + ' back to in-house build.', 'info', 2500);
+    }
     setPlanWeek(orderId, weekIso);
   }
   function planDragOverUnscheduled(e) {
@@ -9685,6 +10038,7 @@ ${_PRODUCTION_PRINT_STYLES}
     e.currentTarget.classList.add('drag-over');
   }
   function planDropUnscheduled(e) {
+    if (typeof IS_PLANNER_MODE !== 'undefined' && IS_PLANNER_MODE) { try { e.preventDefault(); } catch (x) {} return; }
     e.preventDefault();
     e.currentTarget.classList.remove('drag-over');
     const orderId = e.dataTransfer.getData('text/plain');
@@ -11473,6 +11827,9 @@ ${totalsSection}
         if (IS_BOOKING_MODE) {
           // Client booking link — full-screen calendar only (works for anonymous sign-ins too)
           enterBookingOnlyMode();
+        } else if (IS_PLANNER_MODE) {
+          // Shared view-only planner
+          enterPlannerOnlyMode();
         } else if (IS_RESERVED_MODE || currentRole === 'fabricrep') {
           // Fabric-rep portal — view-only reserved sheet with out-of-stock + ETA
           enterReservedOnlyMode();
