@@ -1193,6 +1193,23 @@
         <div class="f1" style="min-width:120px"><label>&nbsp;</label><button class="btn btn-primary" onclick="addManufacturer()">+ Add</button></div>
       </div>
       <div id="mfg-list"></div>
+      <div style="border-top:1px solid var(--border); margin-top:0.9rem; padding-top:0.9rem">
+        <div style="font-weight:700; font-size:12px; letter-spacing:0.04em; margin-bottom:0.4rem">📦 BULK COUCH ORDER</div>
+        <p style="font-size:11px; color:var(--text-muted); margin-bottom:0.5rem">
+          Order a batch in one email. Each line also lands on your board as a stock order (builder set, excluded from your own materials/labour).
+        </p>
+        <div class="row">
+          <div class="f1"><label>Manufacturer</label><select id="bulk-mfg"></select></div>
+          <div class="f1"><label>Needed by</label><input id="bulk-due" type="date"></div>
+          <div class="f2"><label>Note (optional)</label><input id="bulk-note" placeholder="e.g. all in Sienna fabric unless marked"></div>
+        </div>
+        <div id="bulk-lines"></div>
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.4rem">
+          <button class="btn btn-sm" onclick="addBulkLine()">+ Add line</button>
+          <button class="btn btn-primary" onclick="sendBulkOrder()">📧 Send bulk order</button>
+        </div>
+        <div id="bulk-status" style="font-size:11px; color:var(--text-muted); margin-top:0.3rem"></div>
+      </div>
     </div>
   </div>
 
@@ -4170,6 +4187,10 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof renderStages === 'function') renderStages();
     // Manufacturers list (self-guarded).
     if (typeof renderManufacturers === 'function') renderManufacturers();
+    if (typeof renderBulkForm === 'function') {
+      const bl = document.getElementById('bulk-lines');
+      if (bl && !bl.contains(document.activeElement)) renderBulkForm();
+    }
   }
   
   function renderDoneOrders() {
@@ -4508,6 +4529,88 @@ ${_PRODUCTION_PRINT_STYLES}
       : '<div class="empty" style="padding:0.5rem">No manufacturers yet — add Couch Potato above.</div>';
   }
   window.renderManufacturers = renderManufacturers;
+  // ---- Bulk couch order: several lines → one email + stock orders on the board ----
+  let _bulkLines = [{ product: '', qty: 1, fabric: '' }];
+  function renderBulkForm() {
+    const sel = document.getElementById('bulk-mfg');
+    if (sel) {
+      const cur = sel.value;
+      sel.innerHTML = _manufacturers().map(m => `<option value="${_escape(m.name)}" ${m.name === cur ? 'selected' : ''}>${_escape(m.name)}</option>`).join('') || '<option value="">— add a manufacturer above —</option>';
+    }
+    const host = document.getElementById('bulk-lines');
+    if (!host) return;
+    host.innerHTML = _bulkLines.map((l, i) => `
+      <div class="row" style="align-items:flex-end">
+        <div class="f2"><label style="font-size:10px">Product</label><input list="bom-products-list" value="${_escape(l.product)}" placeholder="e.g. 2 Seater — Isabella" onchange="updateBulkLine(${i}, 'product', this.value)"></div>
+        <div class="f1"><label style="font-size:10px">Fabric (optional)</label><input list="fr-fabric-list" value="${_escape(l.fabric)}" placeholder="fabric" onchange="updateBulkLine(${i}, 'fabric', this.value)"></div>
+        <div style="width:80px"><label style="font-size:10px">Qty</label><input type="number" min="1" step="1" value="${l.qty}" onchange="updateBulkLine(${i}, 'qty', this.value)"></div>
+        <div><button class="btn btn-sm btn-danger" onclick="removeBulkLine(${i})">✕</button></div>
+      </div>`).join('');
+  }
+  window.renderBulkForm = renderBulkForm;
+  function addBulkLine() { _bulkLines.push({ product: '', qty: 1, fabric: '' }); renderBulkForm(); }
+  window.addBulkLine = addBulkLine;
+  function removeBulkLine(i) { _bulkLines.splice(i, 1); if (!_bulkLines.length) _bulkLines.push({ product: '', qty: 1, fabric: '' }); renderBulkForm(); }
+  window.removeBulkLine = removeBulkLine;
+  function updateBulkLine(i, field, val) {
+    if (!_bulkLines[i]) return;
+    _bulkLines[i][field] = field === 'qty' ? Math.max(1, parseInt(val) || 1) : String(val || '').trim();
+  }
+  window.updateBulkLine = updateBulkLine;
+  function sendBulkOrder() {
+    const st = document.getElementById('bulk-status');
+    const mfgName = ((document.getElementById('bulk-mfg') || {}).value || '').trim();
+    const mfg = _manufacturers().find(m => m.name === mfgName);
+    if (!mfg) { if (st) st.textContent = '✗ Add a manufacturer first (name + email above).'; return; }
+    if (!mfg.email) { if (st) st.textContent = '✗ ' + mfgName + ' has no order email — delete and re-add it with one.'; return; }
+    const lines = _bulkLines.filter(l => l.product);
+    if (!lines.length) { if (st) st.textContent = '✗ Add at least one product line.'; return; }
+    const due = ((document.getElementById('bulk-due') || {}).value || '').trim();
+    const note = ((document.getElementById('bulk-note') || {}).value || '').trim();
+    const today = new Date().toISOString().split('T')[0];
+    const batch = 'BULK-' + today.replace(/-/g, '').slice(2);
+    snapshotState();
+    // One stock order per line so the batch is trackable on the planner/stages.
+    lines.forEach((l, i) => {
+      currentData().orders.push({
+        id: 'BULKORD-' + Date.now() + '-' + i,
+        invoice: batch + '-' + (i + 1),
+        customer: 'Stock — ' + mfgName,
+        phone: '',
+        product: l.product,
+        category: '',
+        fabric: l.fabric || '',
+        qty: l.qty,
+        orderDate: today,
+        dueDate: due || _dueFromLead('', l.product, today, activeBiz),
+        status: 'pending',
+        startDate: null,
+        builder: mfgName,
+        builderOrderedAt: today,
+        paymentStatus: 'stock',
+        outstanding: 0
+      });
+    });
+    saveData();
+    const bodyLines = lines.map((l, i) => '  ' + (i + 1) + '. ' + l.product + (l.fabric ? ' — fabric: ' + l.fabric : '') + '  ×  ' + l.qty);
+    const body = 'Hi ' + mfgName + ' team,\n\nPlease build the following bulk order for us (ref ' + batch + '):\n\n'
+      + bodyLines.join('\n') + '\n\n'
+      + (due ? 'Needed by: ' + due + '\n' : '')
+      + (note ? 'Note: ' + note + '\n' : '')
+      + '\nPlease confirm the price and delivery date.\n\nThanks!';
+    const a = document.createElement('a');
+    a.href = 'mailto:' + encodeURIComponent(mfg.email) + '?subject=' + encodeURIComponent('Bulk order ' + batch + ' — ' + lines.reduce((n, l) => n + l.qty, 0) + ' pieces') + '&body=' + encodeURIComponent(body);
+    a.style.display = 'none';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { try { a.remove(); } catch (e) {} }, 200);
+    _bulkLines = [{ product: '', qty: 1, fabric: '' }];
+    const dueEl = document.getElementById('bulk-due'); if (dueEl) dueEl.value = '';
+    const noteEl = document.getElementById('bulk-note'); if (noteEl) noteEl.value = '';
+    renderBulkForm();
+    if (typeof render === 'function') render();
+    if (st) st.textContent = '✓ ' + lines.length + ' line(s) sent to ' + mfgName + ' and added to the board as ' + batch + '-…';
+  }
+  window.sendBulkOrder = sendBulkOrder;
   function _findOrderAnyBiz(orderId) {
     let order = null;
     ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
