@@ -4758,6 +4758,7 @@ ${_PRODUCTION_PRINT_STYLES}
     // Orders in the week: planner-scheduled to this Monday, or unplanned and due this week.
     const orders = (biz.orders || []).filter(o => {
       if (!o || o.status === 'delivered' || o.status === 'done') return false;
+      if (o.builder) return false; // outsourced (e.g. Couch Potato) — not our factory's week
       if (o.planWeek) return o.planWeek === mon;
       return o.dueDate && o.dueDate >= mon && o.dueDate <= sun;
     });
