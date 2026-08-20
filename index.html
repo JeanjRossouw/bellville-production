@@ -202,6 +202,7 @@
     body.planner-view .pc-fabric .btn,
     body.planner-view .pc-builder select,
     body.planner-view .pc-builder .btn,
+    body.planner-view .mfg-lane .btn,
     body.planner-view .plan-col-header .btn { display: none !important; }
     body.planner-view .pc-builder-badge { display: inline !important; }
     body.planner-view .plan-card { cursor: default; }
@@ -4656,6 +4657,46 @@ ${_PRODUCTION_PRINT_STYLES}
     }
   }
   window.placeOrderWithBuilder = placeOrderWithBuilder;
+  // Drag an order into a manufacturer lane → outsource it there.
+  function planDropBuilder(e, name) {
+    if (typeof IS_PLANNER_MODE !== 'undefined' && IS_PLANNER_MODE) { try { e.preventDefault(); } catch (x) {} return; }
+    e.preventDefault();
+    try { e.currentTarget.classList.remove('drag-over'); } catch (x) {}
+    const orderId = e.dataTransfer.getData('text/plain');
+    if (!orderId) return;
+    setOrderBuilder(orderId, name);
+  }
+  window.planDropBuilder = planDropBuilder;
+  // One email with EVERY order currently in the manufacturer's lane; stamps
+  // builderOrderedAt on the ones not emailed before.
+  function emailBuilderList(name) {
+    const mfg = _manufacturers().find(m => m.name === name);
+    if (!mfg || !mfg.email) { alert('Add an order email for ' + name + ' in the Couch Manufacturers card first.'); return; }
+    const lane = [];
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      ((data[b] && data[b].orders) || []).forEach(o => {
+        if (o && o.builder === name && o.status !== 'delivered' && o.status !== 'done') lane.push(o);
+      });
+    });
+    if (!lane.length) { alert('No orders in the ' + name + ' lane.'); return; }
+    lane.sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')));
+    const today = new Date().toISOString().split('T')[0];
+    const bodyLines = lane.map((o, i) =>
+      '  ' + (i + 1) + '. #' + (o.invoice || o.id) + ' — ' + (o.product || '') + (o.fabric ? ' — fabric: ' + o.fabric : '') + '  ×  ' + (o.qty || 1) + (o.dueDate ? '  (needed by ' + o.dueDate + ')' : ''));
+    const body = 'Hi ' + name + ' team,\n\nPlease build the following for us:\n\n' + bodyLines.join('\n')
+      + '\n\nPlease confirm prices and delivery dates.\n\nThanks!';
+    const a = document.createElement('a');
+    a.href = 'mailto:' + encodeURIComponent(mfg.email) + '?subject=' + encodeURIComponent('Order list — ' + lane.length + ' piece' + (lane.length === 1 ? '' : 's') + ' (' + today + ')') + '&body=' + encodeURIComponent(body);
+    a.style.display = 'none';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { try { a.remove(); } catch (x) {} }, 200);
+    snapshotState();
+    lane.forEach(o => { if (!o.builderOrderedAt) o.builderOrderedAt = today; });
+    saveData();
+    if (typeof render === 'function') render();
+    if (typeof toast === 'function') toast('📧 ' + lane.length + ' order(s) emailed to ' + name + '.', 'success', 3000);
+  }
+  window.emailBuilderList = emailBuilderList;
 
   // ===== Week Plan — materials, staffing (short-time) and cost for one week =====
   // Reads the Planner (planWeek) + unplanned orders due that week, the BOMs +
@@ -9180,7 +9221,11 @@ ${_PRODUCTION_PRINT_STYLES}
     const buckets = Object.fromEntries(weeks.map(w => [w, []]));
     const beyond = [];
     const unscheduled = [];
+    // Outsourced orders live in their manufacturer's lane, not in the week columns.
+    const builderLanes = {};
+    ((typeof _manufacturers === 'function') ? _manufacturers() : []).forEach(m => { builderLanes[m.name] = []; });
     orders.forEach(o => {
+      if (o.builder) { (builderLanes[o.builder] = builderLanes[o.builder] || []).push(o); return; }
       if (!o.planWeek) { unscheduled.push(o); return; }
       if (buckets[o.planWeek]) { buckets[o.planWeek].push(o); return; }
       if (o.planWeek < weeks[0]) {
@@ -9217,6 +9262,23 @@ ${_PRODUCTION_PRINT_STYLES}
       </div>
     `).join('');
 
+    const laneNames = Object.keys(builderLanes).sort();
+    const lanesHtml = laneNames.map(name => {
+      const lane = builderLanes[name].sort(byDue);
+      const unplaced = lane.filter(o => !o.builderOrderedAt).length;
+      return `
+      <div class="card mfg-lane" style="margin-bottom:1rem; border:2px dashed #7c3aed"
+           ondragover="planDragOver(event)" ondragleave="planDragLeave(event)" ondrop="planDropBuilder(event, '${_escape(name).replace(/'/g, '&#39;')}')">
+        <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
+          <span>🏭 ${_escape(name.toUpperCase())} (${lane.length})${unplaced ? ` <span style="font-size:11px; color:var(--warn,#b45309)">· ${unplaced} not emailed yet</span>` : ''}</span>
+          ${lane.length ? `<button class="btn btn-sm btn-primary" onclick="emailBuilderList('${_escape(name).replace(/'/g, '&#39;')}')">📧 Email the list (${lane.length})</button>` : ''}
+        </div>
+        <div class="plan-pool">
+          ${lane.map(o => planItemCard(o, true)).join('') || '<div class="empty" style="padding:0.75rem 0; font-size:11px">Drag orders here to build them at ' + _escape(name) + '</div>'}
+        </div>
+      </div>`;
+    }).join('');
+
     const beyondHtml = beyond.length ? `
       <div class="card" style="margin-bottom:1rem">
         <div class="card-title">📆 SCHEDULED BEYOND 3 WEEKS (${beyond.length})</div>
@@ -9228,6 +9290,7 @@ ${_PRODUCTION_PRINT_STYLES}
 
     const html = `
       <div class="plan-grid">${colsHtml}</div>
+      ${lanesHtml}
       ${beyondHtml}
       <div class="card">
         <div class="card-title">📥 UNSCHEDULED (${unscheduled.length})</div>
@@ -9893,7 +9956,7 @@ ${_PRODUCTION_PRINT_STYLES}
           ${dueText ? `<div class="pc-due">${_escape(dueText)}</div>` : ''}
           ${fabricRowHtml}
           ${builderRowHtml}
-          ${showPlanDate ? `<div class="pc-due">📅 Week of ${_escape(o.planWeek)}</div>` : ''}
+          ${showPlanDate && o.planWeek ? `<div class="pc-due">📅 Week of ${_escape(o.planWeek)}</div>` : ''}
         </div>
         <button type="button" class="plan-menu-trigger" title="Schedule" aria-label="Schedule options"
                 onclick="event.stopPropagation(); openPlanMenu('${_escape(o.id)}', this)"
@@ -9949,6 +10012,12 @@ ${_PRODUCTION_PRINT_STYLES}
     e.currentTarget.classList.remove('drag-over');
     const orderId = e.dataTransfer.getData('text/plain');
     if (!orderId) return;
+    // Dragging a card out of a manufacturer lane into a week = build in-house again.
+    const dropOrder = (typeof _findOrderAnyBiz === 'function') ? _findOrderAnyBiz(orderId) : null;
+    if (dropOrder && dropOrder.builder) {
+      dropOrder.builder = '';
+      if (typeof toast === 'function') toast('🏠 #' + (dropOrder.invoice || dropOrder.id) + ' back to in-house build.', 'info', 2500);
+    }
     setPlanWeek(orderId, weekIso);
   }
   function planDragOverUnscheduled(e) {
