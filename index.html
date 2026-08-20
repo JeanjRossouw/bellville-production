@@ -2983,7 +2983,7 @@ ${_PRODUCTION_PRINT_STYLES}
 
   // One job card's body, wrapped in .jobcard so each lands on its own A4 page when
   // several are printed together. Includes the linked product's cutting list.
-  function _jobCardBodyHtml(order) {
+  function _jobCardBodyHtml(order, scrubClient) {
     // Cutting list block — only rendered if the linked product has a cutList.
     // Uses getBomKeyForOrder so it works whether the order is linked via
     // order.bomKey (explicit picker selection) or by direct product-name match.
@@ -3073,6 +3073,7 @@ ${_PRODUCTION_PRINT_STYLES}
   </div>
 
   <div class="grid">
+    ${scrubClient ? '' : `
     <div class="field half-width">
       <div class="field-label">Customer</div>
       <div class="field-value">${order.customer}</div>
@@ -3080,7 +3081,7 @@ ${_PRODUCTION_PRINT_STYLES}
     <div class="field half-width">
       <div class="field-label">Phone</div>
       <div class="field-value">${order.phone || '—'}</div>
-    </div>
+    </div>`}
     <div class="field full-width">
       <div class="field-label">Product${order.category ? ' — ' + order.category : ''}</div>
       <div class="field-value">${order.product}</div>
@@ -4655,6 +4656,10 @@ ${_PRODUCTION_PRINT_STYLES}
       saveData();
       if (typeof render === 'function') render();
     }
+    // Client-scrubbed job card to attach (order number only).
+    try {
+      _openJobCardWindow('Job card #' + (order.invoice || order.id) + ' — ' + order.builder, _jobCardBodyHtml(order, true), 'PRINT / SAVE AS PDF → attach to the email');
+    } catch (x) { console.warn('Job card window failed:', x); }
   }
   window.placeOrderWithBuilder = placeOrderWithBuilder;
   // Drag an order into a manufacturer lane → outsource it there.
@@ -4694,7 +4699,13 @@ ${_PRODUCTION_PRINT_STYLES}
     lane.forEach(o => { if (!o.builderOrderedAt) o.builderOrderedAt = today; });
     saveData();
     if (typeof render === 'function') render();
-    if (typeof toast === 'function') toast('📧 ' + lane.length + ' order(s) emailed to ' + name + '.', 'success', 3000);
+    // Client-scrubbed job cards for the batch (sales order number only, no
+    // customer/phone) — Save as PDF in the print dialog and attach to the email.
+    try {
+      const cards = lane.map(o => _jobCardBodyHtml(o, true)).join('');
+      _openJobCardWindow('Job cards — ' + name + ' (' + lane.length + ')', cards, 'PRINT / SAVE AS PDF → attach to the email');
+    } catch (x) { console.warn('Job cards window failed:', x); }
+    if (typeof toast === 'function') toast('📧 ' + lane.length + ' order(s) emailed to ' + name + ' — job cards opened, Save as PDF and attach.', 'success', 4500);
   }
   window.emailBuilderList = emailBuilderList;
 
