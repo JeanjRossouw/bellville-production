@@ -4708,6 +4708,50 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof toast === 'function') toast('📧 ' + lane.length + ' order(s) emailed to ' + name + ' — job cards opened, Save as PDF and attach.', 'success', 4500);
   }
   window.emailBuilderList = emailBuilderList;
+  // Print the manufacturer's order list on the SAME production sheet used for
+  // in-house prints (shared styles/table/rows).
+  function printBuilderLane(name) {
+    const lane = [];
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      ((data[b] && data[b].orders) || []).forEach(o => {
+        if (o && o.builder === name && o.status !== 'delivered' && o.status !== 'done') lane.push(o);
+      });
+    });
+    if (!lane.length) { alert('No orders in the ' + name + ' lane.'); return; }
+    lane.sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')));
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const rows = lane.map((o, i) => _productionRowHtml(o, i + 1, today)).join('');
+    const todayStr = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' });
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<title>Order list — ${_escape(name)}</title>
+${_PRODUCTION_PRINT_STYLES}
+</head>
+<body>
+  <div class="no-print">
+    <button onclick="window.print()" style="padding:8px 16px; font-weight:bold; cursor:pointer; background:#000; color:#fff; border:none; border-radius:4px">🖨️ PRINT</button>
+    <button onclick="window.close()" style="padding:8px 16px; cursor:pointer; margin-left:8px">CLOSE</button>
+  </div>
+  <div class="header">
+    <div>
+      <div class="biz-name">🏭 ${_escape(name.toUpperCase())}</div>
+      <div class="date">Outsourced order list · ${_escape(todayStr)} · ${lane.length} order${lane.length === 1 ? '' : 's'}</div>
+    </div>
+    <div class="title">PRODUCTION PLAN</div>
+  </div>
+  <table>
+    ${_PRODUCTION_TABLE_HEAD}
+    <tbody>${rows}</tbody>
+  </table>
+</body>
+</html>`;
+    const win = window.open('', '_blank');
+    if (!win) { alert('Pop-up blocked. Allow pop-ups for this site, then try again.'); return; }
+    win.document.write(html);
+    win.document.close();
+  }
+  window.printBuilderLane = printBuilderLane;
 
   // ===== Week Plan — materials, staffing (short-time) and cost for one week =====
   // Reads the Planner (planWeek) + unplanned orders due that week, the BOMs +
@@ -9283,7 +9327,10 @@ ${_PRODUCTION_PRINT_STYLES}
            ondragover="planDragOver(event)" ondragleave="planDragLeave(event)" ondrop="planDropBuilder(event, '${_escape(name).replace(/'/g, '&#39;')}')">
         <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
           <span>🏭 ${_escape(name.toUpperCase())} (${lane.length})${unplaced ? ` <span style="font-size:11px; color:var(--warn,#b45309)">· ${unplaced} not emailed yet</span>` : ''}</span>
-          ${lane.length ? `<button class="btn btn-sm btn-primary" onclick="emailBuilderList('${_escape(name).replace(/'/g, '&#39;')}')">📧 Email the list (${lane.length})</button>` : ''}
+          ${lane.length ? `<span style="display:flex; gap:0.4rem; flex-wrap:wrap">
+            <button class="btn btn-sm" onclick="printBuilderLane('${_escape(name).replace(/'/g, '&#39;')}')" title="Same production sheet as the in-house prints">🖨️ Print</button>
+            <button class="btn btn-sm btn-primary" onclick="emailBuilderList('${_escape(name).replace(/'/g, '&#39;')}')">📧 Email the list (${lane.length})</button>
+          </span>` : ''}
         </div>
         <div class="plan-pool">
           ${lane.map(o => planItemCard(o, true)).join('') || '<div class="empty" style="padding:0.75rem 0; font-size:11px">Drag orders here to build them at ' + _escape(name) + '</div>'}
@@ -10178,7 +10225,8 @@ ${_PRODUCTION_PRINT_STYLES}
     const biz = activeBiz;
     const bizNames = { bellville: 'BELLVILLE FURNITURE', pinkfoot: 'PINKFOOT BOUTIQUE', repticube: 'REPTICUBE' };
 
-    let orders = _plannerOrders().filter(o => o.status !== 'delivered' && o.status !== 'done');
+    // In-house sheet only — outsourced orders print from their manufacturer lane.
+    let orders = _plannerOrders().filter(o => o.status !== 'delivered' && o.status !== 'done' && !o.builder);
     if (weekIso) {
       // One week only. The CURRENT week also collects past-scheduled orders,
       // matching what the on-screen planner shows in the Current column.
