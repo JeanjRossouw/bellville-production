@@ -9950,8 +9950,7 @@ ${_PRODUCTION_PRINT_STYLES}
     if (o.fabric && !_isNoFabricCategory(o)) {
       let badge;
       if (o.fabricOOS) {
-        const etaText = o.fabricStockETA ? ' · ETA ' + _escape(o.fabricStockETA) : '';
-        badge = `<span style="font-weight:700; color:#991b1b">🔴 OUT OF STOCK${etaText}</span>`;
+        badge = `<span style="font-weight:700; color:#991b1b">🔴 OUT OF STOCK</span>`;
         bgStyle = 'background:#fef2f2;'; // red tint — blocked
       } else if (o.fabricStatus === 'received') {
         badge = `<span style="font-weight:700; color:#166534">✅ RECEIVED</span>`;
@@ -9972,6 +9971,13 @@ ${_PRODUCTION_PRINT_STYLES}
       if (o.fabricStatus === 'received') fabricAction = '';
       else if (o.fabricStatus === 'ordered') fabricAction = fabBtn('✅ Received', 'received', 'Fabric has arrived');
       else fabricAction = fabBtn('📦 Ordered', 'ordered', 'I have ordered this fabric');
+      if (o.fabricOOS) {
+        fabricAction += `<label style="display:inline-flex; align-items:center; gap:3px; margin:0; font-size:10px; color:#991b1b">ETA
+          <input type="date" value="${_escape(o.fabricStockETA || '')}" title="When the fabric is expected back in stock"
+            onchange="event.stopPropagation(); planSetFabricEta('${_escape(o.id)}', this.value)"
+            onmousedown="event.stopPropagation()" ondragstart="event.preventDefault(); event.stopPropagation()" draggable="false"
+            style="font-size:10px; padding:1px 3px; max-width:118px"></label>`;
+      }
       fabricRowHtml = `
           <div class="pc-fabric" style="font-size:11px; margin-top:4px; display:flex; align-items:center; gap:4px; flex-wrap:wrap; line-height:1.3">
             <span style="color:var(--text-muted)">🧵</span>
@@ -10043,6 +10049,21 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof toast === 'function') toast('🧵 ' + (order.fabric || 'Fabric') + ' marked ' + status.toUpperCase() + ' for #' + (order.invoice || order.id), 'success', 2500);
   }
   window.planSetFabricStatus = planSetFabricStatus;
+  // Edit the fabric's expected-back date straight from the planner card.
+  function planSetFabricEta(orderId, dateStr) {
+    let order = null;
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      if (!order) order = ((data[b] && data[b].orders) || []).find(o => o && o.id === orderId);
+    });
+    if (!order) return;
+    snapshotState();
+    order.fabricStockETA = dateStr || '';
+    if (dateStr) order.fabricOOS = true; // an ETA implies it is currently out of stock
+    saveData();
+    if (typeof render === 'function') render();
+    if (typeof toast === 'function') toast('🧵 ' + (order.fabric || 'Fabric') + (dateStr ? ' ETA set to ' + dateStr : ' ETA cleared') + ' for #' + (order.invoice || order.id), 'success', 2500);
+  }
+  window.planSetFabricEta = planSetFabricEta;
 
   // ----- Drag handlers (desktop) -----
   function planDragStart(e, orderId) {
