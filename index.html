@@ -8658,6 +8658,11 @@ ${_PRODUCTION_PRINT_STYLES}
             ETA <input type="date" value="${_escape(o.dueDate || '')}" onchange="builderPortalSetEta('${_escape(o.id)}', this.value)" style="padding:5px 7px; border-radius:6px; border:1px solid #d6d3d1">
           </label>
         </div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px">
+          ${(Array.isArray(o.builderPhotos) ? o.builderPhotos : []).map((ph, pi) => `<img src="${ph}" onclick="viewPhoto('${ph.replace(/'/g, "\\'")}')" style="width:64px; height:64px; object-fit:cover; border-radius:8px; cursor:pointer; border:1px solid #d6d3d1">`).join('')}
+          ${(!o.builderPhotos || o.builderPhotos.length < 3) ? `<label style="display:inline-flex; align-items:center; gap:5px; margin:0; padding:7px 12px; border-radius:999px; border:1.5px dashed #a8a29e; color:#57534e; font-size:12px; font-weight:600; cursor:pointer">📷 ${o.builderDone ? 'Photo of the finished piece' : 'Add photo'}
+            <input type="file" accept="image/*" capture="environment" style="display:none" onchange="builderPortalAddPhoto('${_escape(o.id)}', this.files[0]); this.value='';"></label>` : ''}
+        </div>
         <div style="border-top:1px solid #e7e5e4; margin-top:10px; padding-top:8px">
           ${comments.slice(-4).map(c => `<div style="font-size:12px; margin-bottom:4px"><strong>${_escape(c.by || '')}</strong> <span style="color:#a8a29e">${_escape(String(c.at || '').slice(0, 10))}</span><br>${_escape(c.text || '')}</div>`).join('')}
           <div style="display:flex; gap:6px; margin-top:4px">
@@ -8718,6 +8723,40 @@ ${_PRODUCTION_PRINT_STYLES}
     renderBuilderPortal();
   }
   window.builderPortalMarkDone = builderPortalMarkDone;
+  // Partner photo of the (finished) piece — compressed hard (shared doc has a
+  // 1MB limit), capped at 3 per order; logged as a comment so staff get the
+  // partner-update alert.
+  function builderPortalAddPhoto(orderId, file) {
+    if (!file) return;
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    if (Array.isArray(o.builderPhotos) && o.builderPhotos.length >= 3) { alert('Maximum 3 photos per order.'); return; }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const maxSize = 700;
+        let w = img.width, h = img.height;
+        if (w > maxSize || h > maxSize) {
+          if (w > h) { h = h * maxSize / w; w = maxSize; }
+          else { w = w * maxSize / h; h = maxSize; }
+        }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        const compressed = canvas.toDataURL('image/jpeg', 0.6);
+        snapshotState();
+        if (!Array.isArray(o.builderPhotos)) o.builderPhotos = [];
+        o.builderPhotos.push(compressed);
+        _builderPortalLogComment(o, '📷 Photo added' + (o.builderDone ? ' of the finished piece' : ''));
+        saveData();
+        renderBuilderPortal();
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+  window.builderPortalAddPhoto = builderPortalAddPhoto;
   function builderPortalPrintCard(orderId) {
     const o = _findOrderAnyBiz(orderId);
     if (!o) return;
@@ -10302,6 +10341,7 @@ ${_PRODUCTION_PRINT_STYLES}
               onclick="event.stopPropagation(); placeOrderWithBuilder('${_escape(o.id)}')"
               onmousedown="event.stopPropagation()" ondragstart="event.preventDefault(); event.stopPropagation()" draggable="false">📧 Place order</button>` : ''}
             ${o.builderOrderedAt ? `<span style="color:var(--success,#166534); font-weight:700">✓ placed ${_escape(o.builderOrderedAt)}</span>` : ''}
+            ${(Array.isArray(o.builderPhotos) && o.builderPhotos.length) ? o.builderPhotos.map(ph => `<img src="${ph}" onclick="event.stopPropagation(); viewPhoto('${ph.replace(/'/g, "\\'")}')" onmousedown="event.stopPropagation()" ondragstart="event.preventDefault()" draggable="false" style="width:34px; height:34px; object-fit:cover; border-radius:6px; cursor:pointer; border:1px solid var(--border,#ddd)">`).join('') : ''}
             ${o.builderDone && !o.builderReceivedAt ? `<span style="color:var(--success,#166534); font-weight:800">✅ DONE at ${_escape(o.builder)}</span>
               <button type="button" class="btn btn-sm btn-primary" style="font-size:10px; padding:2px 8px" title="The finished piece has arrived from ${_escape(o.builder)} — mark the order DONE"
                 onclick="event.stopPropagation(); receiveBuilderItem('${_escape(o.id)}')"
