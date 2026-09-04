@@ -467,6 +467,10 @@
       <div class="card-title">📅 NEW CLIENT BOOKINGS</div>
       <div id="new-bookings-list"></div>
     </div>
+    <div class="card" id="dash-partner-updates-card" style="display:none; border:2px solid #7c3aed">
+      <div class="card-title">🏭 PARTNER UPDATES</div>
+      <div id="partner-updates-list"></div>
+    </div>
     <div class="card" id="dash-week-deliveries-card">
       <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem">
         <span>🚚 DELIVERIES THIS WEEK</span>
@@ -4200,6 +4204,8 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof renderDispatchSettings === 'function') renderDispatchSettings();
     // New client-booking alerts — card + live toast when a booking lands on sync.
     if (typeof _renderNewBookingsCard === 'function') _renderNewBookingsCard();
+    // Partner updates (manufacturer comments / done / ETA) — card + live toast.
+    if (typeof _renderPartnerUpdatesCard === 'function') _renderPartnerUpdatesCard();
     // Week Plan stays live on sync (self-guarded on its element).
     if (typeof renderWeekPlan === 'function') renderWeekPlan();
     // Fabric price list card + dropdowns (self-guarded, no-op when empty).
@@ -5411,6 +5417,67 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof renderDispatch === 'function') renderDispatch();
   }
   window.ackClientBooking = ackClientBooking;
+
+  // ---- Partner-update alerts (manufacturer comments / done / ETA changes) ----
+  // Every portal action logs into o.builderComments; staff acknowledge per order
+  // (o.builderCommentsAck = count seen). First render seeds a baseline so opening
+  // the app doesn't toast old messages — only live arrivals do.
+  let _partnerAlertBaseline = null;
+  function _unackedPartnerUpdates() {
+    const out = [];
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      ((data[b] && data[b].orders) || []).forEach(o => {
+        if (!o || !o.builder || !Array.isArray(o.builderComments)) return;
+        const ack = parseInt(o.builderCommentsAck) || 0;
+        if (o.builderComments.length > ack) out.push({ o: o, biz: b, unread: o.builderComments.slice(ack) });
+      });
+    });
+    return out;
+  }
+  function _renderPartnerUpdatesCard() {
+    const card = document.getElementById('dash-partner-updates-card');
+    const list = document.getElementById('partner-updates-list');
+    if (!card || !list) return;
+    const items = _unackedPartnerUpdates();
+    const counts = {};
+    items.forEach(x => { counts[x.biz + '|' + x.o.id] = (parseInt(x.o.builderCommentsAck) || 0) + x.unread.length; });
+    if (_partnerAlertBaseline !== null) {
+      items.forEach(x => {
+        const k = x.biz + '|' + x.o.id;
+        const prev = _partnerAlertBaseline[k] || 0;
+        const total = counts[k];
+        if (total > prev && typeof toast === 'function') {
+          const latest = x.unread[x.unread.length - 1];
+          toast('🏭 ' + (x.o.builder || 'Partner') + ' on #' + (x.o.invoice || x.o.id) + ': ' + String(latest.text || '').slice(0, 70), 'success', 6000);
+        }
+      });
+      Object.assign(_partnerAlertBaseline, counts);
+    } else {
+      _partnerAlertBaseline = counts;
+    }
+    if (!items.length) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    list.innerHTML = items.map(x => `
+      <div style="border:1px solid var(--border,#ddd); border-radius:8px; padding:8px 10px; margin-bottom:6px; background:#f5f3ff">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:0.75rem; flex-wrap:wrap">
+          <div>
+            <div style="font-weight:700">🏭 ${_escape(x.o.builder)} · #${_escape(x.o.invoice || x.o.id)} — ${_escape(x.o.product || '')}</div>
+            ${x.unread.map(c => `<div style="font-size:12px; margin-top:3px">💬 <span style="color:var(--text-muted,#888)">${_escape(String(c.at || '').slice(0, 10))}</span> ${_escape(c.text || '')}</div>`).join('')}
+          </div>
+          <button class="btn btn-sm" style="background:#7c3aed; color:#fff; border-color:#7c3aed" onclick="ackPartnerUpdates('${x.biz}', '${x.o.id}')">✓ OK, seen</button>
+        </div>
+      </div>`).join('');
+  }
+  function ackPartnerUpdates(biz, orderId) {
+    const o = ((data[biz] && data[biz].orders) || []).find(x => x && x.id === orderId);
+    if (!o) return;
+    snapshotState();
+    o.builderCommentsAck = Array.isArray(o.builderComments) ? o.builderComments.length : 0;
+    saveData();
+    _renderPartnerUpdatesCard();
+    if (typeof renderPlanner === 'function') renderPlanner();
+  }
+  window.ackPartnerUpdates = ackPartnerUpdates;
 
   function printWeekDeliveries() {
     const { days, byDay } = _weekDeliveries();
@@ -10193,7 +10260,11 @@ ${_PRODUCTION_PRINT_STYLES}
                 onclick="event.stopPropagation(); receiveBuilderItem('${_escape(o.id)}')"
                 onmousedown="event.stopPropagation()" ondragstart="event.preventDefault(); event.stopPropagation()" draggable="false">📥 Receive item</button>` : ''}
           </div>
-          ${(Array.isArray(o.builderComments) && o.builderComments.length) ? `<div style="font-size:10.5px; color:var(--text-muted); margin-top:3px">💬 ${_escape(o.builderComments[o.builderComments.length - 1].by || '')}: ${_escape(String(o.builderComments[o.builderComments.length - 1].text || '').slice(0, 90))}${o.builderComments.length > 1 ? ' (+' + (o.builderComments.length - 1) + ')' : ''}</div>` : ''}`;
+          ${(Array.isArray(o.builderComments) && o.builderComments.length) ? (() => {
+            const unread = o.builderComments.length > (parseInt(o.builderCommentsAck) || 0);
+            const last = o.builderComments[o.builderComments.length - 1];
+            return `<div style="font-size:10.5px; margin-top:3px; ${unread ? 'color:#7c3aed; font-weight:700' : 'color:var(--text-muted)'}">💬 ${unread ? 'NEW · ' : ''}${_escape(last.by || '')}: ${_escape(String(last.text || '').slice(0, 90))}${o.builderComments.length > 1 ? ' (+' + (o.builderComments.length - 1) + ')' : ''}</div>`;
+          })() : ''}`;
     }
 
     return `
