@@ -5472,8 +5472,49 @@ ${_PRODUCTION_PRINT_STYLES}
           </div>
           <button class="btn btn-sm" style="background:#7c3aed; color:#fff; border-color:#7c3aed" onclick="ackPartnerUpdates('${x.biz}', '${x.o.id}')">✓ OK, seen</button>
         </div>
+        <div style="display:flex; gap:6px; margin-top:6px">
+          <input id="pu-reply-${x.biz}-${_escape(x.o.id)}" placeholder="Reply to ${_escape(x.o.builder)}…" style="flex:1; padding:5px 8px; font-size:12px; margin:0"
+            onkeydown="if(event.key==='Enter'){staffReplyToBuilder('${x.biz}', '${x.o.id}', 'pu-reply-${x.biz}-${_escape(x.o.id)}')}">
+          <button class="btn btn-sm" onclick="staffReplyToBuilder('${x.biz}', '${x.o.id}', 'pu-reply-${x.biz}-${_escape(x.o.id)}')">💬 Send</button>
+        </div>
       </div>`).join('');
   }
+  function staffReplyToBuilder(biz, orderId, inputId) {
+    const el = document.getElementById(inputId);
+    const text = el ? el.value.trim() : '';
+    if (!text) return;
+    const o = ((data[biz] && data[biz].orders) || []).find(x => x && x.id === orderId);
+    if (!o) return;
+    snapshotState();
+    if (!Array.isArray(o.builderComments)) o.builderComments = [];
+    const by = (typeof currentUser !== 'undefined' && currentUser && currentUser.email) ? currentUser.email.split('@')[0] : 'Bellville';
+    o.builderComments.push({ by: by, at: new Date().toISOString(), text: text });
+    o.builderCommentsAck = o.builderComments.length; // own reply never alerts yourself
+    saveData();
+    if (el) el.value = '';
+    _renderPartnerUpdatesCard();
+    if (typeof renderPlanner === 'function') renderPlanner();
+    if (typeof toast === 'function') toast('💬 Reply sent to ' + (o.builder || 'partner') + ' on #' + (o.invoice || o.id), 'success', 2500);
+  }
+  window.staffReplyToBuilder = staffReplyToBuilder;
+  // Quick reply from a planner lane card.
+  function staffReplyPrompt(orderId) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    const text = prompt('Reply to ' + (o.builder || 'partner') + ' on #' + (o.invoice || o.id) + ':');
+    if (!text || !text.trim()) return;
+    let biz = null;
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => { if (!biz && ((data[b] && data[b].orders) || []).some(x => x && x.id === orderId)) biz = b; });
+    snapshotState();
+    if (!Array.isArray(o.builderComments)) o.builderComments = [];
+    const by = (typeof currentUser !== 'undefined' && currentUser && currentUser.email) ? currentUser.email.split('@')[0] : 'Bellville';
+    o.builderComments.push({ by: by, at: new Date().toISOString(), text: text.trim() });
+    o.builderCommentsAck = o.builderComments.length;
+    saveData();
+    if (typeof render === 'function') render();
+    if (typeof toast === 'function') toast('💬 Reply sent to ' + (o.builder || 'partner'), 'success', 2500);
+  }
+  window.staffReplyPrompt = staffReplyPrompt;
   function ackPartnerUpdates(biz, orderId) {
     const o = ((data[biz] && data[biz].orders) || []).find(x => x && x.id === orderId);
     if (!o) return;
@@ -10269,7 +10310,8 @@ ${_PRODUCTION_PRINT_STYLES}
           ${(Array.isArray(o.builderComments) && o.builderComments.length) ? (() => {
             const unread = o.builderComments.length > (parseInt(o.builderCommentsAck) || 0);
             const last = o.builderComments[o.builderComments.length - 1];
-            return `<div style="font-size:10.5px; margin-top:3px; ${unread ? 'color:#7c3aed; font-weight:700' : 'color:var(--text-muted)'}">💬 ${unread ? 'NEW · ' : ''}${_escape(last.by || '')}: ${_escape(String(last.text || '').slice(0, 90))}${o.builderComments.length > 1 ? ' (+' + (o.builderComments.length - 1) + ')' : ''}</div>`;
+            return `<div style="font-size:10.5px; margin-top:3px; ${unread ? 'color:#7c3aed; font-weight:700' : 'color:var(--text-muted)'}">💬 ${unread ? 'NEW · ' : ''}${_escape(last.by || '')}: ${_escape(String(last.text || '').slice(0, 90))}${o.builderComments.length > 1 ? ' (+' + (o.builderComments.length - 1) + ')' : ''}
+              <a style="cursor:pointer; text-decoration:underline; margin-left:4px" onclick="event.stopPropagation(); staffReplyPrompt('${_escape(o.id)}')" onmousedown="event.stopPropagation()">↩ Reply</a></div>`;
           })() : ''}`;
     }
 
