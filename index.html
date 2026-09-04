@@ -339,7 +339,10 @@
     <div style="font-size:11px; letter-spacing:0.2em; text-transform:uppercase; opacity:0.85">Manufacturer portal</div>
     <div id="builder-portal-name" style="font-size:25px; font-weight:800; margin-top:0.4rem">🏭 Orders</div>
     <div id="builder-portal-count" style="display:inline-block; font-size:13px; font-weight:600; margin-top:0.6rem; background:rgba(255,255,255,0.16); border:1px solid rgba(255,255,255,0.25); border-radius:999px; padding:0.25rem 0.9rem"></div>
-    <div style="margin-top:0.7rem"><button onclick="doLogout()" style="padding:0.35rem 1rem; background:transparent; color:#e9d5ff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px">Log out</button></div>
+    <div style="margin-top:0.7rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap">
+      <button onclick="builderPortalPrintAll()" style="padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">🖨️ Print all job cards</button>
+      <button onclick="doLogout()" style="padding:0.35rem 1rem; background:transparent; color:#e9d5ff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px">Log out</button>
+    </div>
   </div>
   <div style="max-width:680px; margin:-1.4rem auto 0; padding:0 1rem 3rem">
     <div id="builder-portal-content"><div style="text-align:center; color:#78716c; padding:2.5rem 0">Loading orders…</div></div>
@@ -8525,9 +8528,12 @@ ${_PRODUCTION_PRINT_STYLES}
             <div style="font-size:16px; font-weight:800">#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}</div>
             <div style="font-size:12px; color:#78716c; margin-top:2px">Qty ${_escape(o.qty || 1)}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.notes ? '<br>📝 ' + _escape(o.notes) : ''}</div>
           </div>
+          <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+          <button onclick="builderPortalPrintCard('${_escape(o.id)}')" title="Print this order's job card" style="padding:7px 12px; border-radius:999px; border:1.5px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:700; font-size:12.5px; cursor:pointer">🖨️ Job card</button>
           ${o.builderDone
             ? '<span style="font-size:12px; font-weight:800; color:#166534">✅ DONE — awaiting collection</span>'
             : `<button onclick="builderPortalMarkDone('${_escape(o.id)}')" style="padding:7px 14px; border-radius:999px; border:1.5px solid #16a34a; background:#f0fdf4; color:#166534; font-weight:700; font-size:12.5px; cursor:pointer">✓ Mark done</button>`}
+          </span>
         </div>
         <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin-top:10px; font-size:12px">
           <label style="display:flex; align-items:center; gap:6px; margin:0; cursor:pointer; font-weight:600; color:${fabReceived ? '#166534' : '#b45309'}">
@@ -8598,6 +8604,18 @@ ${_PRODUCTION_PRINT_STYLES}
     renderBuilderPortal();
   }
   window.builderPortalMarkDone = builderPortalMarkDone;
+  function builderPortalPrintCard(orderId) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    _openJobCardWindow('Job card #' + (o.invoice || o.id), _jobCardBodyHtml(o, true), 'PRINT');
+  }
+  window.builderPortalPrintCard = builderPortalPrintCard;
+  function builderPortalPrintAll() {
+    const orders = _builderPortalOrders();
+    if (!orders.length) { alert('No open orders to print.'); return; }
+    _openJobCardWindow('Job cards — ' + (BUILDER_MODE_NAME || 'orders') + ' (' + orders.length + ')', orders.map(o => _jobCardBodyHtml(o, true)).join(''), 'PRINT ' + orders.length + ' JOB CARD' + (orders.length === 1 ? '' : 'S'));
+  }
+  window.builderPortalPrintAll = builderPortalPrintAll;
   // Staff side: receive the finished item when it arrives from the partner.
   function receiveBuilderItem(orderId) {
     const o = _findOrderAnyBiz(orderId);
