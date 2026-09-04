@@ -335,13 +335,13 @@
 
 <!-- MANUFACTURER PORTAL — only shown when URL has ?builder=1&m=<name> (e.g. Couch Potato) -->
 <div id="builder-only-view" style="display:none; position:fixed; inset:0; background:#f2f0ec; color:#1c1917; z-index:9000; overflow:auto; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
-  <div style="background:linear-gradient(135deg,#4c1d95,#7c3aed); color:#fff; padding:1.5rem 1.25rem 2.5rem; text-align:center">
+  <div style="background:linear-gradient(135deg,#000,#262626); color:#fff; padding:1.5rem 1.25rem 2.5rem; text-align:center">
     <div style="font-size:11px; letter-spacing:0.2em; text-transform:uppercase; opacity:0.85">Manufacturer portal</div>
     <div id="builder-portal-name" style="font-size:25px; font-weight:800; margin-top:0.4rem">🏭 Orders</div>
     <div id="builder-portal-count" style="display:inline-block; font-size:13px; font-weight:600; margin-top:0.6rem; background:rgba(255,255,255,0.16); border:1px solid rgba(255,255,255,0.25); border-radius:999px; padding:0.25rem 0.9rem"></div>
     <div style="margin-top:0.7rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap">
       <button onclick="builderPortalPrintAll()" style="padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">🖨️ Print all job cards</button>
-      <button onclick="doLogout()" style="padding:0.35rem 1rem; background:transparent; color:#e9d5ff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px">Log out</button>
+      <button onclick="doLogout()" style="padding:0.35rem 1rem; background:transparent; color:#d6d3d1; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px">Log out</button>
     </div>
   </div>
   <div style="max-width:680px; margin:-1.4rem auto 0; padding:0 1rem 3rem">
@@ -8602,7 +8602,7 @@ ${_PRODUCTION_PRINT_STYLES}
             <div style="font-size:12px; color:#78716c; margin-top:2px">Qty ${_escape(o.qty || 1)}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.notes ? '<br>📝 ' + _escape(o.notes) : ''}</div>
           </div>
           <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
-          <button onclick="builderPortalPrintCard('${_escape(o.id)}')" title="Print this order's job card" style="padding:7px 12px; border-radius:999px; border:1.5px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:700; font-size:12.5px; cursor:pointer">🖨️ Job card</button>
+          <button onclick="builderPortalPrintCard('${_escape(o.id)}')" title="Print this order's job card" style="padding:7px 12px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; color:#111; font-weight:700; font-size:12.5px; cursor:pointer">🖨️ Job card</button>
           ${o.builderDone
             ? '<span style="font-size:12px; font-weight:800; color:#166534">✅ DONE — awaiting collection</span>'
             : `<button onclick="builderPortalMarkDone('${_escape(o.id)}')" style="padding:7px 14px; border-radius:999px; border:1.5px solid #16a34a; background:#f0fdf4; color:#166534; font-weight:700; font-size:12.5px; cursor:pointer">✓ Mark done</button>`}
@@ -8622,7 +8622,7 @@ ${_PRODUCTION_PRINT_STYLES}
           <div style="display:flex; gap:6px; margin-top:4px">
             <input id="bp-comment-${_escape(o.id)}" placeholder="Add a comment…" style="flex:1; padding:6px 8px; border-radius:6px; border:1px solid #d6d3d1; font-size:12px"
               onkeydown="if(event.key==='Enter'){builderPortalAddComment('${_escape(o.id)}')}">
-            <button onclick="builderPortalAddComment('${_escape(o.id)}')" style="padding:6px 12px; border-radius:6px; border:1px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:700; font-size:12px; cursor:pointer">💬 Send</button>
+            <button onclick="builderPortalAddComment('${_escape(o.id)}')" style="padding:6px 12px; border-radius:6px; border:1px solid #111; background:#111; color:#fff; font-weight:700; font-size:12px; cursor:pointer">💬 Send</button>
           </div>
         </div>
       </div>`;
