@@ -15,6 +15,13 @@
   to = "/index.html?pos=1"
   status = 200
 
+# Short link for the live AI-readable costing report (key-protected):
+# /claude-report?k=<key> — see netlify/functions/claude-report.mjs.
+[[redirects]]
+  from = "/claude-report"
+  to = "/.netlify/functions/claude-report"
+  status = 200
+
 # Short, tidy link for a customer document: /o/<token> instead of
 # /reptipos/doc.html?t=<token>. A rewrite (status 200) so the pretty path stays
 # in the address bar. The old ?t= form still works — links already sent out
