@@ -1101,6 +1101,15 @@
   <!-- COSTING & PROFIT -->
   <div id="section-costing" class="section">
     <div class="card">
+      <div class="card-title">🧾 OPEN ORDERS — WHAT THEY'LL COST</div>
+      <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.75rem">
+        Every order not yet finished, costed with the same maths as the product table below:
+        materials (from the BOM) + labour per piece + a share of overheads.
+        Outsourced orders (👷) are built by a partner at their price — they're shown but left out of the totals.
+      </p>
+      <div id="costing-orders"></div>
+    </div>
+    <div class="card">
       <div class="card-title">💰 COSTING &amp; PROFIT</div>
       <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.75rem">
         True cost per product = materials (from the BOM) + labour (R per piece) + a share of monthly overheads.
@@ -7115,8 +7124,96 @@ ${_PRODUCTION_PRINT_STYLES}
           </tr></thead>
           <tbody>${prodRows}</tbody>
         </table></div>`;
+
+    renderOrdersCosting(biz, ohUnit, rate);
   }
   window.renderCosting = renderCosting;
+
+  // Open-orders costing: every not-yet-finished order priced with the same
+  // maths as the product table. BOM matching is the loose Week Plan chain
+  // (_wpFindBom), so free-typed invoice names still find their BOM.
+  function renderOrdersCosting(biz, ohUnit, rate) {
+    const host = document.getElementById('costing-orders');
+    if (!host) return;
+    const open = (biz.orders || []).filter(o => o && o.status !== 'delivered' && o.status !== 'done');
+    if (!open.length) { host.innerHTML = '<div class="empty" style="padding:1rem">No open orders.</div>'; return; }
+    let tMat = 0, tLab = 0, tOh = 0, tCost = 0, tSell = 0, pieces = 0, outsourced = 0, inHouseCount = 0;
+    const rows = open.map(o => {
+      const qty = parseInt(o.qty) || 1;
+      const found = _wpFindBom(biz, o.product);
+      const prod = found && found.prod;
+      const hasBom = !!(prod && ((prod.materials && Object.keys(prod.materials).length) || (prod.cutList && prod.cutList.length)));
+      const mat = found ? _productMaterialsCost(found.key, biz) : 0;
+      const dl = prod ? parseFloat(prod.labourCost) : NaN;
+      const labour = !isNaN(dl) ? dl : (prod ? (parseFloat(prod.labourHours) || 0) * rate : 0);
+      const unit = mat + labour + ohUnit;
+      const total = unit * qty;
+      const sell = prod ? (parseFloat(prod.sellingPrice) || 0) : 0;
+      const out = !!o.builder;
+      pieces += qty;
+      if (out) { outsourced++; } else {
+        inHouseCount++;
+        tMat += mat * qty; tLab += labour * qty; tOh += ohUnit * qty; tCost += total; tSell += sell * qty;
+      }
+      const warn = [];
+      if (out) warn.push('👷 built by ' + o.builder + ' — you pay their price, not these in-house figures');
+      else if (!hasBom) warn.push('⚠ no BOM — material cost unknown (link it on the 📊 Week Plan)');
+      if (!out && prod && isNaN(dl) && !(parseFloat(prod.labourHours) > 0)) warn.push('⚠ no labour cost set');
+      const profit = sell ? (sell - unit) : null;
+      const pcol = profit == null ? 'var(--text-muted)' : (profit >= 0 ? 'var(--success,#166534)' : 'var(--danger,#991b1b)');
+      // Fabric status chip — same convention as the production table.
+      let fabricHtml = '<span style="color:var(--text-muted)">—</span>';
+      if (o.fabric) {
+        const fs = o.fabricStatus || 'waiting';
+        if (o.fabricOOS) fabricHtml = '<span style="background:#fee2e2; color:#991b1b; padding:1px 6px; border-radius:8px; font-size:11px; font-weight:700; white-space:nowrap">🔴 OUT OF STOCK' + (o.fabricStockETA ? ' (ETA ' + _escape(o.fabricStockETA) + ')' : '') + '</span>';
+        else if (fs === 'received') fabricHtml = '<span style="background:#d1fae5; color:#065f46; padding:1px 6px; border-radius:8px; font-size:11px; font-weight:700; white-space:nowrap">✅ Received</span>';
+        else if (fs === 'ordered') fabricHtml = '<span style="background:#fef3c7; color:#92400e; padding:1px 6px; border-radius:8px; font-size:11px; font-weight:700; white-space:nowrap">📦 Ordered</span>';
+        else fabricHtml = '<span style="background:#fee2e2; color:#991b1b; padding:1px 6px; border-radius:8px; font-size:11px; font-weight:700; white-space:nowrap">⏳ Not ordered</span>';
+        fabricHtml += '<div style="font-size:10px; color:var(--text-muted); margin-top:1px">' + _escape(o.fabric) + '</div>';
+      }
+      return `<tr style="border-bottom:1px solid var(--border,#eee)${out ? '; opacity:0.65' : ''}">
+        <td style="padding:5px 6px; white-space:nowrap">${_escape(o.invoice || o.id || '')}</td>
+        <td style="padding:5px 6px">${_escape(o.product || '')}${warn.length ? '<div style="font-size:11px; color:var(--text-muted)">' + warn.map(_escape).join('<br>') + '</div>' : ''}</td>
+        <td style="padding:5px 6px; text-align:right">${qty}</td>
+        <td style="padding:5px 6px; white-space:nowrap">${_escape(o.dueDate || '')}</td>
+        <td style="padding:5px 6px">${fabricHtml}</td>
+        <td style="padding:5px 6px; text-align:right">R${mat.toFixed(2)}</td>
+        <td style="padding:5px 6px; text-align:right">R${labour.toFixed(2)}</td>
+        <td style="padding:5px 6px; text-align:right">R${ohUnit.toFixed(2)}</td>
+        <td style="padding:5px 6px; text-align:right; font-weight:800">R${unit.toFixed(2)}</td>
+        <td style="padding:5px 6px; text-align:right; font-weight:800">R${total.toFixed(2)}</td>
+        <td style="padding:5px 6px; text-align:right">${sell ? 'R' + sell.toFixed(2) : '—'}</td>
+        <td style="padding:5px 6px; text-align:right; font-weight:700; color:${pcol}">${profit == null ? '—' : 'R' + profit.toFixed(2)}</td>
+      </tr>`;
+    }).join('');
+    host.innerHTML = `<div style="overflow-x:auto"><table style="width:100%; border-collapse:collapse; font-size:12px; min-width:900px">
+      <thead><tr style="text-align:left; border-bottom:2px solid var(--border,#ddd)">
+        <th style="padding:6px">Invoice</th>
+        <th style="padding:6px">Product</th>
+        <th style="padding:6px; text-align:right">Qty</th>
+        <th style="padding:6px">Due</th>
+        <th style="padding:6px">Fabric</th>
+        <th style="padding:6px; text-align:right">Material/u</th>
+        <th style="padding:6px; text-align:right">Labour/u</th>
+        <th style="padding:6px; text-align:right">Overhead/u</th>
+        <th style="padding:6px; text-align:right">Cost each</th>
+        <th style="padding:6px; text-align:right">Cost total</th>
+        <th style="padding:6px; text-align:right">Sell/u</th>
+        <th style="padding:6px; text-align:right">Profit/u</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr style="border-top:2px solid var(--border,#ddd); font-weight:800">
+        <td style="padding:6px" colspan="5">In-house totals: ${inHouseCount} order(s), ${pieces} piece(s)${outsourced ? ' — ' + outsourced + ' outsourced shown but not counted' : ''}</td>
+        <td style="padding:6px; text-align:right">R${tMat.toFixed(2)}</td>
+        <td style="padding:6px; text-align:right">R${tLab.toFixed(2)}</td>
+        <td style="padding:6px; text-align:right">R${tOh.toFixed(2)}</td>
+        <td></td>
+        <td style="padding:6px; text-align:right">R${tCost.toFixed(2)}</td>
+        <td style="padding:6px; text-align:right">R${tSell.toFixed(2)}</td>
+        <td></td>
+      </tr></tfoot>
+    </table></div>`;
+  }
 
   function costingSetField(field, val) {
     snapshotState();
@@ -8660,6 +8757,14 @@ ${_PRODUCTION_PRINT_STYLES}
     host.innerHTML = orders.map(o => {
       const comments = Array.isArray(o.builderComments) ? o.builderComments : [];
       const fabReceived = o.fabricStatus === 'received';
+      // Fabric-ordered status so the partner can see whether the fabric is even
+      // on its way before they plan the build.
+      let fabChip = '';
+      if (o.fabric && !fabReceived) {
+        if (o.fabricOOS) fabChip = `<span style="background:#fee2e2; color:#991b1b; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:800; white-space:nowrap">🔴 Fabric out of stock${o.fabricStockETA ? ' — ETA ' + _escape(o.fabricStockETA) : ''}</span>`;
+        else if (o.fabricStatus === 'ordered') fabChip = '<span style="background:#fef3c7; color:#92400e; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:800; white-space:nowrap">📦 Fabric ordered — on its way</span>';
+        else fabChip = '<span style="background:#fee2e2; color:#991b1b; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:800; white-space:nowrap">⏳ Fabric not ordered yet</span>';
+      }
       return `
       <div style="background:#fff; border-radius:14px; padding:14px 16px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,0.07); ${o.builderDone ? 'border:2px solid #16a34a' : ''}">
         <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap">
@@ -8675,6 +8780,7 @@ ${_PRODUCTION_PRINT_STYLES}
           </span>
         </div>
         <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin-top:10px; font-size:12px">
+          ${fabChip}
           <label style="display:flex; align-items:center; gap:6px; margin:0; cursor:pointer; font-weight:600; color:${fabReceived ? '#166534' : '#b45309'}">
             <input type="checkbox" ${fabReceived ? 'checked' : ''} ${o.fabric ? '' : 'disabled'} onchange="builderPortalFabricReceived('${_escape(o.id)}', this.checked)" style="width:18px; height:18px; cursor:pointer">
             ${o.fabric ? (fabReceived ? 'Fabric received' : 'Tick when the fabric arrives') : 'No fabric on this order'}
