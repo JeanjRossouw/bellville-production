@@ -336,7 +336,7 @@
 <!-- MANUFACTURER PORTAL — only shown when URL has ?builder=1&m=<name> (e.g. Couch Potato) -->
 <div id="builder-only-view" style="display:none; position:fixed; inset:0; background:#f2f0ec; color:#1c1917; z-index:9000; overflow:auto; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
   <div style="background:linear-gradient(135deg,#000,#262626); color:#fff; padding:1.5rem 1.25rem 2.5rem; text-align:center">
-    <div style="font-size:11px; letter-spacing:0.2em; text-transform:uppercase; opacity:0.85">Manufacturer portal</div>
+    <div id="builder-portal-subtitle" style="font-size:11px; letter-spacing:0.2em; text-transform:uppercase; opacity:0.85">Manufacturer portal</div>
     <div id="builder-portal-name" style="font-size:25px; font-weight:800; margin-top:0.4rem">🏭 Orders</div>
     <div id="builder-portal-count" style="display:inline-block; font-size:13px; font-weight:600; margin-top:0.6rem; background:rgba(255,255,255,0.16); border:1px solid rgba(255,255,255,0.25); border-radius:999px; padding:0.25rem 0.9rem"></div>
     <div style="margin-top:0.7rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap">
@@ -4175,6 +4175,10 @@ ${_PRODUCTION_PRINT_STYLES}
     }
     if (typeof IS_BUILDER_MODE !== 'undefined' && IS_BUILDER_MODE) {
       if (typeof renderBuilderPortal === 'function') renderBuilderPortal();
+      return;
+    }
+    if (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE) {
+      if (typeof renderStaffPortal === 'function') renderStaffPortal();
       return;
     }
     if (((typeof IS_RESERVED_MODE !== 'undefined' && IS_RESERVED_MODE) || currentRole === 'fabricrep')) {
@@ -8736,12 +8740,109 @@ ${_PRODUCTION_PRINT_STYLES}
     ['main-app', 'login-overlay', 'dashboard-only-view', 'reserved-only-view', 'booking-only-view'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
     const view = document.getElementById('builder-only-view');
     if (view) view.style.display = 'block';
+    const sub = document.getElementById('builder-portal-subtitle');
+    if (sub) sub.textContent = 'Manufacturer portal';
     const nm = document.getElementById('builder-portal-name');
     if (nm) nm.innerHTML = _builderWordmarkHtml(BUILDER_MODE_NAME || 'Orders', 24, '#fff');
     document.title = (BUILDER_MODE_NAME || 'Manufacturer') + ' · Orders';
     renderBuilderPortal();
   }
   window.enterBuilderOnlyMode = enterBuilderOnlyMode;
+
+  // ===== STAFF PORTAL — the same clean screen as the manufacturer portal, =====
+  // but for our own staff (sales logins): every open order, with fabric
+  // status, ETA, comments and job cards. No tabs, phone-friendly.
+  let IS_STAFF_PORTAL_MODE = false;
+  function enterStaffPortalMode() {
+    IS_STAFF_PORTAL_MODE = true;
+    ['main-app', 'login-overlay', 'dashboard-only-view', 'reserved-only-view', 'booking-only-view'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    const view = document.getElementById('builder-only-view');
+    if (view) view.style.display = 'block';
+    const sub = document.getElementById('builder-portal-subtitle');
+    if (sub) sub.textContent = 'Staff portal';
+    const nm = document.getElementById('builder-portal-name');
+    if (nm) nm.innerHTML = _builderWordmarkHtml('Bellville Furniture', 22, '#fff');
+    document.title = 'Bellville · Orders';
+    renderStaffPortal();
+  }
+  window.enterStaffPortalMode = enterStaffPortalMode;
+  function _staffPortalOrders() {
+    const out = [];
+    const tags = { bellville: 'Bellville', pinkfoot: 'PinkFoot', repticube: 'ReptiCube' };
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      ((data[b] && data[b].orders) || []).forEach(o => {
+        if (!o || o.status === 'delivered' || o.status === 'done') return;
+        out.push({ o: o, biz: b, tag: tags[b] });
+      });
+    });
+    out.sort((a, b) => String(a.o.dueDate || '9999').localeCompare(String(b.o.dueDate || '9999')));
+    return out;
+  }
+  function renderStaffPortal() {
+    const host = document.getElementById('builder-portal-content');
+    if (!host) return;
+    const rows = _staffPortalOrders();
+    const cnt = document.getElementById('builder-portal-count');
+    if (cnt) cnt.textContent = rows.length + ' open order' + (rows.length === 1 ? '' : 's');
+    if (!rows.length) { host.innerHTML = '<div style="background:#fff; border-radius:14px; padding:2rem; text-align:center; color:#78716c; box-shadow:0 1px 3px rgba(0,0,0,0.07)">No open orders right now.</div>'; return; }
+    host.innerHTML = rows.map(r => {
+      const o = r.o;
+      const comments = Array.isArray(o.builderComments) ? o.builderComments : [];
+      const fabReceived = o.fabricStatus === 'received';
+      let fabChip = '';
+      if (o.fabric && !fabReceived) {
+        if (o.fabricOOS) fabChip = `<span style="background:#fee2e2; color:#991b1b; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:800; white-space:nowrap">🔴 Fabric out of stock${o.fabricStockETA ? ' — ETA ' + _escape(o.fabricStockETA) : ''}</span>`;
+        else if (o.fabricStatus === 'ordered') fabChip = '<span style="background:#fef3c7; color:#92400e; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:800; white-space:nowrap">📦 Fabric ordered</span>';
+        else fabChip = '<span style="background:#fee2e2; color:#991b1b; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:800; white-space:nowrap">⏳ Fabric not ordered</span>';
+      }
+      return `
+      <div style="background:#fff; border-radius:14px; padding:14px 16px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,0.07)">
+        <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap">
+          <div>
+            <div style="font-size:16px; font-weight:800">#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}</div>
+            <div style="font-size:12px; color:#78716c; margin-top:2px">
+              <span style="background:#e7e5e4; border-radius:999px; padding:1px 8px; font-size:10px; font-weight:700">${_escape(r.tag)}</span>
+              · Qty ${_escape(o.qty || 1)}${o.customer ? ' · 👤 ' + _escape(o.customer) : ''}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.builder ? ' · 🏭 ' + _escape(o.builder) : ''}
+            </div>
+          </div>
+          <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+          <button onclick="builderPortalPrintCard('${_escape(o.id)}')" title="Print this order's job card" style="padding:7px 12px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; color:#111; font-weight:700; font-size:12.5px; cursor:pointer">🖨️ Job card</button>
+          <button onclick="staffPortalMarkDone('${_escape(o.id)}')" style="padding:7px 14px; border-radius:999px; border:1.5px solid #16a34a; background:#f0fdf4; color:#166534; font-weight:700; font-size:12.5px; cursor:pointer">✓ Mark done</button>
+          </span>
+        </div>
+        <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin-top:10px; font-size:12px">
+          ${fabChip}
+          <label style="display:flex; align-items:center; gap:6px; margin:0; cursor:pointer; font-weight:600; color:${fabReceived ? '#166534' : '#b45309'}">
+            <input type="checkbox" ${fabReceived ? 'checked' : ''} ${o.fabric ? '' : 'disabled'} onchange="builderPortalFabricReceived('${_escape(o.id)}', this.checked)" style="width:18px; height:18px; cursor:pointer">
+            ${o.fabric ? (fabReceived ? 'Fabric received' : 'Tick when the fabric arrives') : 'No fabric on this order'}
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; margin:0; font-weight:600; color:#44403c">
+            Due <input type="date" value="${_escape(o.dueDate || '')}" onchange="planSetDueDate('${_escape(o.id)}', this.value)" style="padding:5px 7px; border-radius:6px; border:1px solid #d6d3d1">
+          </label>
+        </div>
+        <div style="border-top:1px solid #e7e5e4; margin-top:10px; padding-top:8px">
+          ${comments.slice(-4).map(c => `<div style="font-size:12px; margin-bottom:4px"><strong>${_escape(c.by || '')}</strong> <span style="color:#a8a29e">${_escape(String(c.at || '').slice(0, 10))}</span><br>${_escape(c.text || '')}</div>`).join('')}
+          <div style="display:flex; gap:6px; margin-top:4px">
+            <input id="bp-comment-${_escape(o.id)}" placeholder="Add a comment…" style="flex:1; padding:6px 8px; border-radius:6px; border:1px solid #d6d3d1; font-size:12px"
+              onkeydown="if(event.key==='Enter'){builderPortalAddComment('${_escape(o.id)}')}">
+            <button onclick="builderPortalAddComment('${_escape(o.id)}')" style="padding:6px 12px; border-radius:6px; border:1px solid #111; background:#111; color:#fff; font-weight:700; font-size:12px; cursor:pointer">💬 Send</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  window.renderStaffPortal = renderStaffPortal;
+  function staffPortalMarkDone(orderId) {
+    let biz = null;
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      if (!biz && ((data[b] && data[b].orders) || []).some(x => x && x.id === orderId)) biz = b;
+    });
+    const o = _findOrderAnyBiz(orderId);
+    if (!o || !biz) return;
+    if (!confirm('Mark #' + (o.invoice || o.id) + ' as DONE?')) return;
+    updateOrderStatusForBiz(biz, orderId, 'done');
+  }
+  window.staffPortalMarkDone = staffPortalMarkDone;
   function _builderPortalOrders() {
     const out = [];
     ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
@@ -8756,6 +8857,7 @@ ${_PRODUCTION_PRINT_STYLES}
     return out;
   }
   function renderBuilderPortal() {
+    if (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE) { renderStaffPortal(); return; }
     const host = document.getElementById('builder-portal-content');
     if (!host) return;
     if (!BUILDER_MODE_NAME) { host.innerHTML = '<div style="text-align:center; color:#78716c; padding:2rem">This portal link is missing the manufacturer name — ask for a fresh link.</div>'; return; }
@@ -8868,13 +8970,14 @@ ${_PRODUCTION_PRINT_STYLES}
   function builderPortalPrintCard(orderId) {
     const o = _findOrderAnyBiz(orderId);
     if (!o) return;
-    _openJobCardWindow('Job card #' + (o.invoice || o.id), _jobCardBodyHtml(o, true), 'PRINT');
+    _openJobCardWindow('Job card #' + (o.invoice || o.id), _jobCardBodyHtml(o, !(typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE)), 'PRINT');
   }
   window.builderPortalPrintCard = builderPortalPrintCard;
   function builderPortalPrintAll() {
-    const orders = _builderPortalOrders();
+    const staffMode = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE);
+    const orders = staffMode ? _staffPortalOrders().map(r => r.o) : _builderPortalOrders();
     if (!orders.length) { alert('No open orders to print.'); return; }
-    _openJobCardWindow('Job cards — ' + (BUILDER_MODE_NAME || 'orders') + ' (' + orders.length + ')', orders.map(o => _jobCardBodyHtml(o, true)).join(''), 'PRINT ' + orders.length + ' JOB CARD' + (orders.length === 1 ? '' : 'S'));
+    _openJobCardWindow('Job cards — ' + (staffMode ? 'all open orders' : (BUILDER_MODE_NAME || 'orders')) + ' (' + orders.length + ')', orders.map(o => _jobCardBodyHtml(o, !staffMode)).join(''), 'PRINT ' + orders.length + ' JOB CARD' + (orders.length === 1 ? '' : 'S'));
   }
   window.builderPortalPrintAll = builderPortalPrintAll;
   // Staff side: receive the finished item when it arrives from the partner.
@@ -12416,6 +12519,9 @@ ${totalsSection}
         } else if (IS_PLANNER_MODE) {
           // Shared view-only planner
           enterPlannerOnlyMode();
+        } else if (currentRole === 'sales' && !IS_POS_MODE && !IS_DASHBOARD_MODE) {
+          // Sales staff get the same clean portal screen as the manufacturers
+          enterStaffPortalMode();
         } else if (IS_RESERVED_MODE || currentRole === 'fabricrep') {
           // Fabric-rep portal — view-only reserved sheet with out-of-stock + ETA
           enterReservedOnlyMode();
@@ -12456,6 +12562,7 @@ ${totalsSection}
         document.getElementById('main-app').style.display = 'none';
         const _rv = document.getElementById('reserved-only-view'); if (_rv) _rv.style.display = 'none';
         const _bv = document.getElementById('builder-only-view'); if (_bv) _bv.style.display = 'none';
+        IS_STAFF_PORTAL_MODE = false;
         if (unsubscribe) { unsubscribe(); unsubscribe = null; }
         Object.keys(unsubscribePos).forEach(b => { try { unsubscribePos[b](); } catch (e) {} });
         unsubscribePos = {};
