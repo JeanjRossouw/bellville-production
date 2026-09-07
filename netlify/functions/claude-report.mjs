@@ -176,17 +176,18 @@ export function textReport(report) {
     L.push('='.repeat(120));
     if (!b.openOrders.length) { L.push('No open orders.'); L.push(''); return; }
     L.push(pad('Invoice', 12) + pad('Product', 30) + padL('Qty', 4) + '  ' + pad('Status', 12) + pad('Due', 12) +
-      pad('Builder', 14) + padL('Mat/u', 10) + padL('Lab/u', 10) + padL('OH/u', 9) + padL('Cost/u', 11) + padL('Cost tot', 12) + padL('Sell/u', 10));
-    L.push('-'.repeat(146));
+      pad('Fabric', 12) + pad('Builder', 14) + padL('Mat/u', 10) + padL('Lab/u', 10) + padL('OH/u', 9) + padL('Cost/u', 11) + padL('Cost tot', 12) + padL('Sell/u', 10));
+    L.push('-'.repeat(158));
     b.openOrders.forEach(o => {
+      const fab = !o.fabric ? '' : (o.fabricStatus === 'received' ? 'received' : o.fabricStatus === 'ordered' ? 'ordered' : 'NOT ORDERED');
       L.push(pad(o.invoice, 12) + pad(o.product, 30) + padL(o.qty, 4) + '  ' + pad(o.status, 12) + pad(o.dueDate, 12) +
-        pad(o.outsourcedTo || '', 14) + padL(o.materialPerUnit.toFixed(2), 10) + padL(o.labourPerUnit.toFixed(2), 10) +
+        pad(fab, 12) + pad(o.outsourcedTo || '', 14) + padL(o.materialPerUnit.toFixed(2), 10) + padL(o.labourPerUnit.toFixed(2), 10) +
         padL(o.overheadPerUnit.toFixed(2), 9) + padL(o.costPerUnit.toFixed(2), 11) + padL(o.costTotal.toFixed(2), 12) +
         padL(o.sellingPerUnit != null ? o.sellingPerUnit.toFixed(2) : '—', 10));
       o.warnings.forEach(w => L.push('            ⚠ ' + w));
     });
     const t = b.totals;
-    L.push('-'.repeat(146));
+    L.push('-'.repeat(158));
     L.push('Open orders: ' + t.openOrderCount + ' (' + t.openPieces + ' pieces, ' + t.outsourcedOrders + ' outsourced)');
     L.push('In-house totals: materials ' + R(t.inHouse.materialCost) + ' + labour ' + R(t.inHouse.labourCost) +
       ' + overhead share ' + R(t.inHouse.overheadShare) + ' = ' + R(t.inHouse.totalCost) +

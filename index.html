@@ -7161,11 +7161,22 @@ ${_PRODUCTION_PRINT_STYLES}
       if (!out && prod && isNaN(dl) && !(parseFloat(prod.labourHours) > 0)) warn.push('⚠ no labour cost set');
       const profit = sell ? (sell - unit) : null;
       const pcol = profit == null ? 'var(--text-muted)' : (profit >= 0 ? 'var(--success,#166534)' : 'var(--danger,#991b1b)');
+      // Fabric status chip — same convention as the production table.
+      let fabricHtml = '<span style="color:var(--text-muted)">—</span>';
+      if (o.fabric) {
+        const fs = o.fabricStatus || 'waiting';
+        if (o.fabricOOS) fabricHtml = '<span style="background:#fee2e2; color:#991b1b; padding:1px 6px; border-radius:8px; font-size:11px; font-weight:700; white-space:nowrap">🔴 OUT OF STOCK' + (o.fabricStockETA ? ' (ETA ' + _escape(o.fabricStockETA) + ')' : '') + '</span>';
+        else if (fs === 'received') fabricHtml = '<span style="background:#d1fae5; color:#065f46; padding:1px 6px; border-radius:8px; font-size:11px; font-weight:700; white-space:nowrap">✅ Received</span>';
+        else if (fs === 'ordered') fabricHtml = '<span style="background:#fef3c7; color:#92400e; padding:1px 6px; border-radius:8px; font-size:11px; font-weight:700; white-space:nowrap">📦 Ordered</span>';
+        else fabricHtml = '<span style="background:#fee2e2; color:#991b1b; padding:1px 6px; border-radius:8px; font-size:11px; font-weight:700; white-space:nowrap">⏳ Not ordered</span>';
+        fabricHtml += '<div style="font-size:10px; color:var(--text-muted); margin-top:1px">' + _escape(o.fabric) + '</div>';
+      }
       return `<tr style="border-bottom:1px solid var(--border,#eee)${out ? '; opacity:0.65' : ''}">
         <td style="padding:5px 6px; white-space:nowrap">${_escape(o.invoice || o.id || '')}</td>
         <td style="padding:5px 6px">${_escape(o.product || '')}${warn.length ? '<div style="font-size:11px; color:var(--text-muted)">' + warn.map(_escape).join('<br>') + '</div>' : ''}</td>
         <td style="padding:5px 6px; text-align:right">${qty}</td>
         <td style="padding:5px 6px; white-space:nowrap">${_escape(o.dueDate || '')}</td>
+        <td style="padding:5px 6px">${fabricHtml}</td>
         <td style="padding:5px 6px; text-align:right">R${mat.toFixed(2)}</td>
         <td style="padding:5px 6px; text-align:right">R${labour.toFixed(2)}</td>
         <td style="padding:5px 6px; text-align:right">R${ohUnit.toFixed(2)}</td>
@@ -7181,6 +7192,7 @@ ${_PRODUCTION_PRINT_STYLES}
         <th style="padding:6px">Product</th>
         <th style="padding:6px; text-align:right">Qty</th>
         <th style="padding:6px">Due</th>
+        <th style="padding:6px">Fabric</th>
         <th style="padding:6px; text-align:right">Material/u</th>
         <th style="padding:6px; text-align:right">Labour/u</th>
         <th style="padding:6px; text-align:right">Overhead/u</th>
@@ -7191,7 +7203,7 @@ ${_PRODUCTION_PRINT_STYLES}
       </tr></thead>
       <tbody>${rows}</tbody>
       <tfoot><tr style="border-top:2px solid var(--border,#ddd); font-weight:800">
-        <td style="padding:6px" colspan="4">In-house totals: ${inHouseCount} order(s), ${pieces} piece(s)${outsourced ? ' — ' + outsourced + ' outsourced shown but not counted' : ''}</td>
+        <td style="padding:6px" colspan="5">In-house totals: ${inHouseCount} order(s), ${pieces} piece(s)${outsourced ? ' — ' + outsourced + ' outsourced shown but not counted' : ''}</td>
         <td style="padding:6px; text-align:right">R${tMat.toFixed(2)}</td>
         <td style="padding:6px; text-align:right">R${tLab.toFixed(2)}</td>
         <td style="padding:6px; text-align:right">R${tOh.toFixed(2)}</td>
