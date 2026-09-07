@@ -8767,11 +8767,16 @@ ${_PRODUCTION_PRINT_STYLES}
   }
   window.enterStaffPortalMode = enterStaffPortalMode;
   function _staffPortalOrders() {
+    // The SAME list the manufacturer portal shows — only outsourced orders
+    // (e.g. Couch Patato's), with the same visibility rules — so staff see
+    // exactly what the partner sees and can answer on those threads.
     const out = [];
     const tags = { bellville: 'Bellville', pinkfoot: 'PinkFoot', repticube: 'ReptiCube' };
     ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
       ((data[b] && data[b].orders) || []).forEach(o => {
-        if (!o || o.status === 'delivered' || o.status === 'done') return;
+        if (!o || !o.builder) return;
+        if (o.status === 'delivered') return;
+        if (o.builderReceivedAt && (o.status === 'done')) return; // received back — off the list
         out.push({ o: o, biz: b, tag: tags[b] });
       });
     });
@@ -8783,8 +8788,8 @@ ${_PRODUCTION_PRINT_STYLES}
     if (!host) return;
     const rows = _staffPortalOrders();
     const cnt = document.getElementById('builder-portal-count');
-    if (cnt) cnt.textContent = rows.length + ' open order' + (rows.length === 1 ? '' : 's');
-    if (!rows.length) { host.innerHTML = '<div style="background:#fff; border-radius:14px; padding:2rem; text-align:center; color:#78716c; box-shadow:0 1px 3px rgba(0,0,0,0.07)">No open orders right now.</div>'; return; }
+    if (cnt) cnt.textContent = rows.length + ' order' + (rows.length === 1 ? '' : 's') + ' with the manufacturer';
+    if (!rows.length) { host.innerHTML = '<div style="background:#fff; border-radius:14px; padding:2rem; text-align:center; color:#78716c; box-shadow:0 1px 3px rgba(0,0,0,0.07)">No orders with a manufacturer right now.</div>'; return; }
     host.innerHTML = rows.map(r => {
       const o = r.o;
       const comments = Array.isArray(o.builderComments) ? o.builderComments : [];
@@ -8807,7 +8812,10 @@ ${_PRODUCTION_PRINT_STYLES}
           </div>
           <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
           <button onclick="builderPortalPrintCard('${_escape(o.id)}')" title="Print this order's job card" style="padding:7px 12px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; color:#111; font-weight:700; font-size:12.5px; cursor:pointer">🖨️ Job card</button>
-          <button onclick="staffPortalMarkDone('${_escape(o.id)}')" style="padding:7px 14px; border-radius:999px; border:1.5px solid #16a34a; background:#f0fdf4; color:#166534; font-weight:700; font-size:12.5px; cursor:pointer">✓ Mark done</button>
+          ${o.builderDone
+            ? `<span style="font-size:12px; font-weight:800; color:#166534">✅ DONE by ${_escape(o.builder)}</span>
+               <button onclick="receiveBuilderItem('${_escape(o.id)}')" style="padding:7px 14px; border-radius:999px; border:1.5px solid #16a34a; background:#f0fdf4; color:#166534; font-weight:700; font-size:12.5px; cursor:pointer">📥 Receive item</button>`
+            : ''}
           </span>
         </div>
         <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin-top:10px; font-size:12px">
