@@ -8823,7 +8823,14 @@ ${_PRODUCTION_PRINT_STYLES}
   window.builderPortalSetEta = builderPortalSetEta;
   function _builderPortalLogComment(o, text, byOverride) {
     if (!Array.isArray(o.builderComments)) o.builderComments = [];
-    o.builderComments.push({ by: byOverride || BUILDER_MODE_NAME || 'Partner', at: new Date().toISOString(), text: text });
+    // Comments are stamped with the manufacturer's name — except when one of OUR
+    // staff is signed in on the portal link: then use their own name, and count
+    // the comment as read so it doesn't raise a partner-activity alert on our side.
+    const staffSignedIn = (typeof currentRole !== 'undefined' && currentRole && currentRole !== 'fabricrep'
+      && typeof currentUser !== 'undefined' && currentUser && currentUser.email);
+    const by = byOverride || (staffSignedIn ? currentUser.email.split('@')[0] : (BUILDER_MODE_NAME || 'Partner'));
+    o.builderComments.push({ by: by, at: new Date().toISOString(), text: text });
+    if (staffSignedIn && !byOverride) o.builderCommentsAck = o.builderComments.length;
   }
   function builderPortalAddComment(orderId) {
     const el = document.getElementById('bp-comment-' + orderId);
