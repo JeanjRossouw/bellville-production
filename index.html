@@ -3508,7 +3508,7 @@ ${_PRODUCTION_PRINT_STYLES}
       id: 'FR-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5),
       orderId: order.id, orderNo: order.invoice || order.id, customer: order.customer || '', product: order.product || '',
       fabric, colour, meters, note,
-      by: (typeof currentUser !== 'undefined' && currentUser && currentUser.email) ? currentUser.email.split('@')[0] : 'staff',
+      by: _staffDisplayName('staff'),
       at: new Date().toISOString(), status: 'reserved'
     };
     _fabricReservations().unshift(r);
@@ -4450,7 +4450,7 @@ ${_PRODUCTION_PRINT_STYLES}
     snapshotState();
     o.prodStage = stage;
     if (!Array.isArray(o.stageLog)) o.stageLog = [];
-    o.stageLog.push({ stage: stage, at: new Date().toISOString(), by: (typeof currentUser !== 'undefined' && currentUser && currentUser.email) ? currentUser.email.split('@')[0] : 'staff' });
+    o.stageLog.push({ stage: stage, at: new Date().toISOString(), by: _staffDisplayName('staff') });
     saveData();
     renderStages();
     if (typeof render === 'function') render();
@@ -4692,6 +4692,15 @@ ${_PRODUCTION_PRINT_STYLES}
     if (st) st.textContent = '✓ ' + lines.length + ' line(s) sent to ' + mfgName + ' and added to the board as ' + batch + '-…';
   }
   window.sendBulkOrder = sendBulkOrder;
+  // The name shown on comments and logs — Couch Patato shows as a proper name,
+  // so staff must too: login prefix, capitalised (lehandra -> Lehandra).
+  function _staffDisplayName(fallback) {
+    const e = (typeof currentUser !== 'undefined' && currentUser && currentUser.email) ? currentUser.email.split('@')[0] : '';
+    if (!e) return fallback || 'staff';
+    return e.charAt(0).toUpperCase() + e.slice(1);
+  }
+  window._staffDisplayName = _staffDisplayName;
+
   function _findOrderAnyBiz(orderId) {
     let order = null;
     ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
@@ -5521,7 +5530,7 @@ ${_PRODUCTION_PRINT_STYLES}
     if (!o) return;
     snapshotState();
     if (!Array.isArray(o.builderComments)) o.builderComments = [];
-    const by = (typeof currentUser !== 'undefined' && currentUser && currentUser.email) ? currentUser.email.split('@')[0] : 'Bellville';
+    const by = _staffDisplayName('Bellville');
     o.builderComments.push({ by: by, at: new Date().toISOString(), text: text });
     o.builderCommentsAck = o.builderComments.length; // own reply never alerts yourself
     saveData();
@@ -5541,7 +5550,7 @@ ${_PRODUCTION_PRINT_STYLES}
     ['bellville', 'pinkfoot', 'repticube'].forEach(b => { if (!biz && ((data[b] && data[b].orders) || []).some(x => x && x.id === orderId)) biz = b; });
     snapshotState();
     if (!Array.isArray(o.builderComments)) o.builderComments = [];
-    const by = (typeof currentUser !== 'undefined' && currentUser && currentUser.email) ? currentUser.email.split('@')[0] : 'Bellville';
+    const by = _staffDisplayName('Bellville');
     o.builderComments.push({ by: by, at: new Date().toISOString(), text: text.trim() });
     o.builderCommentsAck = o.builderComments.length;
     saveData();
@@ -5804,7 +5813,7 @@ ${_PRODUCTION_PRINT_STYLES}
       orderNo: orderNo, customer: val('rep-customer'), phone: val('rep-phone'), product: val('rep-product'),
       reason: reason, details: val('rep-details'),
       status: 'logged', pickupDate: '', returnDate: '',
-      by: (typeof currentUser !== 'undefined' && currentUser && currentUser.email) ? currentUser.email.split('@')[0] : 'staff',
+      by: _staffDisplayName('staff'),
       at: new Date().toISOString()
     });
     saveData();
@@ -8828,7 +8837,7 @@ ${_PRODUCTION_PRINT_STYLES}
     // the comment as read so it doesn't raise a partner-activity alert on our side.
     const staffSignedIn = (typeof currentRole !== 'undefined' && currentRole && currentRole !== 'fabricrep'
       && typeof currentUser !== 'undefined' && currentUser && currentUser.email);
-    const by = byOverride || (staffSignedIn ? currentUser.email.split('@')[0] : (BUILDER_MODE_NAME || 'Partner'));
+    const by = byOverride || (staffSignedIn ? _staffDisplayName('staff') : (BUILDER_MODE_NAME || 'Partner'));
     o.builderComments.push({ by: by, at: new Date().toISOString(), text: text });
     if (staffSignedIn && !byOverride) o.builderCommentsAck = o.builderComments.length;
   }
