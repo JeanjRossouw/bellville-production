@@ -340,6 +340,7 @@
     <div id="builder-portal-name" style="font-size:25px; font-weight:800; margin-top:0.4rem">🏭 Orders</div>
     <div id="builder-portal-count" style="display:inline-block; font-size:13px; font-weight:600; margin-top:0.6rem; background:rgba(255,255,255,0.16); border:1px solid rgba(255,255,255,0.25); border-radius:999px; padding:0.25rem 0.9rem"></div>
     <div style="margin-top:0.7rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap">
+      <button id="staff-portal-back" onclick="exitStaffPortalMode()" style="display:none; padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">⬅ Full system</button>
       <button onclick="builderPortalPrintAll()" style="padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">🖨️ Print all job cards</button>
       <button onclick="doLogout()" style="padding:0.35rem 1rem; background:transparent; color:#d6d3d1; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px">Log out</button>
     </div>
@@ -370,6 +371,7 @@
     <button class="btn" onclick="exportBackup()" title="Download a full backup file of all data" style="font-size:10px">⬇️ BACKUP</button>
     <button class="btn" onclick="document.getElementById('backup-file').click()" title="Restore from a backup file" style="font-size:10px">⬆️ RESTORE</button>
     <input type="file" id="backup-file" accept=".json,application/json" style="display:none" onchange="importBackupFile(this)">
+    <button class="btn" onclick="enterStaffPortalMode()" title="The clean portal view of the manufacturer's orders — comments and replies" style="font-size:10px">🏭 PORTAL</button>
     <button class="btn" onclick="doLogout()" style="font-size:10px">🚪 LOG OUT</button>
     <button class="btn" onclick="clearAllData()" style="font-size:10px">CLEAR ALL</button>
   </div>
@@ -8742,6 +8744,8 @@ ${_PRODUCTION_PRINT_STYLES}
     if (view) view.style.display = 'block';
     const sub = document.getElementById('builder-portal-subtitle');
     if (sub) sub.textContent = 'Manufacturer portal';
+    const back = document.getElementById('staff-portal-back');
+    if (back) back.style.display = 'none';
     const nm = document.getElementById('builder-portal-name');
     if (nm) nm.innerHTML = _builderWordmarkHtml(BUILDER_MODE_NAME || 'Orders', 24, '#fff');
     document.title = (BUILDER_MODE_NAME || 'Manufacturer') + ' · Orders';
@@ -8760,12 +8764,25 @@ ${_PRODUCTION_PRINT_STYLES}
     if (view) view.style.display = 'block';
     const sub = document.getElementById('builder-portal-subtitle');
     if (sub) sub.textContent = 'Staff portal';
+    const back = document.getElementById('staff-portal-back');
+    if (back) back.style.display = 'inline-block';
     const nm = document.getElementById('builder-portal-name');
     if (nm) nm.innerHTML = _builderWordmarkHtml('Bellville Furniture', 22, '#fff');
     document.title = 'Bellville · Orders';
     renderStaffPortal();
   }
   window.enterStaffPortalMode = enterStaffPortalMode;
+  function exitStaffPortalMode() {
+    IS_STAFF_PORTAL_MODE = false;
+    const view = document.getElementById('builder-only-view');
+    if (view) view.style.display = 'none';
+    const app = document.getElementById('main-app');
+    if (app) app.style.display = 'block';
+    document.title = 'Production Manager';
+    if (typeof applyRolePermissions === 'function') applyRolePermissions();
+    if (typeof render === 'function') render();
+  }
+  window.exitStaffPortalMode = exitStaffPortalMode;
   function _staffPortalOrders() {
     // The SAME list the manufacturer portal shows — only outsourced orders
     // (e.g. Couch Patato's), with the same visibility rules — so staff see
@@ -12527,9 +12544,6 @@ ${totalsSection}
         } else if (IS_PLANNER_MODE) {
           // Shared view-only planner
           enterPlannerOnlyMode();
-        } else if (currentRole === 'sales' && !IS_POS_MODE && !IS_DASHBOARD_MODE) {
-          // Sales staff get the same clean portal screen as the manufacturers
-          enterStaffPortalMode();
         } else if (IS_RESERVED_MODE || currentRole === 'fabricrep') {
           // Fabric-rep portal — view-only reserved sheet with out-of-stock + ETA
           enterReservedOnlyMode();
