@@ -342,6 +342,7 @@
     <div style="margin-top:0.7rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap">
       <button id="staff-portal-back" onclick="exitStaffPortalMode()" style="display:none; padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">⬅ Full system</button>
       <button onclick="builderPortalPrintAll()" style="padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">🖨️ Print all job cards</button>
+      <button onclick="builderPortalExportCsv()" title="All the job cards as one spreadsheet — opens in Excel" style="padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">⬇️ Export to Excel</button>
       <button onclick="doLogout()" style="padding:0.35rem 1rem; background:transparent; color:#d6d3d1; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px">Log out</button>
     </div>
   </div>
@@ -9005,6 +9006,41 @@ ${_PRODUCTION_PRINT_STYLES}
     _openJobCardWindow('Job cards — ' + (staffMode ? 'all open orders' : (BUILDER_MODE_NAME || 'orders')) + ' (' + orders.length + ')', orders.map(o => _jobCardBodyHtml(o, !staffMode)).join(''), 'PRINT ' + orders.length + ' JOB CARD' + (orders.length === 1 ? '' : 'S'));
   }
   window.builderPortalPrintAll = builderPortalPrintAll;
+  // All the job cards as ONE spreadsheet — a row per order, columns instead of
+  // cards, so the partner can plan in Excel. Same scrubbed data as the job
+  // cards: sales order number only, no client details.
+  function builderPortalExportCsv() {
+    const staffMode = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE);
+    const orders = staffMode ? _staffPortalOrders().map(r => r.o) : _builderPortalOrders();
+    if (!orders.length) { alert('No open orders to export.'); return; }
+    const rows = [['Order #', 'Product', 'Qty', 'Fabric', 'Fabric status', 'Order placed', 'ETA (due date)', 'Done', 'Notes', 'Latest comment']];
+    orders.forEach(o => {
+      let fab = '';
+      if (o.fabric) {
+        if (o.fabricOOS) fab = 'OUT OF STOCK' + (o.fabricStockETA ? ' — back ' + o.fabricStockETA : '');
+        else if (o.fabricStatus === 'received') fab = 'Received';
+        else if (o.fabricStatus === 'ordered') fab = 'Ordered';
+        else fab = 'Not ordered';
+      }
+      const comments = Array.isArray(o.builderComments) ? o.builderComments : [];
+      const last = comments.length ? comments[comments.length - 1] : null;
+      rows.push([
+        o.invoice || o.id || '',
+        o.product || '',
+        parseInt(o.qty) || 1,
+        o.fabric || '',
+        fab,
+        o.builderOrderedAt || '',
+        o.dueDate || '',
+        o.builderDone ? 'DONE' + (o.builderDoneAt ? ' ' + o.builderDoneAt : '') : '',
+        o.notes || '',
+        last ? (last.by || '') + ': ' + (last.text || '') : ''
+      ]);
+    });
+    const who = staffMode ? 'partner-orders' : String(BUILDER_MODE_NAME || 'orders').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    _downloadCsvRows(who + '-' + new Date().toISOString().split('T')[0] + '.csv', rows);
+  }
+  window.builderPortalExportCsv = builderPortalExportCsv;
   // Staff side: receive the finished item when it arrives from the partner.
   function receiveBuilderItem(orderId) {
     const o = _findOrderAnyBiz(orderId);
