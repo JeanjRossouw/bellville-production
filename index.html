@@ -9038,9 +9038,44 @@ ${_PRODUCTION_PRINT_STYLES}
       ]);
     });
     const who = staffMode ? 'partner-orders' : String(BUILDER_MODE_NAME || 'orders').toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    _downloadCsvRows(who + '-' + new Date().toISOString().split('T')[0] + '.csv', rows);
+    const fname = who + '-' + new Date().toISOString().split('T')[0];
+    // A real .xlsx (via SheetJS, loaded on demand) opens with proper columns in
+    // every Excel locale — a comma CSV lands in ONE column on a South African
+    // Excel, whose list separator is ";". CSV stays as the offline fallback.
+    _loadSheetJs(function (ok) {
+      if (ok && window.XLSX) {
+        try {
+          const ws = XLSX.utils.aoa_to_sheet(rows);
+          // Column widths sized to the content (capped so Notes doesn't explode)
+          ws['!cols'] = rows[0].map(function (_, c) {
+            let w = 8;
+            rows.forEach(function (r) { w = Math.max(w, String(r[c] == null ? '' : r[c]).length + 2); });
+            return { wch: Math.min(w, 48) };
+          });
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, ws, 'Orders');
+          XLSX.writeFile(wb, fname + '.xlsx');
+          return;
+        } catch (e) { console.warn('xlsx export failed, falling back to CSV', e); }
+      }
+      _downloadCsvRows(fname + '.csv', rows);
+    });
   }
   window.builderPortalExportCsv = builderPortalExportCsv;
+  // Load SheetJS once, on demand, from the CDN — the portal must not carry the
+  // ~1MB library on every page view just in case someone exports.
+  function _loadSheetJs(cb) {
+    if (window.XLSX) { cb(true); return; }
+    if (_loadSheetJs._loading) { _loadSheetJs._queue.push(cb); return; }
+    _loadSheetJs._loading = true;
+    _loadSheetJs._queue = [cb];
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    const done = function (ok) { (_loadSheetJs._queue || []).forEach(function (f) { try { f(ok); } catch (e) {} }); _loadSheetJs._queue = []; _loadSheetJs._loading = false; };
+    s.onload = function () { done(true); };
+    s.onerror = function () { done(false); };
+    document.head.appendChild(s);
+  }
   // Staff side: receive the finished item when it arrives from the partner.
   function receiveBuilderItem(orderId) {
     const o = _findOrderAnyBiz(orderId);
