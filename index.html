@@ -3185,7 +3185,7 @@ ${_PRODUCTION_PRINT_STYLES}
     <div class="field full-width" style="border:3px solid #000; background:#f3f4f6; page-break-inside:avoid">
       <div class="field-label">⚠ CUSTOM SIZE — BUILD TO THESE DIMENSIONS</div>
       <div class="field-value" style="font-weight:900; font-size:16px">${_customSizeText(order)}</div>
-      <div style="text-align:center; margin-top:6px; background:#fff; padding:4px">${_customSizeSvg(order.customSize, 430)}</div>
+      <div style="text-align:center; margin-top:6px; background:#fff; padding:4px">${_customSizeSvg(order.customSize, 500)}</div>
     </div>
     ` : ''}
     ${order.fabric ? `
@@ -4818,8 +4818,8 @@ ${_PRODUCTION_PRINT_STYLES}
     const bottomY = SEAT_Y + SEAT_FACE;              // bottom of the couch body
     const ext = isChaise || isCorner;
     const EXT_W = isCorner ? 950 : 800;              // width of the projecting section
-    const drop = ext ? Math.max(extLen * 0.38, 380) : 0;   // how far it comes towards the viewer
-    const skew = ext ? drop * 0.55 : 0;              // sideways lean of the projection
+    const drop = ext ? Math.max(extLen * (isCorner ? 0.52 : 0.42), 420) : 0; // how far it comes towards the viewer
+    const skew = ext ? drop * 0.38 : 0;              // sideways lean of the projection
     const PADX = 380, PADT = 200;
     const wMm = L + PADX * 2, hMm = bottomY + LEG_H + drop + 210 + PADT + 330;
     const px = Math.min(maxW || 420, 560);
@@ -4862,11 +4862,23 @@ ${_PRODUCTION_PRINT_STYLES}
       const t = [[x0, topY], [x0 + EXT_W, topY], [x0 + EXT_W + dir * skew, topY + drop], [x0 + dir * skew, topY + drop]];
       S.push('<polygon points="' + P(t) + '" fill="#fff"/>');
       if (isCorner) {
-        // backrest strip along the return's OUTER edge, standing up slightly
-        const bs = 160;
+        // light shading on the return's seat so the plane reads
+        S.push('<polygon points="' + P(t) + '" fill="#f5f5f5"/>');
+        // seat cushion splits across the return (about one per 700mm)
+        const k = Math.max(1, Math.round(extLen / 700));
+        for (let i = 1; i < k; i++) {
+          const v = i / k;
+          S.push('<line x1="' + (x0 + dir * skew * v) + '" y1="' + (topY + drop * v) + '" x2="' + (x0 + EXT_W + dir * skew * v) + '" y2="' + (topY + drop * v) + '"/>');
+        }
+        // tall backrest along the return's OUTER edge (like the main back)
+        const bs = 230;
         const ox = sideLeft ? x0 : x0 + EXT_W - bs;
-        const strip = [[ox, topY - 170], [ox + bs, topY - 170], [ox + bs + dir * skew, topY + drop - 40], [ox + dir * skew, topY + drop - 40]];
-        S.push('<polygon points="' + P(strip) + '" fill="#f2f2f2"/>');
+        const strip = [[ox, topY - 330], [ox + bs, topY - 330], [ox + bs + dir * skew, topY + drop - 60], [ox + dir * skew, topY + drop - 60]];
+        S.push('<polygon points="' + P(strip) + '" fill="#fff"/>');
+        // armrest across the FAR END of the return
+        const ay = topY + drop;
+        const armEnd = [[x0 + dir * skew - 30, ay - 50], [x0 + EXT_W + dir * skew + 30, ay - 50], [x0 + EXT_W + dir * skew + 30, ay + 150], [x0 + dir * skew - 30, ay + 150]];
+        S.push('<polygon points="' + P(armEnd) + '" fill="#fff"/>');
       }
       // front face below the projected edge
       const f = [[x0 + dir * skew, topY + drop], [x0 + EXT_W + dir * skew, topY + drop],
@@ -4902,7 +4914,7 @@ ${_PRODUCTION_PRINT_STYLES}
     host.innerHTML = _customSizeSvg({
       lengthMm: g('customsize-len'), depthMm: g('customsize-depth'), heightMm: g('customsize-h'),
       daybedSide: g('customsize-dbside'), daybedLengthMm: g('customsize-dblen'), cushions: g('customsize-cushions')
-    }, 420);
+    }, 500);
   }
   window._customSizeUpdatePreview = _customSizeUpdatePreview;
   function _readIntakeCustomSize() {
