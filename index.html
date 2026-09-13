@@ -4801,94 +4801,96 @@ ${_PRODUCTION_PRINT_STYLES}
   // seat cushions. Schematic (mm-true proportions), for the modal preview
   // and the printed job card.
   function _customSizeSvg(cs, maxW) {
-    // Front-view couch sketch (furniture line-icon style). Shapes: straight,
-    // daybed (chaise) LEFT/RIGHT, or a full CORNER UNIT LEFT/RIGHT drawn as
-    // an L-return with its own back and end arm. Proportions follow the
-    // entered mm; the printed labels carry the truth.
+    // Couch drawn FROM THE FRONT (like a furniture catalogue line drawing):
+    // back cushions, seat bench, arms and legs, with the daybed / corner
+    // return coming towards the viewer in simple perspective on the chosen
+    // side. Proportions follow the entered mm; labels carry the truth.
     cs = cs || {};
     const L = parseFloat(cs.lengthMm) > 0 ? parseFloat(cs.lengthMm) : 2400;
-    const D = parseFloat(cs.depthMm) > 0 ? parseFloat(cs.depthMm) : 900;
     const raw = String(cs.daybedSide || '');
     const isChaise = raw === 'left' || raw === 'right';
     const isCorner = raw === 'corner-left' || raw === 'corner-right';
     const sideLeft = raw === 'left' || raw === 'corner-left';
     const extLen = (isChaise || isCorner) ? (parseFloat(cs.daybedLengthMm) > 0 ? parseFloat(cs.daybedLengthMm) : (isCorner ? 2000 : 1600)) : 0;
     const n = parseInt(cs.cushions) > 0 ? Math.min(parseInt(cs.cushions), 8) : 0;
-    const ARM = 190, BACK_H = 340, SEAT_H = 300, LEG = 90, DB_W = 780, R = 40;
-    const RW = Math.min(Math.max(D, 800), 1100); // corner return width (its seat depth)
-    const chaiseDrop = isChaise ? Math.max((extLen - D), 350) * 0.75 : 0;
-    const cornerDrop = isCorner ? Math.max(extLen * 0.55, 500) : 0;
-    const drop = Math.max(chaiseDrop, cornerDrop);
-    const PAD = 320;
-    const bodyH = BACK_H + SEAT_H;
-    const wMm = L + PAD * 2;
-    const hMm = bodyH + LEG + drop + (isCorner ? ARM : 0) + PAD * 2 + 130;
+    // vertical proportions (front view)
+    const ARM = 200, ARM_TOP = 60, BACK_TOP = 110, SEAT_Y = 520, SEAT_FACE = 210, LEG_H = 110, R = 55;
+    const bottomY = SEAT_Y + SEAT_FACE;              // bottom of the couch body
+    const ext = isChaise || isCorner;
+    const EXT_W = isCorner ? 950 : 800;              // width of the projecting section
+    const drop = ext ? Math.max(extLen * 0.38, 380) : 0;   // how far it comes towards the viewer
+    const skew = ext ? drop * 0.55 : 0;              // sideways lean of the projection
+    const PADX = 380, PADT = 200;
+    const wMm = L + PADX * 2, hMm = bottomY + LEG_H + drop + 210 + PADT + 330;
     const px = Math.min(maxW || 420, 560);
     const S = [];
+    const P = (pts) => pts.map(p => p.join(',')).join(' ');
     S.push('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + wMm + ' ' + hMm + '" width="' + px + '" style="max-width:100%; height:auto">');
-    S.push('<g transform="translate(' + PAD + ',' + PAD + ')" stroke="#111" stroke-width="16" fill="none" font-family="Arial,Helvetica,sans-serif">');
-    // inner span between the end structures (arms, or the corner return)
-    let leftEdge = ARM, rightEdge = L - ARM;
-    if (isCorner && sideLeft) leftEdge = RW;
-    if (isCorner && !sideLeft) rightEdge = L - RW;
-    // arms — skipped on a corner end (the return replaces it)
-    if (!(isCorner && sideLeft)) S.push('<rect x="0" y="-60" width="' + ARM + '" height="' + (bodyH + 60) + '" rx="' + R + '" fill="#fff"/>');
-    if (!(isCorner && !sideLeft)) S.push('<rect x="' + (L - ARM) + '" y="-60" width="' + ARM + '" height="' + (bodyH + 60) + '" rx="' + R + '" fill="#fff"/>');
-    // corner return: full-height L-leg with its own back, arm at the far end
-    if (isCorner) {
-      const cx = sideLeft ? 0 : L - RW;
-      const blockH = bodyH + drop;
-      S.push('<rect x="' + cx + '" y="-60" width="' + RW + '" height="' + (blockH + 60) + '" rx="' + R + '" fill="#e0e7ff"/>');
-      // inner seat panel of the return (so the back edge reads as a back)
-      const bx = sideLeft ? cx + 150 : cx + 24;
-      S.push('<rect x="' + bx + '" y="' + BACK_H + '" width="' + (RW - 174) + '" height="' + (drop + SEAT_H - 30) + '" rx="' + R + '" fill="#eef2ff"/>');
-      // end arm across the bottom of the return
-      S.push('<rect x="' + cx + '" y="' + blockH + '" width="' + RW + '" height="' + ARM + '" rx="' + R + '" fill="#fff"/>');
-      S.push('<text x="' + (cx + RW / 2) + '" y="' + (BACK_H + (drop + SEAT_H) / 2) + '" text-anchor="middle" font-size="112" stroke="none" fill="#111" font-weight="bold" transform="rotate(-90 ' + (cx + RW / 2) + ' ' + (BACK_H + (drop + SEAT_H) / 2) + ')">CORNER UNIT · ' + extLen + 'mm</text>');
+    S.push('<g transform="translate(' + PADX + ',' + PADT + ')" stroke="#111" stroke-width="16" stroke-linejoin="round" fill="#fff" font-family="Arial,Helvetica,sans-serif">');
+    // back cushions (tucked between the arms)
+    const bx0 = (isCorner && sideLeft) ? -10 : ARM - 30;
+    const bx1 = (isCorner && !sideLeft) ? L + 10 : L - ARM + 30;
+    const bw = bx1 - bx0;
+    const nb = n > 0 ? n : 1;
+    for (let i = 0; i < nb; i++) {
+      const per = bw / nb;
+      S.push('<rect x="' + (bx0 + i * per + 14) + '" y="' + BACK_TOP + '" width="' + (per - 28) + '" height="' + (SEAT_Y - BACK_TOP + 30) + '" rx="' + (R + 20) + '"/>');
     }
-    // back cushions between the end structures
-    const innerW = rightEdge - leftEdge;
-    if (n > 0) {
-      const per = innerW / n;
-      for (let i = 0; i < n; i++) {
-        S.push('<rect x="' + (leftEdge + i * per + 12) + '" y="0" width="' + (per - 24) + '" height="' + BACK_H + '" rx="' + R + '" fill="#fff"/>');
-      }
-    } else {
-      S.push('<rect x="' + (leftEdge + 12) + '" y="0" width="' + (innerW - 24) + '" height="' + BACK_H + '" rx="' + R + '" fill="#fff"/>');
-    }
-    // seat cushions — a chaise takes a seat section, a corner return does not
-    let seatX = leftEdge, seatW = innerW;
-    const dbX = isChaise ? (sideLeft ? ARM : L - ARM - DB_W) : 0;
-    if (isChaise && sideLeft) { seatX = ARM + DB_W; seatW = innerW - DB_W; }
-    if (isChaise && !sideLeft) { seatW = innerW - DB_W; }
-    if (seatW > 100) {
-      if (n > 0) {
-        const per = seatW / n;
-        for (let i = 0; i < n; i++) {
-          S.push('<rect x="' + (seatX + i * per + 12) + '" y="' + BACK_H + '" width="' + (per - 24) + '" height="' + SEAT_H + '" rx="' + R + '" fill="#f3f4f6"/>');
-        }
-        S.push('<text x="' + (seatX + seatW / 2) + '" y="' + (BACK_H + SEAT_H / 2 + 35) + '" text-anchor="middle" font-size="100" stroke="none" fill="#6b7280">' + n + '×</text>');
-      } else {
-        S.push('<rect x="' + (seatX + 12) + '" y="' + BACK_H + '" width="' + (seatW - 24) + '" height="' + SEAT_H + '" rx="' + R + '" fill="#f3f4f6"/>');
+    // seat bench: thin top face + front face (one long bench like the reference)
+    S.push('<rect x="' + (ARM - 40) + '" y="' + SEAT_Y + '" width="' + (L - ARM * 2 + 80) + '" height="90" rx="45" fill="#f7f7f7"/>');
+    S.push('<rect x="' + (ARM - 40) + '" y="' + (SEAT_Y + 70) + '" width="' + (L - ARM * 2 + 80) + '" height="' + (SEAT_FACE - 70) + '" rx="45"/>');
+    // seat cushion split lines on the bench
+    if (n > 1) {
+      const sw = (L - ARM * 2 + 80) / n;
+      for (let i = 1; i < n; i++) {
+        S.push('<line x1="' + (ARM - 40 + i * sw) + '" y1="' + (SEAT_Y + 12) + '" x2="' + (ARM - 40 + i * sw) + '" y2="' + (SEAT_Y + 78) + '"/>');
       }
     }
-    // daybed / chaise: seat section extended forward (drawn downward)
-    if (isChaise) {
-      S.push('<rect x="' + (dbX + 12) + '" y="' + BACK_H + '" width="' + (DB_W - 24) + '" height="' + (SEAT_H + drop) + '" rx="' + R + '" fill="#e0e7ff"/>');
-      S.push('<text x="' + (dbX + DB_W / 2) + '" y="' + (BACK_H + (SEAT_H + drop) / 2) + '" text-anchor="middle" font-size="115" stroke="none" fill="#111" font-weight="bold">DAYBED</text>');
-      S.push('<text x="' + (dbX + DB_W / 2) + '" y="' + (BACK_H + (SEAT_H + drop) / 2 + 150) + '" text-anchor="middle" font-size="105" stroke="none" fill="#111">' + extLen + 'mm</text>');
-      S.push('<line x1="' + (dbX + 90) + '" y1="' + (BACK_H + SEAT_H + drop) + '" x2="' + (dbX + 90) + '" y2="' + (BACK_H + SEAT_H + drop + LEG) + '"/>');
-      S.push('<line x1="' + (dbX + DB_W - 90) + '" y1="' + (BACK_H + SEAT_H + drop) + '" x2="' + (dbX + DB_W - 90) + '" y2="' + (BACK_H + SEAT_H + drop + LEG) + '"/>');
+    // arms (drawn over the bench ends) — the corner side has no arm, the return replaces it
+    if (!(isCorner && sideLeft)) S.push('<rect x="0" y="' + ARM_TOP + '" width="' + ARM + '" height="' + (bottomY - ARM_TOP) + '" rx="' + (R + 25) + '"/>');
+    if (!(isCorner && !sideLeft)) S.push('<rect x="' + (L - ARM) + '" y="' + ARM_TOP + '" width="' + ARM + '" height="' + (bottomY - ARM_TOP) + '" rx="' + (R + 25) + '"/>');
+    // legs (tapered)
+    const leg = (x) => S.push('<polygon points="' + P([[x, bottomY], [x + 70, bottomY], [x + 52, bottomY + LEG_H], [x + 18, bottomY + LEG_H]]) + '" fill="#111"/>');
+    if (!(ext && sideLeft)) leg(ARM * 0.35);
+    if (!(ext && !sideLeft)) leg(L - ARM * 0.35 - 70);
+    // daybed / corner return coming towards the viewer
+    if (ext) {
+      const x0 = sideLeft ? -20 : L - EXT_W + 20;                 // near end edge
+      const dir = sideLeft ? -1 : 1;                              // lean direction
+      const topY = SEAT_Y;
+      // top face (parallelogram coming towards the viewer)
+      const t = [[x0, topY], [x0 + EXT_W, topY], [x0 + EXT_W + dir * skew, topY + drop], [x0 + dir * skew, topY + drop]];
+      S.push('<polygon points="' + P(t) + '" fill="#fff"/>');
+      if (isCorner) {
+        // backrest strip along the return's OUTER edge, standing up slightly
+        const bs = 160;
+        const ox = sideLeft ? x0 : x0 + EXT_W - bs;
+        const strip = [[ox, topY - 170], [ox + bs, topY - 170], [ox + bs + dir * skew, topY + drop - 40], [ox + dir * skew, topY + drop - 40]];
+        S.push('<polygon points="' + P(strip) + '" fill="#f2f2f2"/>');
+      }
+      // front face below the projected edge
+      const f = [[x0 + dir * skew, topY + drop], [x0 + EXT_W + dir * skew, topY + drop],
+                 [x0 + EXT_W + dir * skew, topY + drop + SEAT_FACE - 40], [x0 + dir * skew, topY + drop + SEAT_FACE - 40]];
+      S.push('<polygon points="' + P(f) + '" fill="#fff"/>');
+      // legs under the projected front corners
+      const fy = topY + drop + SEAT_FACE - 40;
+      S.push('<polygon points="' + P([[x0 + dir * skew + 40, fy], [x0 + dir * skew + 110, fy], [x0 + dir * skew + 95, fy + LEG_H], [x0 + dir * skew + 58, fy + LEG_H]]) + '" fill="#111"/>');
+      S.push('<polygon points="' + P([[x0 + EXT_W + dir * skew - 110, fy], [x0 + EXT_W + dir * skew - 40, fy], [x0 + EXT_W + dir * skew - 58, fy + LEG_H], [x0 + EXT_W + dir * skew - 95, fy + LEG_H]]) + '" fill="#111"/>');
+      // label on the top face
+      const lx = x0 + EXT_W / 2 + dir * skew / 2, ly = topY + (isCorner ? drop * 0.62 : drop * 0.55);
+      S.push('<text x="' + lx + '" y="' + ly + '" text-anchor="middle" font-size="105" stroke="none" fill="#111" font-weight="bold">' + (isCorner ? 'CORNER UNIT' : 'DAYBED') + '</text>');
+      S.push('<text x="' + lx + '" y="' + (ly + 135) + '" text-anchor="middle" font-size="95" stroke="none" fill="#111">' + extLen + 'mm</text>');
     }
-    // legs under the arms that exist
-    if (!(isCorner && sideLeft)) S.push('<line x1="' + (ARM / 2) + '" y1="' + bodyH + '" x2="' + (ARM / 2) + '" y2="' + (bodyH + LEG) + '"/>');
-    if (!(isCorner && !sideLeft)) S.push('<line x1="' + (L - ARM / 2) + '" y1="' + bodyH + '" x2="' + (L - ARM / 2) + '" y2="' + (bodyH + LEG) + '"/>');
-    // total length dimension under everything
-    const dimY = bodyH + LEG + drop + (isCorner ? ARM : 0) + 170;
+    // cushion count
+    if (n > 0) S.push('<text x="' + (L / 2) + '" y="' + (BACK_TOP - 40) + '" text-anchor="middle" font-size="95" stroke="none" fill="#6b7280">' + n + ' seat cushion' + (n === 1 ? '' : 's') + '</text>');
+    // total length dimension
+    const dimY = bottomY + LEG_H + drop + 190;
+    S.push('<g stroke-width="10">');
     S.push('<line x1="0" y1="' + dimY + '" x2="' + L + '" y2="' + dimY + '"/>');
-    S.push('<line x1="0" y1="' + (dimY - 55) + '" x2="0" y2="' + (dimY + 55) + '"/>');
-    S.push('<line x1="' + L + '" y1="' + (dimY - 55) + '" x2="' + L + '" y2="' + (dimY + 55) + '"/>');
-    S.push('<text x="' + (L / 2) + '" y="' + (dimY + 165) + '" text-anchor="middle" font-size="125" stroke="none" fill="#111" font-weight="bold">' + L + 'mm long</text>');
+    S.push('<line x1="0" y1="' + (dimY - 50) + '" x2="0" y2="' + (dimY + 50) + '"/>');
+    S.push('<line x1="' + L + '" y1="' + (dimY - 50) + '" x2="' + L + '" y2="' + (dimY + 50) + '"/>');
+    S.push('</g>');
+    S.push('<text x="' + (L / 2) + '" y="' + (dimY + 160) + '" text-anchor="middle" font-size="115" stroke="none" fill="#111" font-weight="bold">' + L + 'mm long</text>');
     S.push('</g></svg>');
     return S.join('');
   }
