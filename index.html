@@ -358,7 +358,7 @@
           <option value="corner-left">Corner unit LEFT</option>
           <option value="corner-right">Corner unit RIGHT</option>
         </select></div>
-      <div style="flex:1; min-width:120px"><label style="font-size:11px; color:var(--text-muted)">Daybed / corner length (mm)</label>
+      <div style="flex:1; min-width:120px"><label style="font-size:11px; color:var(--text-muted)">Daybed length / corner 2nd side (mm)</label>
         <input id="customsize-dblen" type="number" min="0" placeholder="e.g. 1600" oninput="_customSizeUpdatePreview()" style="width:100%; padding:8px"></div>
       <div style="flex:1; min-width:120px"><label style="font-size:11px; color:var(--text-muted)">Seat cushions</label>
         <input id="customsize-cushions" type="number" min="0" max="8" placeholder="e.g. 3" oninput="_customSizeUpdatePreview()" style="width:100%; padding:8px"></div>
@@ -4790,7 +4790,10 @@ ${_PRODUCTION_PRINT_STYLES}
     if (cs.daybedSide === 'left' || cs.daybedSide === 'right') {
       t += (t ? ' · ' : '') + 'daybed ' + cs.daybedSide.toUpperCase() + (parseFloat(cs.daybedLengthMm) > 0 ? ' (' + parseFloat(cs.daybedLengthMm) + 'mm)' : '');
     } else if (cs.daybedSide === 'corner-left' || cs.daybedSide === 'corner-right') {
-      t += (t ? ' · ' : '') + 'corner unit ' + (cs.daybedSide === 'corner-left' ? 'LEFT' : 'RIGHT') + (parseFloat(cs.daybedLengthMm) > 0 ? ' (' + parseFloat(cs.daybedLengthMm) + 'mm)' : '');
+      // a corner unit is two full sides meeting at the corner, e.g. 2800 × 2800
+      const a = parseFloat(cs.lengthMm) > 0 ? parseFloat(cs.lengthMm) : 0;
+      const b = parseFloat(cs.daybedLengthMm) > 0 ? parseFloat(cs.daybedLengthMm) : 0;
+      t += (t ? ' · ' : '') + 'corner unit ' + (cs.daybedSide === 'corner-left' ? 'LEFT' : 'RIGHT') + ((a && b) ? ' (' + a + ' × ' + b + 'mm sides)' : (b ? ' (2nd side ' + b + 'mm)' : ''));
     }
     if (parseInt(cs.cushions) > 0) t += (t ? ' · ' : '') + parseInt(cs.cushions) + ' seat cushion' + (parseInt(cs.cushions) === 1 ? '' : 's');
     if (cs.note) t += (t ? ' — ' : '') + cs.note;
