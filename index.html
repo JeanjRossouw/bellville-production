@@ -333,6 +333,32 @@
   </div>
 </div>
 
+<!-- 📐 CUSTOM SIZE — staff form to build a couch to different dimensions -->
+<div id="customsize-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9500; align-items:center; justify-content:center; padding:1rem">
+  <div style="background:var(--card-bg,#fff); color:var(--text,#111); border-radius:12px; max-width:480px; width:100%; padding:1.25rem; box-shadow:0 20px 60px rgba(0,0,0,0.4)">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem">
+      <div style="font-size:15px; font-weight:900">📐 Custom size</div>
+      <button class="btn btn-sm" onclick="closeCustomSize()">✕</button>
+    </div>
+    <div id="customsize-order" style="font-size:12px; color:var(--text-muted); margin:0.4rem 0 0.75rem"></div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.75rem">
+      <div style="flex:1; min-width:110px"><label style="font-size:11px; color:var(--text-muted)">Length (mm)</label>
+        <input id="customsize-len" type="number" min="0" placeholder="e.g. 2400" style="width:100%; padding:8px"></div>
+      <div style="flex:1; min-width:110px"><label style="font-size:11px; color:var(--text-muted)">Depth (mm)</label>
+        <input id="customsize-depth" type="number" min="0" placeholder="e.g. 900" style="width:100%; padding:8px"></div>
+      <div style="flex:1; min-width:110px"><label style="font-size:11px; color:var(--text-muted)">Height (mm)</label>
+        <input id="customsize-h" type="number" min="0" placeholder="e.g. 850" style="width:100%; padding:8px"></div>
+    </div>
+    <label style="font-size:11px; color:var(--text-muted)">Note (what's different)</label>
+    <input id="customsize-note" placeholder="e.g. arms 200mm wide, loose ottoman" style="width:100%; padding:8px; margin:0.25rem 0 0.9rem">
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap">
+      <button class="btn btn-primary" style="flex:1" onclick="saveCustomSize()">💾 Save size</button>
+      <button class="btn" onclick="clearCustomSize()" title="Remove the custom size — back to standard">↩ Standard size</button>
+    </div>
+    <div style="font-size:11px; color:var(--text-muted); margin-top:0.6rem">The size prints big on the job card (in-house and Couch Patato's) and shows on the portals, so the factory builds to it.</div>
+  </div>
+</div>
+
 <!-- MANUFACTURER PORTAL — only shown when URL has ?builder=1&m=<name> (e.g. Couch Potato) -->
 <div id="builder-only-view" style="display:none; position:fixed; inset:0; background:#f2f0ec; color:#1c1917; z-index:9000; overflow:auto; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
   <div style="background:linear-gradient(135deg,#000,#262626); color:#fff; padding:1.5rem 1.25rem 2.5rem; text-align:center">
@@ -544,6 +570,24 @@
         <div class="f2" style="min-width:80px">
           <label>Qty</label>
           <input id="intake-qty" type="number" value="1" min="1">
+        </div>
+      </div>
+      <div class="row">
+        <div class="f2" style="min-width:110px">
+          <label>📐 Length (mm) <span style="color:var(--text-muted); font-weight:normal">(custom size — leave empty for standard)</span></label>
+          <input id="intake-size-len" type="number" min="0" placeholder="e.g. 2400">
+        </div>
+        <div class="f2" style="min-width:110px">
+          <label>Depth (mm)</label>
+          <input id="intake-size-depth" type="number" min="0" placeholder="e.g. 900">
+        </div>
+        <div class="f2" style="min-width:110px">
+          <label>Height (mm)</label>
+          <input id="intake-size-h" type="number" min="0" placeholder="e.g. 850">
+        </div>
+        <div class="f1">
+          <label>Size note</label>
+          <input id="intake-size-note" placeholder="e.g. arms 200mm wide, loose ottoman">
         </div>
       </div>
       <div class="row">
@@ -2608,6 +2652,9 @@
       outstanding
     };
 
+    const _cs = _readIntakeCustomSize();
+    if (_cs) order.customSize = _cs;
+
     snapshotState();
     currentData().orders.push(order);
     document.getElementById('order-status').innerHTML = `✓ Order added (Due: ${order.dueDate})`;
@@ -2618,6 +2665,7 @@
     document.getElementById('intake-fabric').value = '';
     document.getElementById('intake-product').value = '';
     document.getElementById('intake-qty').value = '1';
+    ['intake-size-len', 'intake-size-depth', 'intake-size-h', 'intake-size-note'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
     if (document.getElementById('intake-category')) document.getElementById('intake-category').value = '';
     if (document.getElementById('intake-payment')) document.getElementById('intake-payment').value = 'deposit';
     if (document.getElementById('intake-outstanding')) document.getElementById('intake-outstanding').value = '';
@@ -3118,6 +3166,12 @@ ${_PRODUCTION_PRINT_STYLES}
       <div class="field-label">Product${order.category ? ' — ' + order.category : ''}</div>
       <div class="field-value">${order.product}</div>
     </div>
+    ${order.customSize && _customSizeText(order) ? `
+    <div class="field full-width" style="border:3px solid #000; background:#f3f4f6">
+      <div class="field-label">⚠ CUSTOM SIZE — BUILD TO THESE DIMENSIONS</div>
+      <div class="field-value" style="font-weight:900; font-size:16px">${_customSizeText(order)}</div>
+    </div>
+    ` : ''}
     ${order.fabric ? `
     <div class="field full-width">
       <div class="field-label">Fabric / Color</div>
@@ -4707,6 +4761,71 @@ ${_PRODUCTION_PRINT_STYLES}
     return e.charAt(0).toUpperCase() + e.slice(1);
   }
   window._staffDisplayName = _staffDisplayName;
+
+  // ---- 📐 CUSTOM SIZE — order.customSize = { lengthMm, depthMm, heightMm, note } ----
+  function _customSizeText(o) {
+    const cs = o && o.customSize;
+    if (!cs) return '';
+    const parts = [];
+    if (parseFloat(cs.lengthMm) > 0) parts.push('L' + parseFloat(cs.lengthMm));
+    if (parseFloat(cs.depthMm) > 0) parts.push('D' + parseFloat(cs.depthMm));
+    if (parseFloat(cs.heightMm) > 0) parts.push('H' + parseFloat(cs.heightMm));
+    let t = parts.length ? parts.join(' × ') + ' mm' : '';
+    if (cs.note) t += (t ? ' — ' : '') + cs.note;
+    return t;
+  }
+  window._customSizeText = _customSizeText;
+  function _readIntakeCustomSize() {
+    const g = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+    const len = parseFloat(g('intake-size-len')) || 0;
+    const depth = parseFloat(g('intake-size-depth')) || 0;
+    const h = parseFloat(g('intake-size-h')) || 0;
+    const note = String(g('intake-size-note') || '').trim();
+    if (!len && !depth && !h && !note) return null;
+    return { lengthMm: len || '', depthMm: depth || '', heightMm: h || '', note: note };
+  }
+  window._readIntakeCustomSize = _readIntakeCustomSize;
+  let _customSizeOrderId = null;
+  function openCustomSize(orderId) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    _customSizeOrderId = orderId;
+    const cs = o.customSize || {};
+    document.getElementById('customsize-order').textContent = '#' + (o.invoice || o.id) + ' — ' + (o.product || '');
+    document.getElementById('customsize-len').value = cs.lengthMm || '';
+    document.getElementById('customsize-depth').value = cs.depthMm || '';
+    document.getElementById('customsize-h').value = cs.heightMm || '';
+    document.getElementById('customsize-note').value = cs.note || '';
+    document.getElementById('customsize-modal').style.display = 'flex';
+  }
+  function closeCustomSize() {
+    document.getElementById('customsize-modal').style.display = 'none';
+    _customSizeOrderId = null;
+  }
+  function saveCustomSize() {
+    const o = _findOrderAnyBiz(_customSizeOrderId);
+    if (!o) { closeCustomSize(); return; }
+    const len = parseFloat(document.getElementById('customsize-len').value) || 0;
+    const depth = parseFloat(document.getElementById('customsize-depth').value) || 0;
+    const h = parseFloat(document.getElementById('customsize-h').value) || 0;
+    const note = String(document.getElementById('customsize-note').value || '').trim();
+    snapshotState();
+    if (!len && !depth && !h && !note) delete o.customSize;
+    else o.customSize = { lengthMm: len || '', depthMm: depth || '', heightMm: h || '', note: note };
+    saveData();
+    const had = !!o.customSize;
+    closeCustomSize();
+    if (typeof render === 'function') render();
+    if (typeof toast === 'function') toast(had ? '📐 Custom size saved for #' + (o.invoice || o.id) : '📐 #' + (o.invoice || o.id) + ' back to standard size', 'success', 2500);
+  }
+  function clearCustomSize() {
+    ['customsize-len', 'customsize-depth', 'customsize-h', 'customsize-note'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    saveCustomSize();
+  }
+  window.openCustomSize = openCustomSize;
+  window.closeCustomSize = closeCustomSize;
+  window.saveCustomSize = saveCustomSize;
+  window.clearCustomSize = clearCustomSize;
 
   function _findOrderAnyBiz(orderId) {
     let order = null;
@@ -8825,7 +8944,7 @@ ${_PRODUCTION_PRINT_STYLES}
             <div style="font-size:16px; font-weight:800">#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}</div>
             <div style="font-size:12px; color:#78716c; margin-top:2px">
               <span style="background:#e7e5e4; border-radius:999px; padding:1px 8px; font-size:10px; font-weight:700">${_escape(r.tag)}</span>
-              · Qty ${_escape(o.qty || 1)}${o.customer ? ' · 👤 ' + _escape(o.customer) : ''}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.builder ? ' · 🏭 ' + _escape(o.builder) : ''}
+              · Qty ${_escape(o.qty || 1)}${o.customer ? ' · 👤 ' + _escape(o.customer) : ''}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.builder ? ' · 🏭 ' + _escape(o.builder) : ''}${o.customSize ? '<br>📐 <strong style="color:#111">' + _escape(_customSizeText(o)) + '</strong>' : ''}
             </div>
           </div>
           <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
@@ -8907,7 +9026,7 @@ ${_PRODUCTION_PRINT_STYLES}
         <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap">
           <div>
             <div style="font-size:16px; font-weight:800">#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}</div>
-            <div style="font-size:12px; color:#78716c; margin-top:2px">Qty ${_escape(o.qty || 1)}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.notes ? '<br>📝 ' + _escape(o.notes) : ''}</div>
+            <div style="font-size:12px; color:#78716c; margin-top:2px">Qty ${_escape(o.qty || 1)}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.customSize ? '<br>📐 <strong style="color:#111">' + _escape(_customSizeText(o)) + '</strong>' : ''}${o.notes ? '<br>📝 ' + _escape(o.notes) : ''}</div>
           </div>
           <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
           <button onclick="builderPortalPrintCard('${_escape(o.id)}')" title="Print this order's job card" style="padding:7px 12px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; color:#111; font-weight:700; font-size:12.5px; cursor:pointer">🖨️ Job card</button>
@@ -9013,7 +9132,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const staffMode = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE);
     const orders = staffMode ? _staffPortalOrders().map(r => r.o) : _builderPortalOrders();
     if (!orders.length) { alert('No open orders to export.'); return; }
-    const rows = [['Order #', 'Product', 'Qty', 'Fabric', 'Fabric status', 'Order placed', 'ETA (due date)', 'Done', 'Notes', 'Latest comment']];
+    const rows = [['Order #', 'Product', 'Custom size', 'Qty', 'Fabric', 'Fabric status', 'Order placed', 'ETA (due date)', 'Done', 'Notes', 'Latest comment']];
     orders.forEach(o => {
       let fab = '';
       if (o.fabric) {
@@ -9027,6 +9146,7 @@ ${_PRODUCTION_PRINT_STYLES}
       rows.push([
         o.invoice || o.id || '',
         o.product || '',
+        _customSizeText(o),
         parseInt(o.qty) || 1,
         o.fabric || '',
         fab,
@@ -9770,6 +9890,11 @@ ${_PRODUCTION_PRINT_STYLES}
           </div>
           <div style="font-size:11px; color:var(--text-muted); margin-bottom:0.75rem">
             Order: ${o.orderDate} | Due: <input type="date" value="${o.dueDate}" onchange="updateDueDate('${o.id}', this.value)" style="display:inline-block; width:auto; padding:2px 6px; font-size:11px; background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:4px">
+          </div>
+
+          <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin-bottom:0.75rem">
+            <button class="btn btn-sm" onclick="openCustomSize('${o.id}')" title="Build this couch to a different size">📐 ${o.customSize ? 'Edit custom size' : 'Custom size'}</button>
+            ${o.customSize ? `<span style="font-size:12px; font-weight:800; color:#7c3aed">📐 ${_escape(_customSizeText(o))}</span>` : ''}
           </div>
 
           ${bomKeys.length > 0 ? `
