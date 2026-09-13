@@ -343,12 +343,25 @@
     <div id="customsize-order" style="font-size:12px; color:var(--text-muted); margin:0.4rem 0 0.75rem"></div>
     <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.75rem">
       <div style="flex:1; min-width:110px"><label style="font-size:11px; color:var(--text-muted)">Length (mm)</label>
-        <input id="customsize-len" type="number" min="0" placeholder="e.g. 2400" style="width:100%; padding:8px"></div>
+        <input id="customsize-len" type="number" min="0" oninput="_customSizeUpdatePreview()" placeholder="e.g. 2400" style="width:100%; padding:8px"></div>
       <div style="flex:1; min-width:110px"><label style="font-size:11px; color:var(--text-muted)">Depth (mm)</label>
-        <input id="customsize-depth" type="number" min="0" placeholder="e.g. 900" style="width:100%; padding:8px"></div>
+        <input id="customsize-depth" type="number" min="0" oninput="_customSizeUpdatePreview()" placeholder="e.g. 900" style="width:100%; padding:8px"></div>
       <div style="flex:1; min-width:110px"><label style="font-size:11px; color:var(--text-muted)">Height (mm)</label>
-        <input id="customsize-h" type="number" min="0" placeholder="e.g. 850" style="width:100%; padding:8px"></div>
+        <input id="customsize-h" type="number" min="0" oninput="_customSizeUpdatePreview()" placeholder="e.g. 850" style="width:100%; padding:8px"></div>
     </div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.75rem">
+      <div style="flex:1; min-width:120px"><label style="font-size:11px; color:var(--text-muted)">Daybed side</label>
+        <select id="customsize-dbside" onchange="_customSizeUpdatePreview()" style="width:100%; padding:8px">
+          <option value="">No daybed</option>
+          <option value="left">Daybed LEFT</option>
+          <option value="right">Daybed RIGHT</option>
+        </select></div>
+      <div style="flex:1; min-width:120px"><label style="font-size:11px; color:var(--text-muted)">Daybed length (mm)</label>
+        <input id="customsize-dblen" type="number" min="0" placeholder="e.g. 1600" oninput="_customSizeUpdatePreview()" style="width:100%; padding:8px"></div>
+      <div style="flex:1; min-width:120px"><label style="font-size:11px; color:var(--text-muted)">Seat cushions</label>
+        <input id="customsize-cushions" type="number" min="0" max="8" placeholder="e.g. 3" oninput="_customSizeUpdatePreview()" style="width:100%; padding:8px"></div>
+    </div>
+    <div id="customsize-preview" style="background:#fff; border:1px solid var(--border,#ddd); border-radius:8px; padding:8px; margin-bottom:0.75rem; text-align:center"></div>
     <label style="font-size:11px; color:var(--text-muted)">Note (what's different)</label>
     <input id="customsize-note" placeholder="e.g. arms 200mm wide, loose ottoman" style="width:100%; padding:8px; margin:0.25rem 0 0.9rem">
     <div style="display:flex; gap:0.5rem; flex-wrap:wrap">
@@ -3167,9 +3180,10 @@ ${_PRODUCTION_PRINT_STYLES}
       <div class="field-value">${order.product}</div>
     </div>
     ${order.customSize && _customSizeText(order) ? `
-    <div class="field full-width" style="border:3px solid #000; background:#f3f4f6">
+    <div class="field full-width" style="border:3px solid #000; background:#f3f4f6; page-break-inside:avoid">
       <div class="field-label">⚠ CUSTOM SIZE — BUILD TO THESE DIMENSIONS</div>
       <div class="field-value" style="font-weight:900; font-size:16px">${_customSizeText(order)}</div>
+      <div style="text-align:center; margin-top:6px; background:#fff; padding:4px">${_customSizeSvg(order.customSize, 430)}</div>
     </div>
     ` : ''}
     ${order.fabric ? `
@@ -4771,10 +4785,97 @@ ${_PRODUCTION_PRINT_STYLES}
     if (parseFloat(cs.depthMm) > 0) parts.push('D' + parseFloat(cs.depthMm));
     if (parseFloat(cs.heightMm) > 0) parts.push('H' + parseFloat(cs.heightMm));
     let t = parts.length ? parts.join(' × ') + ' mm' : '';
+    if (cs.daybedSide === 'left' || cs.daybedSide === 'right') {
+      t += (t ? ' · ' : '') + 'daybed ' + cs.daybedSide.toUpperCase() + (parseFloat(cs.daybedLengthMm) > 0 ? ' (' + parseFloat(cs.daybedLengthMm) + 'mm)' : '');
+    }
+    if (parseInt(cs.cushions) > 0) t += (t ? ' · ' : '') + parseInt(cs.cushions) + ' seat cushion' + (parseInt(cs.cushions) === 1 ? '' : 's');
     if (cs.note) t += (t ? ' — ' : '') + cs.note;
     return t;
   }
   window._customSizeText = _customSizeText;
+  // Top-view 2D drawing of the custom couch: length, daybed side + length,
+  // seat cushions. Schematic (mm-true proportions), for the modal preview
+  // and the printed job card.
+  function _customSizeSvg(cs, maxW) {
+    // Front-view couch sketch (like a furniture line icon): arms both sides,
+    // back + seat cushions, and the daybed/chaise drawn coming forward on the
+    // chosen side. Proportions follow the entered mm; labels carry the truth.
+    cs = cs || {};
+    const L = parseFloat(cs.lengthMm) > 0 ? parseFloat(cs.lengthMm) : 2400;
+    const D = parseFloat(cs.depthMm) > 0 ? parseFloat(cs.depthMm) : 900;
+    const side = (cs.daybedSide === 'left' || cs.daybedSide === 'right') ? cs.daybedSide : '';
+    const dbLen = side ? (parseFloat(cs.daybedLengthMm) > 0 ? parseFloat(cs.daybedLengthMm) : 1600) : 0;
+    const n = parseInt(cs.cushions) > 0 ? Math.min(parseInt(cs.cushions), 8) : 0;
+    const ARM = 190, BACK_H = 340, SEAT_H = 300, LEG = 90, DB_W = 780, R = 40;
+    const chaiseDrop = side ? Math.max((dbLen - D), 350) * 0.75 : 0;
+    const PAD = 300;
+    const bodyH = BACK_H + SEAT_H;
+    const wMm = L + PAD * 2;
+    const hMm = bodyH + LEG + chaiseDrop + PAD * 2;
+    const px = Math.min(maxW || 420, 560);
+    const S = [];
+    S.push('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + wMm + ' ' + hMm + '" width="' + px + '" style="max-width:100%; height:auto">');
+    S.push('<g transform="translate(' + PAD + ',' + PAD + ')" stroke="#111" stroke-width="16" fill="none" font-family="Arial,Helvetica,sans-serif">');
+    // arms (slightly taller than the back)
+    S.push('<rect x="0" y="-60" width="' + ARM + '" height="' + (bodyH + 60) + '" rx="' + R + '" fill="#fff"/>');
+    S.push('<rect x="' + (L - ARM) + '" y="-60" width="' + ARM + '" height="' + (bodyH + 60) + '" rx="' + R + '" fill="#fff"/>');
+    // back cushions between the arms
+    const innerX = ARM, innerW = L - ARM * 2;
+    if (n > 0) {
+      const per = innerW / n;
+      for (let i = 0; i < n; i++) {
+        S.push('<rect x="' + (innerX + i * per + 12) + '" y="0" width="' + (per - 24) + '" height="' + BACK_H + '" rx="' + R + '" fill="#fff"/>');
+      }
+    } else {
+      S.push('<rect x="' + (innerX + 12) + '" y="0" width="' + (innerW - 24) + '" height="' + BACK_H + '" rx="' + R + '" fill="#fff"/>');
+    }
+    // seat cushions — the daybed end's seat runs into the chaise
+    const dbX = side === 'left' ? ARM : (side === 'right' ? L - ARM - DB_W : 0);
+    let seatX = innerX, seatW = innerW;
+    if (side === 'left') { seatX = ARM + DB_W; seatW = innerW - DB_W; }
+    if (side === 'right') { seatW = innerW - DB_W; }
+    if (n > 0 && seatW > 100) {
+      const per = seatW / n;
+      for (let i = 0; i < n; i++) {
+        S.push('<rect x="' + (seatX + i * per + 12) + '" y="' + BACK_H + '" width="' + (per - 24) + '" height="' + SEAT_H + '" rx="' + R + '" fill="#f3f4f6"/>');
+      }
+    } else if (seatW > 100) {
+      S.push('<rect x="' + (seatX + 12) + '" y="' + BACK_H + '" width="' + (seatW - 24) + '" height="' + SEAT_H + '" rx="' + R + '" fill="#f3f4f6"/>');
+    }
+    // daybed / chaise: seat section extended forward (drawn downward)
+    if (side) {
+      S.push('<rect x="' + (dbX + 12) + '" y="' + BACK_H + '" width="' + (DB_W - 24) + '" height="' + (SEAT_H + chaiseDrop) + '" rx="' + R + '" fill="#e0e7ff"/>');
+      S.push('<text x="' + (dbX + DB_W / 2) + '" y="' + (BACK_H + (SEAT_H + chaiseDrop) / 2) + '" text-anchor="middle" font-size="115" stroke="none" fill="#111" font-weight="bold">DAYBED</text>');
+      S.push('<text x="' + (dbX + DB_W / 2) + '" y="' + (BACK_H + (SEAT_H + chaiseDrop) / 2 + 150) + '" text-anchor="middle" font-size="105" stroke="none" fill="#111">' + dbLen + 'mm</text>');
+      // small feet under the chaise
+      S.push('<line x1="' + (dbX + 90) + '" y1="' + (BACK_H + SEAT_H + chaiseDrop) + '" x2="' + (dbX + 90) + '" y2="' + (BACK_H + SEAT_H + chaiseDrop + LEG) + '"/>');
+      S.push('<line x1="' + (dbX + DB_W - 90) + '" y1="' + (BACK_H + SEAT_H + chaiseDrop) + '" x2="' + (dbX + DB_W - 90) + '" y2="' + (BACK_H + SEAT_H + chaiseDrop + LEG) + '"/>');
+    }
+    // legs under the arms
+    S.push('<line x1="' + (ARM / 2) + '" y1="' + bodyH + '" x2="' + (ARM / 2) + '" y2="' + (bodyH + LEG) + '"/>');
+    S.push('<line x1="' + (L - ARM / 2) + '" y1="' + bodyH + '" x2="' + (L - ARM / 2) + '" y2="' + (bodyH + LEG) + '"/>');
+    // cushion count label
+    if (n > 0) S.push('<text x="' + (seatX + seatW / 2) + '" y="' + (BACK_H + SEAT_H / 2 + 35) + '" text-anchor="middle" font-size="100" stroke="none" fill="#6b7280">' + n + '×</text>');
+    // total length dimension under everything
+    const dimY = bodyH + LEG + chaiseDrop + 170;
+    S.push('<line x1="0" y1="' + dimY + '" x2="' + L + '" y2="' + dimY + '"/>');
+    S.push('<line x1="0" y1="' + (dimY - 55) + '" x2="0" y2="' + (dimY + 55) + '"/>');
+    S.push('<line x1="' + L + '" y1="' + (dimY - 55) + '" x2="' + L + '" y2="' + (dimY + 55) + '"/>');
+    S.push('<text x="' + (L / 2) + '" y="' + (dimY + 165) + '" text-anchor="middle" font-size="125" stroke="none" fill="#111" font-weight="bold">' + L + 'mm long</text>');
+    S.push('</g></svg>');
+    return S.join('');
+  }
+  window._customSizeSvg = _customSizeSvg;
+  function _customSizeUpdatePreview() {
+    const host = document.getElementById('customsize-preview');
+    if (!host) return;
+    const g = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+    host.innerHTML = _customSizeSvg({
+      lengthMm: g('customsize-len'), depthMm: g('customsize-depth'), heightMm: g('customsize-h'),
+      daybedSide: g('customsize-dbside'), daybedLengthMm: g('customsize-dblen'), cushions: g('customsize-cushions')
+    }, 420);
+  }
+  window._customSizeUpdatePreview = _customSizeUpdatePreview;
   function _readIntakeCustomSize() {
     const g = id => { const el = document.getElementById(id); return el ? el.value : ''; };
     const len = parseFloat(g('intake-size-len')) || 0;
@@ -4796,7 +4897,11 @@ ${_PRODUCTION_PRINT_STYLES}
     document.getElementById('customsize-depth').value = cs.depthMm || '';
     document.getElementById('customsize-h').value = cs.heightMm || '';
     document.getElementById('customsize-note').value = cs.note || '';
+    document.getElementById('customsize-dbside').value = cs.daybedSide || '';
+    document.getElementById('customsize-dblen').value = cs.daybedLengthMm || '';
+    document.getElementById('customsize-cushions').value = cs.cushions || '';
     document.getElementById('customsize-modal').style.display = 'flex';
+    _customSizeUpdatePreview();
   }
   function closeCustomSize() {
     document.getElementById('customsize-modal').style.display = 'none';
@@ -4809,9 +4914,12 @@ ${_PRODUCTION_PRINT_STYLES}
     const depth = parseFloat(document.getElementById('customsize-depth').value) || 0;
     const h = parseFloat(document.getElementById('customsize-h').value) || 0;
     const note = String(document.getElementById('customsize-note').value || '').trim();
+    const dbSide = document.getElementById('customsize-dbside').value || '';
+    const dbLen = parseFloat(document.getElementById('customsize-dblen').value) || 0;
+    const cush = parseInt(document.getElementById('customsize-cushions').value) || 0;
     snapshotState();
-    if (!len && !depth && !h && !note) delete o.customSize;
-    else o.customSize = { lengthMm: len || '', depthMm: depth || '', heightMm: h || '', note: note };
+    if (!len && !depth && !h && !note && !dbSide && !cush) delete o.customSize;
+    else o.customSize = { lengthMm: len || '', depthMm: depth || '', heightMm: h || '', note: note, daybedSide: dbSide, daybedLengthMm: dbSide && dbLen ? dbLen : '', cushions: cush || '' };
     saveData();
     const had = !!o.customSize;
     closeCustomSize();
@@ -4819,7 +4927,7 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof toast === 'function') toast(had ? '📐 Custom size saved for #' + (o.invoice || o.id) : '📐 #' + (o.invoice || o.id) + ' back to standard size', 'success', 2500);
   }
   function clearCustomSize() {
-    ['customsize-len', 'customsize-depth', 'customsize-h', 'customsize-note'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    ['customsize-len', 'customsize-depth', 'customsize-h', 'customsize-note', 'customsize-dbside', 'customsize-dblen', 'customsize-cushions'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
     saveCustomSize();
   }
   window.openCustomSize = openCustomSize;
