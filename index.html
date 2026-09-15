@@ -374,6 +374,71 @@
   </div>
 </div>
 
+<!-- ＋ NEW ORDER — staff portal order capture; goes straight to the supplier -->
+<div id="neworder-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9600; align-items:flex-start; justify-content:center; padding:1rem; overflow:auto">
+  <div style="background:#fff; color:#111; border-radius:14px; max-width:560px; width:100%; padding:1.25rem; box-shadow:0 20px 60px rgba(0,0,0,0.4); margin:1rem auto; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem">
+      <div style="font-size:16px; font-weight:900">＋ New order</div>
+      <button onclick="closeNewOrder()" style="border:1px solid #d6d3d1; background:#fff; border-radius:6px; padding:4px 10px; cursor:pointer">✕</button>
+    </div>
+    <div style="font-size:12px; color:#78716c; margin:0.3rem 0 0.9rem">Saved orders go straight to the supplier's portal.</div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem">
+      <div style="flex:1; min-width:140px"><label style="font-size:11px; color:#78716c">Business</label>
+        <select id="no-biz" style="width:100%; padding:8px"><option value="bellville">Bellville Furniture</option><option value="pinkfoot">PinkFoot Boutique</option><option value="repticube">ReptiCube</option></select></div>
+      <div style="flex:1; min-width:140px"><label style="font-size:11px; color:#78716c">Invoice / order no.</label>
+        <input id="no-invoice" placeholder="e.g. 3701" style="width:100%; padding:8px"></div>
+      <div id="no-supplier-wrap" style="flex:1; min-width:140px; display:none"><label style="font-size:11px; color:#78716c">Supplier</label>
+        <select id="no-supplier" style="width:100%; padding:8px"></select></div>
+    </div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem">
+      <div style="flex:2; min-width:160px"><label style="font-size:11px; color:#78716c">Customer</label>
+        <input id="no-customer" placeholder="Client name" style="width:100%; padding:8px"></div>
+      <div style="flex:1; min-width:120px"><label style="font-size:11px; color:#78716c">Phone</label>
+        <input id="no-phone" placeholder="Phone" style="width:100%; padding:8px"></div>
+    </div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem">
+      <div style="flex:2; min-width:180px"><label style="font-size:11px; color:#78716c">Product</label>
+        <input id="no-product" placeholder="e.g. 3 Seater Chesterfield" style="width:100%; padding:8px"></div>
+      <div style="flex:2; min-width:160px"><label style="font-size:11px; color:#78716c">Fabric / colour</label>
+        <input id="no-fabric" placeholder="e.g. Moldova : Oatmeal" style="width:100%; padding:8px"></div>
+      <div style="flex:0 0 70px"><label style="font-size:11px; color:#78716c">Qty</label>
+        <input id="no-qty" type="number" min="1" value="1" style="width:100%; padding:8px"></div>
+    </div>
+    <label style="font-size:11px; color:#78716c">Notes / special requests</label>
+    <textarea id="no-notes" rows="2" placeholder="Anything the supplier must know" style="width:100%; padding:8px; margin:0.25rem 0 0.9rem; font-family:inherit"></textarea>
+
+    <div style="border:1px solid #e7e5e4; border-radius:10px; padding:0.75rem; margin-bottom:0.9rem">
+      <div style="font-size:12px; font-weight:800; margin-bottom:0.5rem">📐 Custom size <span style="font-weight:normal; color:#78716c">(leave empty for a standard build)</span></div>
+      <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.5rem">
+        <div style="flex:1; min-width:100px"><label style="font-size:11px; color:#78716c">Length (mm)</label>
+          <input id="no-size-len" type="number" min="0" placeholder="2400" oninput="_newOrderUpdatePreview()" style="width:100%; padding:8px"></div>
+        <div style="flex:1; min-width:100px"><label style="font-size:11px; color:#78716c">Depth (mm)</label>
+          <input id="no-size-depth" type="number" min="0" placeholder="900" oninput="_newOrderUpdatePreview()" style="width:100%; padding:8px"></div>
+        <div style="flex:1; min-width:100px"><label style="font-size:11px; color:#78716c">Height (mm)</label>
+          <input id="no-size-h" type="number" min="0" placeholder="850" oninput="_newOrderUpdatePreview()" style="width:100%; padding:8px"></div>
+      </div>
+      <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.5rem">
+        <div style="flex:1; min-width:140px"><label style="font-size:11px; color:#78716c">Shape</label>
+          <select id="no-size-side" onchange="_newOrderUpdatePreview()" style="width:100%; padding:8px">
+            <option value="">Straight couch</option>
+            <option value="left">Daybed LEFT</option>
+            <option value="right">Daybed RIGHT</option>
+            <option value="corner-left">Corner unit LEFT</option>
+            <option value="corner-right">Corner unit RIGHT</option>
+          </select></div>
+        <div style="flex:1; min-width:120px"><label style="font-size:11px; color:#78716c">Daybed length / corner 2nd side (mm)</label>
+          <input id="no-size-dblen" type="number" min="0" placeholder="1600" oninput="_newOrderUpdatePreview()" style="width:100%; padding:8px"></div>
+        <div style="flex:1; min-width:100px"><label style="font-size:11px; color:#78716c">Seat cushions</label>
+          <input id="no-size-cushions" type="number" min="0" max="8" placeholder="3" oninput="_newOrderUpdatePreview()" style="width:100%; padding:8px"></div>
+      </div>
+      <div id="no-size-preview" style="text-align:center; background:#fafaf9; border-radius:8px; padding:6px; min-height:40px"></div>
+      <input id="no-size-note" placeholder="Size note, e.g. arms 200mm wide" style="width:100%; padding:8px; margin-top:0.5rem">
+    </div>
+    <div id="no-status" style="font-size:12px; color:#991b1b; min-height:1.2em; margin-bottom:0.4rem"></div>
+    <button onclick="saveNewOrder()" style="width:100%; padding:12px; border-radius:8px; border:none; background:#111; color:#fff; font-weight:800; font-size:14px; cursor:pointer">💾 Save & send to supplier</button>
+  </div>
+</div>
+
 <!-- MANUFACTURER PORTAL — only shown when URL has ?builder=1&m=<name> (e.g. Couch Potato) -->
 <div id="builder-only-view" style="display:none; position:fixed; inset:0; background:#f2f0ec; color:#1c1917; z-index:9000; overflow:auto; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
   <div style="background:linear-gradient(135deg,#000,#262626); color:#fff; padding:1.5rem 1.25rem 2.5rem; text-align:center">
@@ -381,6 +446,7 @@
     <div id="builder-portal-name" style="font-size:25px; font-weight:800; margin-top:0.4rem">🏭 Orders</div>
     <div id="builder-portal-count" style="display:inline-block; font-size:13px; font-weight:600; margin-top:0.6rem; background:rgba(255,255,255,0.16); border:1px solid rgba(255,255,255,0.25); border-radius:999px; padding:0.25rem 0.9rem"></div>
     <div style="margin-top:0.7rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap">
+      <button id="staff-portal-new" onclick="openNewOrder()" style="display:none; padding:0.35rem 1rem; background:#fff; color:#111; border:1px solid #fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:800">＋ New order</button>
       <button id="staff-portal-back" onclick="exitStaffPortalMode()" style="display:none; padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">⬅ Full system</button>
       <button onclick="builderPortalPrintAll()" style="padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">🖨️ Print all job cards</button>
       <button onclick="builderPortalExportCsv()" title="All the job cards as one spreadsheet — opens in Excel" style="padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">⬇️ Export to Excel</button>
@@ -9082,6 +9148,8 @@ ${_PRODUCTION_PRINT_STYLES}
     if (sub) sub.textContent = 'Manufacturer portal';
     const back = document.getElementById('staff-portal-back');
     if (back) back.style.display = 'none';
+    const nb = document.getElementById('staff-portal-new');
+    if (nb) nb.style.display = 'none';
     const nm = document.getElementById('builder-portal-name');
     if (nm) nm.innerHTML = _builderWordmarkHtml(BUILDER_MODE_NAME || 'Orders', 24, '#fff');
     document.title = (BUILDER_MODE_NAME || 'Manufacturer') + ' · Orders';
@@ -9102,6 +9170,8 @@ ${_PRODUCTION_PRINT_STYLES}
     if (sub) sub.textContent = 'Staff portal';
     const back = document.getElementById('staff-portal-back');
     if (back) back.style.display = 'inline-block';
+    const nb = document.getElementById('staff-portal-new');
+    if (nb) nb.style.display = 'inline-block';
     const nm = document.getElementById('builder-portal-name');
     if (nm) nm.innerHTML = _builderWordmarkHtml('Bellville Furniture', 22, '#fff');
     document.title = 'Bellville · Orders';
@@ -9119,6 +9189,84 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof render === 'function') render();
   }
   window.exitStaffPortalMode = exitStaffPortalMode;
+  // ---- ＋ New order from the staff portal: captured once, straight to the supplier ----
+  function _allManufacturerNames() {
+    const names = [];
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      (((data[b] || {}).manufacturers) || []).forEach(m => { if (m && m.name && !names.includes(m.name)) names.push(m.name); });
+    });
+    return names;
+  }
+  function _newOrderUpdatePreview() {
+    const host = document.getElementById('no-size-preview');
+    if (!host) return;
+    const g = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+    const any = g('no-size-len') || g('no-size-depth') || g('no-size-h') || g('no-size-side') || g('no-size-dblen') || g('no-size-cushions');
+    host.innerHTML = any ? _customSizeSvg({
+      lengthMm: g('no-size-len'), depthMm: g('no-size-depth'), heightMm: g('no-size-h'),
+      daybedSide: g('no-size-side'), daybedLengthMm: g('no-size-dblen'), cushions: g('no-size-cushions')
+    }, 460) : '<div style="font-size:11px; color:#a8a29e; padding:8px">Fill in a size to see the drawing</div>';
+  }
+  window._newOrderUpdatePreview = _newOrderUpdatePreview;
+  function openNewOrder() {
+    const m = document.getElementById('neworder-modal');
+    if (!m) return;
+    ['no-invoice', 'no-customer', 'no-phone', 'no-product', 'no-fabric', 'no-notes', 'no-size-len', 'no-size-depth', 'no-size-h', 'no-size-dblen', 'no-size-cushions', 'no-size-note'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    document.getElementById('no-qty').value = '1';
+    document.getElementById('no-size-side').value = '';
+    document.getElementById('no-biz').value = (typeof activeBiz !== 'undefined' && activeBiz) ? activeBiz : 'bellville';
+    document.getElementById('no-status').textContent = '';
+    // supplier: automatic when there is exactly one, otherwise a choice
+    const names = _allManufacturerNames();
+    const wrap = document.getElementById('no-supplier-wrap');
+    const sel = document.getElementById('no-supplier');
+    sel.innerHTML = names.map(n => '<option value="' + _escape(n) + '">' + _escape(n) + '</option>').join('');
+    wrap.style.display = names.length > 1 ? 'block' : 'none';
+    _newOrderUpdatePreview();
+    m.style.display = 'flex';
+    setTimeout(() => { const f = document.getElementById('no-invoice'); if (f) f.focus(); }, 50);
+  }
+  function closeNewOrder() { const m = document.getElementById('neworder-modal'); if (m) m.style.display = 'none'; }
+  function saveNewOrder() {
+    const g = id => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+    const biz = g('no-biz') || 'bellville';
+    const invoice = g('no-invoice'), customer = g('no-customer'), phone = g('no-phone');
+    const product = g('no-product'), fabric = g('no-fabric'), notes = g('no-notes');
+    const qty = parseInt(g('no-qty')) || 1;
+    const status = document.getElementById('no-status');
+    if (!invoice || !customer || !product) { status.textContent = 'Fill in the invoice number, customer and product.'; return; }
+    const names = _allManufacturerNames();
+    const supplier = names.length > 1 ? g('no-supplier') : (names[0] || '');
+    if (!supplier) { status.textContent = 'No supplier set up yet — add one under Planner → Manufacturers first.'; return; }
+    if (!data[biz]) data[biz] = { orders: [] };
+    if (!Array.isArray(data[biz].orders)) data[biz].orders = [];
+    const productSlug = product.replace(/[^a-z0-9]/gi, '').toUpperCase().substring(0, 20);
+    const orderId = 'INV-' + invoice + '-' + productSlug;
+    if (data[biz].orders.find(o => o && o.id === orderId)) { status.textContent = 'This product is already on invoice ' + invoice + '.'; return; }
+    const today = new Date().toISOString().split('T')[0];
+    const order = {
+      id: orderId, invoice, customer, phone, product, category: '', fabric, qty,
+      orderDate: today,
+      dueDate: _dueFromLead('', product, today, biz),
+      status: 'pending', startDate: null, paymentStatus: 'deposit', outstanding: 0,
+      notes: notes,
+      builder: supplier
+    };
+    const len = parseFloat(g('no-size-len')) || 0, depth = parseFloat(g('no-size-depth')) || 0, h = parseFloat(g('no-size-h')) || 0;
+    const side = g('no-size-side'), dblen = parseFloat(g('no-size-dblen')) || 0, cush = parseInt(g('no-size-cushions')) || 0, snote = g('no-size-note');
+    if (len || depth || h || side || cush || snote) {
+      order.customSize = { lengthMm: len || '', depthMm: depth || '', heightMm: h || '', note: snote, daybedSide: side, daybedLengthMm: side && dblen ? dblen : '', cushions: cush || '' };
+    }
+    snapshotState();
+    data[biz].orders.push(order);
+    saveData();
+    closeNewOrder();
+    if (typeof render === 'function') render();
+    if (typeof toast === 'function') toast('✅ #' + invoice + ' saved and sent to ' + supplier, 'success', 3000);
+  }
+  window.openNewOrder = openNewOrder;
+  window.closeNewOrder = closeNewOrder;
+  window.saveNewOrder = saveNewOrder;
   function _staffPortalOrders() {
     // The SAME list the manufacturer portal shows — only outsourced orders
     // (e.g. Couch Patato's), with the same visibility rules — so staff see
@@ -12956,6 +13104,9 @@ ${totalsSection}
         } else if (IS_PLANNER_MODE) {
           // Shared view-only planner
           enterPlannerOnlyMode();
+        } else if (currentRole === 'sales' && !IS_POS_MODE && !IS_DASHBOARD_MODE) {
+          // Sales staff land on the orders portal (⬅ Full system is still there)
+          enterStaffPortalMode();
         } else if (IS_RESERVED_MODE || currentRole === 'fabricrep') {
           // Fabric-rep portal — view-only reserved sheet with out-of-stock + ETA
           enterReservedOnlyMode();
