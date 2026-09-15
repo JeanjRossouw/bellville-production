@@ -5005,10 +5005,10 @@ ${_PRODUCTION_PRINT_STYLES}
       const cx1 = ARM + w;
       leg(L - 120, D - 120); leg(cx1 - 120, B - 120); leg(40, B - 120);
       prism([[0, 0], [L, 0], [L, D], [cx1, D], [cx1, B], [0, B]], LEG, BASE);
-      box(0, ARM, 0, D, LEG, ARMH);                      // near arm (chaise side)
+      box(0, ARM, 0, B, LEG, ARMH);                      // near arm runs the full daybed length
       backRow(ARM, L - ARM, 0, BT, n, true);
-      // chaise: the first seat runs forward as one long cushion, flush with the arm
-      prism([[ARM + G, BT + G], [cx1 - G, BT + G], [cx1 - G, B - G], [G, B - G], [G, D + G], [ARM + G, D + G]], BASE, SEAT);
+      // daybed: the first seat section runs forward as one long straight cushion
+      box(ARM + G, cx1 - G, BT + G, B - G, BASE, SEAT);
       for (let i = 1; i < k; i++) box(ARM + i * w + G, ARM + (i + 1) * w - G, BT + G, D - G, BASE, SEAT);
       box(L - ARM, L, 0, D, LEG, ARMH);                  // far arm
       dim([0, -260, BACK + 40], [L, -260, BACK + 40], L0 + 'mm long', DIM);
