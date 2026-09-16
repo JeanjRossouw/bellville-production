@@ -5005,7 +5005,7 @@ ${_PRODUCTION_PRINT_STYLES}
       const cx1 = ARM + w;
       leg(L - 120, D - 120); leg(cx1 - 120, B - 120); leg(40, B - 120);
       prism([[0, 0], [L, 0], [L, D], [cx1, D], [cx1, B], [0, B]], LEG, BASE);
-      box(0, ARM, 0, B, LEG, ARMH);                      // near arm runs the full daybed length
+      box(0, ARM, 0, D, LEG, ARMH);                      // near arm, same size as the opposite arm
       backRow(ARM, L - ARM, 0, BT, n, true);
       // daybed: the first seat section runs forward as one long straight cushion
       box(ARM + G, cx1 - G, BT + G, B - G, BASE, SEAT);
