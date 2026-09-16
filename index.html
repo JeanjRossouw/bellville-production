@@ -393,8 +393,14 @@
     <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem">
       <div style="flex:2; min-width:160px"><label style="font-size:11px; color:#78716c">Customer</label>
         <input id="no-customer" placeholder="Client name" style="width:100%; padding:8px"></div>
-      <div style="flex:1; min-width:120px"><label style="font-size:11px; color:#78716c">Phone</label>
-        <input id="no-phone" placeholder="Phone" style="width:100%; padding:8px"></div>
+      <div style="flex:1; min-width:120px"><label style="font-size:11px; color:#78716c">Cell number</label>
+        <input id="no-phone" placeholder="e.g. 082 555 1234" style="width:100%; padding:8px"></div>
+    </div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem">
+      <div style="flex:2; min-width:200px"><label style="font-size:11px; color:#78716c">Delivery address</label>
+        <input id="no-address" placeholder="Street, complex, unit" style="width:100%; padding:8px"></div>
+      <div style="flex:1; min-width:130px"><label style="font-size:11px; color:#78716c">Area / suburb</label>
+        <input id="no-area" placeholder="e.g. Durbanville" style="width:100%; padding:8px"></div>
     </div>
     <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem">
       <div style="flex:2; min-width:180px"><label style="font-size:11px; color:#78716c">Product</label>
@@ -436,6 +442,35 @@
     </div>
     <div id="no-status" style="font-size:12px; color:#991b1b; min-height:1.2em; margin-bottom:0.4rem"></div>
     <button onclick="saveNewOrder()" style="width:100%; padding:12px; border-radius:8px; border:none; background:#111; color:#fff; font-weight:800; font-size:14px; cursor:pointer">💾 Save & send to supplier</button>
+  </div>
+</div>
+
+<!-- 📤 SEND SIZE CONFIRMATION — WhatsApp / email the client a link to the drawing -->
+<div id="sizesend-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9600; align-items:center; justify-content:center; padding:1rem">
+  <div style="background:#fff; color:#111; border-radius:14px; max-width:460px; width:100%; padding:1.25rem; box-shadow:0 20px 60px rgba(0,0,0,0.4); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem">
+      <div style="font-size:16px; font-weight:900">📤 Send size to client</div>
+      <button onclick="document.getElementById('sizesend-modal').style.display='none'" style="border:1px solid #d6d3d1; background:#fff; border-radius:6px; padding:4px 10px; cursor:pointer">✕</button>
+    </div>
+    <div id="sizesend-order" style="font-size:12px; color:#78716c; margin:0.3rem 0 0.8rem"></div>
+    <div style="font-size:12px; color:#44403c; margin-bottom:0.5rem">The client opens the link, sees the drawing and sizes, and taps <strong>✓ I confirm</strong> (or sends a note). Their answer shows on the order.</div>
+    <input id="sizesend-link" readonly style="width:100%; padding:8px; font-size:12px; margin-bottom:0.75rem; background:#fafaf9">
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap">
+      <a id="sizesend-wa" target="_blank" rel="noopener" style="flex:1; text-align:center; padding:10px; border-radius:8px; background:#25d366; color:#fff; font-weight:800; text-decoration:none">💬 WhatsApp</a>
+      <a id="sizesend-mail" style="flex:1; text-align:center; padding:10px; border-radius:8px; background:#111; color:#fff; font-weight:800; text-decoration:none">✉️ Email</a>
+      <button onclick="copySizeLink()" style="flex:1; padding:10px; border-radius:8px; border:1px solid #d6d3d1; background:#fff; font-weight:800; cursor:pointer">📋 Copy link</button>
+    </div>
+  </div>
+</div>
+
+<!-- CLIENT SIZE CONFIRMATION PAGE — shown when URL has ?confirm=<token>, no login -->
+<div id="confirm-only-view" style="display:none; position:fixed; inset:0; background:#f2f0ec; color:#1c1917; z-index:9000; overflow:auto; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
+  <div style="background:linear-gradient(135deg,#000,#262626); color:#fff; padding:1.5rem 1.25rem 2.5rem; text-align:center">
+    <div style="font-size:11px; letter-spacing:0.2em; text-transform:uppercase; opacity:0.85">Please confirm your couch size</div>
+    <div id="confirm-biz-name" style="font-size:22px; font-weight:800; margin-top:0.4rem; letter-spacing:0.32em; text-transform:uppercase">Bellville Furniture</div>
+  </div>
+  <div style="max-width:620px; margin:-1.4rem auto 0; padding:0 1rem 3rem">
+    <div id="confirm-content"><div style="background:#fff; border-radius:14px; padding:2rem; text-align:center; color:#78716c">Loading your order…</div></div>
   </div>
 </div>
 
@@ -3242,7 +3277,12 @@ ${_PRODUCTION_PRINT_STYLES}
     <div class="field half-width">
       <div class="field-label">Phone</div>
       <div class="field-value">${order.phone || '—'}</div>
-    </div>`}
+    </div>
+    ${(order.address || order.area) ? `
+    <div class="field full-width">
+      <div class="field-label">Delivery address${order.area ? ' — ' + order.area : ''}</div>
+      <div class="field-value">${order.address || ''}${order.address && order.area ? ', ' : ''}${order.area || ''}</div>
+    </div>` : ''}`}
     <div class="field full-width">
       <div class="field-label">Product${order.category ? ' — ' + order.category : ''}</div>
       <div class="field-value">${order.product}</div>
@@ -4310,6 +4350,10 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof IS_BOOKING_MODE !== 'undefined' && IS_BOOKING_MODE) {
       // Client booking page — only the booking calendar renders (live slot updates).
       if (typeof renderBookingPage === 'function') renderBookingPage();
+      return;
+    }
+    if (typeof IS_CONFIRM_MODE !== 'undefined' && IS_CONFIRM_MODE) {
+      if (typeof renderConfirmPage === 'function') renderConfirmPage();
       return;
     }
     if (typeof IS_BUILDER_MODE !== 'undefined' && IS_BUILDER_MODE) {
@@ -9104,6 +9148,16 @@ ${_PRODUCTION_PRINT_STYLES}
     } catch (e) { console.warn('Booking boot failed:', e); }
   }
 
+  // Client size-confirmation link (?confirm=<token>) — no login, like booking.
+  const CONFIRM_TOKEN = (function () {
+    try { return String(new URLSearchParams(window.location.search).get('confirm') || '').replace(/[^a-f0-9]/gi, '').slice(0, 32); }
+    catch (e) { return ''; }
+  })();
+  const IS_CONFIRM_MODE = !!CONFIRM_TOKEN;
+  if (IS_CONFIRM_MODE) {
+    try { enterConfirmOnlyMode(); } catch (e) { console.warn('Confirm boot failed:', e); }
+  }
+
   // View-only planner mode (?planner=1) — a link to share with staff: they sign
   // in and see ONLY the live planner, no tabs, no editing, no dragging.
   const IS_PLANNER_MODE = (function () {
@@ -9214,7 +9268,7 @@ ${_PRODUCTION_PRINT_STYLES}
   function openNewOrder() {
     const m = document.getElementById('neworder-modal');
     if (!m) return;
-    ['no-invoice', 'no-customer', 'no-phone', 'no-product', 'no-fabric', 'no-notes', 'no-size-len', 'no-size-depth', 'no-size-h', 'no-size-dblen', 'no-size-cushions', 'no-size-note'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    ['no-invoice', 'no-customer', 'no-phone', 'no-address', 'no-area', 'no-product', 'no-fabric', 'no-notes', 'no-size-len', 'no-size-depth', 'no-size-h', 'no-size-dblen', 'no-size-cushions', 'no-size-note'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
     document.getElementById('no-qty').value = '1';
     document.getElementById('no-size-side').value = '';
     document.getElementById('no-biz').value = (typeof activeBiz !== 'undefined' && activeBiz) ? activeBiz : 'bellville';
@@ -9235,6 +9289,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const biz = g('no-biz') || 'bellville';
     const invoice = g('no-invoice'), customer = g('no-customer'), phone = g('no-phone');
     const product = g('no-product'), fabric = g('no-fabric'), notes = g('no-notes');
+    const address = g('no-address'), area = g('no-area');
     const qty = parseInt(g('no-qty')) || 1;
     const status = document.getElementById('no-status');
     if (!invoice || !customer || !product) { status.textContent = 'Fill in the invoice number, customer and product.'; return; }
@@ -9253,6 +9308,7 @@ ${_PRODUCTION_PRINT_STYLES}
       dueDate: _dueFromLead('', product, today, biz),
       status: 'pending', startDate: null, paymentStatus: 'deposit', outstanding: 0,
       notes: notes,
+      address: address, area: area,
       builder: supplier
     };
     const len = parseFloat(g('no-size-len')) || 0, depth = parseFloat(g('no-size-depth')) || 0, h = parseFloat(g('no-size-h')) || 0;
@@ -9270,6 +9326,142 @@ ${_PRODUCTION_PRINT_STYLES}
   window.openNewOrder = openNewOrder;
   window.closeNewOrder = closeNewOrder;
   window.saveNewOrder = saveNewOrder;
+
+  // ---- 📍 Address / area on an order ----
+  function _bizOfOrder(orderId) {
+    let biz = null;
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      if (!biz && ((data[b] && data[b].orders) || []).some(x => x && x.id === orderId)) biz = b;
+    });
+    return biz;
+  }
+  function editOrderAddress(orderId) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    const address = prompt('Delivery address for #' + (o.invoice || o.id) + ':', o.address || '');
+    if (address === null) return;
+    const area = prompt('Area / suburb (used to group deliveries):', o.area || '');
+    if (area === null) return;
+    snapshotState();
+    o.address = String(address).trim();
+    o.area = String(area).trim();
+    saveData();
+    if (typeof render === 'function') render();
+  }
+  window.editOrderAddress = editOrderAddress;
+
+  // ---- 📤 Size confirmation link: the client sees the drawing and confirms ----
+  function _sizeToken() {
+    const a = new Uint8Array(8);
+    (window.crypto || window.msCrypto).getRandomValues(a);
+    return Array.from(a).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  function _waDigits(phone) {
+    let d = String(phone || '').replace(/\D/g, '');
+    if (d.startsWith('0')) d = '27' + d.slice(1);
+    return d;
+  }
+  function sendSizeConfirmation(orderId) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o || !o.customSize) { alert('Set a custom size on the order first.'); return; }
+    if (!o.sizeToken) { snapshotState(); o.sizeToken = _sizeToken(); saveData(); }
+    const url = window.location.origin + '/?confirm=' + o.sizeToken;
+    const biz = _bizOfOrder(orderId);
+    const bizName = (typeof BIZ_DISPLAY !== 'undefined' && BIZ_DISPLAY[biz]) || 'Bellville Furniture';
+    const msg = 'Hi ' + (o.customer || '') + ', please check the size drawing for your ' + (o.product || 'couch') + ' (order #' + (o.invoice || o.id) + ') and tap confirm: ' + url + ' — ' + bizName;
+    document.getElementById('sizesend-order').textContent = '#' + (o.invoice || o.id) + ' — ' + (o.product || '') + ' · ' + _customSizeText(o);
+    document.getElementById('sizesend-link').value = url;
+    const wa = document.getElementById('sizesend-wa');
+    wa.href = 'https://wa.me/' + _waDigits(o.phone) + '?text=' + encodeURIComponent(msg);
+    document.getElementById('sizesend-mail').href = 'mailto:?subject=' + encodeURIComponent('Please confirm your couch size — order #' + (o.invoice || o.id)) + '&body=' + encodeURIComponent(msg);
+    document.getElementById('sizesend-modal').style.display = 'flex';
+  }
+  function copySizeLink() {
+    const url = document.getElementById('sizesend-link').value;
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(() => { if (typeof toast === 'function') toast('🔗 Link copied', 'success', 2000); });
+    else prompt('Copy this link:', url);
+  }
+  window.sendSizeConfirmation = sendSizeConfirmation;
+  window.copySizeLink = copySizeLink;
+
+  // ---- Client-side confirmation page (?confirm=<token>) ----
+  function _confirmOrder() {
+    const t = (typeof CONFIRM_TOKEN !== 'undefined') ? CONFIRM_TOKEN : '';
+    if (!t) return null;
+    let found = null;
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      if (!found) { const o = ((data[b] && data[b].orders) || []).find(x => x && x.sizeToken === t); if (o) found = { o: o, biz: b }; }
+    });
+    return found;
+  }
+  function enterConfirmOnlyMode() {
+    ['main-app', 'login-overlay', 'dashboard-only-view', 'reserved-only-view', 'booking-only-view', 'builder-only-view'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    const v = document.getElementById('confirm-only-view');
+    if (v) v.style.display = 'block';
+    document.title = 'Confirm your couch size';
+    renderConfirmPage();
+  }
+  window.enterConfirmOnlyMode = enterConfirmOnlyMode;
+  function renderConfirmPage() {
+    const host = document.getElementById('confirm-content');
+    if (!host) return;
+    const f = _confirmOrder();
+    const hasData = ['bellville', 'pinkfoot', 'repticube'].some(b => data[b] && Array.isArray(data[b].orders) && data[b].orders.length);
+    if (!f) {
+      host.innerHTML = '<div style="background:#fff; border-radius:14px; padding:2rem; text-align:center; color:#78716c">' + (hasData ? 'This link is no longer valid — please ask us for a new one.' : 'Loading your order…') + '</div>';
+      return;
+    }
+    const o = f.o;
+    const bn = document.getElementById('confirm-biz-name');
+    if (bn) bn.textContent = (typeof BIZ_DISPLAY !== 'undefined' && BIZ_DISPLAY[f.biz]) || 'Bellville Furniture';
+    const card = (inner) => '<div style="background:#fff; border-radius:14px; padding:1.25rem; box-shadow:0 1px 3px rgba(0,0,0,0.07); margin-bottom:12px">' + inner + '</div>';
+    let html = card('<div style="font-size:12px; color:#78716c">Order #' + _escape(o.invoice || o.id) + '</div>'
+      + '<div style="font-size:18px; font-weight:800; margin-top:2px">' + _escape(o.product || '') + '</div>'
+      + (o.fabric ? '<div style="font-size:13px; color:#44403c; margin-top:4px">🧵 ' + _escape(o.fabric) + '</div>' : '')
+      + '<div style="text-align:center; margin-top:10px">' + (o.customSize ? _customSizeSvg(o.customSize, 520) : '') + '</div>'
+      + '<div style="font-size:14px; font-weight:800; margin-top:8px; text-align:center">📐 ' + _escape(_customSizeText(o)) + '</div>');
+    if (o.sizeConfirmedAt) {
+      html += card('<div style="text-align:center"><div style="width:56px; height:56px; margin:0 auto; border-radius:50%; background:#16a34a; color:#fff; display:flex; align-items:center; justify-content:center; font-size:26px">✓</div>'
+        + '<div style="font-size:18px; font-weight:800; margin-top:0.8rem">Size confirmed</div>'
+        + '<div style="font-size:13px; color:#78716c; margin-top:0.3rem">' + _escape(o.sizeConfirmedBy || 'You') + ' confirmed on ' + _escape(String(o.sizeConfirmedAt).slice(0, 10)) + '. Thank you!</div></div>');
+    } else {
+      html += card('<div style="font-size:13px; color:#44403c; margin-bottom:0.6rem">Please check the drawing and sizes above. If everything is right, confirm below — if not, send us a note.</div>'
+        + '<input id="confirm-name" placeholder="Your name" value="' + _escape(o.customer || '') + '" style="width:100%; padding:10px; margin-bottom:0.5rem; border:1px solid #d6d3d1; border-radius:8px">'
+        + '<button onclick="clientConfirmSize()" style="width:100%; padding:14px; border-radius:10px; border:none; background:#16a34a; color:#fff; font-weight:900; font-size:15px; cursor:pointer">✓ I confirm this size</button>'
+        + '<div style="border-top:1px solid #e7e5e4; margin-top:1rem; padding-top:0.8rem; font-size:12px; color:#78716c">Something not right?</div>'
+        + '<textarea id="confirm-note" rows="2" placeholder="Tell us what must change…" style="width:100%; padding:10px; margin-top:0.4rem; border:1px solid #d6d3d1; border-radius:8px; font-family:inherit"></textarea>'
+        + '<button onclick="clientSizeNote()" style="width:100%; margin-top:0.4rem; padding:10px; border-radius:10px; border:1px solid #111; background:#fff; font-weight:800; cursor:pointer">💬 Send note</button>');
+    }
+    host.innerHTML = html;
+  }
+  window.renderConfirmPage = renderConfirmPage;
+  function clientConfirmSize() {
+    const f = _confirmOrder();
+    if (!f) return;
+    const name = String((document.getElementById('confirm-name') || {}).value || '').trim() || 'Client';
+    snapshotState();
+    f.o.sizeConfirmedAt = new Date().toISOString();
+    f.o.sizeConfirmedBy = name;
+    if (!Array.isArray(f.o.builderComments)) f.o.builderComments = [];
+    f.o.builderComments.push({ by: 'Client (' + name + ')', at: f.o.sizeConfirmedAt, text: '✓ Confirmed the custom size: ' + _customSizeText(f.o) });
+    saveData();
+    renderConfirmPage();
+  }
+  function clientSizeNote() {
+    const f = _confirmOrder();
+    if (!f) return;
+    const text = String((document.getElementById('confirm-note') || {}).value || '').trim();
+    if (!text) { alert('Please type what must change.'); return; }
+    const name = String((document.getElementById('confirm-name') || {}).value || '').trim() || 'Client';
+    snapshotState();
+    if (!Array.isArray(f.o.builderComments)) f.o.builderComments = [];
+    f.o.builderComments.push({ by: 'Client (' + name + ')', at: new Date().toISOString(), text: text });
+    saveData();
+    document.getElementById('confirm-note').value = '';
+    alert('Thank you — we have your note and will come back to you.');
+  }
+  window.clientConfirmSize = clientConfirmSize;
+  window.clientSizeNote = clientSizeNote;
   function _staffPortalOrders() {
     // The SAME list the manufacturer portal shows — only outsourced orders
     // (e.g. Couch Patato's), with the same visibility rules — so staff see
@@ -9311,11 +9503,13 @@ ${_PRODUCTION_PRINT_STYLES}
             <div style="font-size:16px; font-weight:800">#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}</div>
             <div style="font-size:12px; color:#78716c; margin-top:2px">
               <span style="background:#e7e5e4; border-radius:999px; padding:1px 8px; font-size:10px; font-weight:700">${_escape(r.tag)}</span>
-              · Qty ${_escape(o.qty || 1)}${o.customer ? ' · 👤 ' + _escape(o.customer) : ''}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.builder ? ' · 🏭 ' + _escape(o.builder) : ''}${o.customSize ? '<br>📐 <strong style="color:#111">' + _escape(_customSizeText(o)) + '</strong>' : ''}
+              · Qty ${_escape(o.qty || 1)}${o.customer ? ' · 👤 ' + _escape(o.customer) : ''}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.builder ? ' · 🏭 ' + _escape(o.builder) : ''}${o.phone ? '<br>📱 ' + _escape(o.phone) : ''}${(o.address || o.area) ? ' · 📍 ' + _escape([o.address, o.area].filter(Boolean).join(', ')) : ''}${o.customSize ? '<br>📐 <strong style="color:#111">' + _escape(_customSizeText(o)) + '</strong>' + (o.sizeConfirmedAt ? ' <span style="color:#166534; font-weight:800">✓ confirmed by client ' + _escape(String(o.sizeConfirmedAt).slice(0, 10)) + '</span>' : '') : ''}
             </div>
           </div>
           <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
           <button onclick="builderPortalPrintCard('${_escape(o.id)}')" title="Print this order's job card" style="padding:7px 12px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; color:#111; font-weight:700; font-size:12.5px; cursor:pointer">🖨️ Job card</button>
+          ${o.customSize ? `<button onclick="sendSizeConfirmation('${_escape(o.id)}')" title="Send the client the drawing to confirm" style="padding:7px 12px; border-radius:999px; border:1.5px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:700; font-size:12.5px; cursor:pointer">📤 Size to client</button>` : ''}
+          <button onclick="editOrderAddress('${_escape(o.id)}')" title="Address and area" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fafaf9; color:#111; font-weight:700; font-size:12.5px; cursor:pointer">📍</button>
           ${o.builderDone
             ? `<span style="font-size:12px; font-weight:800; color:#166534">✅ DONE by ${_escape(o.builder)}</span>
                <button onclick="receiveBuilderItem('${_escape(o.id)}')" style="padding:7px 14px; border-radius:999px; border:1.5px solid #16a34a; background:#f0fdf4; color:#166534; font-weight:700; font-size:12.5px; cursor:pointer">📥 Receive item</button>`
@@ -10261,7 +10455,10 @@ ${_PRODUCTION_PRINT_STYLES}
 
           <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin-bottom:0.75rem">
             <button class="btn btn-sm" onclick="openCustomSize('${o.id}')" title="Build this couch to a different size">📐 ${o.customSize ? 'Edit custom size' : 'Custom size'}</button>
-            ${o.customSize ? `<span style="font-size:12px; font-weight:800; color:#7c3aed">📐 ${_escape(_customSizeText(o))}</span>` : ''}
+            ${o.customSize ? `<span style="font-size:12px; font-weight:800; color:#7c3aed">📐 ${_escape(_customSizeText(o))}</span>
+            <button class="btn btn-sm" onclick="sendSizeConfirmation('${o.id}')" title="Send the client the drawing to confirm">📤 Size to client</button>
+            ${o.sizeConfirmedAt ? `<span style="font-size:11px; font-weight:800; color:var(--success,#166534)">✓ confirmed by client ${_escape(String(o.sizeConfirmedAt).slice(0, 10))}</span>` : ''}` : ''}
+            <button class="btn btn-sm" onclick="editOrderAddress('${o.id}')" title="Delivery address and area">📍 ${(o.address || o.area) ? _escape([o.address, o.area].filter(Boolean).join(', ')) : 'Address'}</button>
           </div>
 
           ${bomKeys.length > 0 ? `
@@ -13101,6 +13298,9 @@ ${totalsSection}
         if (IS_BOOKING_MODE) {
           // Client booking link — full-screen calendar only (works for anonymous sign-ins too)
           enterBookingOnlyMode();
+        } else if (typeof IS_CONFIRM_MODE !== 'undefined' && IS_CONFIRM_MODE) {
+          // Client confirming a custom size — works for anonymous sign-ins too
+          enterConfirmOnlyMode();
         } else if (IS_BUILDER_MODE) {
           // Manufacturer portal (Couch Potato etc.)
           enterBuilderOnlyMode();
@@ -13143,6 +13343,18 @@ ${totalsSection}
             });
           } else if (typeof bookingStaticFallback === 'function') {
             bookingStaticFallback();
+          }
+          return;
+        }
+        if (typeof IS_CONFIRM_MODE !== 'undefined' && IS_CONFIRM_MODE) {
+          // Client with a size-confirmation link — sign in anonymously to load the order
+          document.getElementById('login-overlay').style.display = 'none';
+          enterConfirmOnlyMode();
+          if (window.firebaseFns && window.firebaseFns.signInAnonymously) {
+            window.firebaseFns.signInAnonymously(window.firebaseAuth).catch(() => {
+              const h = document.getElementById('confirm-content');
+              if (h) h.innerHTML = '<div style="background:#fff; border-radius:14px; padding:2rem; text-align:center; color:#991b1b">Could not load the order — please WhatsApp us your confirmation instead.</div>';
+            });
           }
           return;
         }
