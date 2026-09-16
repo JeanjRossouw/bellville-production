@@ -333,6 +333,112 @@
   </div>
 </div>
 
+<!-- 📐 CUSTOM SIZE — staff form to build a couch to different dimensions -->
+<div id="customsize-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9500; align-items:center; justify-content:center; padding:1rem">
+  <div style="background:var(--card-bg,#fff); color:var(--text,#111); border-radius:12px; max-width:480px; width:100%; padding:1.25rem; box-shadow:0 20px 60px rgba(0,0,0,0.4)">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem">
+      <div style="font-size:15px; font-weight:900">📐 Custom size</div>
+      <button class="btn btn-sm" onclick="closeCustomSize()">✕</button>
+    </div>
+    <div id="customsize-order" style="font-size:12px; color:var(--text-muted); margin:0.4rem 0 0.75rem"></div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.75rem">
+      <div style="flex:1; min-width:110px"><label style="font-size:11px; color:var(--text-muted)">Length (mm)</label>
+        <input id="customsize-len" type="number" min="0" oninput="_customSizeUpdatePreview()" placeholder="e.g. 2400" style="width:100%; padding:8px"></div>
+      <div style="flex:1; min-width:110px"><label style="font-size:11px; color:var(--text-muted)">Depth (mm)</label>
+        <input id="customsize-depth" type="number" min="0" oninput="_customSizeUpdatePreview()" placeholder="e.g. 900" style="width:100%; padding:8px"></div>
+      <div style="flex:1; min-width:110px"><label style="font-size:11px; color:var(--text-muted)">Height (mm)</label>
+        <input id="customsize-h" type="number" min="0" oninput="_customSizeUpdatePreview()" placeholder="e.g. 850" style="width:100%; padding:8px"></div>
+    </div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.75rem">
+      <div style="flex:1; min-width:120px"><label style="font-size:11px; color:var(--text-muted)">Shape</label>
+        <select id="customsize-dbside" onchange="_customSizeUpdatePreview()" style="width:100%; padding:8px">
+          <option value="">Straight couch (no daybed / corner)</option>
+          <option value="left">Daybed LEFT</option>
+          <option value="right">Daybed RIGHT</option>
+          <option value="corner-left">Corner unit LEFT</option>
+          <option value="corner-right">Corner unit RIGHT</option>
+        </select></div>
+      <div style="flex:1; min-width:120px"><label style="font-size:11px; color:var(--text-muted)">Daybed length / corner 2nd side (mm)</label>
+        <input id="customsize-dblen" type="number" min="0" placeholder="e.g. 1600" oninput="_customSizeUpdatePreview()" style="width:100%; padding:8px"></div>
+      <div style="flex:1; min-width:120px"><label style="font-size:11px; color:var(--text-muted)">Seat cushions</label>
+        <input id="customsize-cushions" type="number" min="0" max="8" placeholder="e.g. 3" oninput="_customSizeUpdatePreview()" style="width:100%; padding:8px"></div>
+    </div>
+    <div id="customsize-preview" style="background:#fff; border:1px solid var(--border,#ddd); border-radius:8px; padding:8px; margin-bottom:0.75rem; text-align:center"></div>
+    <label style="font-size:11px; color:var(--text-muted)">Note (what's different)</label>
+    <input id="customsize-note" placeholder="e.g. arms 200mm wide, loose ottoman" style="width:100%; padding:8px; margin:0.25rem 0 0.9rem">
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap">
+      <button class="btn btn-primary" style="flex:1" onclick="saveCustomSize()">💾 Save size</button>
+      <button class="btn" onclick="clearCustomSize()" title="Remove the custom size — back to standard">↩ Standard size</button>
+    </div>
+    <div style="font-size:11px; color:var(--text-muted); margin-top:0.6rem">The size prints big on the job card (in-house and Couch Patato's) and shows on the portals, so the factory builds to it.</div>
+  </div>
+</div>
+
+<!-- ＋ NEW ORDER — staff portal order capture; goes straight to the supplier -->
+<div id="neworder-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9600; align-items:flex-start; justify-content:center; padding:1rem; overflow:auto">
+  <div style="background:#fff; color:#111; border-radius:14px; max-width:560px; width:100%; padding:1.25rem; box-shadow:0 20px 60px rgba(0,0,0,0.4); margin:1rem auto; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem">
+      <div style="font-size:16px; font-weight:900">＋ New order</div>
+      <button onclick="closeNewOrder()" style="border:1px solid #d6d3d1; background:#fff; border-radius:6px; padding:4px 10px; cursor:pointer">✕</button>
+    </div>
+    <div style="font-size:12px; color:#78716c; margin:0.3rem 0 0.9rem">Saved orders go straight to the supplier's portal.</div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem">
+      <div style="flex:1; min-width:140px"><label style="font-size:11px; color:#78716c">Business</label>
+        <select id="no-biz" style="width:100%; padding:8px"><option value="bellville">Bellville Furniture</option><option value="pinkfoot">PinkFoot Boutique</option><option value="repticube">ReptiCube</option></select></div>
+      <div style="flex:1; min-width:140px"><label style="font-size:11px; color:#78716c">Invoice / order no.</label>
+        <input id="no-invoice" placeholder="e.g. 3701" style="width:100%; padding:8px"></div>
+      <div id="no-supplier-wrap" style="flex:1; min-width:140px; display:none"><label style="font-size:11px; color:#78716c">Supplier</label>
+        <select id="no-supplier" style="width:100%; padding:8px"></select></div>
+    </div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem">
+      <div style="flex:2; min-width:160px"><label style="font-size:11px; color:#78716c">Customer</label>
+        <input id="no-customer" placeholder="Client name" style="width:100%; padding:8px"></div>
+      <div style="flex:1; min-width:120px"><label style="font-size:11px; color:#78716c">Phone</label>
+        <input id="no-phone" placeholder="Phone" style="width:100%; padding:8px"></div>
+    </div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem">
+      <div style="flex:2; min-width:180px"><label style="font-size:11px; color:#78716c">Product</label>
+        <input id="no-product" placeholder="e.g. 3 Seater Chesterfield" style="width:100%; padding:8px"></div>
+      <div style="flex:2; min-width:160px"><label style="font-size:11px; color:#78716c">Fabric / colour</label>
+        <input id="no-fabric" placeholder="e.g. Moldova : Oatmeal" style="width:100%; padding:8px"></div>
+      <div style="flex:0 0 70px"><label style="font-size:11px; color:#78716c">Qty</label>
+        <input id="no-qty" type="number" min="1" value="1" style="width:100%; padding:8px"></div>
+    </div>
+    <label style="font-size:11px; color:#78716c">Notes / special requests</label>
+    <textarea id="no-notes" rows="2" placeholder="Anything the supplier must know" style="width:100%; padding:8px; margin:0.25rem 0 0.9rem; font-family:inherit"></textarea>
+
+    <div style="border:1px solid #e7e5e4; border-radius:10px; padding:0.75rem; margin-bottom:0.9rem">
+      <div style="font-size:12px; font-weight:800; margin-bottom:0.5rem">📐 Custom size <span style="font-weight:normal; color:#78716c">(leave empty for a standard build)</span></div>
+      <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.5rem">
+        <div style="flex:1; min-width:100px"><label style="font-size:11px; color:#78716c">Length (mm)</label>
+          <input id="no-size-len" type="number" min="0" placeholder="2400" oninput="_newOrderUpdatePreview()" style="width:100%; padding:8px"></div>
+        <div style="flex:1; min-width:100px"><label style="font-size:11px; color:#78716c">Depth (mm)</label>
+          <input id="no-size-depth" type="number" min="0" placeholder="900" oninput="_newOrderUpdatePreview()" style="width:100%; padding:8px"></div>
+        <div style="flex:1; min-width:100px"><label style="font-size:11px; color:#78716c">Height (mm)</label>
+          <input id="no-size-h" type="number" min="0" placeholder="850" oninput="_newOrderUpdatePreview()" style="width:100%; padding:8px"></div>
+      </div>
+      <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.5rem">
+        <div style="flex:1; min-width:140px"><label style="font-size:11px; color:#78716c">Shape</label>
+          <select id="no-size-side" onchange="_newOrderUpdatePreview()" style="width:100%; padding:8px">
+            <option value="">Straight couch</option>
+            <option value="left">Daybed LEFT</option>
+            <option value="right">Daybed RIGHT</option>
+            <option value="corner-left">Corner unit LEFT</option>
+            <option value="corner-right">Corner unit RIGHT</option>
+          </select></div>
+        <div style="flex:1; min-width:120px"><label style="font-size:11px; color:#78716c">Daybed length / corner 2nd side (mm)</label>
+          <input id="no-size-dblen" type="number" min="0" placeholder="1600" oninput="_newOrderUpdatePreview()" style="width:100%; padding:8px"></div>
+        <div style="flex:1; min-width:100px"><label style="font-size:11px; color:#78716c">Seat cushions</label>
+          <input id="no-size-cushions" type="number" min="0" max="8" placeholder="3" oninput="_newOrderUpdatePreview()" style="width:100%; padding:8px"></div>
+      </div>
+      <div id="no-size-preview" style="text-align:center; background:#fafaf9; border-radius:8px; padding:6px; min-height:40px"></div>
+      <input id="no-size-note" placeholder="Size note, e.g. arms 200mm wide" style="width:100%; padding:8px; margin-top:0.5rem">
+    </div>
+    <div id="no-status" style="font-size:12px; color:#991b1b; min-height:1.2em; margin-bottom:0.4rem"></div>
+    <button onclick="saveNewOrder()" style="width:100%; padding:12px; border-radius:8px; border:none; background:#111; color:#fff; font-weight:800; font-size:14px; cursor:pointer">💾 Save & send to supplier</button>
+  </div>
+</div>
+
 <!-- MANUFACTURER PORTAL — only shown when URL has ?builder=1&m=<name> (e.g. Couch Potato) -->
 <div id="builder-only-view" style="display:none; position:fixed; inset:0; background:#f2f0ec; color:#1c1917; z-index:9000; overflow:auto; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
   <div style="background:linear-gradient(135deg,#000,#262626); color:#fff; padding:1.5rem 1.25rem 2.5rem; text-align:center">
@@ -340,6 +446,7 @@
     <div id="builder-portal-name" style="font-size:25px; font-weight:800; margin-top:0.4rem">🏭 Orders</div>
     <div id="builder-portal-count" style="display:inline-block; font-size:13px; font-weight:600; margin-top:0.6rem; background:rgba(255,255,255,0.16); border:1px solid rgba(255,255,255,0.25); border-radius:999px; padding:0.25rem 0.9rem"></div>
     <div style="margin-top:0.7rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap">
+      <button id="staff-portal-new" onclick="openNewOrder()" style="display:none; padding:0.35rem 1rem; background:#fff; color:#111; border:1px solid #fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:800">＋ New order</button>
       <button id="staff-portal-back" onclick="exitStaffPortalMode()" style="display:none; padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">⬅ Full system</button>
       <button onclick="builderPortalPrintAll()" style="padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">🖨️ Print all job cards</button>
       <button onclick="builderPortalExportCsv()" title="All the job cards as one spreadsheet — opens in Excel" style="padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">⬇️ Export to Excel</button>
@@ -544,6 +651,24 @@
         <div class="f2" style="min-width:80px">
           <label>Qty</label>
           <input id="intake-qty" type="number" value="1" min="1">
+        </div>
+      </div>
+      <div class="row">
+        <div class="f2" style="min-width:110px">
+          <label>📐 Length (mm) <span style="color:var(--text-muted); font-weight:normal">(custom size — leave empty for standard)</span></label>
+          <input id="intake-size-len" type="number" min="0" placeholder="e.g. 2400">
+        </div>
+        <div class="f2" style="min-width:110px">
+          <label>Depth (mm)</label>
+          <input id="intake-size-depth" type="number" min="0" placeholder="e.g. 900">
+        </div>
+        <div class="f2" style="min-width:110px">
+          <label>Height (mm)</label>
+          <input id="intake-size-h" type="number" min="0" placeholder="e.g. 850">
+        </div>
+        <div class="f1">
+          <label>Size note</label>
+          <input id="intake-size-note" placeholder="e.g. arms 200mm wide, loose ottoman">
         </div>
       </div>
       <div class="row">
@@ -2608,6 +2733,9 @@
       outstanding
     };
 
+    const _cs = _readIntakeCustomSize();
+    if (_cs) order.customSize = _cs;
+
     snapshotState();
     currentData().orders.push(order);
     document.getElementById('order-status').innerHTML = `✓ Order added (Due: ${order.dueDate})`;
@@ -2618,6 +2746,7 @@
     document.getElementById('intake-fabric').value = '';
     document.getElementById('intake-product').value = '';
     document.getElementById('intake-qty').value = '1';
+    ['intake-size-len', 'intake-size-depth', 'intake-size-h', 'intake-size-note'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
     if (document.getElementById('intake-category')) document.getElementById('intake-category').value = '';
     if (document.getElementById('intake-payment')) document.getElementById('intake-payment').value = 'deposit';
     if (document.getElementById('intake-outstanding')) document.getElementById('intake-outstanding').value = '';
@@ -3118,6 +3247,13 @@ ${_PRODUCTION_PRINT_STYLES}
       <div class="field-label">Product${order.category ? ' — ' + order.category : ''}</div>
       <div class="field-value">${order.product}</div>
     </div>
+    ${order.customSize && _customSizeText(order) ? `
+    <div class="field full-width" style="border:3px solid #000; background:#f3f4f6; page-break-inside:avoid">
+      <div class="field-label">⚠ CUSTOM SIZE — BUILD TO THESE DIMENSIONS</div>
+      <div class="field-value" style="font-weight:900; font-size:16px">${_customSizeText(order)}</div>
+      <div style="text-align:center; margin-top:6px; background:#fff; padding:4px">${_customSizeSvg(order.customSize, 500)}</div>
+    </div>
+    ` : ''}
     ${order.fabric ? `
     <div class="field full-width">
       <div class="field-label">Fabric / Color</div>
@@ -4707,6 +4843,271 @@ ${_PRODUCTION_PRINT_STYLES}
     return e.charAt(0).toUpperCase() + e.slice(1);
   }
   window._staffDisplayName = _staffDisplayName;
+
+  // ---- 📐 CUSTOM SIZE — order.customSize = { lengthMm, depthMm, heightMm, note } ----
+  function _customSizeText(o) {
+    const cs = o && o.customSize;
+    if (!cs) return '';
+    const parts = [];
+    if (parseFloat(cs.lengthMm) > 0) parts.push('L' + parseFloat(cs.lengthMm));
+    if (parseFloat(cs.depthMm) > 0) parts.push('D' + parseFloat(cs.depthMm));
+    if (parseFloat(cs.heightMm) > 0) parts.push('H' + parseFloat(cs.heightMm));
+    let t = parts.length ? parts.join(' × ') + ' mm' : '';
+    if (cs.daybedSide === 'left' || cs.daybedSide === 'right') {
+      t += (t ? ' · ' : '') + 'daybed ' + cs.daybedSide.toUpperCase() + (parseFloat(cs.daybedLengthMm) > 0 ? ' (' + parseFloat(cs.daybedLengthMm) + 'mm)' : '');
+    } else if (cs.daybedSide === 'corner-left' || cs.daybedSide === 'corner-right') {
+      // a corner unit is two full sides meeting at the corner, e.g. 2800 × 2800
+      const a = parseFloat(cs.lengthMm) > 0 ? parseFloat(cs.lengthMm) : 0;
+      const b = parseFloat(cs.daybedLengthMm) > 0 ? parseFloat(cs.daybedLengthMm) : 0;
+      t += (t ? ' · ' : '') + 'corner unit ' + (cs.daybedSide === 'corner-left' ? 'LEFT' : 'RIGHT') + ((a && b) ? ' (' + a + ' × ' + b + 'mm sides)' : (b ? ' (2nd side ' + b + 'mm)' : ''));
+    }
+    if (parseInt(cs.cushions) > 0) t += (t ? ' · ' : '') + parseInt(cs.cushions) + ' seat cushion' + (parseInt(cs.cushions) === 1 ? '' : 's');
+    if (cs.note) t += (t ? ' — ' : '') + cs.note;
+    return t;
+  }
+  window._customSizeText = _customSizeText;
+  // Top-view 2D drawing of the custom couch: length, daybed side + length,
+  // seat cushions. Schematic (mm-true proportions), for the modal preview
+  // and the printed job card.
+  function _customSizeSvg(cs, maxW) {
+    // 3/4 ISOMETRIC technical line drawing of the couch (30 degree axes).
+    // World units are mm: x = along the back (side A), y = coming towards the
+    // viewer (depth / side B), z = up.  Every part is an axis-aligned prism
+    // drawn with its three visible faces, back-to-front, so a corner unit
+    // shows TWO full sides (backs, seats, arm each) meeting at a square
+    // corner seat.  Right-hand variants are the mirror image.
+    cs = cs || {};
+    const num = (v, d) => (parseFloat(v) > 0 ? parseFloat(v) : d);
+    let L = num(cs.lengthMm, 2400);
+    const D = Math.max(600, Math.min(num(cs.depthMm, 900), 1400));
+    const raw = String(cs.daybedSide || '');
+    const isChaise = raw === 'left' || raw === 'right';
+    const isCorner = raw === 'corner-left' || raw === 'corner-right';
+    const sideRight = raw === 'right' || raw === 'corner-right';
+    const n = parseInt(cs.cushions) > 0 ? Math.min(parseInt(cs.cushions), 8) : 0;
+
+    // vertical proportions (mm)
+    const LEG = 110, BASE = 320, SEAT = 470, BACK = 930, ARMH = 640;
+    const ARM = 190, BT = 230, G = 40; // arm width, back-cushion thickness, cushion gap
+    // keep every run long enough to hold its arm + at least one seat
+    let B = (isChaise || isCorner) ? num(cs.daybedLengthMm, isCorner ? 2000 : 1600) : 0;
+    const L0 = L, B0 = B;                              // entered values: the labels carry the truth
+    if (isCorner) B = Math.max(B, D + ARM + 400);
+    if (isChaise) B = Math.max(B, D + 300);
+    const Lmin = isCorner ? D + ARM + 400 : ARM * 2 + 500;
+    if (L < Lmin) L = Lmin;
+    // line weights / text scale with the drawing size so every shape prints at
+    // about the same pixel weight when the SVG is shown ~440-560px wide
+    const est = 0.866 * (L + Math.max(B, D)) + 900;
+    const f = Math.max(0.6, Math.min(1.15, est / 5300));
+    const SW = Math.round(14 * f * 10) / 10, DIM = Math.round(170 * f), CAP = Math.round(200 * f);
+
+    // ---- isometric projection (30 deg), mirrored for right-hand variants ----
+    const c = 0.8660254, s = 0.5, m = sideRight ? -1 : 1;
+    let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+    const bb = (x, y) => { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; };
+    const pr = (x, y, z) => { const sx = m * c * (x - y), sy = s * (x + y) - z; bb(sx, sy); return [Math.round(sx * 10) / 10, Math.round(sy * 10) / 10]; };
+    const P = (pts) => pts.map(p => p.join(',')).join(' ');
+    const S = [];
+    const FILL = { top: '#fff', front: '#f2f2f2', side: '#e3e3e3' };
+
+    // prism from a footprint polygon (x,y pairs) between z0 and z1
+    const prism = (fp, z0, z1, f) => {
+      f = f || FILL;
+      let area = 0;
+      for (let i = 0; i < fp.length; i++) { const a = fp[i], b = fp[(i + 1) % fp.length]; area += a[0] * b[1] - b[0] * a[1]; }
+      const sign = area > 0 ? 1 : -1;
+      for (let i = 0; i < fp.length; i++) {
+        const a = fp[i], b = fp[(i + 1) % fp.length];
+        const dx = b[0] - a[0], dy = b[1] - a[1];
+        const nx = sign * dy, ny = -sign * dx;          // outward normal
+        if (nx + ny <= 1e-6) continue;                   // hidden face
+        S.push('<polygon points="' + P([pr(a[0], a[1], z0), pr(b[0], b[1], z0), pr(b[0], b[1], z1), pr(a[0], a[1], z1)]) + '" fill="' + (nx > 0 ? f.side : f.front) + '"/>');
+      }
+      S.push('<polygon points="' + P(fp.map(p => pr(p[0], p[1], z1))) + '" fill="' + f.top + '"/>');
+    };
+    const box = (x0, x1, y0, y1, z0, z1, f) => prism([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], z0, z1, f);
+    const leg = (x, y) => box(x, x + 70, y, y + 70, 0, LEG, { top: '#111', front: '#111', side: '#333' });
+    const cushionRow = (x0, x1, y0, y1, count, alongX) => {
+      // seat cushions split along the run; count 0 = one undivided seat
+      const k = count > 0 ? count : 1;
+      const span = alongX ? (x1 - x0) : (y1 - y0);
+      for (let i = 0; i < k; i++) {
+        const a = i * span / k + G, b = (i + 1) * span / k - G;
+        if (alongX) box(x0 + a, x0 + b, y0 + G, y1 - G, BASE, SEAT);
+        else box(x0 + G, x1 - G, y0 + a, y0 + b, BASE, SEAT);
+      }
+    };
+    const backRow = (x0, x1, y0, y1, count, alongX) => {
+      const k = count > 0 ? count : 1;
+      const span = alongX ? (x1 - x0) : (y1 - y0);
+      for (let i = 0; i < k; i++) {
+        const a = i * span / k + G, b = (i + 1) * span / k - G;
+        if (alongX) box(x0 + a, x0 + b, y0 + G, y1, BASE, BACK);
+        else box(x0 + G, x1, y0 + a, y0 + b, BASE, BACK);
+      }
+    };
+    // text (never mirrored) with rough bbox tracking
+    const text = (x, y, str, size, o) => {
+      o = o || {};
+      const w = str.length * size * 0.6;
+      bb(x - w / 2, y - size); bb(x + w / 2, y + size * 0.4);
+      const tr = o.rot ? ' transform="rotate(' + o.rot + ' ' + x + ' ' + y + ')"' : '';
+      S.push('<text x="' + x + '" y="' + y + '" text-anchor="' + (o.anchor || 'middle') + '" font-size="' + size + '" stroke="none" fill="' + (o.fill || '#111') + '"' + (o.bold ? ' font-weight="bold"' : '') + tr + '>' + str + '</text>');
+    };
+    // dimension line between two world points, label written along it (above)
+    const dim = (p0, p1, label, size) => {
+      const a = pr(p0[0], p0[1], p0[2]), b = pr(p1[0], p1[1], p1[2]);
+      let dx = b[0] - a[0], dy = b[1] - a[1];
+      const len = Math.sqrt(dx * dx + dy * dy) || 1; dx /= len; dy /= len;
+      const px = -dy * 60 * f, py = dx * 60 * f;
+      S.push('<g stroke-width="' + (SW * 0.7) + '">');
+      S.push('<line x1="' + a[0] + '" y1="' + a[1] + '" x2="' + b[0] + '" y2="' + b[1] + '"/>');
+      S.push('<line x1="' + (a[0] - px) + '" y1="' + (a[1] - py) + '" x2="' + (a[0] + px) + '" y2="' + (a[1] + py) + '"/>');
+      S.push('<line x1="' + (b[0] - px) + '" y1="' + (b[1] - py) + '" x2="' + (b[0] + px) + '" y2="' + (b[1] + py) + '"/>');
+      S.push('</g>');
+      let ang = Math.atan2(dy, dx) * 180 / Math.PI;
+      if (dx < 0) ang += 180;
+      const ra = ang * Math.PI / 180, ux = Math.sin(ra), uy = -Math.cos(ra); // text-local "up"
+      const mx = (a[0] + b[0]) / 2 + ux * (size * 0.55), my = (a[1] + b[1]) / 2 + uy * (size * 0.55);
+      text(Math.round(mx), Math.round(my), label, size, { bold: true, rot: Math.round(ang) });
+      bb(mx + ux * size * 1.2, my + uy * size * 1.2); // room for the rotated text
+    };
+
+    // ------------------------------------------------------------------ geometry
+    // Canonical frame: the return / chaise / first arm is at x = 0 (left).
+    if (isCorner) {
+      const bw = Math.max(L - D - ARM, 300);            // usable seat run, side A
+      const rw = Math.max(B - D - ARM, 300);            // usable seat run, side B
+      const k = n > 0 ? Math.max(1, Math.round(n * rw / bw)) : 0;
+      // legs (front corners only; the rest are hidden)
+      leg(L - 120, D - 120); leg(D + 40, D - 120); leg(D - 120, B - 120);
+      // one L-shaped base
+      prism([[0, 0], [L, 0], [L, D], [D, D], [D, B], [0, B]], LEG, BASE);
+      // corner section: L-shaped backrest along both outer edges + square seat
+      prism([[G, G], [D, G], [D, BT], [BT, BT], [BT, D], [G, D]], BASE, BACK);
+      box(BT + G, D - G, BT + G, D - G, BASE, SEAT, { top: '#ececec' });
+      // side A (along the back): backs, seats, arm at the far end
+      backRow(D, L - ARM, 0, BT, n, true);
+      cushionRow(D, L - ARM, BT, D, n, true);
+      box(L - ARM, L, 0, D, LEG, ARMH);
+      // side B (the return coming towards the viewer): backs, seats, arm
+      backRow(0, BT, D, B - ARM, k, false);
+      cushionRow(0, D, D, B - ARM, k, false);
+      box(0, D, B - ARM, B, LEG, ARMH);
+      // dimensions above the two back edges
+      dim([0, -260, BACK + 40], [L, -260, BACK + 40], L0 + 'mm long', DIM);
+      dim([-260, 0, BACK + 40], [-260, B, BACK + 40], B0 + 'mm', DIM);
+    } else if (isChaise) {
+      const bw = L - ARM * 2;
+      const k = n > 0 ? n : 1;
+      const w = bw / k;                                  // width of the chaise section
+      const cx1 = ARM + w;
+      leg(L - 120, D - 120); leg(cx1 - 120, B - 120); leg(40, B - 120);
+      prism([[0, 0], [L, 0], [L, D], [cx1, D], [cx1, B], [0, B]], LEG, BASE);
+      box(0, ARM, 0, B, LEG, ARMH);                      // near arm runs the full daybed length
+      backRow(ARM, L - ARM, 0, BT, n, true);
+      // daybed: the first seat section runs forward as one long straight cushion
+      box(ARM + G, cx1 - G, BT + G, B - G, BASE, SEAT);
+      for (let i = 1; i < k; i++) box(ARM + i * w + G, ARM + (i + 1) * w - G, BT + G, D - G, BASE, SEAT);
+      box(L - ARM, L, 0, D, LEG, ARMH);                  // far arm
+      dim([0, -260, BACK + 40], [L, -260, BACK + 40], L0 + 'mm long', DIM);
+      dim([-260, 0, ARMH + 40], [-260, B, ARMH + 40], 'DAYBED ' + B0 + 'mm', DIM);
+    } else {
+      leg(40, D - 120); leg(L - 120, D - 120);
+      box(0, L, 0, D, LEG, BASE);
+      box(0, ARM, 0, D, LEG, ARMH);
+      backRow(ARM, L - ARM, 0, BT, n, true);
+      cushionRow(ARM, L - ARM, BT, D, n, true);
+      box(L - ARM, L, 0, D, LEG, ARMH);
+      dim([0, -260, BACK + 40], [L, -260, BACK + 40], L0 + 'mm long', DIM);
+    }
+
+    // caption under the drawing (horizontal, always legible)
+    const capX = Math.round((minX + maxX) / 2);
+    let capY = maxY + 300;
+    const kind = isCorner ? 'CORNER UNIT' : isChaise ? 'DAYBED' : 'STRAIGHT';
+    text(capX, capY, kind + (isCorner || isChaise ? (sideRight ? ' - RIGHT' : ' - LEFT') : ''), CAP, { bold: true });
+    capY += CAP * 1.25;
+    text(capX, capY, (n > 0 ? n + ' seat cushion' + (n === 1 ? '' : 's') : 'undivided seat') + ' · ' + D + 'mm deep', CAP * 0.8, { fill: '#333' });
+
+    // ------------------------------------------------------------------ wrap up
+    const PAD = Math.round(140 * f);
+    const wMm = Math.round(maxX - minX + PAD * 2), hMm = Math.round(maxY - minY + PAD * 2);
+    const px = Math.min(maxW || 420, 560);
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + wMm + ' ' + hMm + '" width="' + px + '" style="max-width:100%; height:auto">' +
+      '<g transform="translate(' + Math.round(PAD - minX) + ',' + Math.round(PAD - minY) + ')" stroke="#111" stroke-width="' + SW + '" stroke-linejoin="round" fill="#fff" font-family="Arial,Helvetica,sans-serif">' +
+      S.join('') + '</g></svg>';
+  }
+  window._customSizeSvg = _customSizeSvg;
+  function _customSizeUpdatePreview() {
+    const host = document.getElementById('customsize-preview');
+    if (!host) return;
+    const g = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+    host.innerHTML = _customSizeSvg({
+      lengthMm: g('customsize-len'), depthMm: g('customsize-depth'), heightMm: g('customsize-h'),
+      daybedSide: g('customsize-dbside'), daybedLengthMm: g('customsize-dblen'), cushions: g('customsize-cushions')
+    }, 500);
+  }
+  window._customSizeUpdatePreview = _customSizeUpdatePreview;
+  function _readIntakeCustomSize() {
+    const g = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+    const len = parseFloat(g('intake-size-len')) || 0;
+    const depth = parseFloat(g('intake-size-depth')) || 0;
+    const h = parseFloat(g('intake-size-h')) || 0;
+    const note = String(g('intake-size-note') || '').trim();
+    if (!len && !depth && !h && !note) return null;
+    return { lengthMm: len || '', depthMm: depth || '', heightMm: h || '', note: note };
+  }
+  window._readIntakeCustomSize = _readIntakeCustomSize;
+  let _customSizeOrderId = null;
+  function openCustomSize(orderId) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    _customSizeOrderId = orderId;
+    const cs = o.customSize || {};
+    document.getElementById('customsize-order').textContent = '#' + (o.invoice || o.id) + ' — ' + (o.product || '');
+    document.getElementById('customsize-len').value = cs.lengthMm || '';
+    document.getElementById('customsize-depth').value = cs.depthMm || '';
+    document.getElementById('customsize-h').value = cs.heightMm || '';
+    document.getElementById('customsize-note').value = cs.note || '';
+    document.getElementById('customsize-dbside').value = cs.daybedSide || '';
+    document.getElementById('customsize-dblen').value = cs.daybedLengthMm || '';
+    document.getElementById('customsize-cushions').value = cs.cushions || '';
+    document.getElementById('customsize-modal').style.display = 'flex';
+    _customSizeUpdatePreview();
+  }
+  function closeCustomSize() {
+    document.getElementById('customsize-modal').style.display = 'none';
+    _customSizeOrderId = null;
+  }
+  function saveCustomSize() {
+    const o = _findOrderAnyBiz(_customSizeOrderId);
+    if (!o) { closeCustomSize(); return; }
+    const len = parseFloat(document.getElementById('customsize-len').value) || 0;
+    const depth = parseFloat(document.getElementById('customsize-depth').value) || 0;
+    const h = parseFloat(document.getElementById('customsize-h').value) || 0;
+    const note = String(document.getElementById('customsize-note').value || '').trim();
+    const dbSide = document.getElementById('customsize-dbside').value || '';
+    const dbLen = parseFloat(document.getElementById('customsize-dblen').value) || 0;
+    const cush = parseInt(document.getElementById('customsize-cushions').value) || 0;
+    snapshotState();
+    if (!len && !depth && !h && !note && !dbSide && !cush) delete o.customSize;
+    else o.customSize = { lengthMm: len || '', depthMm: depth || '', heightMm: h || '', note: note, daybedSide: dbSide, daybedLengthMm: dbSide && dbLen ? dbLen : '', cushions: cush || '' };
+    saveData();
+    const had = !!o.customSize;
+    closeCustomSize();
+    if (typeof render === 'function') render();
+    if (typeof toast === 'function') toast(had ? '📐 Custom size saved for #' + (o.invoice || o.id) : '📐 #' + (o.invoice || o.id) + ' back to standard size', 'success', 2500);
+  }
+  function clearCustomSize() {
+    ['customsize-len', 'customsize-depth', 'customsize-h', 'customsize-note', 'customsize-dbside', 'customsize-dblen', 'customsize-cushions'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    saveCustomSize();
+  }
+  window.openCustomSize = openCustomSize;
+  window.closeCustomSize = closeCustomSize;
+  window.saveCustomSize = saveCustomSize;
+  window.clearCustomSize = clearCustomSize;
 
   function _findOrderAnyBiz(orderId) {
     let order = null;
@@ -8747,6 +9148,8 @@ ${_PRODUCTION_PRINT_STYLES}
     if (sub) sub.textContent = 'Manufacturer portal';
     const back = document.getElementById('staff-portal-back');
     if (back) back.style.display = 'none';
+    const nb = document.getElementById('staff-portal-new');
+    if (nb) nb.style.display = 'none';
     const nm = document.getElementById('builder-portal-name');
     if (nm) nm.innerHTML = _builderWordmarkHtml(BUILDER_MODE_NAME || 'Orders', 24, '#fff');
     document.title = (BUILDER_MODE_NAME || 'Manufacturer') + ' · Orders';
@@ -8767,6 +9170,8 @@ ${_PRODUCTION_PRINT_STYLES}
     if (sub) sub.textContent = 'Staff portal';
     const back = document.getElementById('staff-portal-back');
     if (back) back.style.display = 'inline-block';
+    const nb = document.getElementById('staff-portal-new');
+    if (nb) nb.style.display = 'inline-block';
     const nm = document.getElementById('builder-portal-name');
     if (nm) nm.innerHTML = _builderWordmarkHtml('Bellville Furniture', 22, '#fff');
     document.title = 'Bellville · Orders';
@@ -8784,6 +9189,84 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof render === 'function') render();
   }
   window.exitStaffPortalMode = exitStaffPortalMode;
+  // ---- ＋ New order from the staff portal: captured once, straight to the supplier ----
+  function _allManufacturerNames() {
+    const names = [];
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+      (((data[b] || {}).manufacturers) || []).forEach(m => { if (m && m.name && !names.includes(m.name)) names.push(m.name); });
+    });
+    return names;
+  }
+  function _newOrderUpdatePreview() {
+    const host = document.getElementById('no-size-preview');
+    if (!host) return;
+    const g = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+    const any = g('no-size-len') || g('no-size-depth') || g('no-size-h') || g('no-size-side') || g('no-size-dblen') || g('no-size-cushions');
+    host.innerHTML = any ? _customSizeSvg({
+      lengthMm: g('no-size-len'), depthMm: g('no-size-depth'), heightMm: g('no-size-h'),
+      daybedSide: g('no-size-side'), daybedLengthMm: g('no-size-dblen'), cushions: g('no-size-cushions')
+    }, 460) : '<div style="font-size:11px; color:#a8a29e; padding:8px">Fill in a size to see the drawing</div>';
+  }
+  window._newOrderUpdatePreview = _newOrderUpdatePreview;
+  function openNewOrder() {
+    const m = document.getElementById('neworder-modal');
+    if (!m) return;
+    ['no-invoice', 'no-customer', 'no-phone', 'no-product', 'no-fabric', 'no-notes', 'no-size-len', 'no-size-depth', 'no-size-h', 'no-size-dblen', 'no-size-cushions', 'no-size-note'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    document.getElementById('no-qty').value = '1';
+    document.getElementById('no-size-side').value = '';
+    document.getElementById('no-biz').value = (typeof activeBiz !== 'undefined' && activeBiz) ? activeBiz : 'bellville';
+    document.getElementById('no-status').textContent = '';
+    // supplier: automatic when there is exactly one, otherwise a choice
+    const names = _allManufacturerNames();
+    const wrap = document.getElementById('no-supplier-wrap');
+    const sel = document.getElementById('no-supplier');
+    sel.innerHTML = names.map(n => '<option value="' + _escape(n) + '">' + _escape(n) + '</option>').join('');
+    wrap.style.display = names.length > 1 ? 'block' : 'none';
+    _newOrderUpdatePreview();
+    m.style.display = 'flex';
+    setTimeout(() => { const f = document.getElementById('no-invoice'); if (f) f.focus(); }, 50);
+  }
+  function closeNewOrder() { const m = document.getElementById('neworder-modal'); if (m) m.style.display = 'none'; }
+  function saveNewOrder() {
+    const g = id => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+    const biz = g('no-biz') || 'bellville';
+    const invoice = g('no-invoice'), customer = g('no-customer'), phone = g('no-phone');
+    const product = g('no-product'), fabric = g('no-fabric'), notes = g('no-notes');
+    const qty = parseInt(g('no-qty')) || 1;
+    const status = document.getElementById('no-status');
+    if (!invoice || !customer || !product) { status.textContent = 'Fill in the invoice number, customer and product.'; return; }
+    const names = _allManufacturerNames();
+    const supplier = names.length > 1 ? g('no-supplier') : (names[0] || '');
+    if (!supplier) { status.textContent = 'No supplier set up yet — add one under Planner → Manufacturers first.'; return; }
+    if (!data[biz]) data[biz] = { orders: [] };
+    if (!Array.isArray(data[biz].orders)) data[biz].orders = [];
+    const productSlug = product.replace(/[^a-z0-9]/gi, '').toUpperCase().substring(0, 20);
+    const orderId = 'INV-' + invoice + '-' + productSlug;
+    if (data[biz].orders.find(o => o && o.id === orderId)) { status.textContent = 'This product is already on invoice ' + invoice + '.'; return; }
+    const today = new Date().toISOString().split('T')[0];
+    const order = {
+      id: orderId, invoice, customer, phone, product, category: '', fabric, qty,
+      orderDate: today,
+      dueDate: _dueFromLead('', product, today, biz),
+      status: 'pending', startDate: null, paymentStatus: 'deposit', outstanding: 0,
+      notes: notes,
+      builder: supplier
+    };
+    const len = parseFloat(g('no-size-len')) || 0, depth = parseFloat(g('no-size-depth')) || 0, h = parseFloat(g('no-size-h')) || 0;
+    const side = g('no-size-side'), dblen = parseFloat(g('no-size-dblen')) || 0, cush = parseInt(g('no-size-cushions')) || 0, snote = g('no-size-note');
+    if (len || depth || h || side || cush || snote) {
+      order.customSize = { lengthMm: len || '', depthMm: depth || '', heightMm: h || '', note: snote, daybedSide: side, daybedLengthMm: side && dblen ? dblen : '', cushions: cush || '' };
+    }
+    snapshotState();
+    data[biz].orders.push(order);
+    saveData();
+    closeNewOrder();
+    if (typeof render === 'function') render();
+    if (typeof toast === 'function') toast('✅ #' + invoice + ' saved and sent to ' + supplier, 'success', 3000);
+  }
+  window.openNewOrder = openNewOrder;
+  window.closeNewOrder = closeNewOrder;
+  window.saveNewOrder = saveNewOrder;
   function _staffPortalOrders() {
     // The SAME list the manufacturer portal shows — only outsourced orders
     // (e.g. Couch Patato's), with the same visibility rules — so staff see
@@ -8825,7 +9308,7 @@ ${_PRODUCTION_PRINT_STYLES}
             <div style="font-size:16px; font-weight:800">#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}</div>
             <div style="font-size:12px; color:#78716c; margin-top:2px">
               <span style="background:#e7e5e4; border-radius:999px; padding:1px 8px; font-size:10px; font-weight:700">${_escape(r.tag)}</span>
-              · Qty ${_escape(o.qty || 1)}${o.customer ? ' · 👤 ' + _escape(o.customer) : ''}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.builder ? ' · 🏭 ' + _escape(o.builder) : ''}
+              · Qty ${_escape(o.qty || 1)}${o.customer ? ' · 👤 ' + _escape(o.customer) : ''}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.builder ? ' · 🏭 ' + _escape(o.builder) : ''}${o.customSize ? '<br>📐 <strong style="color:#111">' + _escape(_customSizeText(o)) + '</strong>' : ''}
             </div>
           </div>
           <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
@@ -8907,7 +9390,7 @@ ${_PRODUCTION_PRINT_STYLES}
         <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap">
           <div>
             <div style="font-size:16px; font-weight:800">#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}</div>
-            <div style="font-size:12px; color:#78716c; margin-top:2px">Qty ${_escape(o.qty || 1)}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.notes ? '<br>📝 ' + _escape(o.notes) : ''}</div>
+            <div style="font-size:12px; color:#78716c; margin-top:2px">Qty ${_escape(o.qty || 1)}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.customSize ? '<br>📐 <strong style="color:#111">' + _escape(_customSizeText(o)) + '</strong>' : ''}${o.notes ? '<br>📝 ' + _escape(o.notes) : ''}</div>
           </div>
           <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
           <button onclick="builderPortalPrintCard('${_escape(o.id)}')" title="Print this order's job card" style="padding:7px 12px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; color:#111; font-weight:700; font-size:12.5px; cursor:pointer">🖨️ Job card</button>
@@ -9013,7 +9496,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const staffMode = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE);
     const orders = staffMode ? _staffPortalOrders().map(r => r.o) : _builderPortalOrders();
     if (!orders.length) { alert('No open orders to export.'); return; }
-    const rows = [['Order #', 'Product', 'Qty', 'Fabric', 'Fabric status', 'Order placed', 'ETA (due date)', 'Done', 'Notes', 'Latest comment']];
+    const rows = [['Order #', 'Product', 'Custom size', 'Qty', 'Fabric', 'Fabric status', 'Order placed', 'ETA (due date)', 'Done', 'Notes', 'Latest comment']];
     orders.forEach(o => {
       let fab = '';
       if (o.fabric) {
@@ -9027,6 +9510,7 @@ ${_PRODUCTION_PRINT_STYLES}
       rows.push([
         o.invoice || o.id || '',
         o.product || '',
+        _customSizeText(o),
         parseInt(o.qty) || 1,
         o.fabric || '',
         fab,
@@ -9770,6 +10254,11 @@ ${_PRODUCTION_PRINT_STYLES}
           </div>
           <div style="font-size:11px; color:var(--text-muted); margin-bottom:0.75rem">
             Order: ${o.orderDate} | Due: <input type="date" value="${o.dueDate}" onchange="updateDueDate('${o.id}', this.value)" style="display:inline-block; width:auto; padding:2px 6px; font-size:11px; background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:4px">
+          </div>
+
+          <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin-bottom:0.75rem">
+            <button class="btn btn-sm" onclick="openCustomSize('${o.id}')" title="Build this couch to a different size">📐 ${o.customSize ? 'Edit custom size' : 'Custom size'}</button>
+            ${o.customSize ? `<span style="font-size:12px; font-weight:800; color:#7c3aed">📐 ${_escape(_customSizeText(o))}</span>` : ''}
           </div>
 
           ${bomKeys.length > 0 ? `
@@ -12615,6 +13104,9 @@ ${totalsSection}
         } else if (IS_PLANNER_MODE) {
           // Shared view-only planner
           enterPlannerOnlyMode();
+        } else if (currentRole === 'sales' && !IS_POS_MODE && !IS_DASHBOARD_MODE) {
+          // Sales staff land on the orders portal (⬅ Full system is still there)
+          enterStaffPortalMode();
         } else if (IS_RESERVED_MODE || currentRole === 'fabricrep') {
           // Fabric-rep portal — view-only reserved sheet with out-of-stock + ETA
           enterReservedOnlyMode();
