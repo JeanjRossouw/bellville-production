@@ -357,6 +357,7 @@
           <option value="right">Daybed RIGHT</option>
           <option value="corner-left">Corner unit LEFT</option>
           <option value="corner-right">Corner unit RIGHT</option>
+          <option value="u">U-shape (daybed left + right)</option>
         </select></div>
       <div style="flex:1; min-width:120px"><label style="font-size:11px; color:var(--text-muted)">Daybed length / corner 2nd side (mm)</label>
         <input id="customsize-dblen" type="number" min="0" placeholder="e.g. 1600" oninput="_customSizeUpdatePreview()" style="width:100%; padding:8px"></div>
@@ -431,6 +432,7 @@
             <option value="right">Daybed RIGHT</option>
             <option value="corner-left">Corner unit LEFT</option>
             <option value="corner-right">Corner unit RIGHT</option>
+            <option value="u">U-shape (daybed left + right)</option>
           </select></div>
         <div style="flex:1; min-width:120px"><label style="font-size:11px; color:#78716c">Daybed length / corner 2nd side (mm)</label>
           <input id="no-size-dblen" type="number" min="0" placeholder="1600" oninput="_newOrderUpdatePreview()" style="width:100%; padding:8px"></div>
@@ -481,6 +483,7 @@
     <div id="builder-portal-name" style="font-size:25px; font-weight:800; margin-top:0.4rem">🏭 Orders</div>
     <div id="builder-portal-count" style="display:inline-block; font-size:13px; font-weight:600; margin-top:0.6rem; background:rgba(255,255,255,0.16); border:1px solid rgba(255,255,255,0.25); border-radius:999px; padding:0.25rem 0.9rem"></div>
     <div style="margin-top:0.7rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap">
+      <button id="portal-bell" onclick="enableCommentNotifications()" title="Get a notification when a message arrives" style="display:none; padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">🔔 Notify me</button>
       <button id="staff-portal-new" onclick="openNewOrder()" style="display:none; padding:0.35rem 1rem; background:#fff; color:#111; border:1px solid #fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:800">＋ New order</button>
       <button id="staff-portal-back" onclick="exitStaffPortalMode()" style="display:none; padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">⬅ Full system</button>
       <button onclick="builderPortalPrintAll()" style="padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">🖨️ Print all job cards</button>
@@ -4899,6 +4902,8 @@ ${_PRODUCTION_PRINT_STYLES}
     let t = parts.length ? parts.join(' × ') + ' mm' : '';
     if (cs.daybedSide === 'left' || cs.daybedSide === 'right') {
       t += (t ? ' · ' : '') + 'daybed ' + cs.daybedSide.toUpperCase() + (parseFloat(cs.daybedLengthMm) > 0 ? ' (' + parseFloat(cs.daybedLengthMm) + 'mm)' : '');
+    } else if (cs.daybedSide === 'u') {
+      t += (t ? ' · ' : '') + 'U-shape, daybeds both sides' + (parseFloat(cs.daybedLengthMm) > 0 ? ' (' + parseFloat(cs.daybedLengthMm) + 'mm)' : '');
     } else if (cs.daybedSide === 'corner-left' || cs.daybedSide === 'corner-right') {
       // a corner unit is two full sides meeting at the corner, e.g. 2800 × 2800
       const a = parseFloat(cs.lengthMm) > 0 ? parseFloat(cs.lengthMm) : 0;
@@ -4926,6 +4931,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const D = Math.max(600, Math.min(num(cs.depthMm, 900), 1400));
     const raw = String(cs.daybedSide || '');
     const isChaise = raw === 'left' || raw === 'right';
+    const isU = raw === 'u';                            // daybed both ends, seats between
     const isCorner = raw === 'corner-left' || raw === 'corner-right';
     const sideRight = raw === 'right' || raw === 'corner-right';
     const n = parseInt(cs.cushions) > 0 ? Math.min(parseInt(cs.cushions), 8) : 0;
@@ -4934,11 +4940,11 @@ ${_PRODUCTION_PRINT_STYLES}
     const LEG = 110, BASE = 320, SEAT = 470, BACK = 930, ARMH = 640;
     const ARM = 190, BT = 230, G = 40; // arm width, back-cushion thickness, cushion gap
     // keep every run long enough to hold its arm + at least one seat
-    let B = (isChaise || isCorner) ? num(cs.daybedLengthMm, isCorner ? 2000 : 1600) : 0;
+    let B = (isChaise || isCorner || isU) ? num(cs.daybedLengthMm, isCorner ? 2000 : 1600) : 0;
     const L0 = L, B0 = B;                              // entered values: the labels carry the truth
     if (isCorner) B = Math.max(B, D + ARM + 400);
-    if (isChaise) B = Math.max(B, D + 300);
-    const Lmin = isCorner ? D + ARM + 400 : ARM * 2 + 500;
+    if (isChaise || isU) B = Math.max(B, D + 300);
+    const Lmin = isCorner ? D + ARM + 400 : isU ? ARM * 2 + 2100 : ARM * 2 + 500;
     if (L < Lmin) L = Lmin;
     // line weights / text scale with the drawing size so every shape prints at
     // about the same pixel weight when the SVG is shown ~440-560px wide
@@ -5042,6 +5048,24 @@ ${_PRODUCTION_PRINT_STYLES}
       // dimensions above the two back edges
       dim([0, -260, BACK + 40], [L, -260, BACK + 40], L0 + 'mm long', DIM);
       dim([-260, 0, BACK + 40], [-260, B, BACK + 40], B0 + 'mm', DIM);
+    } else if (isU) {
+      const bw = L - ARM * 2;
+      const w = n > 0 ? bw / (n + 2) : Math.min(Math.max(D, 700), bw * 0.4);
+      const cx1 = ARM + w, cx2 = L - ARM - w;
+      leg(40, B - 120); leg(cx1 - 120, B - 120); leg(cx2 + 40, B - 120); leg(L - 120, B - 120);
+      prism([[0, 0], [L, 0], [L, B], [cx2, B], [cx2, D], [cx1, D], [cx1, B], [0, B]], LEG, BASE);
+      box(0, ARM, 0, D, LEG, ARMH);
+      backRow(ARM, L - ARM, 0, BT, n > 0 ? n + 2 : 0, true);
+      // left daybed, widening in front of its arm
+      prism([[ARM + G, BT + G], [cx1 - G, BT + G], [cx1 - G, B - G], [G, B - G], [G, D + G], [ARM + G, D + G]], BASE, SEAT);
+      // seats in the middle
+      if (n > 0) { for (let i = 0; i < n; i++) box(cx1 + i * w + G, cx1 + (i + 1) * w - G, BT + G, D - G, BASE, SEAT); }
+      else box(cx1 + G, cx2 - G, BT + G, D - G, BASE, SEAT);
+      // right daybed (mirror of the left one)
+      prism([[cx2 + G, BT + G], [L - ARM - G, BT + G], [L - ARM - G, D + G], [L - G, D + G], [L - G, B - G], [cx2 + G, B - G]], BASE, SEAT);
+      box(L - ARM, L, 0, D, LEG, ARMH);
+      dim([0, -260, BACK + 40], [L, -260, BACK + 40], L0 + 'mm long', DIM);
+      dim([-260, 0, ARMH + 40], [-260, B, ARMH + 40], 'DAYBED ' + B0 + 'mm', DIM);
     } else if (isChaise) {
       const bw = L - ARM * 2;
       const k = n > 0 ? n : 0;
@@ -5073,7 +5097,7 @@ ${_PRODUCTION_PRINT_STYLES}
     // caption under the drawing (horizontal, always legible)
     const capX = Math.round((minX + maxX) / 2);
     let capY = maxY + 300;
-    const kind = isCorner ? 'CORNER UNIT' : isChaise ? 'DAYBED' : 'STRAIGHT';
+    const kind = isCorner ? 'CORNER UNIT' : isU ? 'U-SHAPE' : isChaise ? 'DAYBED' : 'STRAIGHT';
     text(capX, capY, kind + (isCorner || isChaise ? (sideRight ? ' - RIGHT' : ' - LEFT') : ''), CAP, { bold: true });
     capY += CAP * 1.25;
     text(capX, capY, (n > 0 ? n + ' seat cushion' + (n === 1 ? '' : 's') : 'undivided seat') + ' · ' + D + 'mm deep', CAP * 0.8, { fill: '#333' });
@@ -9553,7 +9577,7 @@ ${_PRODUCTION_PRINT_STYLES}
       <div style="background:#fff; border-radius:14px; padding:14px 16px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,0.07)">
         <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap">
           <div>
-            <div style="font-size:16px; font-weight:800">#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}</div>
+            <div style="font-size:16px; font-weight:800">#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}${_unreadCount(o) ? ' <span style="background:#7c3aed; color:#fff; border-radius:999px; padding:1px 8px; font-size:11px; vertical-align:middle">💬 ' + _unreadCount(o) + ' new</span>' : ''}</div>
             <div style="font-size:12px; color:#78716c; margin-top:2px">
               <span style="background:#e7e5e4; border-radius:999px; padding:1px 8px; font-size:10px; font-weight:700">${_escape(r.tag)}</span>
               · Qty ${_escape(o.qty || 1)}${o.customer ? ' · 👤 ' + _escape(o.customer) : ''}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.builder ? ' · 🏭 ' + _escape(o.builder) : ''}${o.phone ? '<br>📱 ' + _escape(o.phone) : ''}${(o.address || o.area) ? ' · 📍 ' + _escape([o.address, o.area].filter(Boolean).join(', ')) : ''}${o.customSize ? '<br>📐 <strong style="color:#111">' + _escape(_customSizeText(o)) + '</strong>' + (o.sizeConfirmedAt ? ' <span style="color:#166534; font-weight:800">✓ confirmed by client ' + _escape(String(o.sizeConfirmedAt).slice(0, 10)) + '</span>' : '') : ''}
@@ -9581,7 +9605,7 @@ ${_PRODUCTION_PRINT_STYLES}
           </label>
         </div>
         <div style="border-top:1px solid #e7e5e4; margin-top:10px; padding-top:8px">
-          ${comments.slice(-4).map(c => `<div style="font-size:12px; margin-bottom:4px"><strong>${_escape(c.by || '')}</strong> <span style="color:#a8a29e">${_escape(String(c.at || '').slice(0, 10))}</span><br>${_escape(c.text || '')}</div>`).join('')}
+          ${_commentThreadHtml(o, comments)}
           <div style="display:flex; gap:6px; margin-top:4px">
             <input id="bp-comment-${_escape(o.id)}" placeholder="Add a comment…" style="flex:1; padding:6px 8px; border-radius:6px; border:1px solid #d6d3d1; font-size:12px"
               onkeydown="if(event.key==='Enter'){builderPortalAddComment('${_escape(o.id)}')}">
@@ -9590,6 +9614,7 @@ ${_PRODUCTION_PRINT_STYLES}
         </div>
       </div>`;
     }).join('');
+    _afterThreadRender(rows.map(r => r.o));
   }
   window.renderStaffPortal = renderStaffPortal;
   function staffPortalMarkDone(orderId) {
@@ -9640,7 +9665,7 @@ ${_PRODUCTION_PRINT_STYLES}
       <div style="background:#fff; border-radius:14px; padding:14px 16px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,0.07); ${o.builderDone ? 'border:2px solid #16a34a' : ''}">
         <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap">
           <div>
-            <div style="font-size:16px; font-weight:800">#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}</div>
+            <div style="font-size:16px; font-weight:800">#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}${_unreadCount(o) ? ' <span style="background:#7c3aed; color:#fff; border-radius:999px; padding:1px 8px; font-size:11px; vertical-align:middle">💬 ' + _unreadCount(o) + ' new</span>' : ''}</div>
             <div style="font-size:12px; color:#78716c; margin-top:2px">Qty ${_escape(o.qty || 1)}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.customSize ? '<br>📐 <strong style="color:#111">' + _escape(_customSizeText(o)) + '</strong>' : ''}${o.notes ? '<br>📝 ' + _escape(o.notes) : ''}</div>
           </div>
           <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
@@ -9661,7 +9686,7 @@ ${_PRODUCTION_PRINT_STYLES}
           </label>
         </div>
         <div style="border-top:1px solid #e7e5e4; margin-top:10px; padding-top:8px">
-          ${comments.slice(-4).map(c => `<div style="font-size:12px; margin-bottom:4px"><strong>${_escape(c.by || '')}</strong> <span style="color:#a8a29e">${_escape(String(c.at || '').slice(0, 10))}</span><br>${_escape(c.text || '')}</div>`).join('')}
+          ${_commentThreadHtml(o, comments)}
           <div style="display:flex; gap:6px; margin-top:4px">
             <input id="bp-comment-${_escape(o.id)}" placeholder="Add a comment…" style="flex:1; padding:6px 8px; border-radius:6px; border:1px solid #d6d3d1; font-size:12px"
               onkeydown="if(event.key==='Enter'){builderPortalAddComment('${_escape(o.id)}')}">
@@ -9670,6 +9695,7 @@ ${_PRODUCTION_PRINT_STYLES}
         </div>
       </div>`;
     }).join('');
+    _afterThreadRender(orders);
   }
   window.renderBuilderPortal = renderBuilderPortal;
   function builderPortalFabricReceived(orderId, on) {
@@ -9692,6 +9718,86 @@ ${_PRODUCTION_PRINT_STYLES}
     renderBuilderPortal();
   }
   window.builderPortalSetEta = builderPortalSetEta;
+  // ---- Message read-ticks, unread highlights and notifications ----
+  // Each order keeps commentsSeen = { staff: iso, partner: iso } — when a side
+  // last had the thread on screen. A comment is "read" by the other side once
+  // their seen time passes the comment time (WhatsApp-style ✓ / ✓✓).
+  function _mySide() { return (typeof IS_BUILDER_MODE !== 'undefined' && IS_BUILDER_MODE) ? 'partner' : 'staff'; }
+  function _commentSide(o, c) {
+    const by = String((c && c.by) || '');
+    if (/^Client/i.test(by)) return 'client';
+    return (o && o.builder && by === o.builder) ? 'partner' : 'staff';
+  }
+  function _unreadCount(o) {
+    const comments = Array.isArray(o && o.builderComments) ? o.builderComments : [];
+    const seen = ((o && o.commentsSeen) || {})[_mySide()] || '';
+    return comments.filter(c => _commentSide(o, c) !== _mySide() && String(c.at || '') > seen).length;
+  }
+  window._unreadCount = _unreadCount;
+  function _commentThreadHtml(o, comments) {
+    const me = _mySide(), other = me === 'staff' ? 'partner' : 'staff';
+    const seenOther = ((o && o.commentsSeen) || {})[other] || '';
+    const seenMe = ((o && o.commentsSeen) || {})[me] || '';
+    return comments.slice(-6).map(c => {
+      const side = _commentSide(o, c);
+      const at = String(c.at || '');
+      let tick = '';
+      if (side === me) tick = at <= seenOther ? '<span title="Read" style="color:#2563eb; font-weight:800"> ✓✓</span>' : '<span title="Sent" style="color:#a8a29e"> ✓</span>';
+      const unread = side !== me && at > seenMe;
+      return '<div style="font-size:12px; margin-bottom:4px; padding-left:6px; border-left:3px solid ' + (unread ? '#7c3aed' : 'transparent') + '"><strong>' + _escape(c.by || '') + '</strong> <span style="color:#a8a29e">' + _escape(at.slice(0, 16).replace('T', ' ')) + '</span>' + tick + (unread ? ' <span style="color:#7c3aed; font-weight:800; font-size:10px">NEW</span>' : '') + '<br>' + _escape(c.text || '') + '</div>';
+    }).join('');
+  }
+  let _threadBaseline = null;
+  function _afterThreadRender(orders) {
+    const me = _mySide();
+    const now = new Date().toISOString();
+    let changed = false;
+    // notify on NEW messages from the other side (after the first render)
+    const counts = {};
+    orders.forEach(o => { counts[o.id] = (Array.isArray(o.builderComments) ? o.builderComments : []).length; });
+    if (_threadBaseline) {
+      orders.forEach(o => {
+        const comments = Array.isArray(o.builderComments) ? o.builderComments : [];
+        const before = _threadBaseline[o.id] || 0;
+        if (comments.length > before) {
+          const fresh = comments.slice(before).filter(c => _commentSide(o, c) !== me);
+          if (fresh.length) {
+            const last = fresh[fresh.length - 1];
+            const msg = '#' + (o.invoice || o.id) + ' — ' + (last.by || '') + ': ' + (last.text || '');
+            if (typeof toast === 'function') toast('💬 ' + msg, 'info', 6000);
+            try {
+              if ('Notification' in window && Notification.permission === 'granted') new Notification('New message on order #' + (o.invoice || o.id), { body: (last.by || '') + ': ' + (last.text || '') });
+            } catch (e) {}
+          }
+        }
+      });
+    }
+    _threadBaseline = counts;
+    // the thread is on screen now → mark it seen by my side (only when something is newer)
+    orders.forEach(o => {
+      const comments = Array.isArray(o.builderComments) ? o.builderComments : [];
+      if (!comments.length) return;
+      const lastAt = String(comments[comments.length - 1].at || '');
+      if (!o.commentsSeen) o.commentsSeen = {};
+      if ((o.commentsSeen[me] || '') < lastAt) { o.commentsSeen[me] = now; changed = true; }
+    });
+    if (changed) { try { saveData(); } catch (e) {} }
+    // header: unread total + notification bell
+    const total = orders.reduce((s, o) => s + _unreadCount(o), 0);
+    const cnt = document.getElementById('builder-portal-count');
+    if (cnt && total) cnt.textContent = cnt.textContent.replace(/ · \d+ unread$/, '') + ' · ' + total + ' unread';
+    const bell = document.getElementById('portal-bell');
+    if (bell) bell.style.display = ('Notification' in window && Notification.permission === 'default') ? 'inline-block' : 'none';
+  }
+  function enableCommentNotifications() {
+    if (!('Notification' in window)) { alert('This browser does not support notifications.'); return; }
+    Notification.requestPermission().then(p => {
+      const bell = document.getElementById('portal-bell');
+      if (bell) bell.style.display = p === 'default' ? 'inline-block' : 'none';
+      if (p === 'granted' && typeof toast === 'function') toast('🔔 You will be notified when a message arrives (while this page is open)', 'success', 4000);
+    });
+  }
+  window.enableCommentNotifications = enableCommentNotifications;
   function _builderPortalLogComment(o, text, byOverride) {
     if (!Array.isArray(o.builderComments)) o.builderComments = [];
     // Comments are stamped with the manufacturer's name — except when one of OUR
