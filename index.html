@@ -378,7 +378,7 @@
 <div id="neworder-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9600; align-items:flex-start; justify-content:center; padding:1rem; overflow:auto">
   <div style="background:#fff; color:#111; border-radius:14px; max-width:560px; width:100%; padding:1.25rem; box-shadow:0 20px 60px rgba(0,0,0,0.4); margin:1rem auto; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem">
-      <div style="font-size:16px; font-weight:900">＋ New order</div>
+      <div id="no-title" style="font-size:16px; font-weight:900">＋ New order</div>
       <button onclick="closeNewOrder()" style="border:1px solid #d6d3d1; background:#fff; border-radius:6px; padding:4px 10px; cursor:pointer">✕</button>
     </div>
     <div style="font-size:12px; color:#78716c; margin:0.3rem 0 0.9rem">Saved orders go straight to the supplier's portal.</div>
@@ -441,7 +441,7 @@
       <input id="no-size-note" placeholder="Size note, e.g. arms 200mm wide" style="width:100%; padding:8px; margin-top:0.5rem">
     </div>
     <div id="no-status" style="font-size:12px; color:#991b1b; min-height:1.2em; margin-bottom:0.4rem"></div>
-    <button onclick="saveNewOrder()" style="width:100%; padding:12px; border-radius:8px; border:none; background:#111; color:#fff; font-weight:800; font-size:14px; cursor:pointer">💾 Save & send to supplier</button>
+    <button id="no-save" onclick="saveNewOrder()" style="width:100%; padding:12px; border-radius:8px; border:none; background:#111; color:#fff; font-weight:800; font-size:14px; cursor:pointer">💾 Save & send to supplier</button>
   </div>
 </div>
 
@@ -9265,9 +9265,11 @@ ${_PRODUCTION_PRINT_STYLES}
     }, 460) : '<div style="font-size:11px; color:#a8a29e; padding:8px">Fill in a size to see the drawing</div>';
   }
   window._newOrderUpdatePreview = _newOrderUpdatePreview;
-  function openNewOrder() {
+  let _editingOrderId = null;
+  function openNewOrder(orderId) {
     const m = document.getElementById('neworder-modal');
     if (!m) return;
+    _editingOrderId = orderId || null;
     ['no-invoice', 'no-customer', 'no-phone', 'no-address', 'no-area', 'no-product', 'no-fabric', 'no-notes', 'no-size-len', 'no-size-depth', 'no-size-h', 'no-size-dblen', 'no-size-cushions', 'no-size-note'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
     document.getElementById('no-qty').value = '1';
     document.getElementById('no-size-side').value = '';
@@ -9279,11 +9281,46 @@ ${_PRODUCTION_PRINT_STYLES}
     const sel = document.getElementById('no-supplier');
     sel.innerHTML = names.map(n => '<option value="' + _escape(n) + '">' + _escape(n) + '</option>').join('');
     wrap.style.display = names.length > 1 ? 'block' : 'none';
+    const title = document.getElementById('no-title'), saveBtn = document.getElementById('no-save');
+    const bizSel = document.getElementById('no-biz');
+    if (_editingOrderId) {
+      const o = _findOrderAnyBiz(_editingOrderId);
+      if (!o) { _editingOrderId = null; return; }
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v == null ? '' : v); };
+      bizSel.value = _bizOfOrder(_editingOrderId) || bizSel.value;
+      bizSel.disabled = true;
+      set('no-invoice', o.invoice); set('no-customer', o.customer); set('no-phone', o.phone);
+      set('no-address', o.address); set('no-area', o.area); set('no-product', o.product);
+      set('no-fabric', o.fabric); set('no-qty', o.qty || 1); set('no-notes', o.notes);
+      if (o.builder && names.includes(o.builder)) sel.value = o.builder;
+      const cs = o.customSize || {};
+      set('no-size-len', cs.lengthMm); set('no-size-depth', cs.depthMm); set('no-size-h', cs.heightMm);
+      set('no-size-side', cs.daybedSide || ''); set('no-size-dblen', cs.daybedLengthMm); set('no-size-cushions', cs.cushions); set('no-size-note', cs.note);
+      if (title) title.textContent = '✏️ Edit order #' + (o.invoice || o.id);
+      if (saveBtn) saveBtn.textContent = '💾 Save changes';
+    } else {
+      bizSel.disabled = false;
+      if (title) title.textContent = '＋ New order';
+      if (saveBtn) saveBtn.textContent = '💾 Save & send to supplier';
+    }
     _newOrderUpdatePreview();
     m.style.display = 'flex';
     setTimeout(() => { const f = document.getElementById('no-invoice'); if (f) f.focus(); }, 50);
   }
-  function closeNewOrder() { const m = document.getElementById('neworder-modal'); if (m) m.style.display = 'none'; }
+  function closeNewOrder() { const m = document.getElementById('neworder-modal'); if (m) m.style.display = 'none'; _editingOrderId = null; }
+  // Delete from the staff portal (any business)
+  function staffPortalDeleteOrder(orderId) {
+    const biz = _bizOfOrder(orderId);
+    const o = _findOrderAnyBiz(orderId);
+    if (!o || !biz) return;
+    if (!confirm('Delete order #' + (o.invoice || o.id) + ' — ' + (o.product || '') + '? This removes it for the supplier too.')) return;
+    snapshotState();
+    data[biz].orders = data[biz].orders.filter(x => x && x.id !== orderId);
+    saveData();
+    if (typeof render === 'function') render();
+    if (typeof toast === 'function') toast('🗑 #' + (o.invoice || o.id) + ' deleted', 'success', 2500);
+  }
+  window.staffPortalDeleteOrder = staffPortalDeleteOrder;
   function saveNewOrder() {
     const g = id => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
     const biz = g('no-biz') || 'bellville';
@@ -9296,6 +9333,26 @@ ${_PRODUCTION_PRINT_STYLES}
     const names = _allManufacturerNames();
     const supplier = names.length > 1 ? g('no-supplier') : (names[0] || '');
     if (!supplier) { status.textContent = 'No supplier set up yet — add one under Planner → Manufacturers first.'; return; }
+    const len = parseFloat(g('no-size-len')) || 0, depth = parseFloat(g('no-size-depth')) || 0, h = parseFloat(g('no-size-h')) || 0;
+    const side = g('no-size-side'), dblen = parseFloat(g('no-size-dblen')) || 0, cush = parseInt(g('no-size-cushions')) || 0, snote = g('no-size-note');
+    const customSize = (len || depth || h || side || cush || snote)
+      ? { lengthMm: len || '', depthMm: depth || '', heightMm: h || '', note: snote, daybedSide: side, daybedLengthMm: side && dblen ? dblen : '', cushions: cush || '' }
+      : null;
+    if (_editingOrderId) {
+      const o = _findOrderAnyBiz(_editingOrderId);
+      if (!o) { status.textContent = 'This order no longer exists.'; return; }
+      snapshotState();
+      o.invoice = invoice; o.customer = customer; o.phone = phone; o.address = address; o.area = area;
+      o.product = product; o.fabric = fabric; o.qty = qty; o.notes = notes;
+      if (names.length > 1) o.builder = supplier;
+      if (customSize) o.customSize = customSize; else delete o.customSize;
+      saveData();
+      _editingOrderId = null;
+      closeNewOrder();
+      if (typeof render === 'function') render();
+      if (typeof toast === 'function') toast('✏️ #' + invoice + ' updated', 'success', 2500);
+      return;
+    }
     if (!data[biz]) data[biz] = { orders: [] };
     if (!Array.isArray(data[biz].orders)) data[biz].orders = [];
     const productSlug = product.replace(/[^a-z0-9]/gi, '').toUpperCase().substring(0, 20);
@@ -9311,11 +9368,7 @@ ${_PRODUCTION_PRINT_STYLES}
       address: address, area: area,
       builder: supplier
     };
-    const len = parseFloat(g('no-size-len')) || 0, depth = parseFloat(g('no-size-depth')) || 0, h = parseFloat(g('no-size-h')) || 0;
-    const side = g('no-size-side'), dblen = parseFloat(g('no-size-dblen')) || 0, cush = parseInt(g('no-size-cushions')) || 0, snote = g('no-size-note');
-    if (len || depth || h || side || cush || snote) {
-      order.customSize = { lengthMm: len || '', depthMm: depth || '', heightMm: h || '', note: snote, daybedSide: side, daybedLengthMm: side && dblen ? dblen : '', cushions: cush || '' };
-    }
+    if (customSize) order.customSize = customSize;
     snapshotState();
     data[biz].orders.push(order);
     saveData();
@@ -9509,7 +9562,8 @@ ${_PRODUCTION_PRINT_STYLES}
           <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
           <button onclick="builderPortalPrintCard('${_escape(o.id)}')" title="Print this order's job card" style="padding:7px 12px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; color:#111; font-weight:700; font-size:12.5px; cursor:pointer">🖨️ Job card</button>
           ${o.customSize ? `<button onclick="sendSizeConfirmation('${_escape(o.id)}')" title="Send the client the drawing to confirm" style="padding:7px 12px; border-radius:999px; border:1.5px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:700; font-size:12.5px; cursor:pointer">📤 Size to client</button>` : ''}
-          <button onclick="editOrderAddress('${_escape(o.id)}')" title="Address and area" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fafaf9; color:#111; font-weight:700; font-size:12.5px; cursor:pointer">📍</button>
+          <button onclick="openNewOrder('${_escape(o.id)}')" title="Edit this order" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fafaf9; color:#111; font-weight:700; font-size:12.5px; cursor:pointer">✏️ Edit</button>
+          <button onclick="staffPortalDeleteOrder('${_escape(o.id)}')" title="Delete this order" style="padding:7px 12px; border-radius:999px; border:1.5px solid #fca5a5; background:#fef2f2; color:#991b1b; font-weight:700; font-size:12.5px; cursor:pointer">🗑</button>
           ${o.builderDone
             ? `<span style="font-size:12px; font-weight:800; color:#166534">✅ DONE by ${_escape(o.builder)}</span>
                <button onclick="receiveBuilderItem('${_escape(o.id)}')" style="padding:7px 14px; border-radius:999px; border:1.5px solid #16a34a; background:#f0fdf4; color:#166534; font-weight:700; font-size:12.5px; cursor:pointer">📥 Receive item</button>`
