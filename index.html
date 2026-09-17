@@ -9844,6 +9844,11 @@ ${_PRODUCTION_PRINT_STYLES}
       + '<button class="plan-menu-option danger" onclick="portalPlanSet(\'' + _escape(orderId) + '\', \'\'); closePlanMenu()">📥 Unschedule</button>'
       + '<button class="plan-menu-option" onclick="closePlanMenu()">✕ Cancel</button>';
     document.body.appendChild(menu);
+    // register with the shared planner-menu state so closePlanMenu() (and the
+    // outside-click / Escape handlers) close THIS menu too
+    _openPlanMenu = menu;
+    document.addEventListener('click', _planMenuOutsideClick, true);
+    document.addEventListener('keydown', _planMenuKeydown, true);
     const rect = anchorEl.getBoundingClientRect();
     const mw = menu.offsetWidth, mh = menu.offsetHeight;
     const scrollX = window.scrollX || 0, scrollY = window.scrollY || 0;
@@ -9851,7 +9856,6 @@ ${_PRODUCTION_PRINT_STYLES}
     if (left < scrollX + 4) left = scrollX + 4;
     if (top + mh > scrollY + window.innerHeight - 4) top = rect.top + scrollY - mh - 4;
     menu.style.left = left + 'px'; menu.style.top = top + 'px';
-    setTimeout(() => { document.addEventListener('click', function h(e) { if (!menu.contains(e.target)) { closePlanMenu(); document.removeEventListener('click', h); } }); }, 0);
   }
   window.openPortalPlanMenu = openPortalPlanMenu;
   function renderPortalPlanner(orders) {
