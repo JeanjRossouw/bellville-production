@@ -9866,7 +9866,10 @@ ${_PRODUCTION_PRINT_STYLES}
     const wrap = document.getElementById('builder-portal-wrap');
     if (wrap) wrap.style.maxWidth = '1500px';
     let html = '<div class="portal-planner" style="color:#1c1917">';
-    html += '<div style="font-size:13px; color:#57534e; margin:0 0 12px">Drag an order into the week it will be built, or tap ⋮ on the card. Orders scheduled to a past week show in <strong>Current</strong>.</div>';
+    const staffMode = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE);
+    const scheduled = orders.filter(o => o.planWeek).length;
+    html += '<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 12px"><div style="font-size:13px; color:#57534e">Drag an order into the week it will be built, or tap ⋮ on the card. Orders scheduled to a past week show in <strong>Current</strong>.</div>'
+      + (staffMode && scheduled ? '<button class="btn btn-sm" onclick="portalUnscheduleAll()" title="Clear every week so the supplier plans from scratch">📥 Move all to Unscheduled (' + scheduled + ')</button>' : '') + '</div>';
     html += '<div class="plan-grid">' + colsHtml + '</div>';
     if (b.beyond.length) html += '<div class="card" style="margin-bottom:1rem"><div class="card-title">📆 SCHEDULED BEYOND 3 WEEKS (' + b.beyond.length + ')</div><div class="plan-pool">' + b.beyond.map(_portalPlanCard).join('') + '</div></div>';
     html += '<div class="card"><div class="card-title">📥 UNSCHEDULED (' + b.unscheduled.length + ')</div><div class="plan-pool" ondragover="portalDragOver(event)" ondragleave="portalDragLeave(event)" ondrop="portalDrop(event, \'\')">' + (b.unscheduled.map(_portalPlanCard).join('') || '<div class="empty" style="padding:0.75rem 0">No unscheduled orders</div>') + '</div></div>';
@@ -9890,6 +9893,18 @@ ${_PRODUCTION_PRINT_STYLES}
     saveData();
     if (typeof render === 'function') render();
   }
+  function portalUnscheduleAll() {
+    const rows = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE) ? _staffPortalOrders().map(r => r.o) : _builderPortalOrders();
+    const n = rows.filter(o => o.planWeek).length;
+    if (!n) return;
+    if (!confirm('Move all ' + n + ' scheduled order(s) to Unscheduled? The supplier can then plan the weeks from scratch.')) return;
+    snapshotState();
+    rows.forEach(o => { delete o.planWeek; });
+    saveData();
+    if (typeof render === 'function') render();
+    if (typeof toast === 'function') toast('📥 ' + n + ' order(s) moved to Unscheduled', 'success', 3000);
+  }
+  window.portalUnscheduleAll = portalUnscheduleAll;
   window.portalDragStart = portalDragStart; window.portalDragOver = portalDragOver; window.portalDragLeave = portalDragLeave; window.portalDrop = portalDrop; window.portalPlanSet = portalPlanSet;
   function printPortalPlanner(onlyWeek) {
     const staffMode = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE);
