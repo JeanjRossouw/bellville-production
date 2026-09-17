@@ -9771,56 +9771,91 @@ ${_PRODUCTION_PRINT_STYLES}
     return { weeks, b };
   }
   function _portalPlanCard(o) {
-    const fabReceived = o.fabricStatus === 'received';
-    let fab = '';
+    // Same card as the in-house planner (same CSS classes), minus the builder
+    // row; client details only in staff mode, never on the supplier's screen.
+    const staffMode = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const due = o.dueDate ? new Date(o.dueDate + 'T00:00:00') : null;
+    const daysLeft = due && !isNaN(due.getTime()) ? Math.ceil((due - today) / 86400000) : null;
+    const overdueCls = daysLeft !== null && daysLeft < 0 ? 'overdue' : '';
+    const prodLabel = (o.product || '') + (o.qty > 1 ? ' × ' + o.qty : '');
+    let fabricRowHtml = '', bgStyle = '';
     if (o.fabric) {
-      if (fabReceived) fab = '<span style="color:#166534; font-weight:700">✅ fabric in</span>';
-      else if (o.fabricOOS) fab = '<span style="color:#991b1b; font-weight:700">🔴 fabric OOS' + (o.fabricStockETA ? ' ' + _escape(o.fabricStockETA) : '') + '</span>';
-      else if (o.fabricStatus === 'ordered') fab = '<span style="color:#92400e; font-weight:700">📦 fabric ordered</span>';
-      else fab = '<span style="color:#991b1b; font-weight:700">⏳ fabric not ordered</span>';
+      let badge;
+      if (o.fabricOOS) { badge = '<span style="font-weight:700; color:#991b1b">🔴 OUT OF STOCK' + (o.fabricStockETA ? ' · ETA ' + _escape(o.fabricStockETA) : '') + '</span>'; bgStyle = 'background:#fef2f2;'; }
+      else if (o.fabricStatus === 'received') badge = '<span style="font-weight:700; color:#166534">✅ RECEIVED</span>';
+      else if (o.fabricStatus === 'ordered') { badge = '<span style="font-weight:700; color:#92400e">📦 ORDERED</span>'; bgStyle = 'background:#fffbeb;'; }
+      else { badge = '<span style="font-weight:700; color:#991b1b">⏳ WAITING</span>'; bgStyle = 'background:#fffbeb;'; }
+      const fabBtn = (label, status, title) => '<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px" title="' + title + '" onclick="event.stopPropagation(); planSetFabricStatus(\'' + _escape(o.id) + '\', \'' + status + '\')" onmousedown="event.stopPropagation()" ondragstart="event.preventDefault(); event.stopPropagation()" draggable="false">' + label + '</button>';
+      const fabricAction = o.fabricStatus === 'received' ? '' : o.fabricStatus === 'ordered' ? fabBtn('✅ Received', 'received', 'Fabric has arrived') : fabBtn('📦 Ordered', 'ordered', 'Fabric has been ordered');
+      fabricRowHtml = '<div class="pc-fabric" style="font-size:11px; margin-top:4px; display:flex; align-items:center; gap:4px; flex-wrap:wrap; line-height:1.3"><span style="color:var(--text-muted)">🧵</span><span style="color:var(--text); font-weight:500">' + _escape(o.fabric) + '</span><span style="color:var(--text-muted)">·</span>' + badge + fabricAction + '</div>';
     }
+    return '<div class="plan-card ' + overdueCls + '" draggable="true" data-order-id="' + _escape(o.id) + '" style="' + bgStyle + '" ondragstart="portalDragStart(event, \'' + _escape(o.id) + '\')">'
+      + '<div class="pc-body">'
+      + '<div class="pc-inv">#' + _escape(o.invoice || o.id) + (o.builderDone ? ' <span style="color:#166534">✅ DONE</span>' : '') + '</div>'
+      + '<div class="pc-prod">' + _escape(prodLabel) + '</div>'
+      + (staffMode && o.customer ? '<div class="pc-cust">👤 ' + _escape(o.customer) + '</div>' : '')
+      + (o.orderDate ? '<div class="pc-due" style="color:var(--text-muted)">🗓️ Ordered ' + _escape(o.orderDate) + '</div>' : '')
+      + '<div class="pc-due" style="display:flex; align-items:center; gap:4px; flex-wrap:wrap"><label style="margin:0; font-size:10px">ETA</label>'
+      + '<input type="date" value="' + _escape(o.dueDate || '') + '" title="When this piece will be ready" onchange="event.stopPropagation(); planSetDueDate(\'' + _escape(o.id) + '\', this.value)" onmousedown="event.stopPropagation()" ondragstart="event.preventDefault(); event.stopPropagation()" draggable="false" style="font-size:10px; padding:1px 3px; max-width:118px">'
+      + (daysLeft !== null ? '<span style="' + (daysLeft < 0 ? 'color:#991b1b; font-weight:700' : daysLeft <= 7 ? 'color:#b45309; font-weight:700' : 'color:var(--text-muted)') + '">' + (daysLeft < 0 ? Math.abs(daysLeft) + 'd overdue' : daysLeft === 0 ? 'TODAY' : daysLeft + 'd left') + '</span>' : '')
+      + '</div>'
+      + fabricRowHtml
+      + (o.customSize ? '<div class="pc-due" style="font-weight:700; color:var(--text)">📐 ' + _escape(_customSizeText(o)) + '</div>' : '')
+      + '<div style="margin-top:5px"><button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px" onclick="event.stopPropagation(); builderPortalPrintCard(\'' + _escape(o.id) + '\')" onmousedown="event.stopPropagation()" ondragstart="event.preventDefault(); event.stopPropagation()" draggable="false">🖨️ Job card</button></div>'
+      + '</div>'
+      + '<button type="button" class="plan-menu-trigger" title="Schedule" aria-label="Schedule options" onclick="event.stopPropagation(); openPortalPlanMenu(\'' + _escape(o.id) + '\', this)" onmousedown="event.stopPropagation()" ondragstart="event.preventDefault(); event.stopPropagation()" draggable="false">⋮</button>'
+      + '</div>';
+  }
+  function openPortalPlanMenu(orderId, anchorEl) {
+    closePlanMenu();
+    const order = _findOrderAnyBiz(orderId);
+    if (!order) return;
     const weeks = _portalWeeks();
     const labels = ['This week', 'Next week', 'In 2 weeks', 'In 3 weeks'];
-    const opts = '<option value="">Unscheduled</option>' + weeks.map((w, i) => '<option value="' + w + '"' + (o.planWeek === w ? ' selected' : '') + '>' + labels[i] + ' · ' + _escape(_formatWeekShort(w)) + '</option>').join('');
-    return '<div draggable="true" ondragstart="portalDragStart(event, \'' + _escape(o.id) + '\')" style="background:#fff; border-radius:10px; padding:10px 12px; margin-bottom:8px; box-shadow:0 1px 3px rgba(0,0,0,0.08); cursor:grab; ' + (o.builderDone ? 'border:2px solid #16a34a' : 'border:1px solid #e7e5e4') + '">'
-      + '<div style="font-size:13px; font-weight:800">#' + _escape(o.invoice || o.id) + ' — ' + _escape(o.product || '') + '</div>'
-      + '<div style="font-size:11px; color:#78716c; margin-top:2px">Qty ' + _escape(o.qty || 1) + (o.fabric ? ' · 🧵 ' + _escape(o.fabric) : '') + (o.dueDate ? ' · due ' + _escape(o.dueDate) : '') + '</div>'
-      + (o.customSize ? '<div style="font-size:11px; font-weight:700; color:#111; margin-top:2px">📐 ' + _escape(_customSizeText(o)) + '</div>' : '')
-      + (o.builderDone ? '<div style="font-size:11px; font-weight:800; color:#166534; margin-top:2px">✅ DONE</div>' : '')
-      + '<div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px; font-size:11px">'
-      + (o.fabric ? '<label style="display:flex; align-items:center; gap:4px; margin:0; cursor:pointer" onmousedown="event.stopPropagation()"><input type="checkbox" ' + (fabReceived ? 'checked' : '') + ' onchange="builderPortalFabricReceived(\'' + _escape(o.id) + '\', this.checked)" style="width:16px; height:16px"> ' + fab + '</label>' : '')
-      + '<button onclick="builderPortalPrintCard(\'' + _escape(o.id) + '\')" onmousedown="event.stopPropagation()" style="padding:4px 9px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; color:#111; font-weight:700; font-size:11px; cursor:pointer">🖨️ Job card</button>'
-      + '<select onchange="portalPlanSet(\'' + _escape(o.id) + '\', this.value)" onmousedown="event.stopPropagation()" style="font-size:11px; padding:3px 4px; border-radius:6px; border:1px solid #d6d3d1">' + opts + '</select>'
-      + '</div></div>';
+    const current = order.planWeek || '';
+    const menu = document.createElement('div');
+    menu.className = 'plan-menu';
+    menu.style.zIndex = '9999';
+    menu.dataset.orderId = orderId;
+    menu.innerHTML = weeks.map((w, i) => '<button class="plan-menu-option" onclick="portalPlanSet(\'' + _escape(orderId) + '\', \'' + w + '\'); closePlanMenu()">📅 ' + labels[i] + ' <span style="color:var(--text-muted); font-size:11px">(' + _escape(_formatWeekShort(w)) + ')</span>' + (w === current ? ' ✓' : '') + '</button>').join('')
+      + '<div class="plan-menu-divider"></div>'
+      + '<div class="plan-menu-date"><label>📅 Further out:</label><input type="date" min="' + weeks[0] + '" onchange="portalPlanSet(\'' + _escape(orderId) + '\', getMondayOf(this.value)); closePlanMenu()"></div>'
+      + '<div class="plan-menu-divider"></div>'
+      + '<button class="plan-menu-option danger" onclick="portalPlanSet(\'' + _escape(orderId) + '\', \'\'); closePlanMenu()">📥 Unschedule</button>'
+      + '<button class="plan-menu-option" onclick="closePlanMenu()">✕ Cancel</button>';
+    document.body.appendChild(menu);
+    const rect = anchorEl.getBoundingClientRect();
+    const mw = menu.offsetWidth, mh = menu.offsetHeight;
+    const scrollX = window.scrollX || 0, scrollY = window.scrollY || 0;
+    let left = rect.right + scrollX - mw, top = rect.bottom + scrollY + 4;
+    if (left < scrollX + 4) left = scrollX + 4;
+    if (top + mh > scrollY + window.innerHeight - 4) top = rect.top + scrollY - mh - 4;
+    menu.style.left = left + 'px'; menu.style.top = top + 'px';
+    setTimeout(() => { document.addEventListener('click', function h(e) { if (!menu.contains(e.target)) { closePlanMenu(); document.removeEventListener('click', h); } }); }, 0);
   }
+  window.openPortalPlanMenu = openPortalPlanMenu;
   function renderPortalPlanner(orders) {
     const host = document.getElementById('builder-portal-content');
     if (!host) return;
     const { weeks, b } = _portalBuckets(orders);
-    const labels = ['THIS WEEK', 'NEXT WEEK', 'IN 2 WEEKS', 'IN 3 WEEKS'];
-    const col = (key, title, sub, items, accent, wide) => '<div ondragover="portalDragOver(event)" ondragleave="portalDragLeave(event)" ondrop="portalDrop(event, \'' + key + '\')" style="' + (wide ? 'width:100%' : 'flex:1; min-width:230px') + '; background:' + (accent ? '#eef2ff' : '#f5f5f4') + '; border-radius:12px; padding:10px; border:2px dashed ' + (accent ? '#6366f1' : '#d6d3d1') + '; box-sizing:border-box">'
-      + '<div style="font-size:12px; font-weight:900; letter-spacing:0.06em">' + title + ' <span style="font-weight:600; color:#78716c">(' + items.length + ')</span></div>'
-      + (sub ? '<div style="font-size:11px; color:#78716c; margin-bottom:8px">' + sub + '</div>' : '<div style="margin-bottom:8px"></div>')
-      + (wide
-          ? '<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:8px">' + (items.map(_portalPlanCard).join('') || '<div style="font-size:11px; color:#a8a29e; padding:10px 0; text-align:center">Nothing unscheduled</div>') + '</div>'
-          : (items.map(_portalPlanCard).join('') || '<div style="font-size:11px; color:#a8a29e; padding:10px 0; text-align:center">Drop orders here</div>'))
-      + '</div>';
-    let html = '<div style="font-size:12px; color:#57534e; margin:0 0 10px">Drag an order from the unscheduled list at the bottom into the week it will be built (or use the dropdown on the card). Tick the fabric when it arrives; print the job card from the card.</div>';
-    // four week columns across the top
-    html += '<div style="display:flex; gap:10px; overflow-x:auto; padding-bottom:6px; align-items:flex-start">';
-    weeks.forEach((w, i) => { html += col(w, labels[i], _escape(_formatWeekShort(w)), b[w], i === 0, false); });
-    html += '</div>';
-    if (b.beyond.length) html += '<div style="margin-top:10px">' + col('', 'BEYOND 3 WEEKS', '', b.beyond, false, true) + '</div>';
-    // everything not planned yet, full width at the bottom
-    html += '<div style="margin-top:12px">' + col('', 'UNSCHEDULED', 'not planned yet — drag into a week above', b.unscheduled, false, true) + '</div>';
+    const labels = ['Current', 'Next week', 'In 2 weeks', 'In 3 weeks'];
+    const colsHtml = weeks.map((w, i) => '<div class="plan-col ' + (i === 0 ? 'current' : '') + '" data-week="' + w + '" ondragover="portalDragOver(event)" ondragleave="portalDragLeave(event)" ondrop="portalDrop(event, \'' + w + '\')">'
+      + '<div class="plan-col-header">' + labels[i] + '<span class="col-sub">' + _escape(_formatWeekShort(w)) + '</span><span class="col-sub">' + b[w].length + ' order' + (b[w].length !== 1 ? 's' : '') + '</span>'
+      + '<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px; margin-top:2px" onclick="printPortalPlanner(\'' + w + '\')">🖨️ Print week</button></div>'
+      + '<div class="plan-col-body">' + (b[w].map(_portalPlanCard).join('') || '<div class="empty" style="padding:0.75rem 0; font-size:11px">—</div>') + '</div></div>').join('');
+    let html = '<div style="font-size:12px; color:#57534e; margin:0 0 10px">Drag an order into the week it will be built, or tap ⋮ on the card. Orders scheduled to a past week show in <strong>Current</strong>.</div>';
+    html += '<div class="plan-grid" style="color:#1c1917">' + colsHtml + '</div>';
+    if (b.beyond.length) html += '<div class="card" style="margin-bottom:1rem"><div class="card-title">📆 SCHEDULED BEYOND 3 WEEKS (' + b.beyond.length + ')</div><div class="plan-pool">' + b.beyond.map(_portalPlanCard).join('') + '</div></div>';
+    html += '<div class="card"><div class="card-title">📥 UNSCHEDULED (' + b.unscheduled.length + ')</div><div class="plan-pool" ondragover="portalDragOver(event)" ondragleave="portalDragLeave(event)" ondrop="portalDrop(event, \'\')">' + (b.unscheduled.map(_portalPlanCard).join('') || '<div class="empty" style="padding:0.75rem 0">No unscheduled orders</div>') + '</div></div>';
     host.innerHTML = html;
   }
   window.renderPortalPlanner = renderPortalPlanner;
   function portalDragStart(e, orderId) { try { e.dataTransfer.setData('text/plain', orderId); e.dataTransfer.effectAllowed = 'move'; } catch (x) {} }
-  function portalDragOver(e) { e.preventDefault(); e.currentTarget.style.background = '#dcfce7'; }
-  function portalDragLeave(e) { e.currentTarget.style.background = ''; }
+  function portalDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
+  function portalDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
   function portalDrop(e, weekIso) {
-    e.preventDefault(); e.currentTarget.style.background = '';
+    e.preventDefault(); e.currentTarget.classList.remove('drag-over');
     let id = ''; try { id = e.dataTransfer.getData('text/plain'); } catch (x) {}
     if (id) portalPlanSet(id, weekIso);
   }
@@ -9833,11 +9868,11 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof render === 'function') render();
   }
   window.portalDragStart = portalDragStart; window.portalDragOver = portalDragOver; window.portalDragLeave = portalDragLeave; window.portalDrop = portalDrop; window.portalPlanSet = portalPlanSet;
-  function printPortalPlanner() {
+  function printPortalPlanner(onlyWeek) {
     const staffMode = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE);
     const orders = staffMode ? _staffPortalOrders().map(r => r.o) : _builderPortalOrders();
     const { weeks, b } = _portalBuckets(orders);
-    const labels = ['THIS WEEK', 'NEXT WEEK', 'IN 2 WEEKS', 'IN 3 WEEKS'];
+    const labels = ['CURRENT WEEK', 'NEXT WEEK', 'IN 2 WEEKS', 'IN 3 WEEKS'];
     const esc = _escape;
     const table = (title, items) => '<h2 style="font:800 15px Arial; margin:18px 0 6px; border-bottom:2px solid #000; padding-bottom:4px">' + title + ' <span style="font-weight:400">(' + items.length + ')</span></h2>'
       + (items.length ? '<table style="width:100%; border-collapse:collapse; font:12px Arial">'
@@ -9845,6 +9880,12 @@ ${_PRODUCTION_PRINT_STYLES}
         + items.map(o => '<tr><td style="border:1px solid #000; padding:4px; font-weight:700">#' + esc(o.invoice || o.id) + '</td><td style="border:1px solid #000; padding:4px">' + esc(o.product || '') + '</td><td style="border:1px solid #000; padding:4px; text-align:center">' + esc(o.qty || 1) + '</td><td style="border:1px solid #000; padding:4px">' + esc(o.fabric || '') + '</td><td style="border:1px solid #000; padding:4px">' + (o.fabric ? (o.fabricStatus === 'received' ? 'Received' : o.fabricOOS ? 'OUT OF STOCK' + (o.fabricStockETA ? ' — ' + esc(o.fabricStockETA) : '') : o.fabricStatus === 'ordered' ? 'Ordered' : 'Not ordered') : '') + '</td><td style="border:1px solid #000; padding:4px">' + esc(_customSizeText(o)) + '</td><td style="border:1px solid #000; padding:4px; text-align:center">' + esc(o.dueDate || '') + '</td><td style="border:1px solid #000; padding:4px; text-align:center">' + (o.builderDone ? '✓' : '☐') + '</td></tr>').join('')
         + '</table>' : '<div style="font:12px Arial; color:#666">—</div>');
     let body = '<div style="font:900 20px Arial; margin-bottom:2px">PRODUCTION PLANNER — ' + esc((typeof BUILDER_MODE_NAME !== 'undefined' && BUILDER_MODE_NAME) || 'Supplier') + '</div><div style="font:11px Arial; color:#555">Printed ' + new Date().toLocaleDateString('en-ZA') + '</div>';
+    if (onlyWeek) {
+      const i = weeks.indexOf(onlyWeek);
+      body += table((i >= 0 ? labels[i] : 'WEEK') + ' — ' + esc(_formatWeekShort(onlyWeek)), b[onlyWeek] || []);
+      _openJobCardWindow('Planner — week of ' + onlyWeek, body, 'PRINT WEEK');
+      return;
+    }
     weeks.forEach((w, i) => { body += table(labels[i] + ' — ' + esc(_formatWeekShort(w)), b[w]); });
     if (b.beyond.length) body += table('BEYOND 3 WEEKS', b.beyond);
     body += table('UNSCHEDULED', b.unscheduled);
