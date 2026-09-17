@@ -499,6 +499,9 @@
     <div id="builder-portal-subtitle" style="font-size:11px; letter-spacing:0.2em; text-transform:uppercase; opacity:0.85">Manufacturer portal</div>
     <div id="builder-portal-name" style="font-size:25px; font-weight:800; margin-top:0.4rem">🏭 Orders</div>
     <div id="builder-portal-count" style="display:inline-block; font-size:13px; font-weight:600; margin-top:0.6rem; background:rgba(255,255,255,0.16); border:1px solid rgba(255,255,255,0.25); border-radius:999px; padding:0.25rem 0.9rem"></div>
+    <div style="margin-top:0.7rem">
+      <input id="portal-search" type="search" placeholder="🔍 Search order no., product, client, fabric…" oninput="portalSearchChanged()" style="width:min(420px, 92%); padding:9px 12px; border-radius:999px; border:1px solid rgba(255,255,255,0.4); background:rgba(255,255,255,0.14); color:#fff; font-size:13px; outline:none">
+    </div>
     <div style="margin-top:0.7rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap">
       <button id="portal-view-toggle" onclick="togglePortalView()" style="padding:0.35rem 1rem; background:#fff; color:#111; border:1px solid #fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:800">📅 Planner</button>
       <button id="portal-print-planner" onclick="printPortalPlanner()" style="display:none; padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">🖨️ Print planner</button>
@@ -9578,11 +9581,12 @@ ${_PRODUCTION_PRINT_STYLES}
   function renderStaffPortal() {
     const host = document.getElementById('builder-portal-content');
     if (!host) return;
-    const rows = _staffPortalOrders();
+    const allRows = _staffPortalOrders();
+    const rows = _portalQuery() ? allRows.filter(r => _portalFilter([r.o]).length) : allRows;
     const cnt = document.getElementById('builder-portal-count');
-    if (cnt) cnt.textContent = rows.length + ' order' + (rows.length === 1 ? '' : 's') + ' with the manufacturer';
+    if (cnt) cnt.textContent = allRows.length + ' order' + (allRows.length === 1 ? '' : 's') + ' with the manufacturer' + (_portalQuery() ? ' · ' + rows.length + ' match' : '');
     if (_portalView === 'planner') { renderPortalPlanner(rows.map(r => r.o)); _afterThreadRender(rows.map(r => r.o)); return; }
-    if (!rows.length) { host.innerHTML = '<div style="background:#fff; border-radius:14px; padding:2rem; text-align:center; color:#78716c; box-shadow:0 1px 3px rgba(0,0,0,0.07)">No orders with a manufacturer right now.</div>'; return; }
+    if (!rows.length) { host.innerHTML = '<div style="background:#fff; border-radius:14px; padding:2rem; text-align:center; color:#78716c; box-shadow:0 1px 3px rgba(0,0,0,0.07)">' + (_portalQuery() ? 'No orders match your search.' : 'No orders with a manufacturer right now.') + '</div>'; return; }
     host.innerHTML = rows.map(r => {
       const o = r.o;
       const comments = Array.isArray(o.builderComments) ? o.builderComments : [];
@@ -9683,11 +9687,12 @@ ${_PRODUCTION_PRINT_STYLES}
     const host = document.getElementById('builder-portal-content');
     if (!host) return;
     if (!BUILDER_MODE_NAME) { host.innerHTML = '<div style="text-align:center; color:#78716c; padding:2rem">This portal link is missing the manufacturer name — ask for a fresh link.</div>'; return; }
-    const orders = _builderPortalOrders();
+    const allOrders = _builderPortalOrders();
+    const orders = _portalFilter(allOrders);
     const cnt = document.getElementById('builder-portal-count');
-    if (cnt) cnt.textContent = orders.length + ' open order' + (orders.length === 1 ? '' : 's');
+    if (cnt) cnt.textContent = allOrders.length + ' open order' + (allOrders.length === 1 ? '' : 's') + (_portalQuery() ? ' · ' + orders.length + ' match' : '');
     if (_portalView === 'planner') { renderPortalPlanner(orders); _afterThreadRender(orders); return; }
-    if (!orders.length) { host.innerHTML = '<div style="background:#fff; border-radius:14px; padding:2rem; text-align:center; color:#78716c; box-shadow:0 1px 3px rgba(0,0,0,0.07)">No open orders right now.</div>'; return; }
+    if (!orders.length) { host.innerHTML = '<div style="background:#fff; border-radius:14px; padding:2rem; text-align:center; color:#78716c; box-shadow:0 1px 3px rgba(0,0,0,0.07)">' + (_portalQuery() ? 'No orders match your search.' : 'No open orders right now.') + '</div>'; return; }
     host.innerHTML = orders.map(o => {
       const comments = Array.isArray(o.builderComments) ? o.builderComments : [];
       const fabReceived = o.fabricStatus === 'received';
@@ -9756,6 +9761,20 @@ ${_PRODUCTION_PRINT_STYLES}
     renderBuilderPortal();
   }
   window.builderPortalSetEta = builderPortalSetEta;
+  // ---- 🔍 Portal search: filters the orders list and the planner ----
+  function _portalQuery() { const el = document.getElementById('portal-search'); return el ? String(el.value || '').trim().toLowerCase() : ''; }
+  function _portalFilter(orders) {
+    const q = _portalQuery();
+    if (!q) return orders;
+    const staffMode = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE);
+    return orders.filter(o => [o.invoice, o.id, o.product, o.fabric, staffMode ? o.customer : '', staffMode ? o.phone : '', o.notes, _customSizeText(o)]
+      .some(v => String(v || '').toLowerCase().includes(q)));
+  }
+  function portalSearchChanged() {
+    if (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE) renderStaffPortal(); else renderBuilderPortal();
+  }
+  window.portalSearchChanged = portalSearchChanged;
+
   // ---- 📅 PORTAL PLANNER — the supplier drags orders into the next four weeks ----
   // Uses the same order.planWeek (ISO Monday) the old in-house planner used, so
   // staff and the supplier see one plan. Touch devices get a week dropdown.
