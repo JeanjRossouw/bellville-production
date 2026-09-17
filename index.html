@@ -483,6 +483,8 @@
     <div id="builder-portal-name" style="font-size:25px; font-weight:800; margin-top:0.4rem">🏭 Orders</div>
     <div id="builder-portal-count" style="display:inline-block; font-size:13px; font-weight:600; margin-top:0.6rem; background:rgba(255,255,255,0.16); border:1px solid rgba(255,255,255,0.25); border-radius:999px; padding:0.25rem 0.9rem"></div>
     <div style="margin-top:0.7rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap">
+      <button id="portal-view-toggle" onclick="togglePortalView()" style="padding:0.35rem 1rem; background:#fff; color:#111; border:1px solid #fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:800">📅 Planner</button>
+      <button id="portal-print-planner" onclick="printPortalPlanner()" style="display:none; padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">🖨️ Print planner</button>
       <button id="portal-bell" onclick="enableCommentNotifications()" title="Get a notification when a message arrives" style="display:none; padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">🔔 Notify me</button>
       <button id="staff-portal-new" onclick="openNewOrder()" style="display:none; padding:0.35rem 1rem; background:#fff; color:#111; border:1px solid #fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:800">＋ New order</button>
       <button id="staff-portal-back" onclick="exitStaffPortalMode()" style="display:none; padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">⬅ Full system</button>
@@ -9562,6 +9564,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const rows = _staffPortalOrders();
     const cnt = document.getElementById('builder-portal-count');
     if (cnt) cnt.textContent = rows.length + ' order' + (rows.length === 1 ? '' : 's') + ' with the manufacturer';
+    if (_portalView === 'planner') { renderPortalPlanner(rows.map(r => r.o)); _afterThreadRender(rows.map(r => r.o)); return; }
     if (!rows.length) { host.innerHTML = '<div style="background:#fff; border-radius:14px; padding:2rem; text-align:center; color:#78716c; box-shadow:0 1px 3px rgba(0,0,0,0.07)">No orders with a manufacturer right now.</div>'; return; }
     host.innerHTML = rows.map(r => {
       const o = r.o;
@@ -9614,6 +9617,23 @@ ${_PRODUCTION_PRINT_STYLES}
         </div>
       </div>`;
     }).join('');
+    // Orders captured without a supplier (e.g. via the old intake) are NOT on
+    // the supplier's list — show them here so they are never "lost".
+    const names = _allManufacturerNames();
+    const unassigned = [];
+    ['bellville', 'pinkfoot'].forEach(b => {
+      ((data[b] && data[b].orders) || []).forEach(o => {
+        if (o && !o.builder && o.status !== 'delivered' && o.status !== 'done') unassigned.push({ o: o, tag: b === 'bellville' ? 'Bellville' : 'PinkFoot' });
+      });
+    });
+    if (unassigned.length) {
+      host.innerHTML += '<div style="margin-top:1.5rem; font-size:12px; font-weight:900; letter-spacing:0.08em; color:#92400e">📥 NOT WITH THE SUPPLIER YET (' + unassigned.length + ')</div>'
+        + '<div style="font-size:11px; color:#78716c; margin:2px 0 8px">Captured without a supplier — send them across or leave them for the in-house system.</div>'
+        + unassigned.map(r => { const o = r.o; return '<div style="background:#fffbeb; border:1px solid #fcd34d; border-radius:12px; padding:10px 14px; margin-bottom:8px; display:flex; justify-content:space-between; gap:10px; align-items:center; flex-wrap:wrap">'
+          + '<div><div style="font-size:14px; font-weight:800">#' + _escape(o.invoice || o.id) + ' — ' + _escape(o.product || '') + '</div><div style="font-size:11px; color:#78716c"><span style="background:#e7e5e4; border-radius:999px; padding:1px 8px; font-size:10px; font-weight:700">' + r.tag + '</span> · Qty ' + _escape(o.qty || 1) + (o.customer ? ' · 👤 ' + _escape(o.customer) : '') + (o.fabric ? ' · 🧵 ' + _escape(o.fabric) : '') + (o.orderDate ? ' · ' + _escape(o.orderDate) : '') + '</div></div>'
+          + '<span style="display:flex; gap:6px; flex-wrap:wrap">' + names.map(n => '<button onclick="setOrderBuilder(\'' + _escape(o.id) + '\', \'' + _escape(n).replace(/'/g, '&#39;') + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #111; background:#111; color:#fff; font-weight:700; font-size:12px; cursor:pointer">🏭 Send to ' + _escape(n) + '</button>').join('')
+          + '<button onclick="openNewOrder(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fafaf9; color:#111; font-weight:700; font-size:12px; cursor:pointer">✏️ Edit</button></span></div>'; }).join('');
+    }
     _afterThreadRender(rows.map(r => r.o));
   }
   window.renderStaffPortal = renderStaffPortal;
@@ -9649,6 +9669,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const orders = _builderPortalOrders();
     const cnt = document.getElementById('builder-portal-count');
     if (cnt) cnt.textContent = orders.length + ' open order' + (orders.length === 1 ? '' : 's');
+    if (_portalView === 'planner') { renderPortalPlanner(orders); _afterThreadRender(orders); return; }
     if (!orders.length) { host.innerHTML = '<div style="background:#fff; border-radius:14px; padding:2rem; text-align:center; color:#78716c; box-shadow:0 1px 3px rgba(0,0,0,0.07)">No open orders right now.</div>'; return; }
     host.innerHTML = orders.map(o => {
       const comments = Array.isArray(o.builderComments) ? o.builderComments : [];
@@ -9718,6 +9739,115 @@ ${_PRODUCTION_PRINT_STYLES}
     renderBuilderPortal();
   }
   window.builderPortalSetEta = builderPortalSetEta;
+  // ---- 📅 PORTAL PLANNER — the supplier drags orders into the next four weeks ----
+  // Uses the same order.planWeek (ISO Monday) the old in-house planner used, so
+  // staff and the supplier see one plan. Touch devices get a week dropdown.
+  let _portalView = 'orders';
+  function togglePortalView() {
+    _portalView = _portalView === 'planner' ? 'orders' : 'planner';
+    const t = document.getElementById('portal-view-toggle');
+    if (t) t.textContent = _portalView === 'planner' ? '📋 Orders' : '📅 Planner';
+    const p = document.getElementById('portal-print-planner');
+    if (p) p.style.display = _portalView === 'planner' ? 'inline-block' : 'none';
+    if (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE) renderStaffPortal(); else renderBuilderPortal();
+  }
+  window.togglePortalView = togglePortalView;
+  function _portalWeeks() {
+    const mon = getMondayOf(new Date());
+    return [0, 1, 2, 3].map(i => _addDaysIso(mon, i * 7));
+  }
+  function _portalBuckets(orders) {
+    const weeks = _portalWeeks();
+    const b = { unscheduled: [], beyond: [] };
+    weeks.forEach(w => { b[w] = []; });
+    const byDue = (x, y) => String(x.dueDate || '').localeCompare(String(y.dueDate || ''));
+    orders.forEach(o => {
+      if (!o.planWeek) b.unscheduled.push(o);
+      else if (b[o.planWeek]) b[o.planWeek].push(o);
+      else if (o.planWeek < weeks[0]) b[weeks[0]].push(o);   // past week — show in Current
+      else b.beyond.push(o);
+    });
+    Object.keys(b).forEach(k => b[k].sort(byDue));
+    return { weeks, b };
+  }
+  function _portalPlanCard(o) {
+    const fabReceived = o.fabricStatus === 'received';
+    let fab = '';
+    if (o.fabric) {
+      if (fabReceived) fab = '<span style="color:#166534; font-weight:700">✅ fabric in</span>';
+      else if (o.fabricOOS) fab = '<span style="color:#991b1b; font-weight:700">🔴 fabric OOS' + (o.fabricStockETA ? ' ' + _escape(o.fabricStockETA) : '') + '</span>';
+      else if (o.fabricStatus === 'ordered') fab = '<span style="color:#92400e; font-weight:700">📦 fabric ordered</span>';
+      else fab = '<span style="color:#991b1b; font-weight:700">⏳ fabric not ordered</span>';
+    }
+    const weeks = _portalWeeks();
+    const labels = ['This week', 'Next week', 'In 2 weeks', 'In 3 weeks'];
+    const opts = '<option value="">Unscheduled</option>' + weeks.map((w, i) => '<option value="' + w + '"' + (o.planWeek === w ? ' selected' : '') + '>' + labels[i] + ' · ' + _escape(_formatWeekShort(w)) + '</option>').join('');
+    return '<div draggable="true" ondragstart="portalDragStart(event, \'' + _escape(o.id) + '\')" style="background:#fff; border-radius:10px; padding:10px 12px; margin-bottom:8px; box-shadow:0 1px 3px rgba(0,0,0,0.08); cursor:grab; ' + (o.builderDone ? 'border:2px solid #16a34a' : 'border:1px solid #e7e5e4') + '">'
+      + '<div style="font-size:13px; font-weight:800">#' + _escape(o.invoice || o.id) + ' — ' + _escape(o.product || '') + '</div>'
+      + '<div style="font-size:11px; color:#78716c; margin-top:2px">Qty ' + _escape(o.qty || 1) + (o.fabric ? ' · 🧵 ' + _escape(o.fabric) : '') + (o.dueDate ? ' · due ' + _escape(o.dueDate) : '') + '</div>'
+      + (o.customSize ? '<div style="font-size:11px; font-weight:700; color:#111; margin-top:2px">📐 ' + _escape(_customSizeText(o)) + '</div>' : '')
+      + (o.builderDone ? '<div style="font-size:11px; font-weight:800; color:#166534; margin-top:2px">✅ DONE</div>' : '')
+      + '<div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px; font-size:11px">'
+      + (o.fabric ? '<label style="display:flex; align-items:center; gap:4px; margin:0; cursor:pointer" onmousedown="event.stopPropagation()"><input type="checkbox" ' + (fabReceived ? 'checked' : '') + ' onchange="builderPortalFabricReceived(\'' + _escape(o.id) + '\', this.checked)" style="width:16px; height:16px"> ' + fab + '</label>' : '')
+      + '<button onclick="builderPortalPrintCard(\'' + _escape(o.id) + '\')" onmousedown="event.stopPropagation()" style="padding:4px 9px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; color:#111; font-weight:700; font-size:11px; cursor:pointer">🖨️ Job card</button>'
+      + '<select onchange="portalPlanSet(\'' + _escape(o.id) + '\', this.value)" onmousedown="event.stopPropagation()" style="font-size:11px; padding:3px 4px; border-radius:6px; border:1px solid #d6d3d1">' + opts + '</select>'
+      + '</div></div>';
+  }
+  function renderPortalPlanner(orders) {
+    const host = document.getElementById('builder-portal-content');
+    if (!host) return;
+    const { weeks, b } = _portalBuckets(orders);
+    const labels = ['THIS WEEK', 'NEXT WEEK', 'IN 2 WEEKS', 'IN 3 WEEKS'];
+    const col = (key, title, sub, items, accent) => '<div ondragover="portalDragOver(event)" ondragleave="portalDragLeave(event)" ondrop="portalDrop(event, \'' + key + '\')" style="flex:1; min-width:230px; background:' + (accent ? '#eef2ff' : '#f5f5f4') + '; border-radius:12px; padding:10px; border:2px dashed ' + (accent ? '#6366f1' : '#d6d3d1') + '">'
+      + '<div style="font-size:12px; font-weight:900; letter-spacing:0.06em">' + title + ' <span style="font-weight:600; color:#78716c">(' + items.length + ')</span></div>'
+      + (sub ? '<div style="font-size:11px; color:#78716c; margin-bottom:8px">' + sub + '</div>' : '<div style="margin-bottom:8px"></div>')
+      + (items.map(_portalPlanCard).join('') || '<div style="font-size:11px; color:#a8a29e; padding:10px 0; text-align:center">Drop orders here</div>')
+      + '</div>';
+    let html = '<div style="font-size:12px; color:#57534e; margin:0 0 10px">Drag an order into the week it will be built (or use the dropdown on the card). Tick the fabric when it arrives; print the job card from the card.</div>';
+    html += '<div style="display:flex; gap:10px; overflow-x:auto; padding-bottom:6px; align-items:flex-start">';
+    html += col('', 'UNSCHEDULED', 'not planned yet', b.unscheduled, false);
+    weeks.forEach((w, i) => { html += col(w, labels[i], _escape(_formatWeekShort(w)), b[w], i === 0); });
+    html += '</div>';
+    if (b.beyond.length) html += '<div style="margin-top:10px">' + col('', 'BEYOND 3 WEEKS', '', b.beyond, false) + '</div>';
+    host.innerHTML = html;
+  }
+  window.renderPortalPlanner = renderPortalPlanner;
+  function portalDragStart(e, orderId) { try { e.dataTransfer.setData('text/plain', orderId); e.dataTransfer.effectAllowed = 'move'; } catch (x) {} }
+  function portalDragOver(e) { e.preventDefault(); e.currentTarget.style.background = '#dcfce7'; }
+  function portalDragLeave(e) { e.currentTarget.style.background = ''; }
+  function portalDrop(e, weekIso) {
+    e.preventDefault(); e.currentTarget.style.background = '';
+    let id = ''; try { id = e.dataTransfer.getData('text/plain'); } catch (x) {}
+    if (id) portalPlanSet(id, weekIso);
+  }
+  function portalPlanSet(orderId, weekIso) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    snapshotState();
+    if (weekIso) o.planWeek = weekIso; else delete o.planWeek;
+    saveData();
+    if (typeof render === 'function') render();
+  }
+  window.portalDragStart = portalDragStart; window.portalDragOver = portalDragOver; window.portalDragLeave = portalDragLeave; window.portalDrop = portalDrop; window.portalPlanSet = portalPlanSet;
+  function printPortalPlanner() {
+    const staffMode = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE);
+    const orders = staffMode ? _staffPortalOrders().map(r => r.o) : _builderPortalOrders();
+    const { weeks, b } = _portalBuckets(orders);
+    const labels = ['THIS WEEK', 'NEXT WEEK', 'IN 2 WEEKS', 'IN 3 WEEKS'];
+    const esc = _escape;
+    const table = (title, items) => '<h2 style="font:800 15px Arial; margin:18px 0 6px; border-bottom:2px solid #000; padding-bottom:4px">' + title + ' <span style="font-weight:400">(' + items.length + ')</span></h2>'
+      + (items.length ? '<table style="width:100%; border-collapse:collapse; font:12px Arial">'
+        + '<tr style="background:#eee"><th style="border:1px solid #000; padding:4px; text-align:left">Order #</th><th style="border:1px solid #000; padding:4px; text-align:left">Product</th><th style="border:1px solid #000; padding:4px">Qty</th><th style="border:1px solid #000; padding:4px; text-align:left">Fabric</th><th style="border:1px solid #000; padding:4px; text-align:left">Fabric status</th><th style="border:1px solid #000; padding:4px; text-align:left">Custom size</th><th style="border:1px solid #000; padding:4px">Due</th><th style="border:1px solid #000; padding:4px">Done</th></tr>'
+        + items.map(o => '<tr><td style="border:1px solid #000; padding:4px; font-weight:700">#' + esc(o.invoice || o.id) + '</td><td style="border:1px solid #000; padding:4px">' + esc(o.product || '') + '</td><td style="border:1px solid #000; padding:4px; text-align:center">' + esc(o.qty || 1) + '</td><td style="border:1px solid #000; padding:4px">' + esc(o.fabric || '') + '</td><td style="border:1px solid #000; padding:4px">' + (o.fabric ? (o.fabricStatus === 'received' ? 'Received' : o.fabricOOS ? 'OUT OF STOCK' + (o.fabricStockETA ? ' — ' + esc(o.fabricStockETA) : '') : o.fabricStatus === 'ordered' ? 'Ordered' : 'Not ordered') : '') + '</td><td style="border:1px solid #000; padding:4px">' + esc(_customSizeText(o)) + '</td><td style="border:1px solid #000; padding:4px; text-align:center">' + esc(o.dueDate || '') + '</td><td style="border:1px solid #000; padding:4px; text-align:center">' + (o.builderDone ? '✓' : '☐') + '</td></tr>').join('')
+        + '</table>' : '<div style="font:12px Arial; color:#666">—</div>');
+    let body = '<div style="font:900 20px Arial; margin-bottom:2px">PRODUCTION PLANNER — ' + esc((typeof BUILDER_MODE_NAME !== 'undefined' && BUILDER_MODE_NAME) || 'Supplier') + '</div><div style="font:11px Arial; color:#555">Printed ' + new Date().toLocaleDateString('en-ZA') + '</div>';
+    weeks.forEach((w, i) => { body += table(labels[i] + ' — ' + esc(_formatWeekShort(w)), b[w]); });
+    if (b.beyond.length) body += table('BEYOND 3 WEEKS', b.beyond);
+    body += table('UNSCHEDULED', b.unscheduled);
+    _openJobCardWindow('Production planner', body, 'PRINT PLANNER');
+  }
+  window.printPortalPlanner = printPortalPlanner;
+
   // ---- Message read-ticks, unread highlights and notifications ----
   // Each order keeps commentsSeen = { staff: iso, partner: iso } — when a side
   // last had the thread on screen. A comment is "read" by the other side once
