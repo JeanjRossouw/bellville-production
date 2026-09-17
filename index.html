@@ -179,6 +179,23 @@
     .plan-menu-trigger:hover { background: var(--bg); color: var(--text); }
     .plan-menu-trigger:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
 
+    /* Portal planner: wider and larger than the in-house grid */
+    .portal-planner .plan-grid { gap: 1rem; }
+    .portal-planner .plan-col { padding: 0.8rem; min-height: 240px; background: #fff; }
+    .portal-planner .plan-col-header { font-size: 16px; }
+    .portal-planner .plan-col-header .col-sub { font-size: 12px; }
+    .portal-planner .plan-card { font-size: 14px; padding: 0.7rem 0.8rem; margin-bottom: 0.7rem; border-radius: 10px; }
+    .portal-planner .plan-card .pc-inv { font-size: 14px; }
+    .portal-planner .plan-card .pc-prod { font-size: 15px; font-weight: 700; }
+    .portal-planner .plan-card .pc-cust, .portal-planner .plan-card .pc-due { font-size: 13px; }
+    .portal-planner .plan-card .pc-fabric { font-size: 13px !important; }
+    .portal-planner .plan-card input[type="date"] { font-size: 13px !important; max-width: 150px !important; padding: 3px 5px !important; }
+    .portal-planner .plan-card .btn.btn-sm { font-size: 12px !important; padding: 4px 10px !important; }
+    .portal-planner .plan-menu-trigger { font-size: 22px; }
+    .portal-planner .plan-pool { padding: 0.8rem; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.7rem; align-items: start; }
+    .portal-planner .plan-pool .plan-card { margin-bottom: 0; }
+    .portal-planner .card-title { font-size: 15px; }
+    @media (max-width: 900px) { .portal-planner .plan-grid { grid-template-columns: 1fr; } }
     .plan-menu { position: absolute; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.12); padding: 0.25rem; min-width: 240px; max-width: 92vw; z-index: 9999; font-size: 13px; }
     .plan-menu-option { display: block; width: 100%; text-align: left; background: transparent; border: none; padding: 0.65rem 0.75rem; cursor: pointer; border-radius: 4px; font-family: inherit; font-size: 13px; color: var(--text); margin: 0; }
     .plan-menu-option:hover, .plan-menu-option:focus { background: var(--bg); outline: none; }
@@ -493,7 +510,7 @@
       <button onclick="doLogout()" style="padding:0.35rem 1rem; background:transparent; color:#d6d3d1; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px">Log out</button>
     </div>
   </div>
-  <div style="max-width:680px; margin:-1.4rem auto 0; padding:0 1rem 3rem">
+  <div id="builder-portal-wrap" style="max-width:680px; margin:-1.4rem auto 0; padding:0 1rem 3rem">
     <div id="builder-portal-content"><div style="text-align:center; color:#78716c; padding:2.5rem 0">Loading orders…</div></div>
   </div>
 </div>
@@ -9745,6 +9762,8 @@ ${_PRODUCTION_PRINT_STYLES}
   let _portalView = 'orders';
   function togglePortalView() {
     _portalView = _portalView === 'planner' ? 'orders' : 'planner';
+    const wrap = document.getElementById('builder-portal-wrap');
+    if (wrap) wrap.style.maxWidth = _portalView === 'planner' ? '1500px' : '680px';
     const t = document.getElementById('portal-view-toggle');
     if (t) t.textContent = _portalView === 'planner' ? '📋 Orders' : '📅 Planner';
     const p = document.getElementById('portal-print-planner');
@@ -9844,10 +9863,14 @@ ${_PRODUCTION_PRINT_STYLES}
       + '<div class="plan-col-header">' + labels[i] + '<span class="col-sub">' + _escape(_formatWeekShort(w)) + '</span><span class="col-sub">' + b[w].length + ' order' + (b[w].length !== 1 ? 's' : '') + '</span>'
       + '<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px; margin-top:2px" onclick="printPortalPlanner(\'' + w + '\')">🖨️ Print week</button></div>'
       + '<div class="plan-col-body">' + (b[w].map(_portalPlanCard).join('') || '<div class="empty" style="padding:0.75rem 0; font-size:11px">—</div>') + '</div></div>').join('');
-    let html = '<div style="font-size:12px; color:#57534e; margin:0 0 10px">Drag an order into the week it will be built, or tap ⋮ on the card. Orders scheduled to a past week show in <strong>Current</strong>.</div>';
-    html += '<div class="plan-grid" style="color:#1c1917">' + colsHtml + '</div>';
+    const wrap = document.getElementById('builder-portal-wrap');
+    if (wrap) wrap.style.maxWidth = '1500px';
+    let html = '<div class="portal-planner" style="color:#1c1917">';
+    html += '<div style="font-size:13px; color:#57534e; margin:0 0 12px">Drag an order into the week it will be built, or tap ⋮ on the card. Orders scheduled to a past week show in <strong>Current</strong>.</div>';
+    html += '<div class="plan-grid">' + colsHtml + '</div>';
     if (b.beyond.length) html += '<div class="card" style="margin-bottom:1rem"><div class="card-title">📆 SCHEDULED BEYOND 3 WEEKS (' + b.beyond.length + ')</div><div class="plan-pool">' + b.beyond.map(_portalPlanCard).join('') + '</div></div>';
     html += '<div class="card"><div class="card-title">📥 UNSCHEDULED (' + b.unscheduled.length + ')</div><div class="plan-pool" ondragover="portalDragOver(event)" ondragleave="portalDragLeave(event)" ondrop="portalDrop(event, \'\')">' + (b.unscheduled.map(_portalPlanCard).join('') || '<div class="empty" style="padding:0.75rem 0">No unscheduled orders</div>') + '</div></div>';
+    html += '</div>';
     host.innerHTML = html;
   }
   window.renderPortalPlanner = renderPortalPlanner;
