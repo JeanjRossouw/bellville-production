@@ -9798,17 +9798,21 @@ ${_PRODUCTION_PRINT_STYLES}
     if (!host) return;
     const { weeks, b } = _portalBuckets(orders);
     const labels = ['THIS WEEK', 'NEXT WEEK', 'IN 2 WEEKS', 'IN 3 WEEKS'];
-    const col = (key, title, sub, items, accent) => '<div ondragover="portalDragOver(event)" ondragleave="portalDragLeave(event)" ondrop="portalDrop(event, \'' + key + '\')" style="flex:1; min-width:230px; background:' + (accent ? '#eef2ff' : '#f5f5f4') + '; border-radius:12px; padding:10px; border:2px dashed ' + (accent ? '#6366f1' : '#d6d3d1') + '">'
+    const col = (key, title, sub, items, accent, wide) => '<div ondragover="portalDragOver(event)" ondragleave="portalDragLeave(event)" ondrop="portalDrop(event, \'' + key + '\')" style="' + (wide ? 'width:100%' : 'flex:1; min-width:230px') + '; background:' + (accent ? '#eef2ff' : '#f5f5f4') + '; border-radius:12px; padding:10px; border:2px dashed ' + (accent ? '#6366f1' : '#d6d3d1') + '; box-sizing:border-box">'
       + '<div style="font-size:12px; font-weight:900; letter-spacing:0.06em">' + title + ' <span style="font-weight:600; color:#78716c">(' + items.length + ')</span></div>'
       + (sub ? '<div style="font-size:11px; color:#78716c; margin-bottom:8px">' + sub + '</div>' : '<div style="margin-bottom:8px"></div>')
-      + (items.map(_portalPlanCard).join('') || '<div style="font-size:11px; color:#a8a29e; padding:10px 0; text-align:center">Drop orders here</div>')
+      + (wide
+          ? '<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:8px">' + (items.map(_portalPlanCard).join('') || '<div style="font-size:11px; color:#a8a29e; padding:10px 0; text-align:center">Nothing unscheduled</div>') + '</div>'
+          : (items.map(_portalPlanCard).join('') || '<div style="font-size:11px; color:#a8a29e; padding:10px 0; text-align:center">Drop orders here</div>'))
       + '</div>';
-    let html = '<div style="font-size:12px; color:#57534e; margin:0 0 10px">Drag an order into the week it will be built (or use the dropdown on the card). Tick the fabric when it arrives; print the job card from the card.</div>';
+    let html = '<div style="font-size:12px; color:#57534e; margin:0 0 10px">Drag an order from the unscheduled list at the bottom into the week it will be built (or use the dropdown on the card). Tick the fabric when it arrives; print the job card from the card.</div>';
+    // four week columns across the top
     html += '<div style="display:flex; gap:10px; overflow-x:auto; padding-bottom:6px; align-items:flex-start">';
-    html += col('', 'UNSCHEDULED', 'not planned yet', b.unscheduled, false);
-    weeks.forEach((w, i) => { html += col(w, labels[i], _escape(_formatWeekShort(w)), b[w], i === 0); });
+    weeks.forEach((w, i) => { html += col(w, labels[i], _escape(_formatWeekShort(w)), b[w], i === 0, false); });
     html += '</div>';
-    if (b.beyond.length) html += '<div style="margin-top:10px">' + col('', 'BEYOND 3 WEEKS', '', b.beyond, false) + '</div>';
+    if (b.beyond.length) html += '<div style="margin-top:10px">' + col('', 'BEYOND 3 WEEKS', '', b.beyond, false, true) + '</div>';
+    // everything not planned yet, full width at the bottom
+    html += '<div style="margin-top:12px">' + col('', 'UNSCHEDULED', 'not planned yet — drag into a week above', b.unscheduled, false, true) + '</div>';
     host.innerHTML = html;
   }
   window.renderPortalPlanner = renderPortalPlanner;
