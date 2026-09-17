@@ -9783,7 +9783,7 @@ ${_PRODUCTION_PRINT_STYLES}
     orders.forEach(o => {
       if (!o.planWeek) b.unscheduled.push(o);
       else if (b[o.planWeek]) b[o.planWeek].push(o);
-      else if (o.planWeek < weeks[0]) b[weeks[0]].push(o);   // past week — show in Current
+      else if (o.planWeek < weeks[0]) b.unscheduled.push(o);  // stale week (old in-house plan) — back to the pool
       else b.beyond.push(o);
     });
     Object.keys(b).forEach(k => b[k].sort(byDue));
@@ -9868,7 +9868,7 @@ ${_PRODUCTION_PRINT_STYLES}
     let html = '<div class="portal-planner" style="color:#1c1917">';
     const staffMode = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE);
     const scheduled = orders.filter(o => o.planWeek).length;
-    html += '<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 12px"><div style="font-size:13px; color:#57534e">Drag an order into the week it will be built, or tap ⋮ on the card. Orders scheduled to a past week show in <strong>Current</strong>.</div>'
+    html += '<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 12px"><div style="font-size:13px; color:#57534e">Drag an order into the week it will be built, or tap ⋮ on the card. Orders whose week has passed drop back into <strong>Unscheduled</strong>.</div>'
       + (staffMode && scheduled ? '<button class="btn btn-sm" onclick="portalUnscheduleAll()" title="Clear every week so the supplier plans from scratch">📥 Move all to Unscheduled (' + scheduled + ')</button>' : '') + '</div>';
     html += '<div class="plan-grid">' + colsHtml + '</div>';
     if (b.beyond.length) html += '<div class="card" style="margin-bottom:1rem"><div class="card-title">📆 SCHEDULED BEYOND 3 WEEKS (' + b.beyond.length + ')</div><div class="plan-pool">' + b.beyond.map(_portalPlanCard).join('') + '</div></div>';
