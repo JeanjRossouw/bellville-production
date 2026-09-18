@@ -9577,6 +9577,7 @@ ${_PRODUCTION_PRINT_STYLES}
         if (!o || !o.builder) return;
         if (o.status === 'delivered') return;
         if (o.builderReceivedAt && (o.status === 'done')) return; // received back — off the list
+        if (o.builderDone) return; // marked DONE by the supplier — it now lives on the Delivery portal
         out.push({ o: o, biz: b, tag: tags[b] });
       });
     });
@@ -9586,6 +9587,8 @@ ${_PRODUCTION_PRINT_STYLES}
   function renderStaffPortal() {
     const host = document.getElementById('builder-portal-content');
     if (!host) return;
+    const dbtn = document.getElementById('portal-delivery-btn');
+    if (dbtn) { const n = _deliveryGroups().toSchedule.length; dbtn.textContent = '🚚 Delivery' + (n ? ' (' + n + ')' : ''); }
     if (_portalView === 'delivery') { renderDeliveryPortal(); return; }
     const allRows = _staffPortalOrders();
     const rows = _portalQuery() ? allRows.filter(r => _portalFilter([r.o]).length) : allRows;
@@ -9837,7 +9840,7 @@ ${_PRODUCTION_PRINT_STYLES}
     if (cnt) cnt.textContent = g.toSchedule.length + ' to schedule · ' + g.scheduled.length + ' scheduled';
     const areaBlocks = (arr, mode) => { const ga = g.byArea(arr); return Object.keys(ga).sort().map(a => '<div style="font-size:12px; font-weight:800; color:#57534e; margin:10px 0 6px">📍 ' + _escape(a) + ' (' + ga[a].length + ')</div>' + ga[a].map(r => _deliveryCard(r, mode)).join('')).join(''); };
     let html = '<div style="color:#1c1917">';
-    html += '<div style="font-size:12px; color:#57534e; margin-bottom:12px">Finished items land here automatically. Set the date, slot and driver (or let the client pick a slot), tick ✅ Delivered on the day, and attach the signed delivery note.</div>';
+    html += '<div style="font-size:12px; color:#57534e; margin-bottom:12px">The moment the supplier marks an order DONE it moves here from your Orders list. Set the date, slot and driver (or let the client pick a slot), tick ✅ Delivered on the day, and attach the signed delivery note.</div>';
     html += '<div style="font-size:14px; font-weight:900; letter-spacing:0.06em; color:#b45309">🕒 TO SCHEDULE (' + g.toSchedule.length + ')</div>';
     html += g.toSchedule.length ? areaBlocks(g.toSchedule, '') : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">Nothing waiting — items appear here when the supplier marks them DONE.</div>';
     html += '<div style="font-size:14px; font-weight:900; letter-spacing:0.06em; color:#1d4ed8; margin-top:18px">📅 SCHEDULED (' + g.scheduled.length + ')</div>';
