@@ -459,7 +459,7 @@
       <div style="flex:0 0 70px"><label style="font-size:11px; color:#78716c">Qty</label>
         <input id="no-qty" type="number" min="1" value="1" style="width:100%; padding:8px"></div>
       <div style="flex:1; min-width:150px"><label style="font-size:11px; color:#78716c">Date paid</label>
-        <input id="no-paid" type="date" title="The day the client paid — the order date and lead time count from here" style="width:100%; padding:8px"></div>
+        <input id="no-paid" type="date" title="The day the client paid — the due date is 4 weeks after this" style="width:100%; padding:8px"></div>
     </div>
     <label style="font-size:11px; color:#78716c">Notes / special requests</label>
     <textarea id="no-notes" rows="2" placeholder="Anything the supplier must know" style="width:100%; padding:8px; margin:0.25rem 0 0.9rem; font-family:inherit"></textarea>
@@ -9441,6 +9441,7 @@ ${_PRODUCTION_PRINT_STYLES}
       snapshotState();
       o.invoice = invoice; o.customer = customer; o.phone = phone; o.address = address; o.area = area;
       o.product = product; o.fabric = fabric; o.qty = qty; o.notes = notes;
+      if (paidDate !== (o.paidDate || o.orderDate)) o.dueDate = _dueFourWeeks(paidDate);
       o.paidDate = paidDate; o.orderDate = paidDate;
       if (names.length > 1) o.builder = supplier;
       if (customSize) o.customSize = customSize; else delete o.customSize;
@@ -9459,7 +9460,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const order = {
       id: orderId, invoice, customer, phone, product, category: '', fabric, qty,
       orderDate: paidDate, paidDate: paidDate,
-      dueDate: _dueFromLead('', product, paidDate, biz),
+      dueDate: _dueFourWeeks(paidDate),
       status: 'pending', startDate: null, paymentStatus: 'deposit', outstanding: 0,
       notes: notes,
       address: address, area: area,
@@ -9472,6 +9473,13 @@ ${_PRODUCTION_PRINT_STYLES}
     closeNewOrder();
     if (typeof render === 'function') render();
     if (typeof toast === 'function') toast('✅ #' + invoice + ' saved and sent to ' + supplier, 'success', 3000);
+  }
+  // Supplier orders are due 4 weeks after the client paid.
+  function _dueFourWeeks(paidIso) {
+    const d = new Date(paidIso + 'T00:00:00');
+    if (isNaN(d.getTime())) return '';
+    d.setDate(d.getDate() + 28);
+    return d.toISOString().split('T')[0];
   }
   window.openNewOrder = openNewOrder;
   window.closeNewOrder = closeNewOrder;
