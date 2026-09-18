@@ -393,6 +393,37 @@
 </div>
 
 <!-- ＋ NEW ORDER — staff portal order capture; goes straight to the supplier -->
+<div id="repair-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9600; align-items:flex-start; justify-content:center; padding:1rem; overflow:auto">
+  <div style="background:#fff; color:#111; border-radius:14px; max-width:560px; width:100%; padding:1.25rem; box-shadow:0 20px 60px rgba(0,0,0,0.4); margin:1rem auto; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem">
+      <div id="rp-title" style="font-size:16px; font-weight:900">🔧 Log a repair</div>
+      <button onclick="closeRepairModal()" style="border:1px solid #d6d3d1; background:#fff; border-radius:6px; padding:4px 10px; cursor:pointer">✕</button>
+    </div>
+    <div style="font-size:12px; color:#78716c; margin:0.3rem 0 0.9rem">Log what came back and why. Then schedule the pickup and the drop-off on the 📅 Repair planner.</div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem">
+      <div style="flex:1; min-width:140px"><label style="font-size:11px; color:#78716c">Business</label>
+        <select id="rp-biz" style="width:100%; padding:8px"><option value="bellville">Bellville Furniture</option><option value="pinkfoot">PinkFoot Boutique</option></select></div>
+      <div style="flex:2; min-width:200px"><label style="font-size:11px; color:#78716c">Order # (type to search)</label>
+        <input id="rp-order" list="rp-order-list" placeholder="Invoice / order number" oninput="repairModalOrderPicked(this.value)" style="width:100%; padding:8px"><datalist id="rp-order-list"></datalist></div>
+    </div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem">
+      <div style="flex:1; min-width:140px"><label style="font-size:11px; color:#78716c">Customer</label><input id="rp-customer" placeholder="Customer name" style="width:100%; padding:8px"></div>
+      <div style="flex:1; min-width:140px"><label style="font-size:11px; color:#78716c">Cell number</label><input id="rp-phone" placeholder="082 …" style="width:100%; padding:8px"></div>
+    </div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem">
+      <div style="flex:2; min-width:200px"><label style="font-size:11px; color:#78716c">Address</label><input id="rp-address" placeholder="Street, suburb" style="width:100%; padding:8px"></div>
+      <div style="flex:1; min-width:120px"><label style="font-size:11px; color:#78716c">Area</label><input id="rp-area" placeholder="e.g. Durbanville" style="width:100%; padding:8px"></div>
+    </div>
+    <div style="margin-bottom:0.6rem"><label style="font-size:11px; color:#78716c">Product</label><input id="rp-product" placeholder="e.g. 2 Seater — Amber" style="width:100%; padding:8px"></div>
+    <div style="margin-bottom:0.6rem"><label style="font-size:11px; color:#78716c">What's wrong (reason)</label><input id="rp-reason" placeholder="e.g. Broken leg / torn seam / cushion collapsed" style="width:100%; padding:8px"></div>
+    <div style="margin-bottom:0.9rem"><label style="font-size:11px; color:#78716c">Details (optional)</label><input id="rp-details" placeholder="Anything the repairer should know" style="width:100%; padding:8px"></div>
+    <div id="rp-status" style="font-size:12px; color:#991b1b; min-height:1em; margin-bottom:0.4rem"></div>
+    <div style="display:flex; gap:0.5rem; justify-content:flex-end">
+      <button onclick="closeRepairModal()" style="padding:9px 14px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; cursor:pointer">Cancel</button>
+      <button id="rp-save" onclick="saveRepairModal()" style="padding:9px 18px; border-radius:999px; border:none; background:#111; color:#fff; font-weight:800; cursor:pointer">💾 Log repair</button>
+    </div>
+  </div>
+</div>
 <div id="neworder-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9600; align-items:flex-start; justify-content:center; padding:1rem; overflow:auto">
   <div style="background:#fff; color:#111; border-radius:14px; max-width:560px; width:100%; padding:1.25rem; box-shadow:0 20px 60px rgba(0,0,0,0.4); margin:1rem auto; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem">
@@ -504,6 +535,8 @@
     </div>
     <div style="margin-top:0.7rem; display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap">
       <button id="portal-view-toggle" onclick="togglePortalView()" style="padding:0.35rem 1rem; background:#fff; color:#111; border:1px solid #fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:800">📅 Planner</button>
+      <button id="portal-delivery-btn" onclick="setPortalView('delivery')" style="display:none; padding:0.35rem 1rem; background:#fff; color:#111; border:1px solid #fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:800">🚚 Delivery</button>
+      <button id="portal-repairs-btn" onclick="setPortalView('repairs')" style="display:none; padding:0.35rem 1rem; background:#fff; color:#111; border:1px solid #fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:800">🔧 Repairs</button>
       <button id="portal-print-planner" onclick="printPortalPlanner()" style="display:none; padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">🖨️ Print planner</button>
       <button id="portal-bell" onclick="enableCommentNotifications()" title="Get a notification when a message arrives" style="display:none; padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">🔔 Notify me</button>
       <button id="staff-portal-new" onclick="openNewOrder()" style="display:none; padding:0.35rem 1rem; background:#fff; color:#111; border:1px solid #fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:800">＋ New order</button>
@@ -6330,9 +6363,10 @@ ${_PRODUCTION_PRINT_STYLES}
     if (!found) return;
     snapshotState();
     found.r.status = status;
+    if (status === 'returned') found.r.returnedAt = new Date().toISOString().slice(0, 10);
+    if (status === 'in-repair' && !found.r.pickedUpAt) found.r.pickedUpAt = new Date().toISOString().slice(0, 10);
     saveData();
-    renderRepairs();
-    if (typeof renderDispatch === 'function') renderDispatch();
+    _repairAfterChange();
   }
   window.repairSetStatus = repairSetStatus;
   function repairSetDate(id, field, dateStr) {
@@ -6341,8 +6375,7 @@ ${_PRODUCTION_PRINT_STYLES}
     snapshotState();
     found.r[field] = dateStr || '';
     saveData();
-    renderRepairs();
-    if (typeof renderDispatch === 'function') renderDispatch();
+    _repairAfterChange();
   }
   window.repairSetDate = repairSetDate;
   function deleteRepair(id) {
@@ -6352,10 +6385,14 @@ ${_PRODUCTION_PRINT_STYLES}
     snapshotState();
     data[found.biz].repairs = data[found.biz].repairs.filter(x => x.id !== id);
     saveData();
-    renderRepairs();
-    if (typeof renderDispatch === 'function') renderDispatch();
+    _repairAfterChange();
   }
   window.deleteRepair = deleteRepair;
+  function _repairAfterChange() {
+    renderRepairs();
+    if (typeof renderDispatch === 'function') renderDispatch();
+    if (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE && typeof renderStaffPortal === 'function') renderStaffPortal();
+  }
 
   const _REPAIR_BADGE = {
     logged: '<span style="color:#991b1b; font-weight:700">🔴 LOGGED</span>',
@@ -9253,6 +9290,10 @@ ${_PRODUCTION_PRINT_STYLES}
     if (back) back.style.display = 'none';
     const nb = document.getElementById('staff-portal-new');
     if (nb) nb.style.display = 'none';
+    const db = document.getElementById('portal-delivery-btn');
+    if (db) db.style.display = 'none';
+    const rb = document.getElementById('portal-repairs-btn');
+    if (rb) rb.style.display = 'none';
     const nm = document.getElementById('builder-portal-name');
     if (nm) nm.innerHTML = _builderWordmarkHtml(BUILDER_MODE_NAME || 'Orders', 24, '#fff');
     document.title = (BUILDER_MODE_NAME || 'Manufacturer') + ' · Orders';
@@ -9275,6 +9316,10 @@ ${_PRODUCTION_PRINT_STYLES}
     if (back) back.style.display = 'inline-block';
     const nb = document.getElementById('staff-portal-new');
     if (nb) nb.style.display = 'inline-block';
+    const db = document.getElementById('portal-delivery-btn');
+    if (db) db.style.display = 'inline-block';
+    const rb = document.getElementById('portal-repairs-btn');
+    if (rb) rb.style.display = 'inline-block';
     const nm = document.getElementById('builder-portal-name');
     if (nm) nm.innerHTML = _builderWordmarkHtml('Bellville Furniture', 22, '#fff');
     document.title = 'Bellville · Orders';
@@ -9572,6 +9617,7 @@ ${_PRODUCTION_PRINT_STYLES}
         if (!o || !o.builder) return;
         if (o.status === 'delivered') return;
         if (o.builderReceivedAt && (o.status === 'done')) return; // received back — off the list
+        if (o.builderDone) return; // marked DONE by the supplier — it now lives on the Delivery portal
         out.push({ o: o, biz: b, tag: tags[b] });
       });
     });
@@ -9581,6 +9627,12 @@ ${_PRODUCTION_PRINT_STYLES}
   function renderStaffPortal() {
     const host = document.getElementById('builder-portal-content');
     if (!host) return;
+    const dbtn = document.getElementById('portal-delivery-btn');
+    if (dbtn) { const n = _deliveryGroups().toSchedule.length; dbtn.textContent = '🚚 Delivery' + (n ? ' (' + n + ')' : ''); }
+    const rbtn = document.getElementById('portal-repairs-btn');
+    if (rbtn) { const n = _repairGroups().toSchedule.length; rbtn.textContent = '🔧 Repairs' + (n ? ' (' + n + ')' : ''); }
+    if (_portalView === 'delivery') { renderDeliveryPortal(); return; }
+    if (_portalView === 'repairs') { renderRepairsPortal(); return; }
     const allRows = _staffPortalOrders();
     const rows = _portalQuery() ? allRows.filter(r => _portalFilter([r.o]).length) : allRows;
     const cnt = document.getElementById('builder-portal-count');
@@ -9626,6 +9678,11 @@ ${_PRODUCTION_PRINT_STYLES}
           </label>
           <label style="display:flex; align-items:center; gap:6px; margin:0; font-weight:600; color:#44403c">
             Due <input type="date" value="${_escape(o.dueDate || '')}" onchange="planSetDueDate('${_escape(o.id)}', this.value)" style="padding:5px 7px; border-radius:6px; border:1px solid #d6d3d1">
+          </label>
+          <label title="Book the delivery now — it shows on the Delivery planner even before the supplier marks it done" style="display:flex; align-items:center; gap:6px; margin:0; font-weight:600; color:${o.deliveryScheduled ? '#1d4ed8' : '#44403c'}">
+            🚚 Delivery <input type="date" value="${_escape(o.deliveryScheduled || '')}" onchange="deliveryPlanSet('${_escape(o.id)}', this.value)" style="padding:5px 7px; border-radius:6px; border:1px solid ${o.deliveryScheduled ? '#93c5fd' : '#d6d3d1'}">
+            <select onchange="deliverySetSlot('${_escape(o.id)}', this.value)" style="padding:5px 7px; border-radius:6px; border:1px solid #d6d3d1; font-size:12px"><option value="">any time</option>${DELIVERY_SLOTS.map(sl => '<option value="' + sl + '"' + ((o.deliveryTimeFrom + ' - ' + o.deliveryTimeTo) === sl ? ' selected' : '') + '>' + sl + '</option>').join('')}</select>
+            ${o.deliveryScheduled ? '<span style="background:#dbeafe; color:#1e40af; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:800; white-space:nowrap">📅 Delivery booked' + (o.deliveryBookedByClient ? ' by client' : '') + '</span>' : ''}
           </label>
         </div>
         <div style="border-top:1px solid #e7e5e4; margin-top:10px; padding-top:8px">
@@ -9727,6 +9784,7 @@ ${_PRODUCTION_PRINT_STYLES}
           <label style="display:flex; align-items:center; gap:6px; margin:0; font-weight:600; color:#44403c">
             ETA <input type="date" value="${_escape(o.dueDate || '')}" onchange="builderPortalSetEta('${_escape(o.id)}', this.value)" style="padding:5px 7px; border-radius:6px; border:1px solid #d6d3d1">
           </label>
+          ${o.deliveryScheduled && o.status !== 'delivered' ? '<span title="Delivery to the client is booked for this date — please have it ready before then" style="background:#dbeafe; color:#1e40af; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:800; white-space:nowrap">🚚 Delivery booked ' + _escape(o.deliveryScheduled) + (o.deliveryTimeFrom ? ' ' + _escape(o.deliveryTimeFrom) : '') + '</span>' : ''}
         </div>
         <div style="border-top:1px solid #e7e5e4; margin-top:10px; padding-top:8px">
           ${_commentThreadHtml(o, comments)}
@@ -9761,6 +9819,563 @@ ${_PRODUCTION_PRINT_STYLES}
     renderBuilderPortal();
   }
   window.builderPortalSetEta = builderPortalSetEta;
+  // ===== 🚚 DELIVERY PORTAL (staff) =====
+  // Finished items flow here: To schedule → Scheduled (by day, grouped by area)
+  // → Delivered. Staff set date/slot/driver, attach a delivery-note photo
+  // (compressed, stored as its own small record) and leave comments.
+  const DELIVERY_SLOTS = ['08:00 - 10:00', '10:00 - 12:00', '12:00 - 14:00', '14:00 - 16:00'];
+  function _deliveryOrders() {
+    // Bellville + PinkFoot only — ReptiCube runs its own dispatch
+    const tags = { bellville: 'Bellville', pinkfoot: 'PinkFoot' };
+    const out = [];
+    ['bellville', 'pinkfoot'].forEach(b => {
+      ((data[b] && data[b].orders) || []).forEach(o => { if (o) out.push({ o: o, biz: b, tag: tags[b] }); });
+    });
+    return out;
+  }
+  function _deliveryReady(o) { return o.status !== 'delivered' && !!(o.builderDone || o.status === 'done' || o.builderReceivedAt); }
+  function _deliveryGroups() {
+    const all = _portalQuery() ? _deliveryOrders().filter(r => _portalFilter([r.o]).length) : _deliveryOrders();
+    const toSchedule = all.filter(r => _deliveryReady(r.o) && !r.o.deliveryScheduled);
+    const scheduled = all.filter(r => r.o.status !== 'delivered' && r.o.deliveryScheduled);
+    const cutoff = new Date(Date.now() - 45 * 86400000).toISOString().split('T')[0];
+    const delivered = all.filter(r => r.o.status === 'delivered' && String(r.o.deliveredDate || '') >= cutoff)
+      .sort((a, b) => String(b.o.deliveredDate || '').localeCompare(String(a.o.deliveredDate || '')));
+    const byArea = (arr) => { const g = {}; arr.forEach(r => { const k = (r.o.area || 'No area').trim(); (g[k] = g[k] || []).push(r); }); return g; };
+    const byDay = {}; scheduled.forEach(r => { (byDay[r.o.deliveryScheduled] = byDay[r.o.deliveryScheduled] || []).push(r); });
+    return { toSchedule, scheduled, delivered, byArea, byDay };
+  }
+  function _deliveryCard(r, mode) {
+    const o = r.o;
+    const digits = _waDigits(o.phone);
+    const src = o.builder ? '🏭 ' + (o.builderDone ? 'DONE by ' + _escape(o.builder) + (o.builderDoneAt ? ' ' + _escape(o.builderDoneAt) : '') : _escape(o.builder)) : '🏠 made in-house';
+    const comments = Array.isArray(o.deliveryComments) ? o.deliveryComments : [];
+    const slotOpts = DELIVERY_SLOTS.map(sl => '<option value="' + sl + '"' + ((o.deliveryTimeFrom + ' - ' + o.deliveryTimeTo) === sl ? ' selected' : '') + '>' + sl + '</option>').join('');
+    const form = '<div id="dlv-form-' + _escape(o.id) + '" style="display:' + (mode === 'schedule' ? 'flex' : 'none') + '; gap:6px; flex-wrap:wrap; align-items:center; margin-top:8px; padding:8px; background:#f5f5f4; border-radius:8px">'
+      + '<input type="date" id="dlv-date-' + _escape(o.id) + '" value="' + _escape(o.deliveryScheduled || '') + '" style="padding:6px; border:1px solid #d6d3d1; border-radius:6px">'
+      + '<select id="dlv-slot-' + _escape(o.id) + '" style="padding:6px; border:1px solid #d6d3d1; border-radius:6px"><option value="">Any time</option>' + slotOpts + '</select>'
+      + '<input id="dlv-by-' + _escape(o.id) + '" value="' + _escape(o.deliveryBy || '') + '" placeholder="Driver / courier + waybill" style="padding:6px; border:1px solid #d6d3d1; border-radius:6px; min-width:180px">'
+      + '<button onclick="deliverySchedule(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:none; background:#111; color:#fff; font-weight:700; cursor:pointer">📅 Save</button>'
+      + '</div>';
+    let actions = '';
+    if (o.status !== 'delivered') {
+      actions += '<button onclick="deliveryToggleForm(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; font-weight:700; font-size:12px; cursor:pointer">' + (o.deliveryScheduled ? '✏️ Change' : '📅 Schedule') + '</button>';
+      if (digits) actions += '<button onclick="deliverySendBookingLink(\'' + r.biz + '\', \'' + _escape(o.id) + '\')" title="Let the client pick a slot" style="padding:7px 12px; border-radius:999px; border:1.5px solid #25d366; background:#f0fdf4; color:#166534; font-weight:700; font-size:12px; cursor:pointer">💬 Client picks slot</button>';
+      actions += '<button onclick="deliveryMarkDelivered(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #16a34a; background:#16a34a; color:#fff; font-weight:800; font-size:12px; cursor:pointer">✅ Delivered</button>';
+    }
+    actions += '<label style="padding:7px 12px; border-radius:999px; border:1.5px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:700; font-size:12px; cursor:pointer; margin:0">📎 ' + (o.deliveryNoteId ? 'Replace note' : 'Delivery note') + '<input type="file" accept="image/*,application/pdf" capture="environment" style="display:none" onchange="deliveryNoteUpload(\'' + _escape(o.id) + '\', this)"></label>';
+    if (o.deliveryNoteId) actions += '<button onclick="deliveryNoteView(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">👁 View note</button>';
+    actions += '<button onclick="builderPortalPrintCard(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">🖨️ Job card</button>';
+    return '<div style="background:#fff; border-radius:12px; padding:12px 14px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,0.07); border-left:4px solid ' + (o.status === 'delivered' ? '#16a34a' : o.deliveryScheduled ? '#2563eb' : '#f59e0b') + '">'
+      + '<div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:flex-start"><div>'
+      + '<div style="font-size:15px; font-weight:800">#' + _escape(o.invoice || o.id) + ' — ' + _escape(o.product || '') + (o.qty > 1 ? ' × ' + _escape(o.qty) : '') + ' <span style="background:#e7e5e4; border-radius:999px; padding:1px 8px; font-size:10px; font-weight:700; vertical-align:middle">' + r.tag + '</span></div>'
+      + '<div style="font-size:12px; color:#44403c; margin-top:2px">👤 ' + _escape(o.customer || '') + (o.phone ? ' · <a href="https://wa.me/' + digits + '" target="_blank" rel="noopener" style="color:#166534; font-weight:700">📱 ' + _escape(o.phone) + '</a>' : '') + '</div>'
+      + '<div style="font-size:12px; color:#44403c">📍 ' + ((o.address || o.area) ? _escape([o.address, o.area].filter(Boolean).join(', ')) : '<span style="color:#991b1b">no address — add it via ✏️ Edit on the order</span>') + '</div>'
+      + '<div style="font-size:11px; color:#78716c; margin-top:2px">' + src + (o.customSize ? ' · 📐 ' + _escape(_customSizeText(o)) : '') + (!_deliveryReady(o) && o.status !== 'delivered' ? ' <span style="background:#fef3c7; color:#92400e; padding:1px 8px; border-radius:999px; font-weight:800">⏳ NOT DONE YET' + (o.dueDate ? ' — ETA ' + _escape(o.dueDate) : '') + '</span>' : '') + '</div>'
+      + (o.deliveryScheduled ? '<div style="font-size:13px; font-weight:800; color:#1d4ed8; margin-top:4px">📅 ' + _escape(o.deliveryScheduled) + (o.deliveryTimeFrom ? ' · ' + _escape(o.deliveryTimeFrom) + (o.deliveryTimeTo ? ' – ' + _escape(o.deliveryTimeTo) : '') : '') + (o.deliveryBy ? ' · 🚚 ' + _escape(o.deliveryBy) : '') + (o.deliveryBookedByClient ? ' · booked by client' : '') + '</div>' : '')
+      + (o.status === 'delivered' ? '<div style="font-size:13px; font-weight:800; color:#166534; margin-top:4px">✅ Delivered ' + _escape(o.deliveredDate || '') + (o.deliveredBy ? ' by ' + _escape(o.deliveredBy) : '') + (o.deliveryNoteId ? ' · 📎 note attached' : ' · <span style="color:#b45309">no delivery note</span>') + '</div>' : '')
+      + '</div><div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center">' + actions + '</div></div>'
+      + form
+      + '<div style="border-top:1px solid #e7e5e4; margin-top:8px; padding-top:6px">'
+      + comments.slice(-4).map(c => '<div style="font-size:12px; margin-bottom:3px"><strong>' + _escape(c.by || '') + '</strong> <span style="color:#a8a29e">' + _escape(String(c.at || '').slice(0, 16).replace('T', ' ')) + '</span><br>' + _escape(c.text || '') + '</div>').join('')
+      + '<div style="display:flex; gap:6px; margin-top:4px"><input id="dlv-comment-' + _escape(o.id) + '" placeholder="Delivery comment (e.g. left with security, client wants leg change)…" style="flex:1; padding:6px 8px; border-radius:6px; border:1px solid #d6d3d1; font-size:12px" onkeydown="if(event.key===\'Enter\'){deliveryAddComment(\'' + _escape(o.id) + '\')}">'
+      + '<button onclick="deliveryAddComment(\'' + _escape(o.id) + '\')" style="padding:6px 12px; border-radius:6px; border:1px solid #111; background:#111; color:#fff; font-weight:700; font-size:12px; cursor:pointer">💬</button></div></div></div>';
+  }
+  let _deliveryTab = 'schedule';
+  function setDeliveryTab(t) { _deliveryTab = t; renderDeliveryPortal(); }
+  window.setDeliveryTab = setDeliveryTab;
+  function _deliveryDays() {
+    const out = [];
+    const d = new Date(); d.setHours(0, 0, 0, 0);
+    for (let i = 0; i < 7; i++) { const x = new Date(d.getTime() + i * 86400000); out.push(x.toISOString().split('T')[0]); }
+    return out;
+  }
+  function _deliveryPlanCard(r) {
+    const o = r.o;
+    const slotOpts = '<option value="">any time</option>' + DELIVERY_SLOTS.map(sl => '<option value="' + sl + '"' + ((o.deliveryTimeFrom + ' - ' + o.deliveryTimeTo) === sl ? ' selected' : '') + '>' + sl + '</option>').join('');
+    return '<div class="plan-card" draggable="true" ondragstart="portalDragStart(event, \'' + _escape(o.id) + '\')" style="' + (o.deliveryScheduled ? '' : 'background:#fffbeb;') + (!_deliveryReady(o) ? 'border-left:4px solid #f59e0b;' : '') + '">'
+      + '<div class="pc-body">'
+      + '<div class="pc-inv">#' + _escape(o.invoice || o.id) + ' <span style="background:#e7e5e4; border-radius:999px; padding:0 6px; font-size:10px; color:#44403c">' + r.tag + '</span></div>'
+      + '<div class="pc-prod">' + _escape(o.product || '') + (o.qty > 1 ? ' × ' + _escape(o.qty) : '') + '</div>'
+      + '<div class="pc-cust">👤 ' + _escape(o.customer || '') + (o.phone ? ' · ' + _escape(o.phone) : '') + '</div>'
+      + '<div class="pc-due">📍 ' + _escape([o.address, o.area].filter(Boolean).join(', ') || 'no address') + '</div>'
+      + (!_deliveryReady(o) ? '<div class="pc-due" style="color:#92400e; font-weight:800">⏳ Not done yet' + (o.dueDate ? ' — ETA ' + _escape(o.dueDate) : '') + '</div>' : '')
+      + '<div class="pc-due" style="display:flex; gap:4px; align-items:center; flex-wrap:wrap; margin-top:4px">'
+      + '<select onchange="event.stopPropagation(); deliverySetSlot(\'' + _escape(o.id) + '\', this.value)" onmousedown="event.stopPropagation()" style="font-size:11px; padding:2px 4px">' + slotOpts + '</select>'
+      + '<input value="' + _escape(o.deliveryBy || '') + '" placeholder="driver" onchange="event.stopPropagation(); deliverySetBy(\'' + _escape(o.id) + '\', this.value)" onmousedown="event.stopPropagation()" style="font-size:11px; padding:2px 4px; width:90px">'
+      + '<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px" onclick="event.stopPropagation(); deliveryMarkDelivered(\'' + _escape(o.id) + '\')" onmousedown="event.stopPropagation()" draggable="false">✅ Delivered</button>'
+      + '</div></div>'
+      + '<button type="button" class="plan-menu-trigger" title="Move" onclick="event.stopPropagation(); openDeliveryMenu(\'' + _escape(o.id) + '\', this)" onmousedown="event.stopPropagation()" draggable="false">⋮</button>'
+      + '</div>';
+  }
+  function openDeliveryMenu(orderId, anchorEl) {
+    closePlanMenu();
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    const days = _deliveryDays();
+    const menu = document.createElement('div');
+    menu.className = 'plan-menu'; menu.style.zIndex = '9999';
+    menu.innerHTML = days.map(d => '<button class="plan-menu-option" onclick="deliveryPlanSet(\'' + _escape(orderId) + '\', \'' + d + '\'); closePlanMenu()">📅 ' + _escape(new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' })) + (o.deliveryScheduled === d ? ' ✓' : '') + '</button>').join('')
+      + '<div class="plan-menu-divider"></div><div class="plan-menu-date"><label>📅 Later:</label><input type="date" onchange="deliveryPlanSet(\'' + _escape(orderId) + '\', this.value); closePlanMenu()"></div>'
+      + '<div class="plan-menu-divider"></div><button class="plan-menu-option danger" onclick="deliveryPlanSet(\'' + _escape(orderId) + '\', \'\'); closePlanMenu()">📥 Unschedule</button>'
+      + '<button class="plan-menu-option" onclick="closePlanMenu()">✕ Cancel</button>';
+    document.body.appendChild(menu);
+    _openPlanMenu = menu;
+    document.addEventListener('click', _planMenuOutsideClick, true);
+    document.addEventListener('keydown', _planMenuKeydown, true);
+    const rect = anchorEl.getBoundingClientRect(), mw = menu.offsetWidth, mh = menu.offsetHeight;
+    const sx = window.scrollX || 0, sy = window.scrollY || 0;
+    let left = rect.right + sx - mw, top = rect.bottom + sy + 4;
+    if (left < sx + 4) left = sx + 4;
+    if (top + mh > sy + window.innerHeight - 4) top = rect.top + sy - mh - 4;
+    menu.style.left = left + 'px'; menu.style.top = top + 'px';
+  }
+  function deliveryPlanSet(orderId, dateIso) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    snapshotState();
+    if (dateIso) { o.deliveryScheduled = dateIso; o.deliveryBookedByClient = false; }
+    else { delete o.deliveryScheduled; o.deliveryTimeFrom = ''; o.deliveryTimeTo = ''; }
+    saveData();
+    if (typeof render === 'function') render();
+  }
+  function deliverySetSlot(orderId, slot) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    snapshotState();
+    const parts = String(slot || '').split('-').map(x => x.trim());
+    o.deliveryTimeFrom = parts[0] || ''; o.deliveryTimeTo = parts[1] || '';
+    saveData();
+  }
+  function deliverySetBy(orderId, by) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    snapshotState(); o.deliveryBy = String(by || '').trim(); saveData();
+  }
+  function deliveryDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
+  function deliveryDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
+  function deliveryDrop(e, dateIso) {
+    e.preventDefault(); e.currentTarget.classList.remove('drag-over');
+    let id = ''; try { id = e.dataTransfer.getData('text/plain'); } catch (x) {}
+    if (!id) return;
+    if (id.indexOf('rep:') === 0) { const p = id.split(':'); repairPlanSet(p[1], p[2], dateIso); return; }
+    deliveryPlanSet(id, dateIso);
+  }
+  window.openDeliveryMenu = openDeliveryMenu; window.deliveryPlanSet = deliveryPlanSet; window.deliverySetSlot = deliverySetSlot; window.deliverySetBy = deliverySetBy;
+  window.deliveryDragOver = deliveryDragOver; window.deliveryDragLeave = deliveryDragLeave; window.deliveryDrop = deliveryDrop;
+  function renderDeliveryPortal() {
+    const host = document.getElementById('builder-portal-content');
+    if (!host) return;
+    const g = _deliveryGroups();
+    const cnt = document.getElementById('builder-portal-count');
+    if (cnt) cnt.textContent = g.toSchedule.length + ' to schedule · ' + g.scheduled.length + ' scheduled';
+    const areaBlocks = (arr) => { const ga = g.byArea(arr); return Object.keys(ga).sort().map(a => '<div style="font-size:12px; font-weight:800; color:#57534e; margin:10px 0 6px">📍 ' + _escape(a) + ' (' + ga[a].length + ')</div>' + ga[a].map(r => _deliveryCard(r, '')).join('')).join(''); };
+    const tab = (key, label, n, color) => '<button onclick="setDeliveryTab(\'' + key + '\')" style="padding:8px 14px; border-radius:999px; border:1.5px solid ' + color + '; background:' + (_deliveryTab === key ? color : '#fff') + '; color:' + (_deliveryTab === key ? '#fff' : color) + '; font-weight:800; font-size:12px; cursor:pointer">' + label + (n != null ? ' (' + n + ')' : '') + '</button>';
+    let html = '<div style="color:#1c1917">';
+    html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px">' + tab('schedule', '🕒 To schedule', g.toSchedule.length, '#b45309') + tab('planner', '📅 Delivery planner', null, '#4f46e5') + tab('scheduled', '📋 Scheduled', g.scheduled.length, '#1d4ed8') + tab('delivered', '✅ Delivered', g.delivered.length, '#166534') + '</div>';
+    if (_deliveryTab === 'schedule') {
+      html += '<div style="font-size:12px; color:#57534e; margin-bottom:8px">The moment the supplier marks an order DONE it moves here from your Orders list. Schedule it here, or drag it into a day on the 📅 Delivery planner.</div>';
+      html += g.toSchedule.length ? areaBlocks(g.toSchedule) : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">Nothing waiting — items appear here when the supplier marks them DONE.</div>';
+    } else if (_deliveryTab === 'planner') {
+      const wrap = document.getElementById('builder-portal-wrap'); if (wrap) wrap.style.maxWidth = '1600px';
+      const days = _deliveryDays();
+      const later = g.scheduled.filter(r => !days.includes(r.o.deliveryScheduled));
+      html += '<div class="portal-planner"><div style="font-size:12px; color:#57534e; margin-bottom:8px">Drag an order into the day it will be delivered (or tap ⋮). Set the time slot and driver on the card; print the run sheet per day.</div>';
+      html += '<div class="plan-grid" style="grid-template-columns:repeat(7, minmax(220px, 1fr)); overflow-x:auto">';
+      days.forEach((d, i) => {
+        const items = (g.byDay[d] || []).slice().sort((a, b) => String(a.o.area || '').localeCompare(String(b.o.area || '')) || String(a.o.deliveryTimeFrom || '').localeCompare(String(b.o.deliveryTimeFrom || '')));
+        const reps = _repairGroups().byDay[d] || [];
+        const dt = new Date(d + 'T00:00:00');
+        html += '<div class="plan-col ' + (i === 0 ? 'current' : '') + '" ondragover="deliveryDragOver(event)" ondragleave="deliveryDragLeave(event)" ondrop="deliveryDrop(event, \'' + d + '\')">'
+          + '<div class="plan-col-header">' + _escape(dt.toLocaleDateString('en-ZA', { weekday: 'long' })) + '<span class="col-sub">' + _escape(dt.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })) + '</span><span class="col-sub">' + items.length + ' deliver' + (items.length === 1 ? 'y' : 'ies') + (reps.length ? ' · ' + reps.length + ' repair stop' + (reps.length === 1 ? '' : 's') : '') + '</span>'
+          + ((items.length || reps.length) ? '<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px; margin-top:2px" onclick="printRunSheet(\'' + d + '\')">🖨️ Run sheet</button>' : '') + '</div>'
+          + '<div class="plan-col-body">' + ((items.map(_deliveryPlanCard).join('') + reps.map(_repairPlanCard).join('')) || '<div class="empty" style="padding:0.75rem 0; font-size:11px">—</div>') + '</div></div>';
+      });
+      html += '</div>';
+      if (later.length) html += '<div class="card" style="margin-top:10px"><div class="card-title">📆 LATER (' + later.length + ')</div><div class="plan-pool">' + later.map(_deliveryPlanCard).join('') + '</div></div>';
+      html += '<div class="card" style="margin-top:10px"><div class="card-title">🕒 TO SCHEDULE (' + g.toSchedule.length + ')</div><div class="plan-pool" ondragover="deliveryDragOver(event)" ondragleave="deliveryDragLeave(event)" ondrop="deliveryDrop(event, \'\')">' + (g.toSchedule.map(_deliveryPlanCard).join('') || '<div class="empty" style="padding:0.75rem 0">Nothing waiting</div>') + '</div></div></div>';
+    } else if (_deliveryTab === 'scheduled') {
+      const days = Object.keys(g.byDay).sort();
+      const rg = _repairGroups().byDay;
+      html += days.length ? days.map(d => '<div style="display:flex; justify-content:space-between; align-items:center; margin:12px 0 4px"><div style="font-size:13px; font-weight:800">' + _escape(new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' })) + ' <span style="color:#78716c; font-weight:600">(' + g.byDay[d].length + (rg[d] ? ' + ' + rg[d].length + ' repair' : '') + ')</span></div><button onclick="printRunSheet(\'' + d + '\')" style="padding:5px 10px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; font-weight:700; font-size:11px; cursor:pointer">🖨️ Run sheet</button></div>' + areaBlocks(g.byDay[d]) + (rg[d] ? '<div style="font-size:12px; font-weight:800; color:#9a3412; margin:8px 0 4px">🔧 Repair stops</div><div class="portal-planner"><div class="plan-pool">' + rg[d].map(_repairPlanCard).join('') + '</div></div>' : '')).join('') : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">No deliveries scheduled.</div>';
+    } else {
+      html += '<div style="font-size:12px; color:#57534e; margin-bottom:8px">Delivered in the last 45 days.</div>';
+      html += g.delivered.length ? g.delivered.map(r => _deliveryCard(r, '')).join('') : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">Nothing delivered yet.</div>';
+    }
+    html += '</div>';
+    host.innerHTML = html;
+  }
+  window.renderDeliveryPortal = renderDeliveryPortal;
+  function deliveryToggleForm(orderId) { const f = document.getElementById('dlv-form-' + orderId); if (f) f.style.display = f.style.display === 'none' ? 'flex' : 'none'; }
+  function deliverySchedule(orderId) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    const date = (document.getElementById('dlv-date-' + orderId) || {}).value || '';
+    const slot = (document.getElementById('dlv-slot-' + orderId) || {}).value || '';
+    const by = String((document.getElementById('dlv-by-' + orderId) || {}).value || '').trim();
+    if (!date) { alert('Pick a delivery date first.'); return; }
+    snapshotState();
+    o.deliveryScheduled = date;
+    const parts = slot.split('-').map(x => x.trim());
+    o.deliveryTimeFrom = parts[0] || ''; o.deliveryTimeTo = parts[1] || '';
+    o.deliveryBy = by;
+    o.deliveryBookedByClient = false;
+    saveData();
+    if (typeof render === 'function') render();
+    if (typeof toast === 'function') toast('📅 #' + (o.invoice || o.id) + ' scheduled for ' + date + (slot ? ' ' + slot : ''), 'success', 3000);
+  }
+  function deliveryMarkDelivered(orderId) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    if (!confirm('Mark #' + (o.invoice || o.id) + ' — ' + (o.product || '') + ' as DELIVERED?')) return;
+    snapshotState();
+    const today = new Date().toISOString().split('T')[0];
+    o.status = 'delivered';
+    o.deliveredDate = today;
+    o.deliveredBy = o.deliveryBy || _staffDisplayName('staff');
+    if (o.builder && !o.builderReceivedAt) o.builderReceivedAt = today;
+    saveData();
+    if (typeof render === 'function') render();
+    if (typeof toast === 'function') toast('✅ #' + (o.invoice || o.id) + ' delivered', 'success', 3000);
+  }
+  function deliveryAddComment(orderId) {
+    const o = _findOrderAnyBiz(orderId);
+    const el = document.getElementById('dlv-comment-' + orderId);
+    const text = el ? el.value.trim() : '';
+    if (!o || !text) return;
+    snapshotState();
+    if (!Array.isArray(o.deliveryComments)) o.deliveryComments = [];
+    o.deliveryComments.push({ by: _staffDisplayName('staff'), at: new Date().toISOString(), text: text });
+    saveData();
+    if (typeof render === 'function') render();
+  }
+  function deliverySendBookingLink(biz, orderId) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    const url = _bookingLinkFor(biz, o);
+    const msg = 'Hi ' + (o.customer || '') + ', your ' + (o.product || 'order') + ' (order #' + (o.invoice || o.id) + ') is ready! Please choose a delivery slot here: ' + url;
+    const d = _waDigits(o.phone);
+    if (d) window.open('https://wa.me/' + d + '?text=' + encodeURIComponent(msg), '_blank');
+    else if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => toast && toast('🔗 Booking link copied', 'success', 2500));
+  }
+  // Delivery note photo/PDF: compressed on the phone and saved as its own record
+  // (shared-data/dn-<order id>) so the main production document stays small.
+  function _deliveryNoteDocId(orderId) { return 'dn-' + String(orderId).replace(/[^A-Za-z0-9_-]/g, '_'); }
+  function deliveryNoteUpload(orderId, input) {
+    const file = input && input.files && input.files[0];
+    if (!file) return;
+    const finish = (dataUrl) => {
+      const ref = window.firebaseFns.doc(window.firebaseDb, 'shared-data', _deliveryNoteDocId(orderId));
+      window.firebaseFns.setDoc(ref, { orderId: orderId, dataUrl: dataUrl, type: file.type || '', at: new Date().toISOString(), by: _staffDisplayName('staff') })
+        .then(() => {
+          const o = _findOrderAnyBiz(orderId);
+          if (o) { snapshotState(); o.deliveryNoteId = _deliveryNoteDocId(orderId); o.deliveryNoteAt = new Date().toISOString(); saveData(); if (typeof render === 'function') render(); }
+          if (typeof toast === 'function') toast('📎 Delivery note saved', 'success', 2500);
+        })
+        .catch(e => alert('Could not save the delivery note: ' + e.message));
+    };
+    if (/^image\//.test(file.type)) {
+      const img = new Image();
+      img.onload = () => {
+        const max = 1400, sc = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement('canvas'); c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        finish(c.toDataURL('image/jpeg', 0.72));
+      };
+      img.onerror = () => alert('Could not read that image.');
+      img.src = URL.createObjectURL(file);
+    } else {
+      if (file.size > 900000) { alert('PDF too large (max 900 KB) — take a photo of the note instead.'); return; }
+      const rd = new FileReader(); rd.onload = () => finish(rd.result); rd.readAsDataURL(file);
+    }
+  }
+  function deliveryNoteView(orderId) {
+    const ref = window.firebaseFns.doc(window.firebaseDb, 'shared-data', _deliveryNoteDocId(orderId));
+    window.firebaseFns.getDoc(ref).then(snap => {
+      if (!snap.exists()) { alert('No delivery note found.'); return; }
+      const d = snap.data();
+      const w = window.open('', '_blank');
+      if (!w) { alert('Pop-up blocked — allow pop-ups to view the note.'); return; }
+      const body = /^data:application\/pdf/.test(d.dataUrl) ? '<iframe src="' + d.dataUrl + '" style="width:100%; height:95vh; border:0"></iframe>' : '<img src="' + d.dataUrl + '" style="max-width:100%">';
+      w.document.write('<title>Delivery note ' + _escape(orderId) + '</title><body style="margin:0; padding:10px; font-family:Arial; background:#f5f5f4"><div style="font-size:12px; color:#555; margin-bottom:6px">Uploaded ' + _escape(String(d.at || '').slice(0, 16).replace('T', ' ')) + ' by ' + _escape(d.by || '') + '</div>' + body + '</body>');
+      w.document.close();
+    }).catch(e => alert('Could not load the note: ' + e.message));
+  }
+  function printRunSheet(dateIso) {
+    const g = _deliveryGroups();
+    const items = g.byDay[dateIso] || [];
+    const ga = g.byArea(items);
+    const esc = _escape;
+    let body = '<div style="font:900 20px Arial">DELIVERY RUN SHEET — ' + esc(new Date(dateIso + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })) + '</div><div style="font:11px Arial; color:#555; margin-bottom:10px">' + items.length + ' delivery(ies)</div>';
+    Object.keys(ga).sort().forEach(a => {
+      body += '<h2 style="font:800 14px Arial; margin:14px 0 4px; border-bottom:2px solid #000">📍 ' + esc(a) + '</h2><table style="width:100%; border-collapse:collapse; font:12px Arial"><tr style="background:#eee"><th style="border:1px solid #000; padding:4px">Slot</th><th style="border:1px solid #000; padding:4px; text-align:left">Order</th><th style="border:1px solid #000; padding:4px; text-align:left">Client</th><th style="border:1px solid #000; padding:4px; text-align:left">Address</th><th style="border:1px solid #000; padding:4px">Driver</th><th style="border:1px solid #000; padding:4px; width:120px">Signature</th></tr>'
+        + ga[a].sort((x, y) => String(x.o.deliveryTimeFrom || '').localeCompare(String(y.o.deliveryTimeFrom || ''))).map(r => { const o = r.o; return '<tr><td style="border:1px solid #000; padding:4px; text-align:center">' + esc(o.deliveryTimeFrom || 'any') + '</td><td style="border:1px solid #000; padding:4px"><b>#' + esc(o.invoice || o.id) + '</b> ' + esc(o.product || '') + (o.qty > 1 ? ' × ' + esc(o.qty) : '') + '</td><td style="border:1px solid #000; padding:4px">' + esc(o.customer || '') + '<br>' + esc(o.phone || '') + '</td><td style="border:1px solid #000; padding:4px">' + esc(o.address || '') + '</td><td style="border:1px solid #000; padding:4px; text-align:center">' + esc(o.deliveryBy || '') + '</td><td style="border:1px solid #000; padding:4px"></td></tr>'; }).join('') + '</table>';
+    });
+    const reps = _repairGroups().byDay[dateIso] || [];
+    if (reps.length) {
+      body += '<h2 style="font:800 14px Arial; margin:18px 0 4px; border-bottom:2px solid #000">🔧 REPAIRS — pickups &amp; drop-offs (' + reps.length + ')</h2><table style="width:100%; border-collapse:collapse; font:12px Arial"><tr style="background:#eee"><th style="border:1px solid #000; padding:4px">Slot</th><th style="border:1px solid #000; padding:4px">Stop</th><th style="border:1px solid #000; padding:4px; text-align:left">Item / reason</th><th style="border:1px solid #000; padding:4px; text-align:left">Client</th><th style="border:1px solid #000; padding:4px; text-align:left">Address</th><th style="border:1px solid #000; padding:4px">Driver</th><th style="border:1px solid #000; padding:4px; width:120px">Signature</th></tr>'
+        + reps.slice().sort((x, y) => String(x.slot || '').localeCompare(String(y.slot || ''))).map(ev => { const r = ev.r; return '<tr><td style="border:1px solid #000; padding:4px; text-align:center">' + esc((ev.slot || 'any').split('-')[0].trim()) + '</td><td style="border:1px solid #000; padding:4px; text-align:center; font-weight:700">' + (ev.kind === 'pickup' ? '⬆ PICKUP' : '⬇ DROP-OFF') + '</td><td style="border:1px solid #000; padding:4px">' + (r.orderNo ? '<b>#' + esc(r.orderNo) + '</b> ' : '') + esc(r.product || '') + '<br><i>' + esc(r.reason || '') + '</i></td><td style="border:1px solid #000; padding:4px">' + esc(r.customer || '') + '<br>' + esc(r.phone || '') + '</td><td style="border:1px solid #000; padding:4px">' + esc([r.address, r.area].filter(Boolean).join(', ')) + '</td><td style="border:1px solid #000; padding:4px; text-align:center">' + esc(r.driver || '') + '</td><td style="border:1px solid #000; padding:4px"></td></tr>'; }).join('') + '</table>';
+    }
+    _openJobCardWindow('Run sheet ' + dateIso, body, 'PRINT RUN SHEET');
+  }
+  window.deliveryToggleForm = deliveryToggleForm; window.deliverySchedule = deliverySchedule; window.deliveryMarkDelivered = deliveryMarkDelivered;
+  window.deliveryAddComment = deliveryAddComment; window.deliverySendBookingLink = deliverySendBookingLink;
+  window.deliveryNoteUpload = deliveryNoteUpload; window.deliveryNoteView = deliveryNoteView; window.printRunSheet = printRunSheet;
+
+  // ===== 🔧 REPAIRS PORTAL (staff) — log a repair, then schedule its =====
+  // pickup and its drop-off on a 7-day planner, exactly like deliveries.
+  // Uses the same per-business `repairs` records as the full system's Repairs
+  // tab (pickupDate / returnDate), plus pickupSlot / returnSlot / driver /
+  // address / area added here. A repair is two stops: ⬆ pickup (while
+  // 'logged') and ⬇ drop-off (once 'in-repair' or 'done').
+  function _repairRows() {
+    const tags = { bellville: 'Bellville', pinkfoot: 'PinkFoot' };
+    const out = [];
+    ['bellville', 'pinkfoot'].forEach(b => {
+      ((data[b] && data[b].repairs) || []).forEach(r => { if (r) out.push({ r: r, biz: b, tag: tags[b] }); });
+    });
+    const q = _portalQuery();
+    return q ? out.filter(x => [x.r.orderNo, x.r.customer, x.r.phone, x.r.product, x.r.reason, x.r.area, x.r.address].some(v => String(v || '').toLowerCase().includes(q))) : out;
+  }
+  function _repairStops() {
+    const stops = [];
+    _repairRows().forEach(x => {
+      const r = x.r;
+      if (r.status === 'returned') return;
+      if (r.status === 'logged') stops.push({ r: r, biz: x.biz, tag: x.tag, kind: 'pickup', date: r.pickupDate || '', slot: r.pickupSlot || '' });
+      else stops.push({ r: r, biz: x.biz, tag: x.tag, kind: 'dropoff', date: r.returnDate || '', slot: r.returnSlot || '' });
+    });
+    return stops;
+  }
+  function _repairGroups() {
+    const stops = _repairStops();
+    // Waiting for a date: pickups not yet booked, and drop-offs of finished repairs
+    const toSchedule = stops.filter(ev => !ev.date && (ev.kind === 'pickup' || ev.r.status === 'done'));
+    const scheduled = stops.filter(ev => !!ev.date);
+    const byDay = {}; scheduled.forEach(ev => { (byDay[ev.date] = byDay[ev.date] || []).push(ev); });
+    const cutoff = new Date(Date.now() - 45 * 86400000).toISOString().split('T')[0];
+    const returned = _repairRows().filter(x => x.r.status === 'returned' && String(x.r.returnedAt || x.r.returnDate || '') >= cutoff)
+      .sort((a, b) => String(b.r.returnedAt || b.r.returnDate || '').localeCompare(String(a.r.returnedAt || a.r.returnDate || '')));
+    return { stops, toSchedule, scheduled, byDay, returned };
+  }
+  function repairPlanSet(id, kind, dateIso) {
+    const f = _findRepair(id);
+    if (!f) return;
+    snapshotState();
+    if (kind === 'pickup') { f.r.pickupDate = dateIso || ''; if (!dateIso) f.r.pickupSlot = ''; }
+    else { f.r.returnDate = dateIso || ''; if (!dateIso) f.r.returnSlot = ''; }
+    saveData();
+    _repairAfterChange();
+  }
+  function repairSetSlot(id, kind, slot) {
+    const f = _findRepair(id);
+    if (!f) return;
+    snapshotState();
+    f.r[kind === 'pickup' ? 'pickupSlot' : 'returnSlot'] = slot || '';
+    saveData();
+  }
+  function repairSetDriver(id, by) {
+    const f = _findRepair(id);
+    if (!f) return;
+    snapshotState(); f.r.driver = String(by || '').trim(); saveData();
+  }
+  function repairSetField(id, field, value) {
+    const f = _findRepair(id);
+    if (!f) return;
+    snapshotState(); f.r[field] = String(value || '').trim(); saveData();
+  }
+  function _repairKindBadge(kind) {
+    return kind === 'pickup'
+      ? '<span style="background:#ffedd5; color:#9a3412; padding:0 7px; border-radius:999px; font-size:10px; font-weight:900">⬆ PICKUP</span>'
+      : '<span style="background:#dcfce7; color:#166534; padding:0 7px; border-radius:999px; font-size:10px; font-weight:900">⬇ DROP-OFF</span>';
+  }
+  function _repairSlotSelect(ev) {
+    return '<select onchange="event.stopPropagation(); repairSetSlot(\'' + _escape(ev.r.id) + '\', \'' + ev.kind + '\', this.value)" onmousedown="event.stopPropagation()" style="font-size:11px; padding:2px 4px"><option value="">any time</option>'
+      + DELIVERY_SLOTS.map(sl => '<option value="' + sl + '"' + (ev.slot === sl ? ' selected' : '') + '>' + sl + '</option>').join('') + '</select>';
+  }
+  function _repairStopAction(ev) {
+    if (ev.kind === 'pickup') return '<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px" onclick="event.stopPropagation(); repairSetStatus(\'' + _escape(ev.r.id) + '\', \'in-repair\')" onmousedown="event.stopPropagation()" draggable="false">✓ Picked up</button>';
+    if (ev.r.status === 'done') return '<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px" onclick="event.stopPropagation(); repairSetStatus(\'' + _escape(ev.r.id) + '\', \'returned\')" onmousedown="event.stopPropagation()" draggable="false">✓ Returned</button>';
+    return '<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px" onclick="event.stopPropagation(); repairSetStatus(\'' + _escape(ev.r.id) + '\', \'done\')" onmousedown="event.stopPropagation()" draggable="false">✓ Repair done</button>';
+  }
+  function _repairPlanCard(ev) {
+    const r = ev.r;
+    const notReady = ev.kind === 'dropoff' && r.status !== 'done';
+    return '<div class="plan-card" draggable="true" ondragstart="portalDragStart(event, \'rep:' + _escape(r.id) + ':' + ev.kind + '\')" style="background:' + (ev.kind === 'pickup' ? '#fff7ed' : '#f0fdf4') + ';' + (notReady ? 'border-left:4px solid #f59e0b;' : '') + '">'
+      + '<div class="pc-body">'
+      + '<div class="pc-inv">🔧 ' + (r.orderNo ? '#' + _escape(r.orderNo) + ' ' : '') + _repairKindBadge(ev.kind) + ' <span style="background:#e7e5e4; border-radius:999px; padding:0 6px; font-size:10px; color:#44403c">' + ev.tag + '</span></div>'
+      + '<div class="pc-prod">' + _escape(r.product || '') + '</div>'
+      + '<div class="pc-cust" style="color:#991b1b">⚠️ ' + _escape(r.reason || '') + '</div>'
+      + '<div class="pc-cust">👤 ' + _escape(r.customer || '') + (r.phone ? ' · ' + _escape(r.phone) : '') + '</div>'
+      + '<div class="pc-due">📍 ' + _escape([r.address, r.area].filter(Boolean).join(', ') || 'no address') + '</div>'
+      + (notReady ? '<div class="pc-due" style="color:#92400e; font-weight:800">⏳ Still in repair</div>' : '')
+      + '<div class="pc-due" style="display:flex; gap:4px; align-items:center; flex-wrap:wrap; margin-top:4px">'
+      + _repairSlotSelect(ev)
+      + '<input value="' + _escape(r.driver || '') + '" placeholder="driver" onchange="event.stopPropagation(); repairSetDriver(\'' + _escape(r.id) + '\', this.value)" onmousedown="event.stopPropagation()" style="font-size:11px; padding:2px 4px; width:90px">'
+      + _repairStopAction(ev)
+      + '</div></div>'
+      + '<button type="button" class="plan-menu-trigger" title="Move" onclick="event.stopPropagation(); openRepairMenu(\'' + _escape(r.id) + '\', \'' + ev.kind + '\', this)" onmousedown="event.stopPropagation()" draggable="false">⋮</button>'
+      + '</div>';
+  }
+  function openRepairMenu(id, kind, anchorEl) {
+    closePlanMenu();
+    const f = _findRepair(id);
+    if (!f) return;
+    const cur = kind === 'pickup' ? f.r.pickupDate : f.r.returnDate;
+    const days = _deliveryDays();
+    const menu = document.createElement('div');
+    menu.className = 'plan-menu'; menu.style.zIndex = '9999';
+    menu.innerHTML = '<div style="padding:4px 10px; font-size:10px; font-weight:900; color:#78716c">' + (kind === 'pickup' ? '⬆ PICKUP' : '⬇ DROP-OFF') + '</div>'
+      + days.map(d => '<button class="plan-menu-option" onclick="repairPlanSet(\'' + _escape(id) + '\', \'' + kind + '\', \'' + d + '\'); closePlanMenu()">📅 ' + _escape(new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' })) + (cur === d ? ' ✓' : '') + '</button>').join('')
+      + '<div class="plan-menu-divider"></div><div class="plan-menu-date"><label>📅 Later:</label><input type="date" onchange="repairPlanSet(\'' + _escape(id) + '\', \'' + kind + '\', this.value); closePlanMenu()"></div>'
+      + '<div class="plan-menu-divider"></div><button class="plan-menu-option danger" onclick="repairPlanSet(\'' + _escape(id) + '\', \'' + kind + '\', \'\'); closePlanMenu()">📥 Unschedule</button>'
+      + '<button class="plan-menu-option" onclick="closePlanMenu()">✕ Cancel</button>';
+    document.body.appendChild(menu);
+    _openPlanMenu = menu;
+    document.addEventListener('click', _planMenuOutsideClick, true);
+    document.addEventListener('keydown', _planMenuKeydown, true);
+    const rect = anchorEl.getBoundingClientRect(), mw = menu.offsetWidth, mh = menu.offsetHeight;
+    const sx = window.scrollX || 0, sy = window.scrollY || 0;
+    let left = rect.right + sx - mw, top = rect.bottom + sy + 4;
+    if (left < sx + 4) left = sx + 4;
+    if (top + mh > sy + window.innerHeight - 4) top = rect.top + sy - mh - 4;
+    menu.style.left = left + 'px'; menu.style.top = top + 'px';
+  }
+  // Full card for the list tabs: both stops editable in one place
+  function _repairCard(x) {
+    const r = x.r;
+    const digits = _waDigits(r.phone);
+    const stopRow = (kind, label, dateField, slotField) => {
+      const cur = r[slotField] || '';
+      return '<div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; font-size:12px; font-weight:600; color:#44403c">' + label
+        + ' <input type="date" value="' + _escape(r[dateField] || '') + '" onchange="repairPlanSet(\'' + _escape(r.id) + '\', \'' + kind + '\', this.value)" style="padding:5px 7px; border-radius:6px; border:1px solid #d6d3d1">'
+        + '<select onchange="repairSetSlot(\'' + _escape(r.id) + '\', \'' + kind + '\', this.value)" style="padding:5px 7px; border-radius:6px; border:1px solid #d6d3d1; font-size:12px"><option value="">any time</option>' + DELIVERY_SLOTS.map(sl => '<option value="' + sl + '"' + (cur === sl ? ' selected' : '') + '>' + sl + '</option>').join('') + '</select></div>';
+    };
+    let actions = '';
+    if (r.status === 'logged') actions += '<button onclick="repairSetStatus(\'' + _escape(r.id) + '\', \'in-repair\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; font-weight:700; font-size:12px; cursor:pointer">⬆ Picked up</button>';
+    if (r.status === 'in-repair') actions += '<button onclick="repairSetStatus(\'' + _escape(r.id) + '\', \'done\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #16a34a; background:#f0fdf4; color:#166534; font-weight:700; font-size:12px; cursor:pointer">✓ Repair done</button>';
+    if (r.status === 'done') actions += '<button onclick="repairSetStatus(\'' + _escape(r.id) + '\', \'returned\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #16a34a; background:#16a34a; color:#fff; font-weight:800; font-size:12px; cursor:pointer">⬇ Returned to client</button>';
+    if (r.status === 'returned') actions += '<button onclick="repairSetStatus(\'' + _escape(r.id) + '\', \'done\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">Reopen</button>';
+    if (digits) actions += '<a href="https://wa.me/' + digits + '" target="_blank" rel="noopener" style="padding:7px 12px; border-radius:999px; border:1.5px solid #25d366; background:#f0fdf4; color:#166534; font-weight:700; font-size:12px; text-decoration:none">💬 WhatsApp</a>';
+    actions += '<button onclick="deleteRepair(\'' + _escape(r.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #fca5a5; background:#fef2f2; color:#991b1b; font-weight:700; font-size:12px; cursor:pointer">🗑</button>';
+    const border = r.status === 'returned' ? '#6b7280' : r.status === 'done' ? '#16a34a' : r.status === 'in-repair' ? '#f59e0b' : '#dc2626';
+    return '<div style="background:#fff; border-radius:12px; padding:12px 14px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,0.07); border-left:4px solid ' + border + '">'
+      + '<div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:flex-start"><div>'
+      + '<div style="font-size:15px; font-weight:800">🔧 ' + (r.orderNo ? '#' + _escape(r.orderNo) + ' — ' : '') + _escape(r.product || r.customer || '') + ' <span style="background:#e7e5e4; border-radius:999px; padding:1px 8px; font-size:10px; font-weight:700; vertical-align:middle">' + x.tag + '</span> ' + (_REPAIR_BADGE[r.status] || '') + '</div>'
+      + '<div style="font-size:12px; color:#991b1b; font-weight:700; margin-top:2px">⚠️ ' + _escape(r.reason || '') + (r.details ? ' <span style="color:#78716c; font-weight:400">— ' + _escape(r.details) + '</span>' : '') + '</div>'
+      + '<div style="font-size:12px; color:#44403c; margin-top:2px">👤 ' + _escape(r.customer || '') + (r.phone ? ' · 📱 ' + _escape(r.phone) : '') + '</div>'
+      + '<div style="font-size:12px; color:#44403c">📍 ' + ((r.address || r.area) ? _escape([r.address, r.area].filter(Boolean).join(', ')) : '<input placeholder="Add address" onchange="repairSetField(\'' + _escape(r.id) + '\', \'address\', this.value)" style="padding:3px 6px; font-size:12px; border:1px solid #d6d3d1; border-radius:6px"> <input placeholder="Area" onchange="repairSetField(\'' + _escape(r.id) + '\', \'area\', this.value)" style="padding:3px 6px; font-size:12px; border:1px solid #d6d3d1; border-radius:6px; width:110px">') + '</div>'
+      + '<div style="font-size:11px; color:#78716c; margin-top:2px">logged ' + _escape(String(r.at || '').slice(0, 10)) + (r.by ? ' by ' + _escape(r.by) : '') + (r.pickedUpAt ? ' · picked up ' + _escape(r.pickedUpAt) : '') + (r.returnedAt ? ' · returned ' + _escape(r.returnedAt) : '') + '</div>'
+      + '</div><div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center">' + actions + '</div></div>'
+      + (r.status !== 'returned' ? '<div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; padding:8px; background:#f5f5f4; border-radius:8px">'
+        + stopRow('pickup', '⬆ Pickup', 'pickupDate', 'pickupSlot') + stopRow('dropoff', '⬇ Drop-off', 'returnDate', 'returnSlot')
+        + '<div style="display:flex; gap:6px; align-items:center; font-size:12px; font-weight:600; color:#44403c">🚚 <input value="' + _escape(r.driver || '') + '" placeholder="Driver" onchange="repairSetDriver(\'' + _escape(r.id) + '\', this.value)" style="padding:5px 7px; border-radius:6px; border:1px solid #d6d3d1; width:120px"></div>'
+        + '</div>' : '')
+      + '</div>';
+  }
+  let _repairTab = 'open';
+  function setRepairTab(t) { _repairTab = t; renderRepairsPortal(); }
+  function renderRepairsPortal() {
+    const host = document.getElementById('builder-portal-content');
+    if (!host) return;
+    const g = _repairGroups();
+    const rows = _repairRows();
+    const open = rows.filter(x => x.r.status !== 'returned');
+    const cnt = document.getElementById('builder-portal-count');
+    if (cnt) cnt.textContent = open.length + ' open repair' + (open.length === 1 ? '' : 's') + ' · ' + g.toSchedule.length + ' to schedule';
+    const tab = (key, label, n, color) => '<button onclick="setRepairTab(\'' + key + '\')" style="padding:8px 14px; border-radius:999px; border:1.5px solid ' + color + '; background:' + (_repairTab === key ? color : '#fff') + '; color:' + (_repairTab === key ? '#fff' : color) + '; font-weight:800; font-size:12px; cursor:pointer">' + label + (n != null ? ' (' + n + ')' : '') + '</button>';
+    let html = '<div style="color:#1c1917">';
+    html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; align-items:center">' + tab('open', '🔧 Repairs', open.length, '#b91c1c') + tab('planner', '📅 Repair planner', null, '#4f46e5') + tab('returned', '🏠 Returned', g.returned.length, '#6b7280')
+      + '<span style="flex:1"></span><button onclick="openRepairModal()" style="padding:8px 16px; border-radius:999px; border:none; background:#111; color:#fff; font-weight:800; font-size:12px; cursor:pointer">＋ Log repair</button></div>';
+    if (_repairTab === 'open') {
+      const grp = (st, title, color) => { const arr = open.filter(x => x.r.status === st); return arr.length ? '<div style="font-size:12px; font-weight:900; letter-spacing:0.06em; color:' + color + '; margin:12px 0 6px">' + title + ' (' + arr.length + ')</div>' + arr.map(_repairCard).join('') : ''; };
+      html += '<div style="font-size:12px; color:#57534e; margin-bottom:8px">Set the ⬆ pickup and ⬇ drop-off dates here, or drag the stops onto a day on the 📅 Repair planner. Repair stops also show on the 🚚 Delivery planner and its run sheets.</div>';
+      html += (grp('logged', '🔴 TO PICK UP', '#991b1b') + grp('in-repair', '🔧 IN REPAIR', '#92400e') + grp('done', '✅ REPAIRED — TO DROP OFF', '#166534')) || '<div style="font-size:12px; color:#a8a29e; padding:8px 0">No open repairs. Use ＋ Log repair when something comes back.</div>';
+    } else if (_repairTab === 'planner') {
+      const days = _deliveryDays();
+      const later = g.scheduled.filter(ev => !days.includes(ev.date));
+      html += '<div class="portal-planner"><div style="font-size:12px; color:#57534e; margin-bottom:8px">Drag a pickup or drop-off into the day it happens (or tap ⋮). Set the time slot and driver on the card.</div>';
+      html += '<div class="plan-grid" style="grid-template-columns:repeat(7, minmax(220px, 1fr)); overflow-x:auto">';
+      days.forEach((d, i) => {
+        const items = (g.byDay[d] || []).slice().sort((a, b) => String(a.slot || '').localeCompare(String(b.slot || '')));
+        const dt = new Date(d + 'T00:00:00');
+        html += '<div class="plan-col ' + (i === 0 ? 'current' : '') + '" ondragover="deliveryDragOver(event)" ondragleave="deliveryDragLeave(event)" ondrop="deliveryDrop(event, \'' + d + '\')">'
+          + '<div class="plan-col-header">' + _escape(dt.toLocaleDateString('en-ZA', { weekday: 'long' })) + '<span class="col-sub">' + _escape(dt.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })) + '</span><span class="col-sub">' + items.length + ' stop' + (items.length === 1 ? '' : 's') + '</span>'
+          + (items.length ? '<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px; margin-top:2px" onclick="printRunSheet(\'' + d + '\')">🖨️ Run sheet</button>' : '') + '</div>'
+          + '<div class="plan-col-body">' + (items.map(_repairPlanCard).join('') || '<div class="empty" style="padding:0.75rem 0; font-size:11px">—</div>') + '</div></div>';
+      });
+      html += '</div>';
+      if (later.length) html += '<div class="card" style="margin-top:10px"><div class="card-title">📆 LATER (' + later.length + ')</div><div class="plan-pool">' + later.map(_repairPlanCard).join('') + '</div></div>';
+      html += '<div class="card" style="margin-top:10px"><div class="card-title">🕒 TO SCHEDULE (' + g.toSchedule.length + ')</div><div class="plan-pool" ondragover="deliveryDragOver(event)" ondragleave="deliveryDragLeave(event)" ondrop="deliveryDrop(event, \'\')">' + (g.toSchedule.map(_repairPlanCard).join('') || '<div class="empty" style="padding:0.75rem 0">Nothing waiting</div>') + '</div></div></div>';
+    } else {
+      html += '<div style="font-size:12px; color:#57534e; margin-bottom:8px">Returned to the client in the last 45 days.</div>';
+      html += g.returned.length ? g.returned.map(_repairCard).join('') : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">Nothing returned yet.</div>';
+    }
+    html += '</div>';
+    host.innerHTML = html;
+  }
+  // ---- ＋ Log repair modal ----
+  let _rpOrderIndex = {};
+  function openRepairModal() {
+    const m = document.getElementById('repair-modal');
+    if (!m) return;
+    ['rp-order', 'rp-customer', 'rp-phone', 'rp-address', 'rp-area', 'rp-product', 'rp-reason', 'rp-details'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    const st = document.getElementById('rp-status'); if (st) st.textContent = '';
+    const dl = document.getElementById('rp-order-list');
+    if (dl) {
+      _rpOrderIndex = {};
+      const opts = [];
+      ['bellville', 'pinkfoot'].forEach(b => {
+        ((data[b] && data[b].orders) || []).forEach(o => {
+          if (!o) return;
+          const label = '#' + (o.invoice || o.id) + ' — ' + (o.customer || '') + (o.product ? ' — ' + o.product : '');
+          _rpOrderIndex[label] = { o: o, biz: b };
+          opts.push('<option value="' + _escape(label) + '"></option>');
+        });
+      });
+      dl.innerHTML = opts.join('');
+    }
+    m.style.display = 'flex';
+    setTimeout(() => { const f = document.getElementById('rp-order'); if (f) f.focus(); }, 50);
+  }
+  function closeRepairModal() { const m = document.getElementById('repair-modal'); if (m) m.style.display = 'none'; }
+  function repairModalOrderPicked(label) {
+    const hit = _rpOrderIndex[label];
+    if (!hit) return;
+    const o = hit.o;
+    const set = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
+    const bz = document.getElementById('rp-biz'); if (bz) bz.value = hit.biz;
+    set('rp-customer', o.customer); set('rp-phone', o.phone); set('rp-address', o.address); set('rp-area', o.area);
+    set('rp-product', (o.product || '') + (o.fabric ? ' — ' + o.fabric : ''));
+  }
+  function saveRepairModal() {
+    const val = id => (document.getElementById(id) ? document.getElementById(id).value : '').trim();
+    const st = document.getElementById('rp-status');
+    const reason = val('rp-reason');
+    if (!reason) { if (st) st.textContent = 'Say what is wrong (the reason) before logging.'; return; }
+    if (!val('rp-order') && !val('rp-customer')) { if (st) st.textContent = 'Give an order # or at least the customer name.'; return; }
+    const biz = val('rp-biz') || 'bellville';
+    let orderNo = val('rp-order');
+    const m = orderNo.match(/^#?([^\s—]+)/); if (m) orderNo = m[1];
+    snapshotState();
+    _repairsFor(data[biz]).unshift({
+      id: 'REP-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5),
+      orderNo: orderNo, customer: val('rp-customer'), phone: val('rp-phone'), address: val('rp-address'), area: val('rp-area'), product: val('rp-product'),
+      reason: reason, details: val('rp-details'),
+      status: 'logged', pickupDate: '', returnDate: '', pickupSlot: '', returnSlot: '', driver: '',
+      by: _staffDisplayName('staff'),
+      at: new Date().toISOString()
+    });
+    saveData();
+    closeRepairModal();
+    _repairTab = 'open';
+    _repairAfterChange();
+    if (typeof toast === 'function') toast('🔧 Repair logged — schedule the pickup on the Repair planner', 'success', 3500);
+  }
+  window.repairPlanSet = repairPlanSet; window.repairSetSlot = repairSetSlot; window.repairSetDriver = repairSetDriver; window.repairSetField = repairSetField;
+  window.openRepairMenu = openRepairMenu; window.setRepairTab = setRepairTab; window.renderRepairsPortal = renderRepairsPortal;
+  window.openRepairModal = openRepairModal; window.closeRepairModal = closeRepairModal; window.repairModalOrderPicked = repairModalOrderPicked; window.saveRepairModal = saveRepairModal;
+
   // ---- 🔍 Portal search: filters the orders list and the planner ----
   function _portalQuery() { const el = document.getElementById('portal-search'); return el ? String(el.value || '').trim().toLowerCase() : ''; }
   function _portalFilter(orders) {
@@ -9779,16 +10394,22 @@ ${_PRODUCTION_PRINT_STYLES}
   // Uses the same order.planWeek (ISO Monday) the old in-house planner used, so
   // staff and the supplier see one plan. Touch devices get a week dropdown.
   let _portalView = 'orders';
-  function togglePortalView() {
-    _portalView = _portalView === 'planner' ? 'orders' : 'planner';
+  function setPortalView(v) {
+    _portalView = v;
     const wrap = document.getElementById('builder-portal-wrap');
-    if (wrap) wrap.style.maxWidth = _portalView === 'planner' ? '1500px' : '680px';
+    if (wrap) wrap.style.maxWidth = (v === 'planner' || v === 'delivery' || v === 'repairs') ? '1500px' : '680px';
     const t = document.getElementById('portal-view-toggle');
-    if (t) t.textContent = _portalView === 'planner' ? '📋 Orders' : '📅 Planner';
+    if (t) t.textContent = v === 'orders' ? '📅 Planner' : '📋 Orders';
     const p = document.getElementById('portal-print-planner');
-    if (p) p.style.display = _portalView === 'planner' ? 'inline-block' : 'none';
+    if (p) p.style.display = v === 'planner' ? 'inline-block' : 'none';
+    const d = document.getElementById('portal-delivery-btn');
+    if (d) d.style.background = v === 'delivery' ? '#fde68a' : '#fff';
+    const rb = document.getElementById('portal-repairs-btn');
+    if (rb) rb.style.background = v === 'repairs' ? '#fde68a' : '#fff';
     if (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE) renderStaffPortal(); else renderBuilderPortal();
   }
+  function togglePortalView() { setPortalView(_portalView === 'orders' ? 'planner' : 'orders'); }
+  window.setPortalView = setPortalView;
   window.togglePortalView = togglePortalView;
   function _portalWeeks() {
     const mon = getMondayOf(new Date());
@@ -10023,7 +10644,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const cnt = document.getElementById('builder-portal-count');
     if (cnt && total) cnt.textContent = cnt.textContent.replace(/ · \d+ unread$/, '') + ' · ' + total + ' unread';
     const bell = document.getElementById('portal-bell');
-    if (bell) bell.style.display = ('Notification' in window && Notification.permission === 'default') ? 'inline-block' : 'none';
+    if (bell) bell.style.display = 'none'; // browser notifications parked for now — toasts and NEW markers still work
   }
   function enableCommentNotifications() {
     if (!('Notification' in window)) { alert('This browser does not support notifications.'); return; }
