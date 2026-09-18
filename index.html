@@ -9636,6 +9636,11 @@ ${_PRODUCTION_PRINT_STYLES}
           <label style="display:flex; align-items:center; gap:6px; margin:0; font-weight:600; color:#44403c">
             Due <input type="date" value="${_escape(o.dueDate || '')}" onchange="planSetDueDate('${_escape(o.id)}', this.value)" style="padding:5px 7px; border-radius:6px; border:1px solid #d6d3d1">
           </label>
+          <label title="Book the delivery now — it shows on the Delivery planner even before the supplier marks it done" style="display:flex; align-items:center; gap:6px; margin:0; font-weight:600; color:${o.deliveryScheduled ? '#1d4ed8' : '#44403c'}">
+            🚚 Delivery <input type="date" value="${_escape(o.deliveryScheduled || '')}" onchange="deliveryPlanSet('${_escape(o.id)}', this.value)" style="padding:5px 7px; border-radius:6px; border:1px solid ${o.deliveryScheduled ? '#93c5fd' : '#d6d3d1'}">
+            <select onchange="deliverySetSlot('${_escape(o.id)}', this.value)" style="padding:5px 7px; border-radius:6px; border:1px solid #d6d3d1; font-size:12px"><option value="">any time</option>${DELIVERY_SLOTS.map(sl => '<option value="' + sl + '"' + ((o.deliveryTimeFrom + ' - ' + o.deliveryTimeTo) === sl ? ' selected' : '') + '>' + sl + '</option>').join('')}</select>
+            ${o.deliveryScheduled ? '<span style="background:#dbeafe; color:#1e40af; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:800; white-space:nowrap">📅 Delivery booked' + (o.deliveryBookedByClient ? ' by client' : '') + '</span>' : ''}
+          </label>
         </div>
         <div style="border-top:1px solid #e7e5e4; margin-top:10px; padding-top:8px">
           ${_commentThreadHtml(o, comments)}
@@ -9736,6 +9741,7 @@ ${_PRODUCTION_PRINT_STYLES}
           <label style="display:flex; align-items:center; gap:6px; margin:0; font-weight:600; color:#44403c">
             ETA <input type="date" value="${_escape(o.dueDate || '')}" onchange="builderPortalSetEta('${_escape(o.id)}', this.value)" style="padding:5px 7px; border-radius:6px; border:1px solid #d6d3d1">
           </label>
+          ${o.deliveryScheduled && o.status !== 'delivered' ? '<span title="Delivery to the client is booked for this date — please have it ready before then" style="background:#dbeafe; color:#1e40af; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:800; white-space:nowrap">🚚 Delivery booked ' + _escape(o.deliveryScheduled) + (o.deliveryTimeFrom ? ' ' + _escape(o.deliveryTimeFrom) : '') + '</span>' : ''}
         </div>
         <div style="border-top:1px solid #e7e5e4; margin-top:10px; padding-top:8px">
           ${_commentThreadHtml(o, comments)}
@@ -9822,7 +9828,7 @@ ${_PRODUCTION_PRINT_STYLES}
       + '<div style="font-size:15px; font-weight:800">#' + _escape(o.invoice || o.id) + ' — ' + _escape(o.product || '') + (o.qty > 1 ? ' × ' + _escape(o.qty) : '') + ' <span style="background:#e7e5e4; border-radius:999px; padding:1px 8px; font-size:10px; font-weight:700; vertical-align:middle">' + r.tag + '</span></div>'
       + '<div style="font-size:12px; color:#44403c; margin-top:2px">👤 ' + _escape(o.customer || '') + (o.phone ? ' · <a href="https://wa.me/' + digits + '" target="_blank" rel="noopener" style="color:#166534; font-weight:700">📱 ' + _escape(o.phone) + '</a>' : '') + '</div>'
       + '<div style="font-size:12px; color:#44403c">📍 ' + ((o.address || o.area) ? _escape([o.address, o.area].filter(Boolean).join(', ')) : '<span style="color:#991b1b">no address — add it via ✏️ Edit on the order</span>') + '</div>'
-      + '<div style="font-size:11px; color:#78716c; margin-top:2px">' + src + (o.customSize ? ' · 📐 ' + _escape(_customSizeText(o)) : '') + '</div>'
+      + '<div style="font-size:11px; color:#78716c; margin-top:2px">' + src + (o.customSize ? ' · 📐 ' + _escape(_customSizeText(o)) : '') + (!_deliveryReady(o) && o.status !== 'delivered' ? ' <span style="background:#fef3c7; color:#92400e; padding:1px 8px; border-radius:999px; font-weight:800">⏳ NOT DONE YET' + (o.dueDate ? ' — ETA ' + _escape(o.dueDate) : '') + '</span>' : '') + '</div>'
       + (o.deliveryScheduled ? '<div style="font-size:13px; font-weight:800; color:#1d4ed8; margin-top:4px">📅 ' + _escape(o.deliveryScheduled) + (o.deliveryTimeFrom ? ' · ' + _escape(o.deliveryTimeFrom) + (o.deliveryTimeTo ? ' – ' + _escape(o.deliveryTimeTo) : '') : '') + (o.deliveryBy ? ' · 🚚 ' + _escape(o.deliveryBy) : '') + (o.deliveryBookedByClient ? ' · booked by client' : '') + '</div>' : '')
       + (o.status === 'delivered' ? '<div style="font-size:13px; font-weight:800; color:#166534; margin-top:4px">✅ Delivered ' + _escape(o.deliveredDate || '') + (o.deliveredBy ? ' by ' + _escape(o.deliveredBy) : '') + (o.deliveryNoteId ? ' · 📎 note attached' : ' · <span style="color:#b45309">no delivery note</span>') + '</div>' : '')
       + '</div><div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center">' + actions + '</div></div>'
@@ -9844,12 +9850,13 @@ ${_PRODUCTION_PRINT_STYLES}
   function _deliveryPlanCard(r) {
     const o = r.o;
     const slotOpts = '<option value="">any time</option>' + DELIVERY_SLOTS.map(sl => '<option value="' + sl + '"' + ((o.deliveryTimeFrom + ' - ' + o.deliveryTimeTo) === sl ? ' selected' : '') + '>' + sl + '</option>').join('');
-    return '<div class="plan-card" draggable="true" ondragstart="portalDragStart(event, \'' + _escape(o.id) + '\')" style="' + (o.deliveryScheduled ? '' : 'background:#fffbeb;') + '">'
+    return '<div class="plan-card" draggable="true" ondragstart="portalDragStart(event, \'' + _escape(o.id) + '\')" style="' + (o.deliveryScheduled ? '' : 'background:#fffbeb;') + (!_deliveryReady(o) ? 'border-left:4px solid #f59e0b;' : '') + '">'
       + '<div class="pc-body">'
       + '<div class="pc-inv">#' + _escape(o.invoice || o.id) + ' <span style="background:#e7e5e4; border-radius:999px; padding:0 6px; font-size:10px; color:#44403c">' + r.tag + '</span></div>'
       + '<div class="pc-prod">' + _escape(o.product || '') + (o.qty > 1 ? ' × ' + _escape(o.qty) : '') + '</div>'
       + '<div class="pc-cust">👤 ' + _escape(o.customer || '') + (o.phone ? ' · ' + _escape(o.phone) : '') + '</div>'
       + '<div class="pc-due">📍 ' + _escape([o.address, o.area].filter(Boolean).join(', ') || 'no address') + '</div>'
+      + (!_deliveryReady(o) ? '<div class="pc-due" style="color:#92400e; font-weight:800">⏳ Not done yet' + (o.dueDate ? ' — ETA ' + _escape(o.dueDate) : '') + '</div>' : '')
       + '<div class="pc-due" style="display:flex; gap:4px; align-items:center; flex-wrap:wrap; margin-top:4px">'
       + '<select onchange="event.stopPropagation(); deliverySetSlot(\'' + _escape(o.id) + '\', this.value)" onmousedown="event.stopPropagation()" style="font-size:11px; padding:2px 4px">' + slotOpts + '</select>'
       + '<input value="' + _escape(o.deliveryBy || '') + '" placeholder="driver" onchange="event.stopPropagation(); deliverySetBy(\'' + _escape(o.id) + '\', this.value)" onmousedown="event.stopPropagation()" style="font-size:11px; padding:2px 4px; width:90px">'
