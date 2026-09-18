@@ -9695,23 +9695,6 @@ ${_PRODUCTION_PRINT_STYLES}
         </div>
       </div>`;
     }).join('');
-    // Orders captured without a supplier (e.g. via the old intake) are NOT on
-    // the supplier's list — show them here so they are never "lost".
-    const names = _allManufacturerNames();
-    const unassigned = [];
-    ['bellville', 'pinkfoot'].forEach(b => {
-      ((data[b] && data[b].orders) || []).forEach(o => {
-        if (o && !o.builder && o.status !== 'delivered' && o.status !== 'done') unassigned.push({ o: o, tag: b === 'bellville' ? 'Bellville' : 'PinkFoot' });
-      });
-    });
-    if (unassigned.length) {
-      host.innerHTML += '<div style="margin-top:1.5rem; font-size:12px; font-weight:900; letter-spacing:0.08em; color:#92400e">📥 NOT WITH THE SUPPLIER YET (' + unassigned.length + ')</div>'
-        + '<div style="font-size:11px; color:#78716c; margin:2px 0 8px">Captured without a supplier — send them across or leave them for the in-house system.</div>'
-        + unassigned.map(r => { const o = r.o; return '<div style="background:#fffbeb; border:1px solid #fcd34d; border-radius:12px; padding:10px 14px; margin-bottom:8px; display:flex; justify-content:space-between; gap:10px; align-items:center; flex-wrap:wrap">'
-          + '<div><div style="font-size:14px; font-weight:800">#' + _escape(o.invoice || o.id) + ' — ' + _escape(o.product || '') + '</div><div style="font-size:11px; color:#78716c"><span style="background:#e7e5e4; border-radius:999px; padding:1px 8px; font-size:10px; font-weight:700">' + r.tag + '</span> · Qty ' + _escape(o.qty || 1) + (o.customer ? ' · 👤 ' + _escape(o.customer) : '') + (o.fabric ? ' · 🧵 ' + _escape(o.fabric) : '') + (o.orderDate ? ' · ' + _escape(o.orderDate) : '') + '</div></div>'
-          + '<span style="display:flex; gap:6px; flex-wrap:wrap">' + names.map(n => '<button onclick="setOrderBuilder(\'' + _escape(o.id) + '\', \'' + _escape(n).replace(/'/g, '&#39;') + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #111; background:#111; color:#fff; font-weight:700; font-size:12px; cursor:pointer">🏭 Send to ' + _escape(n) + '</button>').join('')
-          + '<button onclick="openNewOrder(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fafaf9; color:#111; font-weight:700; font-size:12px; cursor:pointer">✏️ Edit</button></span></div>'; }).join('');
-    }
     _afterThreadRender(rows.map(r => r.o));
   }
   window.renderStaffPortal = renderStaffPortal;
@@ -9784,7 +9767,6 @@ ${_PRODUCTION_PRINT_STYLES}
           <label style="display:flex; align-items:center; gap:6px; margin:0; font-weight:600; color:#44403c">
             ETA <input type="date" value="${_escape(o.dueDate || '')}" onchange="builderPortalSetEta('${_escape(o.id)}', this.value)" style="padding:5px 7px; border-radius:6px; border:1px solid #d6d3d1">
           </label>
-          ${o.deliveryScheduled && o.status !== 'delivered' ? '<span title="Delivery to the client is booked for this date — please have it ready before then" style="background:#dbeafe; color:#1e40af; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:800; white-space:nowrap">🚚 Delivery booked ' + _escape(o.deliveryScheduled) + (o.deliveryTimeFrom ? ' ' + _escape(o.deliveryTimeFrom) : '') + '</span>' : ''}
         </div>
         <div style="border-top:1px solid #e7e5e4; margin-top:10px; padding-top:8px">
           ${_commentThreadHtml(o, comments)}
