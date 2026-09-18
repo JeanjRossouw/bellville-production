@@ -9832,22 +9832,122 @@ ${_PRODUCTION_PRINT_STYLES}
       + '<div style="display:flex; gap:6px; margin-top:4px"><input id="dlv-comment-' + _escape(o.id) + '" placeholder="Delivery comment (e.g. left with security, client wants leg change)…" style="flex:1; padding:6px 8px; border-radius:6px; border:1px solid #d6d3d1; font-size:12px" onkeydown="if(event.key===\'Enter\'){deliveryAddComment(\'' + _escape(o.id) + '\')}">'
       + '<button onclick="deliveryAddComment(\'' + _escape(o.id) + '\')" style="padding:6px 12px; border-radius:6px; border:1px solid #111; background:#111; color:#fff; font-weight:700; font-size:12px; cursor:pointer">💬</button></div></div></div>';
   }
+  let _deliveryTab = 'schedule';
+  function setDeliveryTab(t) { _deliveryTab = t; renderDeliveryPortal(); }
+  window.setDeliveryTab = setDeliveryTab;
+  function _deliveryDays() {
+    const out = [];
+    const d = new Date(); d.setHours(0, 0, 0, 0);
+    for (let i = 0; i < 7; i++) { const x = new Date(d.getTime() + i * 86400000); out.push(x.toISOString().split('T')[0]); }
+    return out;
+  }
+  function _deliveryPlanCard(r) {
+    const o = r.o;
+    const slotOpts = '<option value="">any time</option>' + DELIVERY_SLOTS.map(sl => '<option value="' + sl + '"' + ((o.deliveryTimeFrom + ' - ' + o.deliveryTimeTo) === sl ? ' selected' : '') + '>' + sl + '</option>').join('');
+    return '<div class="plan-card" draggable="true" ondragstart="portalDragStart(event, \'' + _escape(o.id) + '\')" style="' + (o.deliveryScheduled ? '' : 'background:#fffbeb;') + '">'
+      + '<div class="pc-body">'
+      + '<div class="pc-inv">#' + _escape(o.invoice || o.id) + ' <span style="background:#e7e5e4; border-radius:999px; padding:0 6px; font-size:10px; color:#44403c">' + r.tag + '</span></div>'
+      + '<div class="pc-prod">' + _escape(o.product || '') + (o.qty > 1 ? ' × ' + _escape(o.qty) : '') + '</div>'
+      + '<div class="pc-cust">👤 ' + _escape(o.customer || '') + (o.phone ? ' · ' + _escape(o.phone) : '') + '</div>'
+      + '<div class="pc-due">📍 ' + _escape([o.address, o.area].filter(Boolean).join(', ') || 'no address') + '</div>'
+      + '<div class="pc-due" style="display:flex; gap:4px; align-items:center; flex-wrap:wrap; margin-top:4px">'
+      + '<select onchange="event.stopPropagation(); deliverySetSlot(\'' + _escape(o.id) + '\', this.value)" onmousedown="event.stopPropagation()" style="font-size:11px; padding:2px 4px">' + slotOpts + '</select>'
+      + '<input value="' + _escape(o.deliveryBy || '') + '" placeholder="driver" onchange="event.stopPropagation(); deliverySetBy(\'' + _escape(o.id) + '\', this.value)" onmousedown="event.stopPropagation()" style="font-size:11px; padding:2px 4px; width:90px">'
+      + '<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px" onclick="event.stopPropagation(); deliveryMarkDelivered(\'' + _escape(o.id) + '\')" onmousedown="event.stopPropagation()" draggable="false">✅ Delivered</button>'
+      + '</div></div>'
+      + '<button type="button" class="plan-menu-trigger" title="Move" onclick="event.stopPropagation(); openDeliveryMenu(\'' + _escape(o.id) + '\', this)" onmousedown="event.stopPropagation()" draggable="false">⋮</button>'
+      + '</div>';
+  }
+  function openDeliveryMenu(orderId, anchorEl) {
+    closePlanMenu();
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    const days = _deliveryDays();
+    const menu = document.createElement('div');
+    menu.className = 'plan-menu'; menu.style.zIndex = '9999';
+    menu.innerHTML = days.map(d => '<button class="plan-menu-option" onclick="deliveryPlanSet(\'' + _escape(orderId) + '\', \'' + d + '\'); closePlanMenu()">📅 ' + _escape(new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' })) + (o.deliveryScheduled === d ? ' ✓' : '') + '</button>').join('')
+      + '<div class="plan-menu-divider"></div><div class="plan-menu-date"><label>📅 Later:</label><input type="date" onchange="deliveryPlanSet(\'' + _escape(orderId) + '\', this.value); closePlanMenu()"></div>'
+      + '<div class="plan-menu-divider"></div><button class="plan-menu-option danger" onclick="deliveryPlanSet(\'' + _escape(orderId) + '\', \'\'); closePlanMenu()">📥 Unschedule</button>'
+      + '<button class="plan-menu-option" onclick="closePlanMenu()">✕ Cancel</button>';
+    document.body.appendChild(menu);
+    _openPlanMenu = menu;
+    document.addEventListener('click', _planMenuOutsideClick, true);
+    document.addEventListener('keydown', _planMenuKeydown, true);
+    const rect = anchorEl.getBoundingClientRect(), mw = menu.offsetWidth, mh = menu.offsetHeight;
+    const sx = window.scrollX || 0, sy = window.scrollY || 0;
+    let left = rect.right + sx - mw, top = rect.bottom + sy + 4;
+    if (left < sx + 4) left = sx + 4;
+    if (top + mh > sy + window.innerHeight - 4) top = rect.top + sy - mh - 4;
+    menu.style.left = left + 'px'; menu.style.top = top + 'px';
+  }
+  function deliveryPlanSet(orderId, dateIso) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    snapshotState();
+    if (dateIso) { o.deliveryScheduled = dateIso; o.deliveryBookedByClient = false; }
+    else { delete o.deliveryScheduled; o.deliveryTimeFrom = ''; o.deliveryTimeTo = ''; }
+    saveData();
+    if (typeof render === 'function') render();
+  }
+  function deliverySetSlot(orderId, slot) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    snapshotState();
+    const parts = String(slot || '').split('-').map(x => x.trim());
+    o.deliveryTimeFrom = parts[0] || ''; o.deliveryTimeTo = parts[1] || '';
+    saveData();
+  }
+  function deliverySetBy(orderId, by) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    snapshotState(); o.deliveryBy = String(by || '').trim(); saveData();
+  }
+  function deliveryDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
+  function deliveryDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
+  function deliveryDrop(e, dateIso) {
+    e.preventDefault(); e.currentTarget.classList.remove('drag-over');
+    let id = ''; try { id = e.dataTransfer.getData('text/plain'); } catch (x) {}
+    if (id) deliveryPlanSet(id, dateIso);
+  }
+  window.openDeliveryMenu = openDeliveryMenu; window.deliveryPlanSet = deliveryPlanSet; window.deliverySetSlot = deliverySetSlot; window.deliverySetBy = deliverySetBy;
+  window.deliveryDragOver = deliveryDragOver; window.deliveryDragLeave = deliveryDragLeave; window.deliveryDrop = deliveryDrop;
   function renderDeliveryPortal() {
     const host = document.getElementById('builder-portal-content');
     if (!host) return;
     const g = _deliveryGroups();
     const cnt = document.getElementById('builder-portal-count');
     if (cnt) cnt.textContent = g.toSchedule.length + ' to schedule · ' + g.scheduled.length + ' scheduled';
-    const areaBlocks = (arr, mode) => { const ga = g.byArea(arr); return Object.keys(ga).sort().map(a => '<div style="font-size:12px; font-weight:800; color:#57534e; margin:10px 0 6px">📍 ' + _escape(a) + ' (' + ga[a].length + ')</div>' + ga[a].map(r => _deliveryCard(r, mode)).join('')).join(''); };
+    const areaBlocks = (arr) => { const ga = g.byArea(arr); return Object.keys(ga).sort().map(a => '<div style="font-size:12px; font-weight:800; color:#57534e; margin:10px 0 6px">📍 ' + _escape(a) + ' (' + ga[a].length + ')</div>' + ga[a].map(r => _deliveryCard(r, '')).join('')).join(''); };
+    const tab = (key, label, n, color) => '<button onclick="setDeliveryTab(\'' + key + '\')" style="padding:8px 14px; border-radius:999px; border:1.5px solid ' + color + '; background:' + (_deliveryTab === key ? color : '#fff') + '; color:' + (_deliveryTab === key ? '#fff' : color) + '; font-weight:800; font-size:12px; cursor:pointer">' + label + (n != null ? ' (' + n + ')' : '') + '</button>';
     let html = '<div style="color:#1c1917">';
-    html += '<div style="font-size:12px; color:#57534e; margin-bottom:12px">The moment the supplier marks an order DONE it moves here from your Orders list. Set the date, slot and driver (or let the client pick a slot), tick ✅ Delivered on the day, and attach the signed delivery note.</div>';
-    html += '<div style="font-size:14px; font-weight:900; letter-spacing:0.06em; color:#b45309">🕒 TO SCHEDULE (' + g.toSchedule.length + ')</div>';
-    html += g.toSchedule.length ? areaBlocks(g.toSchedule, '') : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">Nothing waiting — items appear here when the supplier marks them DONE.</div>';
-    html += '<div style="font-size:14px; font-weight:900; letter-spacing:0.06em; color:#1d4ed8; margin-top:18px">📅 SCHEDULED (' + g.scheduled.length + ')</div>';
-    const days = Object.keys(g.byDay).sort();
-    html += days.length ? days.map(d => '<div style="display:flex; justify-content:space-between; align-items:center; margin:12px 0 4px"><div style="font-size:13px; font-weight:800">' + _escape(new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' })) + ' <span style="color:#78716c; font-weight:600">(' + g.byDay[d].length + ')</span></div><button onclick="printRunSheet(\'' + d + '\')" style="padding:5px 10px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; font-weight:700; font-size:11px; cursor:pointer">🖨️ Run sheet</button></div>' + areaBlocks(g.byDay[d], '')).join('') : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">No deliveries scheduled.</div>';
-    html += '<div style="font-size:14px; font-weight:900; letter-spacing:0.06em; color:#166534; margin-top:18px">✅ DELIVERED — last 45 days (' + g.delivered.length + ')</div>';
-    html += g.delivered.length ? g.delivered.map(r => _deliveryCard(r, '')).join('') : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">Nothing delivered yet.</div>';
+    html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px">' + tab('schedule', '🕒 To schedule', g.toSchedule.length, '#b45309') + tab('planner', '📅 Delivery planner', null, '#4f46e5') + tab('scheduled', '📋 Scheduled', g.scheduled.length, '#1d4ed8') + tab('delivered', '✅ Delivered', g.delivered.length, '#166534') + '</div>';
+    if (_deliveryTab === 'schedule') {
+      html += '<div style="font-size:12px; color:#57534e; margin-bottom:8px">The moment the supplier marks an order DONE it moves here from your Orders list. Schedule it here, or drag it into a day on the 📅 Delivery planner.</div>';
+      html += g.toSchedule.length ? areaBlocks(g.toSchedule) : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">Nothing waiting — items appear here when the supplier marks them DONE.</div>';
+    } else if (_deliveryTab === 'planner') {
+      const wrap = document.getElementById('builder-portal-wrap'); if (wrap) wrap.style.maxWidth = '1600px';
+      const days = _deliveryDays();
+      const later = g.scheduled.filter(r => !days.includes(r.o.deliveryScheduled));
+      html += '<div class="portal-planner"><div style="font-size:12px; color:#57534e; margin-bottom:8px">Drag an order into the day it will be delivered (or tap ⋮). Set the time slot and driver on the card; print the run sheet per day.</div>';
+      html += '<div class="plan-grid" style="grid-template-columns:repeat(7, minmax(220px, 1fr)); overflow-x:auto">';
+      days.forEach((d, i) => {
+        const items = (g.byDay[d] || []).slice().sort((a, b) => String(a.o.area || '').localeCompare(String(b.o.area || '')) || String(a.o.deliveryTimeFrom || '').localeCompare(String(b.o.deliveryTimeFrom || '')));
+        const dt = new Date(d + 'T00:00:00');
+        html += '<div class="plan-col ' + (i === 0 ? 'current' : '') + '" ondragover="deliveryDragOver(event)" ondragleave="deliveryDragLeave(event)" ondrop="deliveryDrop(event, \'' + d + '\')">'
+          + '<div class="plan-col-header">' + _escape(dt.toLocaleDateString('en-ZA', { weekday: 'long' })) + '<span class="col-sub">' + _escape(dt.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })) + '</span><span class="col-sub">' + items.length + ' deliver' + (items.length === 1 ? 'y' : 'ies') + '</span>'
+          + (items.length ? '<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px; margin-top:2px" onclick="printRunSheet(\'' + d + '\')">🖨️ Run sheet</button>' : '') + '</div>'
+          + '<div class="plan-col-body">' + (items.map(_deliveryPlanCard).join('') || '<div class="empty" style="padding:0.75rem 0; font-size:11px">—</div>') + '</div></div>';
+      });
+      html += '</div>';
+      if (later.length) html += '<div class="card" style="margin-top:10px"><div class="card-title">📆 LATER (' + later.length + ')</div><div class="plan-pool">' + later.map(_deliveryPlanCard).join('') + '</div></div>';
+      html += '<div class="card" style="margin-top:10px"><div class="card-title">🕒 TO SCHEDULE (' + g.toSchedule.length + ')</div><div class="plan-pool" ondragover="deliveryDragOver(event)" ondragleave="deliveryDragLeave(event)" ondrop="deliveryDrop(event, \'\')">' + (g.toSchedule.map(_deliveryPlanCard).join('') || '<div class="empty" style="padding:0.75rem 0">Nothing waiting</div>') + '</div></div></div>';
+    } else if (_deliveryTab === 'scheduled') {
+      const days = Object.keys(g.byDay).sort();
+      html += days.length ? days.map(d => '<div style="display:flex; justify-content:space-between; align-items:center; margin:12px 0 4px"><div style="font-size:13px; font-weight:800">' + _escape(new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' })) + ' <span style="color:#78716c; font-weight:600">(' + g.byDay[d].length + ')</span></div><button onclick="printRunSheet(\'' + d + '\')" style="padding:5px 10px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; font-weight:700; font-size:11px; cursor:pointer">🖨️ Run sheet</button></div>' + areaBlocks(g.byDay[d])).join('') : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">No deliveries scheduled.</div>';
+    } else {
+      html += '<div style="font-size:12px; color:#57534e; margin-bottom:8px">Delivered in the last 45 days.</div>';
+      html += g.delivered.length ? g.delivered.map(r => _deliveryCard(r, '')).join('') : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">Nothing delivered yet.</div>';
+    }
     html += '</div>';
     host.innerHTML = html;
   }
