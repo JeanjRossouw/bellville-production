@@ -9773,9 +9773,10 @@ ${_PRODUCTION_PRINT_STYLES}
   // (compressed, stored as its own small record) and leave comments.
   const DELIVERY_SLOTS = ['08:00 - 10:00', '10:00 - 12:00', '12:00 - 14:00', '14:00 - 16:00'];
   function _deliveryOrders() {
-    const tags = { bellville: 'Bellville', pinkfoot: 'PinkFoot', repticube: 'ReptiCube' };
+    // Bellville + PinkFoot only — ReptiCube runs its own dispatch
+    const tags = { bellville: 'Bellville', pinkfoot: 'PinkFoot' };
     const out = [];
-    ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
+    ['bellville', 'pinkfoot'].forEach(b => {
       ((data[b] && data[b].orders) || []).forEach(o => { if (o) out.push({ o: o, biz: b, tag: tags[b] }); });
     });
     return out;
