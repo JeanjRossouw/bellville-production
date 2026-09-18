@@ -9784,7 +9784,6 @@ ${_PRODUCTION_PRINT_STYLES}
           <label style="display:flex; align-items:center; gap:6px; margin:0; font-weight:600; color:#44403c">
             ETA <input type="date" value="${_escape(o.dueDate || '')}" onchange="builderPortalSetEta('${_escape(o.id)}', this.value)" style="padding:5px 7px; border-radius:6px; border:1px solid #d6d3d1">
           </label>
-          ${o.deliveryScheduled && o.status !== 'delivered' ? '<span title="Delivery to the client is booked for this date — please have it ready before then" style="background:#dbeafe; color:#1e40af; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:800; white-space:nowrap">🚚 Delivery booked ' + _escape(o.deliveryScheduled) + (o.deliveryTimeFrom ? ' ' + _escape(o.deliveryTimeFrom) : '') + '</span>' : ''}
         </div>
         <div style="border-top:1px solid #e7e5e4; margin-top:10px; padding-top:8px">
           ${_commentThreadHtml(o, comments)}
