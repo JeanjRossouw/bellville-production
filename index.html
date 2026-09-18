@@ -14459,6 +14459,31 @@ ${totalsSection}
     });
   }
 
+  // A phone or tablet left on the Orders portal overnight gets backgrounded —
+  // the browser freezes its JS and its live Firestore listener can miss
+  // updates. When the tab is foregrounded again, force a fresh pull straight
+  // away (not just a redraw from possibly-stale memory) so the screen — and
+  // anything this device saves next — starts from the real current state.
+  let _hiddenAt = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { _hiddenAt = Date.now(); return; }
+    if (!_hiddenAt || Date.now() - _hiddenAt < 20000) return; // brief tab-switches: onSnapshot already keeps up
+    _hiddenAt = 0;
+    if (!currentUser || !firebaseReady || !window.firebaseFns || !window.firebaseDb) return;
+    const docRef = window.firebaseFns.doc(window.firebaseDb, 'shared-data', 'production');
+    window.firebaseFns.getDoc(docRef).then(snap => {
+      if (!snap.exists()) return;
+      const payload = (snap.data() || {}).data || '';
+      if (!payload || payload === lastSyncedPayload) return;
+      try {
+        data = JSON.parse(payload);
+      } catch (e) { return; }
+      lastSyncedPayload = payload;
+      localStorage.setItem('production-data', JSON.stringify(data));
+      if (typeof render === 'function') render();
+    }).catch(e => console.warn('Resync-on-return failed:', e));
+  });
+
   // Count orders per business in a serialized payload (0 if unparseable)
   function _orderCounts(payload) {
     const out = { bellville: 0, pinkfoot: 0, repticube: 0 };
@@ -14488,26 +14513,79 @@ ${totalsSection}
     } catch (e) { console.warn('Rolling backup failed:', e); }
   }
 
+  // Three-way merge of one order-like array (orders / repairs) by id:
+  // remote = the freshest copy on the server right now (the source of truth
+  // for anything this tab hasn't seen yet); base = what this tab last knew
+  // (from lastSyncedPayload); local = what this tab currently holds (its own
+  // edits, adds, deletes). Result = remote, minus ids we knowingly deleted
+  // (were in base but no longer in local), plus/overwritten by every id we
+  // currently hold locally (our own touches win for records we edited).
+  // This stops a stale tab — a phone or tablet left open overnight — from
+  // wiping out orders someone else added since it last synced.
+  function _mergeById(remoteArr, baseArr, localArr) {
+    const baseIds = new Set((baseArr || []).map(o => o && o.id).filter(Boolean));
+    const localIds = new Set((localArr || []).map(o => o && o.id).filter(Boolean));
+    const merged = {};
+    (remoteArr || []).forEach(o => { if (o && o.id) merged[o.id] = o; });
+    baseIds.forEach(id => { if (!localIds.has(id)) delete merged[id]; });
+    (localArr || []).forEach(o => { if (o && o.id) merged[o.id] = o; });
+    return Object.values(merged);
+  }
+
   function cloudSave() {
     if (!currentUser || !firebaseReady) return;
     // Debounce: wait 500ms after last change before saving
     clearTimeout(saveTimeout);
     updateSyncStatus('☁ Saving…', 'info');
     saveTimeout = setTimeout(async () => {
-      const serialized = JSON.stringify(data);
-      // GUARD: never silently overwrite the cloud with an all-orders-gone copy.
-      if (_wouldWipeOrders(lastSyncedPayload, serialized)) {
-        const was = _orderCounts(lastSyncedPayload);
-        const ok = confirm('⚠️ DATA-LOSS WARNING\n\nThis change would remove ALL orders from one or more businesses ' +
-          '(was: Bellville ' + was.bellville + ', PinkFoot ' + was.pinkfoot + ', ReptiCube ' + was.repticube + ') ' +
-          'and overwrite the shared cloud copy.\n\nIf you did NOT intend to delete every order, click Cancel.\n\nSave anyway?');
-        if (!ok) {
-          updateSyncStatus('✋ Save blocked — orders protected (reload to restore)', 'warn');
-          return;
-        }
-      }
       try {
         const docRef = window.firebaseFns.doc(window.firebaseDb, 'shared-data', 'production');
+        // Merge-safe save: pull the freshest server copy right before writing
+        // so a stale local session (a device that has been backgrounded and
+        // missed live updates) can never blindly overwrite orders or repairs
+        // another device saved since. See _mergeById above.
+        try {
+          let baseData = {};
+          try { baseData = lastSyncedPayload ? JSON.parse(lastSyncedPayload) : {}; } catch (e) { baseData = {}; }
+          const freshSnap = await window.firebaseFns.getDoc(docRef);
+          if (freshSnap.exists()) {
+            const freshPayload = (freshSnap.data() || {}).data || '';
+            if (freshPayload && freshPayload !== lastSyncedPayload) {
+              const remoteData = JSON.parse(freshPayload);
+              let mergedAnything = false;
+              ['bellville', 'pinkfoot', 'repticube'].forEach(biz => {
+                if (!data[biz]) data[biz] = { orders: [] };
+                ['orders', 'repairs'].forEach(key => {
+                  const remoteArr = (remoteData[biz] || {})[key] || [];
+                  const baseArr = (baseData[biz] || {})[key] || [];
+                  const localArr = data[biz][key] || [];
+                  const merged = _mergeById(remoteArr, baseArr, localArr);
+                  if (JSON.stringify(merged) !== JSON.stringify(localArr)) mergedAnything = true;
+                  data[biz][key] = merged;
+                });
+              });
+              if (mergedAnything) {
+                localStorage.setItem('production-data', JSON.stringify(data));
+                if (typeof render === 'function') render();
+              }
+            }
+          }
+        } catch (mergeErr) {
+          console.warn('Merge-safe pre-save check failed, saving local copy as-is:', mergeErr);
+        }
+
+        const serialized = JSON.stringify(data);
+        // GUARD: never silently overwrite the cloud with an all-orders-gone copy.
+        if (_wouldWipeOrders(lastSyncedPayload, serialized)) {
+          const was = _orderCounts(lastSyncedPayload);
+          const ok = confirm('⚠️ DATA-LOSS WARNING\n\nThis change would remove ALL orders from one or more businesses ' +
+            '(was: Bellville ' + was.bellville + ', PinkFoot ' + was.pinkfoot + ', ReptiCube ' + was.repticube + ') ' +
+            'and overwrite the shared cloud copy.\n\nIf you did NOT intend to delete every order, click Cancel.\n\nSave anyway?');
+          if (!ok) {
+            updateSyncStatus('✋ Save blocked — orders protected (reload to restore)', 'warn');
+            return;
+          }
+        }
         await window.firebaseFns.setDoc(docRef, {
           data: serialized,
           updatedAt: new Date().toISOString(),
