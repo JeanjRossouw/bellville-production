@@ -10229,7 +10229,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const cnt = document.getElementById('builder-portal-count');
     if (cnt && total) cnt.textContent = cnt.textContent.replace(/ · \d+ unread$/, '') + ' · ' + total + ' unread';
     const bell = document.getElementById('portal-bell');
-    if (bell) bell.style.display = ('Notification' in window && Notification.permission === 'default') ? 'inline-block' : 'none';
+    if (bell) bell.style.display = 'none'; // browser notifications parked for now — toasts and NEW markers still work
   }
   function enableCommentNotifications() {
     if (!('Notification' in window)) { alert('This browser does not support notifications.'); return; }
