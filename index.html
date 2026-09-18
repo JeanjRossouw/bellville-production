@@ -458,6 +458,8 @@
         <input id="no-fabric" placeholder="e.g. Moldova : Oatmeal" style="width:100%; padding:8px"></div>
       <div style="flex:0 0 70px"><label style="font-size:11px; color:#78716c">Qty</label>
         <input id="no-qty" type="number" min="1" value="1" style="width:100%; padding:8px"></div>
+      <div style="flex:1; min-width:150px"><label style="font-size:11px; color:#78716c">Date paid</label>
+        <input id="no-paid" type="date" title="The day the client paid — the order date and lead time count from here" style="width:100%; padding:8px"></div>
     </div>
     <label style="font-size:11px; color:#78716c">Notes / special requests</label>
     <textarea id="no-notes" rows="2" placeholder="Anything the supplier must know" style="width:100%; padding:8px; margin:0.25rem 0 0.9rem; font-family:inherit"></textarea>
@@ -9363,6 +9365,7 @@ ${_PRODUCTION_PRINT_STYLES}
     _editingOrderId = orderId || null;
     ['no-invoice', 'no-customer', 'no-phone', 'no-address', 'no-area', 'no-product', 'no-fabric', 'no-notes', 'no-size-len', 'no-size-depth', 'no-size-h', 'no-size-dblen', 'no-size-cushions', 'no-size-note'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
     document.getElementById('no-qty').value = '1';
+    document.getElementById('no-paid').value = new Date().toISOString().split('T')[0];
     document.getElementById('no-size-side').value = '';
     document.getElementById('no-biz').value = (typeof activeBiz !== 'undefined' && activeBiz) ? activeBiz : 'bellville';
     document.getElementById('no-status').textContent = '';
@@ -9383,6 +9386,7 @@ ${_PRODUCTION_PRINT_STYLES}
       set('no-invoice', o.invoice); set('no-customer', o.customer); set('no-phone', o.phone);
       set('no-address', o.address); set('no-area', o.area); set('no-product', o.product);
       set('no-fabric', o.fabric); set('no-qty', o.qty || 1); set('no-notes', o.notes);
+      set('no-paid', o.paidDate || o.orderDate || '');
       if (o.builder && names.includes(o.builder)) sel.value = o.builder;
       const cs = o.customSize || {};
       set('no-size-len', cs.lengthMm); set('no-size-depth', cs.depthMm); set('no-size-h', cs.heightMm);
@@ -9419,8 +9423,10 @@ ${_PRODUCTION_PRINT_STYLES}
     const product = g('no-product'), fabric = g('no-fabric'), notes = g('no-notes');
     const address = g('no-address'), area = g('no-area');
     const qty = parseInt(g('no-qty')) || 1;
+    const paidDate = g('no-paid');
     const status = document.getElementById('no-status');
     if (!invoice || !customer || !product) { status.textContent = 'Fill in the invoice number, customer and product.'; return; }
+    if (!paidDate) { status.textContent = 'Fill in the date the order was paid.'; return; }
     const names = _allManufacturerNames();
     const supplier = names.length > 1 ? g('no-supplier') : (names[0] || '');
     if (!supplier) { status.textContent = 'No supplier set up yet — add one under Planner → Manufacturers first.'; return; }
@@ -9435,6 +9441,7 @@ ${_PRODUCTION_PRINT_STYLES}
       snapshotState();
       o.invoice = invoice; o.customer = customer; o.phone = phone; o.address = address; o.area = area;
       o.product = product; o.fabric = fabric; o.qty = qty; o.notes = notes;
+      o.paidDate = paidDate; o.orderDate = paidDate;
       if (names.length > 1) o.builder = supplier;
       if (customSize) o.customSize = customSize; else delete o.customSize;
       saveData();
@@ -9449,11 +9456,10 @@ ${_PRODUCTION_PRINT_STYLES}
     const productSlug = product.replace(/[^a-z0-9]/gi, '').toUpperCase().substring(0, 20);
     const orderId = 'INV-' + invoice + '-' + productSlug;
     if (data[biz].orders.find(o => o && o.id === orderId)) { status.textContent = 'This product is already on invoice ' + invoice + '.'; return; }
-    const today = new Date().toISOString().split('T')[0];
     const order = {
       id: orderId, invoice, customer, phone, product, category: '', fabric, qty,
-      orderDate: today,
-      dueDate: _dueFromLead('', product, today, biz),
+      orderDate: paidDate, paidDate: paidDate,
+      dueDate: _dueFromLead('', product, paidDate, biz),
       status: 'pending', startDate: null, paymentStatus: 'deposit', outstanding: 0,
       notes: notes,
       address: address, area: area,
@@ -9656,7 +9662,7 @@ ${_PRODUCTION_PRINT_STYLES}
             <div style="font-size:16px; font-weight:800">#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}${_unreadCount(o) ? ' <span style="background:#7c3aed; color:#fff; border-radius:999px; padding:1px 8px; font-size:11px; vertical-align:middle">💬 ' + _unreadCount(o) + ' new</span>' : ''}</div>
             <div style="font-size:12px; color:#78716c; margin-top:2px">
               <span style="background:#e7e5e4; border-radius:999px; padding:1px 8px; font-size:10px; font-weight:700">${_escape(r.tag)}</span>
-              · Qty ${_escape(o.qty || 1)}${o.customer ? ' · 👤 ' + _escape(o.customer) : ''}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.builder ? ' · 🏭 ' + _escape(o.builder) : ''}${o.phone ? '<br>📱 ' + _escape(o.phone) : ''}${(o.address || o.area) ? ' · 📍 ' + _escape([o.address, o.area].filter(Boolean).join(', ')) : ''}${o.customSize ? '<br>📐 <strong style="color:#111">' + _escape(_customSizeText(o)) + '</strong>' + (o.sizeConfirmedAt ? ' <span style="color:#166534; font-weight:800">✓ confirmed by client ' + _escape(String(o.sizeConfirmedAt).slice(0, 10)) + '</span>' : '') : ''}
+              · Qty ${_escape(o.qty || 1)}${o.customer ? ' · 👤 ' + _escape(o.customer) : ''}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.builder ? ' · 🏭 ' + _escape(o.builder) : ''}${(o.paidDate || o.orderDate) ? ' · 💰 Paid ' + _escape(o.paidDate || o.orderDate) : ''}${o.phone ? '<br>📱 ' + _escape(o.phone) : ''}${(o.address || o.area) ? ' · 📍 ' + _escape([o.address, o.area].filter(Boolean).join(', ')) : ''}${o.customSize ? '<br>📐 <strong style="color:#111">' + _escape(_customSizeText(o)) + '</strong>' + (o.sizeConfirmedAt ? ' <span style="color:#166534; font-weight:800">✓ confirmed by client ' + _escape(String(o.sizeConfirmedAt).slice(0, 10)) + '</span>' : '') : ''}
             </div>
           </div>
           <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
