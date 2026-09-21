@@ -308,6 +308,61 @@ async function fulfillOrder({ orderId }) {
   return { fulfilled: true };
 }
 
+// Auto-import: every PAID web order that hasn't been fulfilled yet becomes a
+// POS sales order (deposit = total, balance 0) so the till tracks the handover.
+// The lines are custom (title + price) — the original order already decremented
+// stock and holds the money, so nothing is double-counted; Fulfil on the till
+// closes the ORIGINAL order (see fulfillOrder above). A Blobs ledger records
+// every order ever imported, so it happens exactly once — across tills, and
+// even if the sales order is later removed from the list by hand.
+async function syncWebOrders() {
+  let store = null;
+  try { store = getStore('reptipos-websync'); } catch (e) { /* degrade to draft-check only */ }
+  const { json } = await shopify('/orders.json?status=open&financial_status=paid&fulfillment_status=unfulfilled&limit=100');
+  const candidates = (json.orders || []).filter(o =>
+    o.source_name !== 'reptipos' &&                       // till sales are already tracked
+    !String(o.tags || '').includes('lightspeed-import')); // backdated history, not live work
+  if (!candidates.length) return { created: 0, names: [] };
+  // Orders already represented by an open sales order / quote on the till.
+  const have = new Set();
+  try {
+    const { json: dj } = await shopify('/draft_orders.json?status=open&limit=100');
+    (dj.draft_orders || []).forEach(d => { const doc = parseDocNote(d.note); if (doc && doc.originalOrderId) have.add(String(doc.originalOrderId)); });
+  } catch (e) { /* if drafts can't load, the Blobs ledger still guards dupes */ }
+  const cents = v => Math.round(parseFloat(v || '0') * 100);
+  const names = [];
+  for (const o of candidates) {
+    const oid = String(o.id);
+    if (have.has(oid)) continue;
+    if (store) { try { if (await store.get('order-' + oid)) continue; } catch (e) {} }
+    const items = (o.line_items || []).map(li => {
+      const qty = Number(li.quantity) || 1;
+      const total = cents(li.price) * qty - cents(li.total_discount);
+      return { custom: true, name: li.title, qty, priceCents: Math.round(total / qty), lineTotalCents: total };
+    });
+    const ship = cents(o.total_shipping_price_set && o.total_shipping_price_set.shop_money ? o.total_shipping_price_set.shop_money.amount : 0);
+    if (ship > 0) items.push({ custom: true, name: 'Delivery / shipping', qty: 1, priceCents: ship, lineTotalCents: ship });
+    const totalCents = cents(o.total_price);
+    const custName = o.customer ? ([o.customer.first_name, o.customer.last_name].filter(Boolean).join(' ') || o.customer.email || 'Customer') : 'Online customer';
+    const a = o.shipping_address;
+    const addr = a ? [a.address1, a.address2, a.city, a.zip, a.province].filter(Boolean).join(', ') : '';
+    const doc = {
+      type: 'salesorder', status: 'ready', items, totalCents, depositCents: totalCents,
+      payments: [{ method: 'online', amountCents: totalCents, kind: 'deposit', at: o.created_at }],
+      expectedDate: '', note: 'Paid online · web order ' + o.name, deliveryAddress: addr,
+      createdAt: o.created_at, staff: null, originalOrderId: oid, originalOrderName: o.name,
+      customer: o.customer ? { id: String(o.customer.id), name: custName } : null
+    };
+    const saved = await docSave({
+      lineItems: items.map(i => ({ custom: true, title: i.name, qty: i.qty, priceCents: i.priceCents })),
+      customerId: o.customer ? o.customer.id : undefined, tags: 'pos,sales-order', doc
+    });
+    if (store) { try { await store.setJSON('order-' + oid, { draftId: saved.id, name: o.name, at: new Date().toISOString() }); } catch (e) {} }
+    names.push(o.name + ' → ' + saved.name);
+  }
+  return { created: names.length, names };
+}
+
 // Receive goods into stock: increment Shopify inventory at the primary location
 // for each line (GRV). idemKey makes a retry a no-op instead of double-adding.
 // lineItems: [{ inventoryItemId, qty, costCents? }]. Optionally update the
@@ -849,6 +904,7 @@ export const handler = async (event) => {
       return json(200, out);
     }
     if (body.action === 'fulfillOrder') return json(200, await fulfillOrder(body));
+    if (body.action === 'syncWebOrders') return json(200, await syncWebOrders());
     if (body.action === 'parkSale') return json(200, await draftCreate(body));
     if (body.action === 'listParked') return json(200, { parked: await draftList() });
     if (body.action === 'deleteParked') return json(200, await draftDelete(body.id));
