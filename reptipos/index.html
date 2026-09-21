@@ -1266,7 +1266,10 @@
   }
 
   // Buttons a cashier never sees. Applied on sign-in and on sign-out.
-  const MANAGER_BUTTONS = ['btn-dashboard', 'btn-receive', 'btn-po', 'btn-sales', 'btn-catalogue'];
+  // (Purchase orders are deliberately NOT in here — any staff member can
+  // order stock; the dashboard, receiving, sales history and catalogue
+  // stay managers-only.)
+  const MANAGER_BUTTONS = ['btn-dashboard', 'btn-receive', 'btn-sales', 'btn-catalogue'];
   function applyRoleToChrome() {
     const show = isManager();
     MANAGER_BUTTONS.forEach(id => {
@@ -1366,7 +1369,7 @@
         <input id="st-disc" type="number" min="0" max="100" placeholder="disc %" title="Max discount % without manager approval" style="width:80px">
         <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.8rem;cursor:pointer"><input id="st-refund" type="checkbox" style="width:auto">refunds</label>
       </div>
-      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Cashiers can sell, refund and handle customers. Cost prices, the dashboard, receiving and purchase orders are managers only. Over-limit discounts, refunds and pay-outs ask for a manager PIN.</div>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Cashiers can sell, refund, handle customers and raise stock orders (purchase orders). The dashboard, receiving stock, sales history and the catalogue are managers only. Over-limit discounts, refunds and pay-outs ask for a manager PIN.</div>
       <button class="qbtn" style="width:auto; padding:0 0.7rem; margin-top:0.4rem" onclick="addStaff()">+ Add staff</button>
       <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">Company details (printed on documents)</div>
       <div style="display:flex; flex-direction:column; gap:0.35rem">
@@ -4163,7 +4166,8 @@
     return 0;
   }
   async function openReorder() {
-    if (!managerOnly('Purchase orders')) return;
+    // Open to all staff — a cashier can raise a stock order when something
+    // runs low. Receiving the stock (GRV) stays managers-only.
     document.getElementById('reorder-modal').classList.add('show');
     await ensureCosts();
     await ensureSuppliers();
