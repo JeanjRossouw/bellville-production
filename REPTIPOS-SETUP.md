@@ -84,6 +84,14 @@ Shopify error text so you can see exactly which one.
 - **Quotes**: save a priced quote (Shopify draft tagged `quote`); print/email it; load it back to the cart to convert to a sale.
 - **Sales orders** (back-order / special order): for an out-of-stock item, take any **deposit** now (cash/card/EFT) with the **balance recorded as owing**; when stock arrives, mark ready, collect the balance, and it becomes a **paid Shopify order** (stock decrements) + invoice. Deposit + balance = item total across the lifecycle (no double-count).
 - **Client profile**: details, purchase history, open quotes & sales orders, and an **account summary** (deposits held + balance owing) aggregated from the client's open sales orders.
+- **Web orders on the till**: every **paid** online order that hasn't been
+  fulfilled yet is pulled onto the Sales orders list automatically (on till
+  start, every 5 minutes, and when the list opens) with the payment loaded
+  (deposit = total, balance 0) and the delivery address on the 🚚 line. The
+  original web order already decremented stock and holds the money, so nothing
+  double-counts; **Fulfil & invoice** on the till marks the ORIGINAL Shopify
+  order fulfilled. A Netlify Blobs ledger guarantees each order is imported
+  exactly once, even across tills or after a row is removed by hand.
 - **Purchasing / GRV** (📥 Receive): add **suppliers**; do a **goods-received voucher** (scan/search items, qty + unit cost) that **increments Shopify stock** at the location (idempotent, optionally updates the variant cost). Each GRV sits on the **supplier account as owing** until you **record payments** against it; the Suppliers tab shows each supplier's total balance owing. Suppliers, GRVs and supplier payments are stored in **Firestore** (`suppliers`, `grvs`) — Shopify has no accounts-payable concept; only the stock increment goes to Shopify. Needs `write_inventory` + `read_locations` (already in the scope table) and Firestore write access (same as the sales log).
 - **Wholesale clients**: mark a client 🏷 wholesale (from their profile, or the
   checkbox when creating one — managers only) and every sale, quote and sales

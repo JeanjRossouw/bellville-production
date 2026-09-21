@@ -625,6 +625,8 @@
       }
       case 'refundCreate':
         return { refundId: 'DR' + Date.now(), amountCents: 0, restocked: !!p.restock };
+      case 'syncWebOrders':
+        return { created: 0, names: [] }; // demo has no web shop
       case 'salesReport': {
         const since = new Date(p.since).getTime(); const until = p.until ? new Date(p.until).getTime() : Date.now();
         let orderCount = 0, salesCents = 0, itemCount = 0; const byV = {}; const points = [];
@@ -2438,7 +2440,25 @@
     } catch (e) { toast('Sales order failed: ' + (e.message || e)); }
   }
 
-  function openDocs(type) { docsType = type || 'salesorder'; document.getElementById('docs-modal').classList.add('show'); docsTab(docsType); }
+  // Web-order sync: the server turns every paid-but-unfulfilled online order
+  // into a sales order on this list (once, ever — it keeps a ledger). Runs on
+  // start, every 5 minutes, and whenever the Orders list opens.
+  let webSyncBusy = false;
+  async function syncWebOrdersTill() {
+    if (isDemo() || webSyncBusy || !navigator.onLine) return;
+    webSyncBusy = true;
+    try {
+      const r = await api('syncWebOrders');
+      if (r && r.created > 0) {
+        toast('🌐 ' + r.created + ' web order' + (r.created === 1 ? '' : 's') + ' added to Sales orders');
+        if (document.getElementById('docs-modal').classList.contains('show')) docsTab(docsType);
+      }
+    } catch (e) { /* quiet — next run retries */ }
+    webSyncBusy = false;
+  }
+  setInterval(syncWebOrdersTill, 5 * 60 * 1000);
+
+  function openDocs(type) { docsType = type || 'salesorder'; document.getElementById('docs-modal').classList.add('show'); docsTab(docsType); syncWebOrdersTill(); }
   function closeDocs() { document.getElementById('docs-modal').classList.remove('show'); }
   function docsTab(type) {
     docsType = type;
@@ -4794,6 +4814,7 @@
   lockPOS();              // require a staff PIN before selling (default admin PIN 0000)
   refreshCatalogue(false);
   flushQueue(false);      // sync anything queued from a previous offline session
+  setTimeout(syncWebOrdersTill, 4000); // pull new paid web orders onto the sales-order list
 </script>
 </body>
 </html>
