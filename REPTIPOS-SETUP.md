@@ -102,6 +102,13 @@ Shopify error text so you can see exactly which one.
   arbitrary; Black/White cost the same, bundles & starter kits always stay
   retail, and Shopify's retail prices are never touched. The wholesale flag is
   a `wholesale` tag on the Shopify customer, so it follows the client anywhere.
+- **Installable app (PWA)**: open the till URL in Chrome/Edge and use
+  **Install ReptiCube POS** (⋮ menu → "Install app", or the install icon in the
+  address bar; on iPad: Share → "Add to Home Screen"). It then launches
+  full-screen from its own ReptiCube icon — no browser bar, no visible URL —
+  and still opens when the internet is down (the page shell is cached; the
+  till's own offline queue handles the rest). Updates roll out automatically
+  on the next reload — nothing to reinstall.
 - **Staff PINs**: lock screen, per-staff PIN, admin can manage staff.
 - **Register / cash-up**: open float, pay in/out, X-report, close with counted-cash variance + Z-report (saved to Firestore `cashups`).
 - **Offline queue**: a failed Shopify write is recorded locally and auto-retried on reconnect / every 30s / on demand — same idemKey, never a duplicate.
