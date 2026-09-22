@@ -4016,7 +4016,9 @@
         <div class="field" style="flex:1"><label>Supplier invoice #</label><input id="grv-ref" placeholder="optional"></div>
         <div class="field" style="width:160px"><label>Date</label><input id="grv-date" type="date" value="${new Date().toISOString().slice(0, 10)}"></div>
       </div>
-      <div class="field"><label>Add item (scan / search the catalogue)</label>
+      <div class="field"><label style="display:flex;justify-content:space-between;align-items:center"><span>Add item (scan / search the catalogue)</span>
+        <button class="qbtn" style="width:auto;padding:0 0.6rem;height:28px" onclick="document.getElementById('grv-file').click()" title="Load the supplier's invoice / packing list (Excel or CSV) — lines match by SKU, barcode or name">📄 Import file</button></label>
+        <input type="file" id="grv-file" accept=".xlsx,.xls,.csv,text/csv" style="display:none" onchange="importGrvFile(this)">
         <input id="grv-search" autocomplete="off" placeholder="🔍 product name / SKU / barcode" oninput="renderGrvSearch(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();grvSearchEnter()}">
         <div id="grv-search-res" style="max-height:150px;overflow:auto"></div></div>
       <div id="grv-lines"></div>
@@ -4037,6 +4039,64 @@
     box.innerHTML = items.length ? items.map(p => `<div class="cust-result" onclick="addGrvLine('${p.variantId}')"><div><div style="font-weight:600">${esc(p.name)}</div><div style="font-size:0.72rem;color:var(--muted)">${esc(p.sku || '')} · stock ${Number(p.qty) || 0}</div></div></div>`).join('') : '<div class="empty" style="padding:0.6rem">No matches</div>';
   }
   function grvSearchEnter() { const f = document.getElementById('grv-search'); const code = f.value.trim(); if (!code) return; const hit = matchExact(code); if (hit) { addGrvLine(hit.variantId); f.value = ''; renderGrvSearch(''); } else toast('No exact barcode/SKU match'); }
+
+  // ---- Import a supplier file into the GRV --------------------------------
+  // Load the supplier's invoice / packing list (Excel or CSV) instead of
+  // scanning line by line. Rows match the catalogue by SKU or barcode first,
+  // then by (unambiguous) name; qty and unit cost come from the file.
+  function moneyStrToCents(v) {
+    let s = String(v == null ? '' : v).replace(/[^\d.,-]/g, '');
+    if (s.includes(',') && s.includes('.')) s = s.replace(/,/g, ''); else s = s.replace(',', '.');
+    return Math.round((parseFloat(s) || 0) * 100);
+  }
+  function importGrvFile(input) {
+    const file = input.files && input.files[0]; if (!file) return;
+    const name = file.name.toLowerCase();
+    const finish = rows => { try { applyGrvRows(rows); } catch (e) { toast('Import failed: ' + (e.message || e)); } input.value = ''; };
+    if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+      loadXlsx().then(XLSX => {
+        const r = new FileReader();
+        r.onload = () => { try { const wb = XLSX.read(r.result, { type: 'array' }); finish(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, blankrows: false })); } catch (e) { toast('Import failed: ' + (e.message || e)); input.value = ''; } };
+        r.readAsArrayBuffer(file);
+      }).catch(e => { toast('Excel import needs internet: ' + (e.message || e)); input.value = ''; });
+    } else {
+      const r = new FileReader();
+      r.onload = () => finish(parseCsvFull(String(r.result)));
+      r.readAsText(file);
+    }
+  }
+  function applyGrvRows(rows) {
+    if (!rows || !rows.length) { toast('Empty file'); return; }
+    const hdr = (rows[0] || []).map(c => String(c == null ? '' : c).trim().toLowerCase());
+    const findCol = (...names) => hdr.findIndex(h => names.some(n => h.includes(n)));
+    let iSku = findCol('sku', 'barcode', 'item code', 'code'), iQty = findCol('qty', 'quantity', 'units', 'ordered', 'delivered'),
+        iCost = findCol('unit cost', 'cost', 'unit price', 'price'), iName = findCol('description', 'product', 'name', 'title', 'item');
+    let start = 1;
+    if (iQty < 0) { iSku = 0; iName = -1; iQty = 1; iCost = 2; start = 0; } // headerless: code, qty, cost
+    let matched = 0; const misses = [];
+    for (let r = start; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const code = iSku >= 0 ? String(row[iSku] == null ? '' : row[iSku]).trim() : '';
+      const nm = iName >= 0 ? String(row[iName] == null ? '' : row[iName]).trim() : '';
+      const qty = Math.round(Number(String(row[iQty] == null ? '' : row[iQty]).replace(/[^\d.]/g, '')) || 0);
+      if ((!code && !nm) || qty <= 0) continue;
+      const costC = iCost >= 0 ? moneyStrToCents(row[iCost]) : 0;
+      let p = code ? catalogue.find(x => (x.sku || '').toLowerCase() === code.toLowerCase() || (x.barcode || '') === code) : null;
+      if (!p && nm) {
+        const t = nm.toLowerCase();
+        p = catalogue.find(x => (x.name || '').toLowerCase() === t) || null;
+        if (!p) { const c = catalogue.filter(x => (x.name || '').toLowerCase().includes(t)); if (c.length === 1) p = c[0]; }
+      }
+      if (!p) { misses.push(code || nm); continue; }
+      const ex = grvLines.find(l => l.variantId === p.variantId);
+      if (ex) { ex.qty += qty; if (costC > 0) ex.costCents = costC; }
+      else grvLines.push({ variantId: p.variantId, inventoryItemId: p.inventoryItemId || '', name: p.name, sku: p.sku || '', qty, costCents: costC > 0 ? costC : (p.costCents || 0) });
+      matched++;
+    }
+    renderGrvLines();
+    toast('Imported ' + matched + ' line' + (matched === 1 ? '' : 's') + (misses.length ? ' · ' + misses.length + ' not matched' : ''));
+    if (misses.length) alert('These lines didn\'t match a catalogue item — add them by scan/search:\n\n' + misses.slice(0, 25).join('\n') + (misses.length > 25 ? '\n…and ' + (misses.length - 25) + ' more' : ''));
+  }
   function addGrvLine(variantId) {
     const p = findProduct(variantId); if (!p) { toast('Not in catalogue'); return; }
     const ex = grvLines.find(l => l.variantId === variantId);
@@ -4969,7 +5029,7 @@
     openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, stAddItem, reconcileStocktake, exportStockCsv, exportStockXlsx, importStockFile, importCostsFile,
     openReorder, closeReorder, setReorderLevel, startPO, startBlankPO, poSetSupplier, poSearch, poAddItem, poBack, poSetQty, poSetCost, poRemove, sendPO,
     lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, editStaff, saveTaxSettings, saveLoyaltySettings, saveEnclosureSettings,
-    editPO, printLabels, printLabelsForGrv, printPOById, togglePO,
+    editPO, printLabels, printLabelsForGrv, printPOById, togglePO, importGrvFile,
     toggleRedeemPoints,
     flushQueue,
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
