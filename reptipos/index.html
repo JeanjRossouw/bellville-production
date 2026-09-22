@@ -4017,8 +4017,8 @@
         <div class="field" style="width:160px"><label>Date</label><input id="grv-date" type="date" value="${new Date().toISOString().slice(0, 10)}"></div>
       </div>
       <div class="field"><label style="display:flex;justify-content:space-between;align-items:center"><span>Add item (scan / search the catalogue)</span>
-        <button class="qbtn" style="width:auto;padding:0 0.6rem;height:28px" onclick="document.getElementById('grv-file').click()" title="Load the supplier's invoice / packing list (Excel or CSV) — lines match by SKU, barcode or name">📄 Import file</button></label>
-        <input type="file" id="grv-file" accept=".xlsx,.xls,.csv,text/csv" style="display:none" onchange="importGrvFile(this)">
+        <button class="qbtn" style="width:auto;padding:0 0.6rem;height:28px" onclick="document.getElementById('grv-file').click()" title="Load the supplier's invoice / packing list (PDF, Excel or CSV) — lines match by SKU, barcode or name">📄 Import file</button></label>
+        <input type="file" id="grv-file" accept=".xlsx,.xls,.csv,.pdf,text/csv,application/pdf" style="display:none" onchange="importGrvFile(this)">
         <input id="grv-search" autocomplete="off" placeholder="🔍 product name / SKU / barcode" oninput="renderGrvSearch(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();grvSearchEnter()}">
         <div id="grv-search-res" style="max-height:150px;overflow:auto"></div></div>
       <div id="grv-lines"></div>
@@ -4052,34 +4052,92 @@
   function importGrvFile(input) {
     const file = input.files && input.files[0]; if (!file) return;
     const name = file.name.toLowerCase();
-    const finish = rows => { try { applyGrvRows(rows); } catch (e) { toast('Import failed: ' + (e.message || e)); } input.value = ''; };
+    const finish = (rows, opts) => { try { applyGrvRows(rows, opts); } catch (e) { toast('Import failed: ' + (e.message || e)); } input.value = ''; };
     if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
       loadXlsx().then(XLSX => {
         const r = new FileReader();
         r.onload = () => { try { const wb = XLSX.read(r.result, { type: 'array' }); finish(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, blankrows: false })); } catch (e) { toast('Import failed: ' + (e.message || e)); input.value = ''; } };
         r.readAsArrayBuffer(file);
       }).catch(e => { toast('Excel import needs internet: ' + (e.message || e)); input.value = ''; });
-    } else {
-      const r = new FileReader();
-      r.onload = () => finish(parseCsvFull(String(r.result)));
-      r.readAsText(file);
+      return;
     }
+    if (name.endsWith('.pdf')) { importGrvPdf(file, input); return; }
+    const r = new FileReader();
+    r.onload = () => {
+      const text = String(r.result);
+      // A PDF or other binary picked despite the filter: don't parse garbage.
+      if (text.slice(0, 8).includes('%PDF')) { input.value = ''; importGrvPdf(file, input); return; }
+      const junk = (text.slice(0, 4000).match(/[�\u0000-\u0008\u000E-\u001F]/g) || []).length;
+      if (junk > 20) { toast('That file isn’t a spreadsheet — use the supplier’s Excel/CSV or PDF invoice'); input.value = ''; return; }
+      finish(parseCsvFull(text));
+    };
+    r.readAsText(file);
   }
-  function applyGrvRows(rows) {
+  // PDF invoices: extract the text with pdf.js, rebuild the table rows from
+  // the text positions, then run the same matching as a spreadsheet import.
+  let pdfjsLoading = null;
+  function loadPdfJs() {
+    if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+    if (pdfjsLoading) return pdfjsLoading;
+    pdfjsLoading = new Promise((res, rej) => {
+      const sc = document.createElement('script');
+      sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      sc.onload = () => { try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; } catch (e) {} res(window.pdfjsLib); };
+      sc.onerror = () => { pdfjsLoading = null; rej(new Error('Could not load the PDF reader — needs internet')); };
+      document.head.appendChild(sc);
+    });
+    return pdfjsLoading;
+  }
+  function importGrvPdf(file, input) {
+    toast('Reading PDF…');
+    loadPdfJs().then(async (pdfjsLib) => {
+      const buf = await file.arrayBuffer();
+      const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+      const rows = [];
+      for (let pg = 1; pg <= doc.numPages; pg++) {
+        const page = await doc.getPage(pg);
+        const tc = await page.getTextContent();
+        // Cluster text runs into visual rows by their y position, then order
+        // each row's cells left-to-right.
+        const items = tc.items.map(it => ({ str: (it.str || '').trim(), x: it.transform[4], y: it.transform[5] })).filter(it => it.str);
+        items.sort((a, b) => (b.y - a.y) || (a.x - b.x));
+        let cur = null, curY = null;
+        items.forEach(it => {
+          if (curY === null || Math.abs(it.y - curY) > 4) { cur = []; rows.push(cur); curY = it.y; }
+          cur.push(it);
+        });
+      }
+      const cells = rows.map(r => r.sort((a, b) => a.x - b.x).map(c => c.str));
+      applyGrvRows(cells, { fromPdf: true });
+      if (input) input.value = '';
+    }).catch(e => { toast('PDF import failed: ' + (e.message || e)); if (input) input.value = ''; });
+  }
+  function applyGrvRows(rows, opts) {
+    opts = opts || {};
     if (!rows || !rows.length) { toast('Empty file'); return; }
-    const hdr = (rows[0] || []).map(c => String(c == null ? '' : c).trim().toLowerCase());
-    const findCol = (...names) => hdr.findIndex(h => names.some(n => h.includes(n)));
-    let iSku = findCol('sku', 'barcode', 'item code', 'code'), iQty = findCol('qty', 'quantity', 'units', 'ordered', 'delivered'),
-        iCost = findCol('unit cost', 'cost', 'unit price', 'price'), iName = findCol('description', 'product', 'name', 'title', 'item');
-    let start = 1;
-    if (iQty < 0) { iSku = 0; iName = -1; iQty = 1; iCost = 2; start = 0; } // headerless: code, qty, cost
+    const lower = r => (r || []).map(c => String(c == null ? '' : c).trim().toLowerCase());
+    // The header row isn't always first (PDF invoices carry address blocks
+    // above the table) — find the first row that names a qty column.
+    let hdrIdx = rows.findIndex(r => { const h = lower(r); return h.some(c => /qty|quantity|units/.test(c)); });
+    let iSku = -1, iQty = -1, iCost = -1, iName = -1, start;
+    if (hdrIdx >= 0) {
+      const hdr = lower(rows[hdrIdx]);
+      const findCol = (...names) => hdr.findIndex(h => names.some(n => h.includes(n)));
+      iSku = findCol('sku', 'barcode', 'item code', 'code');
+      iQty = findCol('qty', 'quantity', 'units');
+      iCost = findCol('unit cost', 'cost', 'unit price', 'price', 'excl');
+      iName = hdr.findIndex((h, ix) => ix !== iSku && ['description', 'product', 'name', 'title', 'item'].some(n => h.includes(n)));
+      start = hdrIdx + 1;
+    } else if (!opts.fromPdf) {
+      iSku = 0; iQty = 1; iCost = 2; start = 0; // headerless CSV: code, qty, cost
+    } else { toast('Couldn’t find the item table in this PDF — ask the supplier for the invoice as Excel/CSV'); return; }
     let matched = 0; const misses = [];
     for (let r = start; r < rows.length; r++) {
       const row = rows[r] || [];
       const code = iSku >= 0 ? String(row[iSku] == null ? '' : row[iSku]).trim() : '';
       const nm = iName >= 0 ? String(row[iName] == null ? '' : row[iName]).trim() : '';
       const qty = Math.round(Number(String(row[iQty] == null ? '' : row[iQty]).replace(/[^\d.]/g, '')) || 0);
-      if ((!code && !nm) || qty <= 0) continue;
+      if ((!code && !nm) || qty <= 0 || qty > 100000) continue;
       const costC = iCost >= 0 ? moneyStrToCents(row[iCost]) : 0;
       let p = code ? catalogue.find(x => (x.sku || '').toLowerCase() === code.toLowerCase() || (x.barcode || '') === code) : null;
       if (!p && nm) {
@@ -4087,13 +4145,18 @@
         p = catalogue.find(x => (x.name || '').toLowerCase() === t) || null;
         if (!p) { const c = catalogue.filter(x => (x.name || '').toLowerCase().includes(t)); if (c.length === 1) p = c[0]; }
       }
-      if (!p) { misses.push(code || nm); continue; }
+      if (!p) {
+        const label = (code || nm).replace(/[^\x20-\x7E]/g, '').slice(0, 40);
+        if (label.length >= 3) misses.push(label);
+        continue;
+      }
       const ex = grvLines.find(l => l.variantId === p.variantId);
       if (ex) { ex.qty += qty; if (costC > 0) ex.costCents = costC; }
       else grvLines.push({ variantId: p.variantId, inventoryItemId: p.inventoryItemId || '', name: p.name, sku: p.sku || '', qty, costCents: costC > 0 ? costC : (p.costCents || 0) });
       matched++;
     }
     renderGrvLines();
+    if (!matched && !misses.length) { toast('No item lines found in that file'); return; }
     toast('Imported ' + matched + ' line' + (matched === 1 ? '' : 's') + (misses.length ? ' · ' + misses.length + ' not matched' : ''));
     if (misses.length) alert('These lines didn\'t match a catalogue item — add them by scan/search:\n\n' + misses.slice(0, 25).join('\n') + (misses.length > 25 ? '\n…and ' + (misses.length - 25) + ' more' : ''));
   }
