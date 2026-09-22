@@ -31,8 +31,9 @@ You don't need to link Shopify to evaluate the system. On the lock screen tap
 Register → admin). Demo mode loads a sample reptile catalogue and **simulates
 all Shopify reads/writes locally** — sales, orders, stock, customers, quotes,
 sales orders and GRVs all work, but **nothing ever touches your Shopify store**.
-Turn it off the same way to switch back to the real store. (Default staff PIN is
-**0000**.)
+Turn it off the same way to switch back to the real store. (There is no default
+PIN — on a fresh till the first PIN you enter becomes the manager PIN. Staff
+PINs sync across tills via Firestore.)
 
 ## Two ways to run it (live)
 
@@ -128,7 +129,7 @@ Shopify error text so you can see exactly which one.
 - **Data migration**: see `REPTIPOS-MIGRATION.md` (Lightspeed → Shopify runbook).
 
 ## Smoke test
-1. Open `/reptipos/`, enter the default admin PIN **0000** at the lock screen.
+1. Open `/reptipos/`, enter a PIN at the lock screen (first run: the PIN you enter becomes the manager PIN).
 2. Catalogue loads (status shows the product count); header shows the store.
 3. **Scan / search** a real barcode/SKU → it adds to the cart; adjust qty + try a discount.
 4. **Open register** with a float, then **Pay** → cash/card/EFT/split → confirm.
