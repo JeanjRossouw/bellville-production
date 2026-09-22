@@ -400,7 +400,7 @@
   <div id="lock-name" style="color:var(--muted); font-size:0.9rem">Enter your PIN</div>
   <div id="lock-dots" style="font-size:1.8rem; letter-spacing:0.4rem; height:2rem">····</div>
   <div id="lock-pad" style="display:grid; grid-template-columns:repeat(3,72px); gap:0.6rem"></div>
-  <div style="color:var(--muted); font-size:0.75rem">Default PIN: 0000</div>
+  <div id="lock-hint" style="color:var(--muted); font-size:0.75rem"></div>
   <button id="lock-demo" onclick="toggleDemo()" style="margin-top:0.6rem; background:none; border:none; color:var(--warn); font-size:0.85rem; cursor:pointer; text-decoration:underline"></button>
 </div>
 
@@ -1213,8 +1213,36 @@
   let currentStaff = null;
   let pinBuffer = '';
   function staffList() { try { return JSON.parse(localStorage.getItem('reptipos-staff') || '[]'); } catch (e) { return []; } }
-  function saveStaff(arr) { localStorage.setItem('reptipos-staff', JSON.stringify(arr)); }
-  function ensureStaffSeed() { if (staffList().length === 0) saveStaff([{ id: 'admin', name: 'Admin', pin: '0000', role: 'admin' }]); }
+  // Staff live in the SHARED Firestore settings doc so a PIN added on one till
+  // works on every till; localStorage keeps the till usable offline.
+  function saveStaff(arr) {
+    localStorage.setItem('reptipos-staff', JSON.stringify(arr));
+    try { if (window.fb || isDemo()) fbSet('settings', 'staff', { staff: arr, updatedAt: new Date().toISOString() }); } catch (e) { /* next save syncs */ }
+  }
+  window.addEventListener('fb-ready', async () => {
+    try {
+      const s = await fbGet('settings', 'staff');
+      const cloud = s && Array.isArray(s.staff) ? s.staff : [];
+      const local = staffList();
+      const mergedOnce = localStorage.getItem('reptipos-staff-synced') === '1';
+      if (!cloud.length && local.length) {
+        // First till online seeds the shared list from what it has.
+        saveStaff(local);
+      } else if (cloud.length && !mergedOnce) {
+        // This till's first sync: union its local staff into the shared list so
+        // nobody added before the sync existed gets lost. After this, the
+        // shared list is canonical (removals propagate, nothing resurrects).
+        const merged = [...cloud];
+        local.forEach(l => { if (!merged.some(m => m.id === l.id || m.pin === l.pin)) merged.push(l); });
+        if (merged.length !== cloud.length) saveStaff(merged);
+        else localStorage.setItem('reptipos-staff', JSON.stringify(cloud));
+      } else if (cloud.length) {
+        localStorage.setItem('reptipos-staff', JSON.stringify(cloud));
+      }
+      localStorage.setItem('reptipos-staff-synced', '1');
+      renderLockPad();
+    } catch (e) { /* offline — local list keeps working */ }
+  });
   function renderStaffBadge() {
     const b = document.getElementById('staff-badge');
     if (b) b.textContent = currentStaff ? '👤 ' + currentStaff.name + (isManager() ? '' : ' · cashier') : '';
@@ -1301,6 +1329,8 @@
   function lockPOS() { currentStaff = null; pinBuffer = ''; renderStaffBadge(); applyRoleToChrome(); renderLockPad(); renderLockDemo(); document.getElementById('lock').style.display = 'flex'; }
   function renderLockPad() {
     document.getElementById('lock-dots').textContent = '••••'.slice(0, pinBuffer.length).padEnd(4, '·');
+    const hint = document.getElementById('lock-hint');
+    if (hint) hint.textContent = staffList().length === 0 ? 'First time on this till? Enter a NEW 4–6 digit PIN — it becomes the manager PIN.' : '';
     const pad = document.getElementById('lock-pad');
     pad.innerHTML = ['1','2','3','4','5','6','7','8','9','C','0','⌫'].map(k =>
       `<button class="qbtn" style="height:64px; font-size:1.3rem" onclick="pinKey('${k}')">${k}</button>`).join('');
@@ -1313,6 +1343,18 @@
     if (pinBuffer.length >= 4) {
       const s = staffList().find(x => x.pin === pinBuffer);
       if (s) { currentStaff = s; pinBuffer = ''; document.getElementById('lock').style.display = 'none'; renderStaffBadge(); applyRoleToChrome(); }
+      else if (staffList().length === 0) {
+        // First run — no default PIN exists. The first PIN typed becomes the
+        // manager PIN (confirmed, so a typo doesn't get locked in).
+        if (confirm('Set ' + pinBuffer + ' as the MANAGER PIN for this shop?')) {
+          const me = { id: 'admin', name: 'Manager', pin: pinBuffer, role: 'admin' };
+          saveStaff([me]);
+          currentStaff = me; pinBuffer = '';
+          document.getElementById('lock').style.display = 'none';
+          renderStaffBadge(); applyRoleToChrome();
+          toast('Manager PIN set — add staff under 🧾 Register');
+        } else if (pinBuffer.length >= 6) { pinBuffer = ''; renderLockPad(); }
+      }
       else if (pinBuffer.length >= 6) { toast('Wrong PIN'); pinBuffer = ''; renderLockPad(); }
     }
   }
@@ -1381,7 +1423,7 @@
     if (!currentStaff || currentStaff.role !== 'admin') return '';
     const list = staffList();
     return `<div style="font-size:0.8rem; font-weight:700; margin-bottom:0.4rem">Staff</div>
-      ${list.map(s => `<div style="display:flex; justify-content:space-between; padding:0.25rem 0; font-size:0.85rem"><span>${esc(s.name)} <span style="color:var(--muted)">(${s.role}${s.role === 'admin' ? '' : ' · disc ≤' + (s.maxDiscPct != null ? s.maxDiscPct : 10) + '% · ' + (s.canRefund ? 'refunds ✓' : 'no refunds')})</span></span>${s.id !== 'admin' ? `<button class="rm" onclick="removeStaff('${s.id}')">✕</button>` : ''}</div>`).join('')}
+      ${list.map(s => `<div style="display:flex; justify-content:space-between; padding:0.25rem 0; font-size:0.85rem"><span>${esc(s.name)} <span style="color:var(--muted)">(${s.role}${s.role === 'admin' ? '' : ' · disc ≤' + (s.maxDiscPct != null ? s.maxDiscPct : 10) + '% · ' + (s.canRefund ? 'refunds ✓' : 'no refunds')})</span></span><span style="display:flex;gap:0.3rem"><button class="qbtn" style="width:auto;padding:0 0.5rem;height:26px" onclick="editStaff('${s.id}')" title="Edit name / PIN / limits">✎</button><button class="rm" onclick="removeStaff('${s.id}')">✕</button></span></div>`).join('')}
       <div style="display:flex; gap:0.4rem; margin-top:0.4rem">
         <input id="st-name" placeholder="Name" style="flex:1">
         <input id="st-pin" placeholder="PIN" style="width:80px">
@@ -1475,7 +1517,29 @@
     list.push({ id: 'st-' + Date.now(), name, pin, role, maxDiscPct, canRefund });
     saveStaff(list); renderReg(); toast('Staff added');
   }
-  function removeStaff(id) { if (!confirm('Remove this staff member?')) return; saveStaff(staffList().filter(s => s.id !== id)); renderReg(); }
+  // Edit an existing staff member's name / PIN / limits (syncs to every till).
+  function editStaff(id) {
+    const list = staffList(); const s = list.find(x => x.id === id); if (!s) return;
+    const name = prompt('Name:', s.name); if (name === null) return;
+    const pin = (prompt('PIN (4–6 digits):', s.pin) || '').trim(); if (!pin) return;
+    if (!/^\d{4,6}$/.test(pin)) { toast('PIN must be 4–6 digits'); return; }
+    if (list.some(x => x.id !== id && x.pin === pin)) { toast('That PIN is already in use'); return; }
+    s.name = name.trim() || s.name; s.pin = pin;
+    if (s.role !== 'admin') {
+      const d = prompt('Max discount % without manager approval:', s.maxDiscPct != null ? s.maxDiscPct : 10);
+      if (d !== null) s.maxDiscPct = Math.min(100, Math.max(0, parseFloat(d) || 0));
+      s.canRefund = confirm('May ' + s.name + ' do refunds without a manager PIN?\nOK = yes · Cancel = no');
+    }
+    saveStaff(list);
+    if (currentStaff && currentStaff.id === id) { currentStaff = s; renderStaffBadge(); }
+    renderReg(); toast('Saved — ' + s.name);
+  }
+  function removeStaff(id) {
+    const list = staffList(); const s = list.find(x => x.id === id); if (!s) return;
+    if (s.role === 'admin' && list.filter(x => x.role === 'admin').length <= 1) { toast('You need at least one manager — add another first'); return; }
+    if (!confirm('Remove ' + s.name + '?')) return;
+    saveStaff(list.filter(x => x.id !== id)); renderReg();
+  }
   // ---- Lightspeed history import + till-history reset --------------------
   // Proper CSV parsing (quoted fields can contain commas/newlines).
   function parseCsvFull(text) {
@@ -4040,6 +4104,7 @@
         try { await fbSet('purchase_orders', linkedPo.id, { items: linkedPo.items, status: linkedPo.status }); } catch (e) {}
       }
       printGrv(grv);
+      if (confirm('Print product labels for the received items? (' + lines.reduce((n, l) => n + l.qty, 0) + ' labels)')) printLabels(grv.lineItems);
       toast('Received into stock · ' + grvNumber + (linkedPo ? ' (' + linkedPo.poNumber + ' ' + linkedPo.status + ')' : ''));
       grvLines = []; grvSupplierId = null; receivingPoId = null;
       grvTab('list');
@@ -4065,6 +4130,7 @@
       <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
         ${bal > 0 ? `<button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="grvPay('${g.id}')">+ Payment</button>` : ''}
         <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="printGrvById('${g.id}')">🖨️</button>
+        <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="printLabelsForGrv('${g.id}')" title="Print product labels for these items">🏷</button>
       </div></div>`;
   }
   async function grvPay(id) {
@@ -4144,7 +4210,7 @@
         return `<div class="cust-result" style="cursor:default;flex-direction:column;align-items:stretch;gap:0.3rem">
           <div style="display:flex;justify-content:space-between"><div style="font-weight:600">${esc(po.poNumber || 'PO')} · ${esc(po.supplierName || '')}</div><div style="font-weight:700">${money(po.totalCents || 0)}</div></div>
           <div style="font-size:0.72rem;color:var(--muted)">${new Date(po.createdAt).toLocaleString('en-ZA')} · ${recv}/${ordered} received · ${esc(label)}</div>
-          <div style="display:flex;gap:0.4rem"><button class="qbtn" style="width:auto;padding:0 0.7rem;background:var(--accent);color:#04210f" onclick="receivePO('${po.id}')">📥 Receive what came in</button><button class="rm" onclick="deletePO('${po.id}')" title="Delete this PO">✕ Delete</button></div>
+          <div style="display:flex;gap:0.4rem"><button class="qbtn" style="width:auto;padding:0 0.7rem;background:var(--accent);color:#04210f" onclick="receivePO('${po.id}')">📥 Receive what came in</button><button class="qbtn" style="width:auto;padding:0 0.7rem" onclick="editPO('${po.id}')" title="Change items, quantities or costs">✎ Edit</button><button class="rm" onclick="deletePO('${po.id}')" title="Delete this PO">✕ Delete</button></div>
         </div>`;
       }).join('')}</div>`;
     } catch (e) { body.innerHTML = `<div class="empty" style="padding:1.5rem;color:var(--warn)">${esc(String(e.message || e))}</div>`; }
@@ -4172,6 +4238,39 @@
     grvTab('new');
   }
   function printGrvById(id) { const g = grvsCache.find(x => x.id === id); if (g) printGrv(g); }
+  // ---- Product labels (arrivals) ------------------------------------------
+  // One label per unit received: name, Code-128 barcode (product barcode, or
+  // SKU when there's none) and the selling price. Printed on the 80mm slip
+  // printer — each label is its own page, so a label roll works too.
+  function printLabels(lines) {
+    const labels = [];
+    (lines || []).forEach(l => {
+      const p = findProduct(l.variantId) || {};
+      const name = l.name || p.name || 'Item';
+      const code = String(p.barcode || l.barcode || p.sku || l.sku || '').trim();
+      const priceCents = p.priceCents != null ? p.priceCents : null;
+      const n = Math.max(0, Math.round(Number(l.qty) || 0));
+      for (let k = 0; k < n && labels.length < 300; k++) labels.push({ name, code, priceCents });
+    });
+    if (!labels.length) { toast('Nothing to print labels for'); return; }
+    if (labels.length > 40 && !confirm(labels.length + ' labels — print them all?')) return;
+    const body = labels.map(lb => `<div class="lb">
+        <div class="nm">${esc(lb.name)}</div>
+        ${lb.code ? barcodeSvg(lb.code, 42) : ''}
+        ${lb.code ? `<div class="cd">${esc(lb.code)}</div>` : ''}
+        ${lb.priceCents != null ? `<div class="pr">${money(lb.priceCents)}</div>` : ''}
+      </div>`).join('');
+    const w = window.open('', '_blank', 'width=360,height=640'); if (!w) { toast('Allow pop-ups'); return; }
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Labels</title><style>
+      @media print{@page{size:80mm auto;margin:2mm}.noprint{display:none}.lb{page-break-after:always}}
+      body{font-family:-apple-system,"Segoe UI",Arial,sans-serif;width:80mm;margin:0 auto;color:#000;text-align:center}
+      .lb{padding:6px 4px}.nm{font-size:12px;font-weight:700;line-height:1.2}.cd{font-size:10px;letter-spacing:1px}
+      .pr{font-size:17px;font-weight:800;margin-top:2px}svg{margin:3px 0;max-width:72mm}
+      .btns button{width:100%;padding:10px;border:1px solid #000;border-radius:8px;background:#fff;cursor:pointer;margin-top:8px}
+    </style></head><body>${body}<div class="btns noprint"><button onclick="window.print()">🖨️ Print ${labels.length} label${labels.length === 1 ? '' : 's'}</button></div></body></html>`);
+    w.document.close();
+  }
+  function printLabelsForGrv(id) { const g = grvsCache.find(x => x.id === id); if (g) printLabels(g.lineItems || []); }
   function printGrv(g) {
     const rows = (g.lineItems || []).map(i => `<tr><td>${esc(i.qty)} × ${esc(i.name)}</td><td style="text-align:right">${money(i.costCents * i.qty)}</td></tr>`).join('');
     const paid = g.amountPaidCents || 0; const bal = (g.totalCents || 0) - paid;
@@ -4191,7 +4290,7 @@
   // last 30 days × ~2 weeks cover), overridable per item (Firestore reorder_settings).
   // "What to order" = max(0, level + open-sales-order demand − on hand), grouped by
   // supplier (the Shopify product vendor). A PO is sent to the supplier by email/WhatsApp.
-  let reorderOverrides = {}, reorderRows = [], poDraft = null;
+  let reorderOverrides = {}, reorderRows = [], poDraft = null, editingPoId = null;
   function salesVelocity(variantId, days) {
     const since = Date.now() - days * 86400000; let units = 0;
     loadSales().forEach(s => { if (new Date(s.datetime).getTime() >= since) (s.items || []).forEach(i => { if (i.variantId === variantId) units += (Number(i.qty) || 0); }); });
@@ -4265,7 +4364,23 @@
     const r = reorderRows.find(x => x.variantId === variantId);
     if (r) r.level = level;
   }
-  function startBlankPO() { poDraft = { supplier: '', supplierId: null, email: '', phone: '', items: [] }; renderPO(); }
+  function startBlankPO() { poDraft = { supplier: '', supplierId: null, email: '', phone: '', items: [] }; editingPoId = null; renderPO(); }
+  // Load an existing open PO back into the builder; saving/sending updates the
+  // SAME purchase order (same number) instead of creating a new one.
+  async function editPO(id) {
+    const po = posCache.find(p => p.id === id); if (!po) return;
+    closeGrv();
+    document.getElementById('reorder-modal').classList.add('show');
+    await ensureCosts(); await ensureSuppliers();
+    const sup = suppliersCache.find(s => s.id === po.supplierId);
+    poDraft = {
+      supplier: po.supplierName || (sup ? sup.name : ''), supplierId: po.supplierId || (sup ? sup.id : null),
+      email: sup ? (sup.email || '') : '', phone: sup ? (sup.phone || '') : '',
+      items: (po.items || []).map(i => ({ variantId: i.variantId, inventoryItemId: i.inventoryItemId || '', name: i.name, sku: i.sku || '', qty: i.qty, costCents: i.costCents || 0, receivedQty: i.receivedQty || 0 }))
+    };
+    editingPoId = id;
+    renderPO();
+  }
   function poSetSupplier(id) {
     const s = suppliersCache.find(x => x.id === id);
     poDraft.supplier = s ? s.name : ''; poDraft.supplierId = s ? s.id : null; poDraft.email = s ? (s.email || '') : ''; poDraft.phone = s ? (s.phone || '') : '';
@@ -4290,6 +4405,7 @@
     const rows = reorderRows.filter(r => r.supplier === supplier && r.rec > 0);
     if (!rows.length) { toast('Nothing to order for ' + supplier); return; }
     const sup = suppliersCache.find(s => (s.name || '').toLowerCase() === supplier.toLowerCase());
+    editingPoId = null;
     poDraft = {
       supplier, supplierId: sup ? sup.id : null, email: sup ? sup.email : '', phone: sup ? sup.phone : '',
       items: rows.map(r => ({ variantId: r.variantId, inventoryItemId: r.inventoryItemId || (findProduct(r.variantId) || {}).inventoryItemId || '', name: r.name, sku: r.sku, qty: r.rec, costCents: lastCostCents(r.variantId) }))
@@ -4309,6 +4425,7 @@
     const p = poDraft;
     const supOpts = suppliersCache.map(s => `<option value="${s.id}" ${s.id === p.supplierId ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
     body.innerHTML = `
+      ${editingPoId ? `<div style="background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:0.5rem 0.7rem;margin-bottom:0.6rem;font-size:0.85rem">✎ Editing <b>${esc((posCache.find(x => x.id === editingPoId) || {}).poNumber || 'PO')}</b> — saving updates this purchase order</div>` : ''}
       <button class="qbtn" style="width:auto;padding:0 0.7rem;margin-bottom:0.6rem" onclick="poBack()">↺ Start over</button>
       <div class="field"><label>Supplier</label>
         <select id="po-sup" style="width:100%;padding:0.6rem;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" onchange="poSetSupplier(this.value)">
@@ -4353,10 +4470,27 @@
     const items = poDraft.items.filter(i => i.qty > 0);
     if (!items.length) { toast('Add at least one item'); return; }
     poDraft.items = items;
-    const seq = (parseInt(localStorage.getItem('reptipos-po-seq') || '0', 10) || 0) + 1; localStorage.setItem('reptipos-po-seq', String(seq));
-    const poNumber = 'PO-' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + String(seq).padStart(3, '0');
-    const po = { poNumber, supplierId: poDraft.supplierId, supplierName: poDraft.supplier, items: poDraft.items.map(i => ({ variantId: i.variantId, inventoryItemId: i.inventoryItemId || (findProduct(i.variantId) || {}).inventoryItemId || '', name: i.name, sku: i.sku, qty: i.qty, costCents: i.costCents })), totalCents: poTotalCents(), status: method === 'save' ? 'draft' : 'sent', sentVia: method === 'save' ? '' : method, createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
-    try { if (fbReady()) await fbAdd('purchase_orders', po); } catch (e) {}
+    // Editing an existing PO keeps its number + created date and overwrites it;
+    // otherwise a fresh PO number is issued.
+    const editing = editingPoId ? posCache.find(p => p.id === editingPoId) : null;
+    let poNumber;
+    if (editing) poNumber = editing.poNumber;
+    else {
+      const seq = (parseInt(localStorage.getItem('reptipos-po-seq') || '0', 10) || 0) + 1; localStorage.setItem('reptipos-po-seq', String(seq));
+      poNumber = 'PO-' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + String(seq).padStart(3, '0');
+    }
+    const po = { poNumber, supplierId: poDraft.supplierId, supplierName: poDraft.supplier, items: poDraft.items.map(i => ({ variantId: i.variantId, inventoryItemId: i.inventoryItemId || (findProduct(i.variantId) || {}).inventoryItemId || '', name: i.name, sku: i.sku, qty: i.qty, costCents: i.costCents, ...(i.receivedQty ? { receivedQty: i.receivedQty } : {}) })), totalCents: poTotalCents(),
+      status: method === 'save' ? (editing ? (editing.status || 'draft') : 'draft') : 'sent',
+      sentVia: method === 'save' ? (editing ? (editing.sentVia || '') : '') : method,
+      createdAt: editing ? editing.createdAt : new Date().toISOString(),
+      ...(editing ? { updatedAt: new Date().toISOString() } : {}),
+      staff: currentStaff ? currentStaff.name : null };
+    try {
+      if (fbReady()) {
+        if (editing) { await fbSet('purchase_orders', editingPoId, po); const c = posCache.find(p => p.id === editingPoId); if (c) Object.assign(c, po); }
+        else await fbAdd('purchase_orders', po);
+      }
+    } catch (e) {}
     // Remember the entered costs in the POS's own cost store (never Shopify).
     try {
       const costLines = po.items.filter(i => i.costCents > 0 && i.variantId);
@@ -4374,8 +4508,8 @@
       const ph = (poDraft.phone || '').replace(/[^\d]/g, '');
       window.open('https://wa.me/' + ph + '?text=' + encodeURIComponent(text), '_blank');
     }
-    toast(method === 'save' ? 'PO ' + poNumber + ' saved · costs updated' : 'PO ' + poNumber + ' — ' + method + ' opened · costs updated');
-    poDraft = null; closeReorder();
+    toast(method === 'save' ? 'PO ' + poNumber + (editing ? ' updated' : ' saved') + ' · costs updated' : 'PO ' + poNumber + ' — ' + method + ' opened · costs updated');
+    poDraft = null; editingPoId = null; closeReorder();
   }
 
   // ---- Payments (Phase 2) ----
@@ -4812,7 +4946,8 @@
     openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier, loadVendorSuppliers, receivePO, deletePO,
     openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, stAddItem, reconcileStocktake, exportStockCsv, exportStockXlsx, importStockFile, importCostsFile,
     openReorder, closeReorder, setReorderLevel, startPO, startBlankPO, poSetSupplier, poSearch, poAddItem, poBack, poSetQty, poSetCost, poRemove, sendPO,
-    lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, saveTaxSettings, saveLoyaltySettings, saveEnclosureSettings,
+    lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, editStaff, saveTaxSettings, saveLoyaltySettings, saveEnclosureSettings,
+    editPO, printLabels, printLabelsForGrv,
     toggleRedeemPoints,
     flushQueue,
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
@@ -4823,13 +4958,12 @@
     openCatalogue, closeCatalogue, catSetFilter, catToggleMissing, catEdit, catSave, catNewForm, catArchive });
 
   // ---- Boot ----
-  ensureStaffSeed();
   if (loadCached()) { document.getElementById('cat-status').textContent = catalogue.length + ' products (cached)'; renderGrid(); }
   renderCart();
   renderCustomer();
   renderQueueBadge();
   renderOutboxBadge();
-  lockPOS();              // require a staff PIN before selling (default admin PIN 0000)
+  lockPOS();              // require a staff PIN before selling (first run: the PIN you enter becomes the manager PIN)
   refreshCatalogue(false);
   flushQueue(false);      // sync anything queued from a previous offline session
   setTimeout(syncWebOrdersTill, 4000); // pull new paid web orders onto the sales-order list
