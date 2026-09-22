@@ -4112,6 +4112,30 @@
       if (input) input.value = '';
     }).catch(e => { toast('PDF import failed: ' + (e.message || e)); if (input) input.value = ''; });
   }
+  // Fuzzy name match for supplier files: token overlap against name+SKU+
+  // barcode, accepted only for a clear unique winner. Numeric-led tokens
+  // (25w, 30cm) must match whole words — "50w" inside "150w" is a different
+  // product — so it never guesses the wrong wattage/size; ambiguous lines
+  // stay unmatched for a human to pick.
+  function fuzzyFindProduct(nm) {
+    const toks = String(nm || '').toLowerCase().replace(/[^\w.\-]+/g, ' ').split(/\s+/).filter(t => t.length >= 2);
+    if (toks.length < 2) return null;
+    let best = null, bestScore = 0, second = 0;
+    catalogue.forEach(p => {
+      const hay = ((p.name || '') + ' ' + (p.sku || '') + ' ' + (p.barcode || '')).toLowerCase();
+      const hayToks = hay.replace(/[^\w.\-]+/g, ' ').split(/\s+/).filter(Boolean);
+      let hit = 0;
+      toks.forEach(t => {
+        if (/^\d/.test(t)) { if (hayToks.includes(t)) hit++; return; }
+        if (hay.includes(t)) { hit++; return; }
+        if (t.length >= 4 && hayToks.some(h => h.length >= 4 && (h.startsWith(t) || t.startsWith(h)))) hit++;
+      });
+      const score = hit / toks.length;
+      if (score > bestScore) { second = bestScore; bestScore = score; best = p; }
+      else if (score > second) second = score;
+    });
+    return (bestScore >= 0.7 && (bestScore - second) >= 0.5 / toks.length) ? best : null;
+  }
   function applyGrvRows(rows, opts) {
     opts = opts || {};
     if (!rows || !rows.length) { toast('Empty file'); return; }
@@ -4144,6 +4168,7 @@
         const t = nm.toLowerCase();
         p = catalogue.find(x => (x.name || '').toLowerCase() === t) || null;
         if (!p) { const c = catalogue.filter(x => (x.name || '').toLowerCase().includes(t)); if (c.length === 1) p = c[0]; }
+        if (!p) p = fuzzyFindProduct((code ? code + ' ' : '') + nm);
       }
       if (!p) {
         const label = (code || nm).replace(/[^\x20-\x7E]/g, '').slice(0, 40);
