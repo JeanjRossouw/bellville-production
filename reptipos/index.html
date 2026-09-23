@@ -1315,15 +1315,19 @@
 
   // Buttons a cashier never sees. Applied on sign-in and on sign-out.
   // (Purchase orders are deliberately NOT in here — any staff member can
-  // order stock; the dashboard, receiving, sales history and catalogue
-  // stay managers-only.)
-  const MANAGER_BUTTONS = ['btn-dashboard', 'btn-receive', 'btn-sales', 'btn-catalogue'];
+  // order stock. 📥 Receive is per-staff: managers always, cashiers when
+  // their "receive" permission is ticked. The dashboard, sales history and
+  // catalogue stay managers-only.)
+  const MANAGER_BUTTONS = ['btn-dashboard', 'btn-sales', 'btn-catalogue'];
+  function canReceiveStock() { return !!currentStaff && (isManager() || !!currentStaff.canReceive); }
   function applyRoleToChrome() {
     const show = isManager();
     MANAGER_BUTTONS.forEach(id => {
       const el = document.getElementById(id);
       if (el) el.style.display = show ? '' : 'none';
     });
+    const rec = document.getElementById('btn-receive');
+    if (rec) rec.style.display = canReceiveStock() ? '' : 'none';
   }
 
   function lockPOS() { currentStaff = null; pinBuffer = ''; renderStaffBadge(); applyRoleToChrome(); renderLockPad(); renderLockDemo(); document.getElementById('lock').style.display = 'flex'; }
@@ -1423,15 +1427,16 @@
     if (!currentStaff || currentStaff.role !== 'admin') return '';
     const list = staffList();
     return `<div style="font-size:0.8rem; font-weight:700; margin-bottom:0.4rem">Staff</div>
-      ${list.map(s => `<div style="display:flex; justify-content:space-between; padding:0.25rem 0; font-size:0.85rem"><span>${esc(s.name)} <span style="color:var(--muted)">(${s.role}${s.role === 'admin' ? '' : ' · disc ≤' + (s.maxDiscPct != null ? s.maxDiscPct : 10) + '% · ' + (s.canRefund ? 'refunds ✓' : 'no refunds')})</span></span><span style="display:flex;gap:0.3rem"><button class="qbtn" style="width:auto;padding:0 0.5rem;height:26px" onclick="editStaff('${s.id}')" title="Edit name / PIN / limits">✎</button><button class="rm" onclick="removeStaff('${s.id}')">✕</button></span></div>`).join('')}
+      ${list.map(s => `<div style="display:flex; justify-content:space-between; padding:0.25rem 0; font-size:0.85rem"><span>${esc(s.name)} <span style="color:var(--muted)">(${s.role}${s.role === 'admin' ? '' : ' · disc ≤' + (s.maxDiscPct != null ? s.maxDiscPct : 10) + '% · ' + (s.canRefund ? 'refunds ✓' : 'no refunds') + (s.canReceive ? ' · 📥 receive ✓' : '')})</span></span><span style="display:flex;gap:0.3rem"><button class="qbtn" style="width:auto;padding:0 0.5rem;height:26px" onclick="editStaff('${s.id}')" title="Edit name / PIN / limits">✎</button><button class="rm" onclick="removeStaff('${s.id}')">✕</button></span></div>`).join('')}
       <div style="display:flex; gap:0.4rem; margin-top:0.4rem">
         <input id="st-name" placeholder="Name" style="flex:1">
         <input id="st-pin" placeholder="PIN" style="width:80px">
         <select id="st-role" style="width:110px"><option value="cashier">Cashier</option><option value="admin">Manager</option></select>
         <input id="st-disc" type="number" min="0" max="100" placeholder="disc %" title="Max discount % without manager approval" style="width:80px">
         <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.8rem;cursor:pointer"><input id="st-refund" type="checkbox" style="width:auto">refunds</label>
+        <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.8rem;cursor:pointer" title="May receive stock (GRV / receive a PO)"><input id="st-receive" type="checkbox" style="width:auto">📥 receive</label>
       </div>
-      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Cashiers can sell, refund, handle customers and raise stock orders (purchase orders). The dashboard, receiving stock, sales history and the catalogue are managers only. Over-limit discounts, refunds and pay-outs ask for a manager PIN.</div>
+      <div style="font-size:0.72rem; color:var(--muted); margin-top:0.3rem">Cashiers can sell, refund, handle customers and raise stock orders (purchase orders). Tick 📥 receive to also let a cashier receive stock. The dashboard, sales history and the catalogue are managers only. Over-limit discounts, refunds and pay-outs ask for a manager PIN.</div>
       <button class="qbtn" style="width:auto; padding:0 0.7rem; margin-top:0.4rem" onclick="addStaff()">+ Add staff</button>
       <div style="font-size:0.8rem; font-weight:700; margin:0.8rem 0 0.4rem">Company details (printed on documents)</div>
       <div style="display:flex; flex-direction:column; gap:0.35rem">
@@ -1514,7 +1519,8 @@
     const role = roleEl && roleEl.value === 'admin' ? 'admin' : 'cashier';
     const maxDiscPct = Math.min(100, Math.max(0, parseFloat(document.getElementById('st-disc').value) || 10));
     const canRefund = !!(document.getElementById('st-refund') && document.getElementById('st-refund').checked);
-    list.push({ id: 'st-' + Date.now(), name, pin, role, maxDiscPct, canRefund });
+    const canReceive = !!(document.getElementById('st-receive') && document.getElementById('st-receive').checked);
+    list.push({ id: 'st-' + Date.now(), name, pin, role, maxDiscPct, canRefund, canReceive });
     saveStaff(list); renderReg(); toast('Staff added');
   }
   // Edit an existing staff member's name / PIN / limits (syncs to every till).
@@ -1529,6 +1535,7 @@
       const d = prompt('Max discount % without manager approval:', s.maxDiscPct != null ? s.maxDiscPct : 10);
       if (d !== null) s.maxDiscPct = Math.min(100, Math.max(0, parseFloat(d) || 0));
       s.canRefund = confirm('May ' + s.name + ' do refunds without a manager PIN?\nOK = yes · Cancel = no');
+      s.canReceive = confirm('May ' + s.name + ' receive stock (📥 GRV / receive a PO)?\nOK = yes · Cancel = no');
     }
     saveStaff(list);
     if (currentStaff && currentStaff.id === id) { currentStaff = s; renderStaffBadge(); }
@@ -3970,7 +3977,7 @@
 
   let suppliersCache = [], grvsCache = [], grvLines = [], grvSupplierId = null, grvInFlight = false, grvCurTab = 'new', receivingPoId = null, posCache = [];
   async function openGrv() {
-    if (!managerOnly('Receiving stock')) return;
+    if (!canReceiveStock()) { toast('Receiving stock needs the 📥 receive permission — a manager grants it under 🧾 Register → staff'); return; }
     receivingPoId = null; grvLines = []; grvSupplierId = null; grvInFlight = false;
     document.getElementById('grv-modal').classList.add('show');
     grvTab('new');
