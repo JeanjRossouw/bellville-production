@@ -576,6 +576,20 @@
     return res.json();
   }
   const demoSeq = k => { const n = (parseInt(localStorage.getItem(k) || '0', 10) || 0) + 1; localStorage.setItem(k, String(n)); return n; };
+  // Shared-across-tills settings (staff, quick keys, wholesale prices) go
+  // through the server, whose service account CAN reach them — the till's own
+  // Firestore login is blocked from the settings collection by the security
+  // rules, which is why direct fbGet/fbSet sync silently never worked.
+  async function sharedGet(key) {
+    if (isDemo()) return fbGet('settings', key);
+    const r = await callFn({ action: 'sharedGet', key });
+    if (r && r.error) throw new Error(r.error);
+    return r ? r.data : null;
+  }
+  function sharedSave(key, data) {
+    if (isDemo()) return Promise.resolve(fbSet('settings', key, data));
+    return callFn({ action: 'sharedSave', key, data });
+  }
   const demoGet = k => { try { return JSON.parse(localStorage.getItem(k) || '[]'); } catch (e) { return []; } };
   const demoPut = (k, v) => localStorage.setItem(k, JSON.stringify(v));
   async function demoHandle(p) {
@@ -795,10 +809,10 @@
   let quickKeys = [];
   let qkEdit = false;
   try { quickKeys = JSON.parse(localStorage.getItem('reptipos-quickkeys') || '[]'); } catch (e) {}
-  // Cloud copy loads once Firebase is up (the module script runs after this one).
-  window.addEventListener('fb-ready', async () => {
-    try { const s = await fbGet('settings', 'quickkeys'); if (s && Array.isArray(s.variantIds)) { quickKeys = s.variantIds; localStorage.setItem('reptipos-quickkeys', JSON.stringify(quickKeys)); renderGrid(); } } catch (e) {}
-  });
+  // Cloud copy loads at boot (via the server — see sharedGet).
+  async function loadCloudQuickKeys() {
+    try { const s = await sharedGet('quickkeys'); if (s && Array.isArray(s.variantIds)) { quickKeys = s.variantIds; localStorage.setItem('reptipos-quickkeys', JSON.stringify(quickKeys)); renderGrid(); } } catch (e) {}
+  }
   // ---- Wholesale price list ----------------------------------------------
   // A client tagged "wholesale" (on the Shopify customer) buys enclosures at
   // the wholesale price list instead of retail. The list is keyed by MODEL
@@ -815,9 +829,10 @@
   let wholesalePrices = null;
   try { wholesalePrices = JSON.parse(localStorage.getItem('reptipos-wholesale') || 'null'); } catch (e) {}
   if (!wholesalePrices || typeof wholesalePrices !== 'object') wholesalePrices = { ...WHOLESALE_DEFAULTS };
-  window.addEventListener('fb-ready', async () => {
-    try { const s = await fbGet('settings', 'wholesale'); if (s && s.prices && typeof s.prices === 'object') { wholesalePrices = s.prices; localStorage.setItem('reptipos-wholesale', JSON.stringify(wholesalePrices)); renderCart(); } } catch (e) {}
-  });
+  window.addEventListener('fb-ready', loadCloudWholesale);
+  async function loadCloudWholesale() {
+    try { const s = await sharedGet('wholesale'); if (s && s.prices && typeof s.prices === 'object') { wholesalePrices = s.prices; localStorage.setItem('reptipos-wholesale', JSON.stringify(wholesalePrices)); renderCart(); } } catch (e) {}
+  }
   function custIsWholesale(c) { return !!(c && /(^|,)\s*wholesale\s*(,|$)/i.test(c.tags || '')); }
   function wholesaleCodeOf(name) {
     const n = String(name || '');
@@ -844,7 +859,7 @@
     const i = quickKeys.indexOf(variantId);
     if (i >= 0) quickKeys.splice(i, 1); else quickKeys.push(variantId);
     localStorage.setItem('reptipos-quickkeys', JSON.stringify(quickKeys));
-    try { fbSet('settings', 'quickkeys', { variantIds: quickKeys, updatedAt: new Date().toISOString() }); } catch (e) {}
+    sharedSave('quickkeys', { variantIds: quickKeys, updatedAt: new Date().toISOString() }).catch(() => {});
     renderGrid();
   }
   function productTile(p, withStar) {
@@ -1213,18 +1228,19 @@
   let currentStaff = null;
   let pinBuffer = '';
   function staffList() { try { return JSON.parse(localStorage.getItem('reptipos-staff') || '[]'); } catch (e) { return []; } }
-  // Staff live in the SHARED Firestore settings doc so a PIN added on one till
-  // works on every till; localStorage keeps the till usable offline.
+  // Staff live in the SHARED settings doc (synced via the server) so a PIN
+  // added on one till works on every till; localStorage keeps the till usable
+  // offline.
   function saveStaff(arr) {
     localStorage.setItem('reptipos-staff', JSON.stringify(arr));
-    try { if (window.fb || isDemo()) fbSet('settings', 'staff', { staff: arr, updatedAt: new Date().toISOString() }); } catch (e) { /* next save syncs */ }
+    sharedSave('staff', { staff: arr, updatedAt: new Date().toISOString() }).catch(() => { /* next save syncs */ });
   }
-  window.addEventListener('fb-ready', async () => {
+  async function syncStaffFromCloud() {
     try {
-      const s = await fbGet('settings', 'staff');
+      const s = await sharedGet('staff');
       const cloud = s && Array.isArray(s.staff) ? s.staff : [];
       const local = staffList();
-      const mergedOnce = localStorage.getItem('reptipos-staff-synced') === '1';
+      const mergedOnce = localStorage.getItem('reptipos-staff-synced2') === '1';
       if (!cloud.length && local.length) {
         // First till online seeds the shared list from what it has.
         saveStaff(local);
@@ -1239,10 +1255,11 @@
       } else if (cloud.length) {
         localStorage.setItem('reptipos-staff', JSON.stringify(cloud));
       }
-      localStorage.setItem('reptipos-staff-synced', '1');
+      localStorage.setItem('reptipos-staff-synced2', '1');
       renderLockPad();
     } catch (e) { /* offline — local list keeps working */ }
-  });
+  }
+  setInterval(syncStaffFromCloud, 5 * 60 * 1000);
   function renderStaffBadge() {
     const b = document.getElementById('staff-badge');
     if (b) b.textContent = currentStaff ? '👤 ' + currentStaff.name + (isManager() ? '' : ' · cashier') : '';
@@ -1293,7 +1310,7 @@
     if (nc && np > 0) map[nc] = np;
     wholesalePrices = map;
     localStorage.setItem('reptipos-wholesale', JSON.stringify(wholesalePrices));
-    try { fbSet('settings', 'wholesale', { prices: wholesalePrices, updatedAt: new Date().toISOString() }); } catch (e) {}
+    sharedSave('wholesale', { prices: wholesalePrices, updatedAt: new Date().toISOString() }).catch(() => {});
     renderCart(); renderReg();
     toast('Wholesale price list saved (' + Object.keys(map).length + ' items)');
   }
@@ -1301,7 +1318,7 @@
     if (!confirm('Remove ' + code + ' from the wholesale list? It sells at retail again.')) return;
     delete wholesalePrices[code];
     localStorage.setItem('reptipos-wholesale', JSON.stringify(wholesalePrices));
-    try { fbSet('settings', 'wholesale', { prices: wholesalePrices, updatedAt: new Date().toISOString() }); } catch (e) {}
+    sharedSave('wholesale', { prices: wholesalePrices, updatedAt: new Date().toISOString() }).catch(() => {});
     renderCart(); renderReg();
   }
 
@@ -5157,6 +5174,9 @@
   refreshCatalogue(false);
   flushQueue(false);      // sync anything queued from a previous offline session
   setTimeout(syncWebOrdersTill, 4000); // pull new paid web orders onto the sales-order list
+  syncStaffFromCloud();      // shared staff PINs (via the server) — makes every till agree
+  loadCloudQuickKeys();
+  loadCloudWholesale();
 </script>
 </body>
 </html>

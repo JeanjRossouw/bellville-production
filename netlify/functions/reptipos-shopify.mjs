@@ -439,6 +439,23 @@ async function setStock({ lineItems }) {
 // — which is why a cashier's till never receives a cost at all.
 const COSTS_DOC = 'pos-costs-repticube';
 
+// ---- Shared till settings (staff / quick keys / wholesale prices) --------
+// These must be the same on every till, but the tills' own Firestore login is
+// blocked from the settings collection by the client security rules — so they
+// sync through this function's service account instead. Whitelisted keys only.
+const SHARED_KEYS = new Set(['staff', 'quickkeys', 'wholesale']);
+function sharedKeyDoc(key) {
+  if (!SHARED_KEYS.has(key)) { const e = new Error('Unknown shared-settings key'); e.status = 400; throw e; }
+  return 'pos-shared-' + key;
+}
+async function sharedGet({ key }) {
+  const doc = await readDoc(sharedKeyDoc(key));
+  return { data: doc && Object.keys(doc).length ? doc : null };
+}
+async function sharedSave({ key, data }) {
+  await writeDoc(sharedKeyDoc(key), data || {}, 'pos');
+  return { ok: true };
+}
 async function getCosts() {
   const doc = await readDoc(COSTS_DOC);
   return { costs: (doc && typeof doc.costs === 'object' && doc.costs) || {} };
@@ -926,6 +943,8 @@ export const handler = async (event) => {
     if (body.action === 'scCredit') return json(200, await scCredit(body));
     if (body.action === 'scDebit') return json(200, await scDebit(body));
     if (body.action === 'getCosts') return json(200, await getCosts());
+    if (body.action === 'sharedGet') return json(200, await sharedGet(body));
+    if (body.action === 'sharedSave') return json(200, await sharedSave(body));
     if (body.action === 'saveCosts') return json(200, await saveCosts(body));
     if (body.action === 'productCreate') return json(200, await productCreate(body));
     if (body.action === 'productUpdate') return json(200, await productUpdate(body));
