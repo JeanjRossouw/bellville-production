@@ -1235,27 +1235,35 @@
     localStorage.setItem('reptipos-staff', JSON.stringify(arr));
     sharedSave('staff', { staff: arr, updatedAt: new Date().toISOString() }).catch(() => { /* next save syncs */ });
   }
+  let cloudStaffState = 'unknown'; // 'empty' | 'have' | 'unknown' — gates first-run PIN creation
   async function syncStaffFromCloud() {
     try {
       const s = await sharedGet('staff');
       const cloud = s && Array.isArray(s.staff) ? s.staff : [];
+      cloudStaffState = cloud.length ? 'have' : 'empty';
       const local = staffList();
-      const mergedOnce = localStorage.getItem('reptipos-staff-synced2') === '1';
+      const mergedOnce = localStorage.getItem('reptipos-staff-synced3') === '1';
       if (!cloud.length && local.length) {
         // First till online seeds the shared list from what it has.
         saveStaff(local);
       } else if (cloud.length && !mergedOnce) {
-        // This till's first sync: union its local staff into the shared list so
-        // nobody added before the sync existed gets lost. After this, the
-        // shared list is canonical (removals propagate, nothing resurrects).
+        // This till's first sync: union its local staff into the shared list.
+        // A person is identified by their PIN — never drop someone just
+        // because two tills both used the same internal id (that once
+        // knocked out the owner's PIN); re-id the local copy instead.
         const merged = [...cloud];
-        local.forEach(l => { if (!merged.some(m => m.id === l.id || m.pin === l.pin)) merged.push(l); });
-        if (merged.length !== cloud.length) saveStaff(merged);
+        let added = 0;
+        local.forEach(l => {
+          if (merged.some(m => String(m.pin) === String(l.pin))) return; // same person already there
+          const entry = merged.some(m => m.id === l.id) ? { ...l, id: l.id + '-' + Date.now().toString(36) } : l;
+          merged.push(entry); added++;
+        });
+        if (added) saveStaff(merged);
         else localStorage.setItem('reptipos-staff', JSON.stringify(cloud));
       } else if (cloud.length) {
         localStorage.setItem('reptipos-staff', JSON.stringify(cloud));
       }
-      localStorage.setItem('reptipos-staff-synced2', '1');
+      localStorage.setItem('reptipos-staff-synced3', '1');
       renderLockPad();
     } catch (e) { /* offline — local list keeps working */ }
   }
@@ -1356,7 +1364,9 @@
   function renderLockPad() {
     document.getElementById('lock-dots').textContent = '••••'.slice(0, pinBuffer.length).padEnd(4, '·');
     const hint = document.getElementById('lock-hint');
-    if (hint) hint.textContent = staffList().length === 0 ? 'First time on this till? Enter a NEW 4–6 digit PIN — it becomes the manager PIN.' : '';
+    if (hint) hint.textContent = staffList().length ? ''
+      : (cloudStaffState === 'empty' ? 'First time on this till? Enter a NEW 4–6 digit PIN — it becomes the manager PIN.'
+        : 'Loading staff from the cloud — give it a few seconds…');
     const pad = document.getElementById('lock-pad');
     pad.innerHTML = ['1','2','3','4','5','6','7','8','9','C','0','⌫'].map(k =>
       `<button class="qbtn" style="height:64px; font-size:1.3rem" onclick="pinKey('${k}')">${k}</button>`).join('');
@@ -1370,10 +1380,17 @@
       const s = staffList().find(x => x.pin === pinBuffer);
       if (s) { currentStaff = s; pinBuffer = ''; document.getElementById('lock').style.display = 'none'; renderStaffBadge(); applyRoleToChrome(); }
       else if (staffList().length === 0) {
-        // First run — no default PIN exists. The first PIN typed becomes the
-        // manager PIN (confirmed, so a typo doesn't get locked in).
+        // First run — but ONLY once the cloud has confirmed there is no staff
+        // list anywhere. Otherwise a fresh device racing its first sync could
+        // mint a new manager PIN that overwrites the real one.
+        if (cloudStaffState !== 'empty') {
+          if (pinBuffer.length >= 6) { pinBuffer = ''; renderLockPad(); }
+          toast('Still loading the staff list — give it a few seconds and try again');
+          syncStaffFromCloud();
+          return;
+        }
         if (confirm('Set ' + pinBuffer + ' as the MANAGER PIN for this shop?')) {
-          const me = { id: 'admin', name: 'Manager', pin: pinBuffer, role: 'admin' };
+          const me = { id: 'st-' + Date.now(), name: 'Manager', pin: pinBuffer, role: 'admin' };
           saveStaff([me]);
           currentStaff = me; pinBuffer = '';
           document.getElementById('lock').style.display = 'none';
