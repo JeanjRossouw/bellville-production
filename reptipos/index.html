@@ -4534,15 +4534,16 @@
     });
     if (!labels.length) { toast('Nothing to print labels for'); return; }
     if (labels.length > 40 && !confirm(labels.length + ' labels — print them all?')) return;
-    const body = labels.map(lb => `<div class="lb">
+    const body = labels.map(lb => `<div class="pg"><div class="lb">
         <div class="nm">${esc(lb.name)}</div>
         ${lb.code ? `<div class="bc">${barcodeSvg(lb.code, 20)}</div>` : ''}
         <div class="ft"><span class="cd">${esc(lb.code)}</span>${lb.priceCents != null ? `<span class="pr">${money(lb.priceCents)}</span>` : ''}</div>
-      </div>`).join('');
+      </div></div>`).join('');
     const w = window.open('', '_blank', 'width=460,height=640'); if (!w) { toast('Allow pop-ups'); return; }
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Labels</title><style>
       body{font-family:Arial,Helvetica,sans-serif;color:#000;background:#fff;margin:8px}
-      .lb{width:54mm;height:16mm;box-sizing:border-box;padding:0.6mm 1.6mm 0;overflow:hidden;display:flex;flex-direction:column;page-break-after:always;break-inside:avoid;border:1px dashed #bbb;margin:0 0 4px}
+      .lb{width:54mm;height:16mm;box-sizing:border-box;padding:0.6mm 1.6mm 0;overflow:hidden;display:flex;flex-direction:column;border:1px dashed #bbb}
+      .pg{margin:0 0 4px}
       .nm{font-size:6pt;font-weight:700;line-height:1.05;height:5.4mm;overflow:hidden}
       .bc{line-height:0;text-align:center;height:5.4mm}
       .bc svg{width:100%;height:5.4mm;display:block}
@@ -4551,10 +4552,20 @@
       .pr{font-size:8.4pt;font-weight:800;white-space:nowrap}
       .hint{font-size:12px;color:#555;margin:0 0 8px}
       .btns button{width:100%;padding:10px;border:1px solid #000;border-radius:8px;background:#fff;cursor:pointer;margin-top:8px}
-      /* Print rules LAST so they beat the screen rules above. */
-      @media print{@page{size:54mm 17mm;margin:0}.noprint{display:none}body{margin:0}.lb{border:none;margin:0}.lb:last-of-type{page-break-after:auto}}
+      /* Print rules LAST so they beat the screen rules above. The QL-800's
+         DK paper is PORTRAIT 17mm wide x 54mm long, so the page matches it
+         exactly (no scaling, no cropping) and the label content is rotated
+         90 degrees to lie along the sticker. */
+      @media print{
+        @page{size:17mm 54mm;margin:0}
+        .noprint{display:none}
+        body{margin:0}
+        .pg{width:17mm;height:54mm;position:relative;overflow:hidden;margin:0;page-break-after:always;break-inside:avoid}
+        .pg:last-of-type{page-break-after:auto}
+        .lb{border:none;position:absolute;top:0;left:0;width:54mm;height:16mm;transform:rotate(90deg) translateY(-16mm);transform-origin:top left}
+      }
     </style></head><body>
-      <div class="hint noprint">Print on the <b>Brother QL-800</b> — choose paper size <b>17mm × 54mm</b>, margins none. Each sticker is one label.</div>
+      <div class="hint noprint">Print on the <b>Brother QL-800</b> — paper size <b>17mm × 54mm</b>, margins <b>None</b>, scale <b>100% / Default</b> (never "Fit to page"). Each sticker is one label.</div>
       ${body}<div class="btns noprint"><button onclick="window.print()">🖨️ Print ${labels.length} label${labels.length === 1 ? '' : 's'}</button></div></body></html>`);
     w.document.close();
   }
