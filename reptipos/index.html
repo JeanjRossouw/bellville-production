@@ -4542,30 +4542,30 @@
     const w = window.open('', '_blank', 'width=460,height=640'); if (!w) { toast('Allow pop-ups'); return; }
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Labels</title><style>
       body{font-family:Arial,Helvetica,sans-serif;color:#000;background:#fff;margin:8px}
-      .lb{width:54mm;height:16mm;box-sizing:border-box;padding:0.6mm 1.6mm 0;overflow:hidden;display:flex;flex-direction:column;border:1px dashed #bbb}
+      .lb{width:50mm;height:14mm;box-sizing:border-box;padding:0.4mm 1mm 0;overflow:hidden;display:flex;flex-direction:column;border:1px dashed #bbb}
       .pg{margin:0 0 4px}
-      .nm{font-size:6pt;font-weight:700;line-height:1.05;height:5.4mm;overflow:hidden}
-      .bc{line-height:0;text-align:center;height:5.4mm}
-      .bc svg{width:100%;height:5.4mm;display:block}
-      .ft{display:flex;justify-content:space-between;align-items:baseline;gap:2mm;height:3.6mm;line-height:3.6mm}
-      .cd{font-size:4.8pt;letter-spacing:0.4px;overflow:hidden;white-space:nowrap}
-      .pr{font-size:8.4pt;font-weight:800;white-space:nowrap}
+      .nm{font-size:5.6pt;font-weight:700;line-height:1.05;height:4.6mm;overflow:hidden}
+      .bc{line-height:0;text-align:center;height:5mm}
+      .bc svg{width:100%;height:5mm;display:block}
+      .ft{display:flex;justify-content:space-between;align-items:baseline;gap:2mm;height:3.4mm;line-height:3.4mm}
+      .cd{font-size:4.6pt;letter-spacing:0.4px;overflow:hidden;white-space:nowrap}
+      .pr{font-size:8pt;font-weight:800;white-space:nowrap}
       .hint{font-size:12px;color:#555;margin:0 0 8px}
       .btns button{width:100%;padding:10px;border:1px solid #000;border-radius:8px;background:#fff;cursor:pointer;margin-top:8px}
       /* Print rules LAST so they beat the screen rules above. The QL-800's
-         DK paper is PORTRAIT 17mm wide x 54mm long, so the page matches it
-         exactly (no scaling, no cropping) and the label content is rotated
-         90 degrees to lie along the sticker. */
+         DK paper is PORTRAIT 17mm wide x 54mm long; the content strip is
+         50x14mm, rotated 90 degrees and CENTRED on the sticker so the
+         printer's unprintable edges never clip it. Print at Actual size. */
       @media print{
         @page{size:17mm 54mm;margin:0}
         .noprint{display:none}
         body{margin:0}
         .pg{width:17mm;height:54mm;position:relative;overflow:hidden;margin:0;page-break-after:always;break-inside:avoid}
         .pg:last-of-type{page-break-after:auto}
-        .lb{border:none;position:absolute;top:0;left:0;width:54mm;height:16mm;transform:rotate(90deg) translateY(-16mm);transform-origin:top left}
+        .lb{border:none;position:absolute;top:2mm;left:1.5mm;width:50mm;height:14mm;transform:rotate(90deg) translateY(-14mm);transform-origin:top left}
       }
     </style></head><body>
-      <div class="hint noprint">Print on the <b>Brother QL-800</b> — paper size <b>17mm × 54mm</b>, margins <b>None</b>, scale <b>100% / Default</b> (never "Fit to page"). Each sticker is one label.</div>
+      <div class="hint noprint">Print on the <b>Brother QL-800</b> — paper size <b>17mm × 54mm</b>, margins <b>None</b>, scale <b>Actual size</b>. The content is centred on the sticker automatically.</div>
       ${body}<div class="btns noprint"><button onclick="window.print()">🖨️ Print ${labels.length} label${labels.length === 1 ? '' : 's'}</button></div></body></html>`);
     w.document.close();
   }
