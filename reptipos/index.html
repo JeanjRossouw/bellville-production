@@ -3992,6 +3992,10 @@
     if (isDemo()) { const k = 'reptipos-demo-' + coll; const list = demoGet(k); const i = list.findIndex(x => x.id === id); if (i >= 0) list[i] = { ...list[i], ...data }; else list.push({ id, ...data }); demoPut(k, list); return; }
     const { db, fns } = window.fb; await fns.setDoc(fns.doc(db, coll, id), data, { merge: true });
   }
+  async function fbDel(coll, id) {
+    if (isDemo()) { const k = 'reptipos-demo-' + coll; demoPut(k, demoGet(k).filter(x => x.id !== id)); return; }
+    const { db, fns } = window.fb; await fns.deleteDoc(fns.doc(db, coll, id));
+  }
   async function fbGet(coll, id) {
     if (isDemo()) { return demoGet('reptipos-demo-' + coll).find(x => x.id === id) || null; }
     const { db, fns } = window.fb; const snap = await fns.getDoc(fns.doc(db, coll, id)); return snap.exists() ? { id: snap.id, ...snap.data() } : null;
@@ -4023,9 +4027,29 @@
   }
 
   let suppliersCache = [], grvsCache = [], grvLines = [], grvSupplierId = null, grvInFlight = false, grvCurTab = 'new', receivingPoId = null, posCache = [];
+  // The GRV in progress autosaves on every change, so a half-counted delivery
+  // survives a closed tab, a crash or lunch — reopening 📥 Receive restores it.
+  function saveGrvDraft() {
+    try {
+      if (grvLines.length) localStorage.setItem('reptipos-grv-draft', JSON.stringify({ grvLines, grvSupplierId, receivingPoId, at: new Date().toISOString() }));
+      else localStorage.removeItem('reptipos-grv-draft');
+    } catch (e) {}
+  }
+  function loadGrvDraft() { try { return JSON.parse(localStorage.getItem('reptipos-grv-draft') || 'null'); } catch (e) { return null; } }
+  function discardGrvDraft() {
+    if (grvLines.length && !confirm('Throw away this unfinished GRV?')) return;
+    localStorage.removeItem('reptipos-grv-draft');
+    grvLines = []; grvSupplierId = null; receivingPoId = null;
+    renderGrvNew();
+  }
   async function openGrv() {
     if (!canReceiveStock()) { toast('Receiving stock needs the 📥 receive permission — a manager grants it under 🧾 Register → staff'); return; }
-    receivingPoId = null; grvLines = []; grvSupplierId = null; grvInFlight = false;
+    const draft = loadGrvDraft();
+    if (draft && Array.isArray(draft.grvLines) && draft.grvLines.length) {
+      grvLines = draft.grvLines; grvSupplierId = draft.grvSupplierId || null; receivingPoId = draft.receivingPoId || null;
+      toast('Unfinished GRV restored — 🗑 Discard to start fresh');
+    } else { receivingPoId = null; grvLines = []; grvSupplierId = null; }
+    grvInFlight = false;
     document.getElementById('grv-modal').classList.add('show');
     grvTab('new');
     await ensureCosts();                          // margins on each received line
@@ -4062,7 +4086,7 @@
       ${linkedPo ? `<div style="background:var(--panel2);border:1px solid var(--accent);border-radius:8px;padding:0.55rem;margin-bottom:0.6rem;font-size:0.85rem">📦 Receiving <b>${esc(linkedPo.poNumber)}</b> — set the qty that actually arrived (0 to skip an item). Remaining stays on the PO.</div>` : ''}
       <div class="field"><label>Supplier</label>
         <div style="display:flex;gap:0.4rem">
-          <select id="grv-sup" style="flex:1;padding:0.7rem;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" onchange="grvSupplierId=this.value">
+          <select id="grv-sup" style="flex:1;padding:0.7rem;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text)" onchange="grvSupplierId=this.value;saveGrvDraft()">
             <option value="">— select supplier —</option>${supOpts}</select>
           <button class="qbtn" style="width:auto;padding:0 0.7rem" onclick="grvTab('suppliers')">+ New</button>
         </div></div>
@@ -4071,7 +4095,9 @@
         <div class="field" style="width:160px"><label>Date</label><input id="grv-date" type="date" value="${new Date().toISOString().slice(0, 10)}"></div>
       </div>
       <div class="field"><label style="display:flex;justify-content:space-between;align-items:center"><span>Add item (scan / search the catalogue)</span>
-        <button class="qbtn" style="width:auto;padding:0 0.6rem;height:28px" onclick="document.getElementById('grv-file').click()" title="Load the supplier's invoice / packing list (PDF, Excel or CSV) — lines match by SKU, barcode or name">📄 Import file</button></label>
+        <span style="display:flex;gap:0.4rem">
+        ${grvLines.length ? `<button class="qbtn" style="width:auto;padding:0 0.6rem;height:28px" onclick="discardGrvDraft()" title="Throw away this unfinished GRV">🗑 Discard</button>` : ''}
+        <button class="qbtn" style="width:auto;padding:0 0.6rem;height:28px" onclick="document.getElementById('grv-file').click()" title="Load the supplier's invoice / packing list (PDF, Excel or CSV) — lines match by SKU, barcode or name">📄 Import file</button></span></label>
         <input type="file" id="grv-file" accept=".xlsx,.xls,.csv,.pdf,text/csv,application/pdf" style="display:none" onchange="importGrvFile(this)">
         <input id="grv-search" autocomplete="off" placeholder="🔍 product name / SKU / barcode" oninput="renderGrvSearch(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();grvSearchEnter()}">
         <div id="grv-search-res" style="max-height:150px;overflow:auto"></div></div>
@@ -4235,6 +4261,7 @@
       matched++;
     }
     renderGrvLines();
+    saveGrvDraft();
     if (!matched && !misses.length) { toast('No item lines found in that file'); return; }
     toast('Imported ' + matched + ' line' + (matched === 1 ? '' : 's') + (misses.length ? ' · ' + misses.length + ' not matched' : ''));
     if (misses.length) alert('These lines didn\'t match a catalogue item — add them by scan/search:\n\n' + misses.slice(0, 25).join('\n') + (misses.length > 25 ? '\n…and ' + (misses.length - 25) + ' more' : ''));
@@ -4248,7 +4275,7 @@
       grvLines.push({ variantId, inventoryItemId: p.inventoryItemId || '', name: p.name, sku: p.sku || '', qty: 1, costCents: p.costCents || 0 });
     }
     const f = document.getElementById('grv-search'); if (f) f.value = '';
-    renderGrvSearch(''); renderGrvLines();
+    renderGrvSearch(''); renderGrvLines(); saveGrvDraft();
   }
   function renderGrvLines() {
     const el = document.getElementById('grv-lines'); if (!el) return;
@@ -4263,9 +4290,9 @@
     }).join('');
     updateGrvTotalsUI();
   }
-  function grvSetQty(i, v) { grvLines[i].qty = Math.max(0, parseInt(v) || 0); updateGrvTotalsUI(); }
-  function grvSetCost(i, v) { grvLines[i].costCents = toCents(v); updateGrvTotalsUI(); }
-  function grvRemove(i) { grvLines.splice(i, 1); renderGrvLines(); }
+  function grvSetQty(i, v) { grvLines[i].qty = Math.max(0, parseInt(v) || 0); updateGrvTotalsUI(); saveGrvDraft(); }
+  function grvSetCost(i, v) { grvLines[i].costCents = toCents(v); updateGrvTotalsUI(); saveGrvDraft(); }
+  function grvRemove(i) { grvLines.splice(i, 1); renderGrvLines(); saveGrvDraft(); }
   async function confirmGrv() {
     console.log('[GRV] confirm tapped', { grvInFlight, receivingPoId, lines: grvLines.length, grvSupplierId });
     if (grvInFlight) { toast('Already receiving — please wait a moment'); return; }
@@ -4309,6 +4336,7 @@
       if (confirm('Print product labels for the received items? (' + lines.reduce((n, l) => n + l.qty, 0) + ' labels)')) printLabels(grv.lineItems);
       toast('Received into stock · ' + grvNumber + (linkedPo ? ' (' + linkedPo.poNumber + ' ' + linkedPo.status + ')' : ''));
       grvLines = []; grvSupplierId = null; receivingPoId = null;
+      localStorage.removeItem('reptipos-grv-draft');
       grvTab('list');
     } catch (e) { toast('Receive failed: ' + (e.message || e)); }
     finally { grvInFlight = false; const b = document.getElementById('grv-confirm'); if (b) { b.disabled = false; b.textContent = '📥 Receive into stock'; } }
@@ -4333,6 +4361,7 @@
         ${bal > 0 ? `<button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="grvPay('${g.id}')">+ Payment</button>` : ''}
         <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="printGrvById('${g.id}')">🖨️</button>
         <button class="qbtn" style="width:auto;padding:0 0.6rem" onclick="printLabelsForGrv('${g.id}')" title="Print product labels for these items">🏷</button>
+        <button class="rm" onclick="deleteGrv('${g.id}')" title="Delete this GRV (optionally reversing the stock)">✕</button>
       </div></div>`;
   }
   async function grvPay(id) {
@@ -4445,6 +4474,7 @@
   }
   function receivePO(id) {
     const po = posCache.find(p => p.id === id); if (!po) return;
+    if (grvLines.length && receivingPoId !== id && !confirm('You have an unfinished GRV — replace it with ' + (po.poNumber || 'this PO') + '?')) return;
     grvLines = (po.items || []).map(i => {
       let invId = i.inventoryItemId || (findProduct(i.variantId) || {}).inventoryItemId || '';
       let variantId = i.variantId;
@@ -4459,9 +4489,33 @@
     grvSupplierId = po.supplierId;
     receivingPoId = id;
     grvInFlight = false;
+    saveGrvDraft();
     grvTab('new');
   }
   function printGrvById(id) { const g = grvsCache.find(x => x.id === id); if (g) printGrv(g); }
+  // Delete a GRV (test runs, double captures). Managers only (or admin PIN).
+  // Optionally reverses the stock increment in Shopify so counts stay honest.
+  async function deleteGrv(id) {
+    const g = grvsCache.find(x => x.id === id); if (!g) return;
+    if (!isManager() && !adminOverride('delete ' + (g.grvNumber || 'this GRV'))) return;
+    if ((g.amountPaidCents || 0) > 0 && !confirm(money(g.amountPaidCents) + ' in supplier payments are recorded against ' + (g.grvNumber || 'this GRV') + '. Delete it anyway?')) return;
+    if (!confirm('Delete ' + (g.grvNumber || 'this GRV') + ' (' + money(g.totalCents || 0) + ' from ' + (g.supplierName || 'supplier') + ')?\nIt disappears from the supplier account.')) return;
+    const reverse = confirm('Also take the received stock back OUT of Shopify?\nOK = yes — stock goes back down (right for a test or a mistake)\nCancel = no — keep the stock as it is');
+    try {
+      if (reverse) {
+        const lines = (g.lineItems || []).filter(l => l.inventoryItemId && (Number(l.qty) || 0) > 0);
+        if (lines.length) {
+          await apiX('receiveStock', { idemKey: uuid(), updateCost: false, lineItems: lines.map(l => ({ inventoryItemId: l.inventoryItemId, variantId: l.variantId, qty: -l.qty, costCents: 0 })) });
+          lines.forEach(l => { const p = findProduct(l.variantId); if (p) p.qty = Math.max(0, (Number(p.qty) || 0) - l.qty); });
+          cacheCatalogue(); renderGrid();
+        }
+      }
+      await fbDel('grvs', id);
+      grvsCache = grvsCache.filter(x => x.id !== id);
+      toast((g.grvNumber || 'GRV') + ' deleted' + (reverse ? ' — stock reversed' : ''));
+      renderGrvList();
+    } catch (e) { toast('Delete failed: ' + (e.message || e)); }
+  }
   // ---- Product labels (arrivals) ------------------------------------------
   // Sized for the shop's Brother QL-800 label printer with 17mm × 54mm
   // die-cut labels (DK-11204): each sticker is ONE page — in the print dialog
@@ -5181,7 +5235,7 @@
     openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, stAddItem, reconcileStocktake, exportStockCsv, exportStockXlsx, importStockFile, importCostsFile,
     openReorder, closeReorder, setReorderLevel, startPO, startBlankPO, poSetSupplier, poSearch, poAddItem, poBack, poSetQty, poSetCost, poRemove, sendPO,
     lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, editStaff, saveTaxSettings, saveLoyaltySettings, saveEnclosureSettings,
-    editPO, printLabels, printLabelsForGrv, printPOById, togglePO, importGrvFile,
+    editPO, printLabels, printLabelsForGrv, printPOById, togglePO, importGrvFile, deleteGrv, discardGrvDraft,
     toggleRedeemPoints,
     flushQueue,
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
