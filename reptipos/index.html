@@ -196,7 +196,7 @@
     <span id="store" title="Connected Shopify store">—</span>
     <span id="net"><span class="dot" id="net-dot"></span> <span id="net-txt">online</span></span>
     <span id="cat-status">loading catalogue…</span>
-    <button id="queue-badge" onclick="flushQueue(true)" title="Sales waiting to sync — click to sync now" style="display:none; width:auto;padding:0 0.6rem;height:30px;font-size:0.78rem;border-radius:8px;border:1px solid var(--warn);background:transparent;color:var(--warn);cursor:pointer"></button>
+    <button id="queue-badge" onclick="openSyncQueue()" title="Writes waiting to sync — click to see what and why" style="display:none; width:auto;padding:0 0.6rem;height:30px;font-size:0.78rem;border-radius:8px;border:1px solid var(--warn);background:transparent;color:var(--warn);cursor:pointer"></button>
     <button class="qbtn" id="btn-dashboard" title="Dashboard" onclick="openDashboard()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📈 Dashboard</button>
     <button class="qbtn" title="Clients &amp; accounts" onclick="openClients()" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">👥 Clients</button>
     <button class="qbtn" title="Sales orders &amp; quotes" onclick="openDocs('salesorder')" style="width:auto;padding:0 0.6rem;height:30px;font-size:0.8rem">📋 Orders</button>
@@ -5089,7 +5089,7 @@
       console.warn('Xero sync failed — queuing for retry:', e);
       const q = loadXeroQueue();
       if (!q.some(x => x.payload._localId === payload._localId)) {
-        q.push({ saleNumber: sale.saleNumber, payload });
+        q.push({ saleNumber: sale.saleNumber, payload, lastError: String(e.message || e), attempts: 1, at: new Date().toISOString() });
         saveXeroQueue(q);
       }
       renderQueueBadge();
@@ -5106,7 +5106,7 @@
       try {
         const out = await postSaleToXero(item.payload);
         markSaleXeroSynced(item.saleNumber, out);
-      } catch (e) { remaining.push(item); }
+      } catch (e) { item.lastError = String(e.message || e); item.attempts = (item.attempts || 0) + 1; remaining.push(item); }
     }
     saveXeroQueue(remaining); flushingXero = false;
     renderQueueBadge();
@@ -5153,8 +5153,9 @@
     for (const item of q) {
       try {
         const out = await callFn({ action: 'createOrder', idemKey: item.idemKey, customerId: item.customerId, lineItems: item.lineItems, note: item.note });
+        if (out && out.error) throw new Error(out.error);
         markSaleSynced(item.saleNumber, out.orderName);
-      } catch (e) { remaining.push(item); }
+      } catch (e) { item.lastError = String(e.message || e); item.attempts = (item.attempts || 0) + 1; remaining.push(item); }
     }
     saveQueue(remaining); renderQueueBadge(); flushing = false;
     const done = q.length - remaining.length;
@@ -5162,6 +5163,58 @@
   }
   window.addEventListener('online', () => { setNet(true); flushQueue(false); });
   setInterval(() => { if ((loadQueue().length || loadXeroQueue().length) && navigator.onLine) flushQueue(false); }, 30000);
+
+  // Tap the ⏳ badge: see exactly WHAT is waiting and WHY it last failed,
+  // retry now, or (managers) discard an item. A queued Shopify sale is real
+  // money/stock, so discarding one asks hard; Xero items are accounting
+  // copies — the sale itself is already safe in Shopify and the till.
+  let syncOverlay = null;
+  function openSyncQueue() {
+    if (syncOverlay) { try { syncOverlay.remove(); } catch (e) {} syncOverlay = null; }
+    const shop = loadQueue(), xero = loadXeroQueue();
+    if (!shop.length && !xero.length) { toast('Nothing waiting to sync'); renderQueueBadge(); return; }
+    const errLine = it => it.lastError
+      ? `<div style="color:var(--warn);font-size:0.72rem">⚠ ${esc(it.lastError)}${it.attempts ? ' · tried ' + it.attempts + '×' : ''}</div>`
+      : '<div style="color:var(--muted);font-size:0.72rem">waiting for next retry…</div>';
+    syncOverlay = overlay(`
+      <div style="font-weight:700;margin-bottom:6px">⏳ Waiting to sync</div>
+      ${shop.length ? `<div style="font-size:0.8rem;font-weight:700;margin:8px 0 2px;color:var(--warn)">Shopify sales (${shop.length}) — real sales not yet in Shopify</div>` + shop.map((it, i) => `
+        <div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:0.82rem">
+          <div style="min-width:0"><div style="font-weight:600">${esc(it.saleNumber || 'Sale')}</div>
+          <div style="color:var(--muted);font-size:0.72rem">${esc(it.note || '')}</div>${errLine(it)}</div>
+          <button class="rm" onclick="discardQueueItem('shop',${i})" title="Discard (manager)">✕</button>
+        </div>`).join('') : ''}
+      ${xero.length ? `<div style="font-size:0.8rem;font-weight:700;margin:10px 0 2px">Xero invoices (${xero.length}) — accounting copies only; these sales are already in Shopify</div>` + xero.map((it, i) => `
+        <div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:0.82rem">
+          <div style="min-width:0"><div style="font-weight:600">${esc(it.saleNumber || 'Sale')}</div>${errLine(it)}</div>
+          <button class="rm" onclick="discardQueueItem('xero',${i})" title="Discard (manager)">✕</button>
+        </div>`).join('') : ''}
+      <div style="display:flex;gap:0.5rem;margin-top:12px;flex-wrap:wrap">
+        <button class="btn btn-pay" style="flex:1;padding:0.6rem" onclick="flushQueue(true).then(()=>openSyncQueue())">🔄 Try sync now</button>
+        ${xero.length > 1 ? `<button class="qbtn" style="width:auto;padding:0 0.7rem" onclick="discardQueueItem('xero','all')">🗑 Discard all Xero</button>` : ''}
+      </div>`);
+  }
+  async function flushQueueAndRefresh() { await flushQueue(true); openSyncQueue(); }
+  function discardQueueItem(kind, i) {
+    if (!isManager() && !adminOverride('discard a queued sync item')) return;
+    if (kind === 'shop') {
+      const q = loadQueue(); const it = q[i]; if (!it) return;
+      if (!confirm('Discard ' + (it.saleNumber || 'this sale') + '?\n\nThis sale will NEVER reach Shopify (no stock movement there). Only do this for a test sale or one captured another way.')) return;
+      q.splice(i, 1); saveQueue(q);
+    } else {
+      const q = loadXeroQueue();
+      if (i === 'all') {
+        if (!confirm('Discard ALL ' + q.length + ' queued Xero invoices?\n\nThe sales themselves stay in Shopify and on the till — only the Xero accounting copies are skipped.')) return;
+        saveXeroQueue([]);
+      } else {
+        const it = q[i]; if (!it) return;
+        if (!confirm('Discard the Xero invoice for ' + (it.saleNumber || 'this sale') + '? The sale itself stays in Shopify.')) return;
+        q.splice(i, 1); saveXeroQueue(q);
+      }
+    }
+    renderQueueBadge();
+    openSyncQueue();
+  }
   // Customer messages: badge on boot, then a light poll.
   setTimeout(() => refreshInbox(true), 2500);
   setInterval(() => { if (navigator.onLine) refreshInbox(true); }, 120000);
@@ -5249,7 +5302,7 @@
     lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, editStaff, saveTaxSettings, saveLoyaltySettings, saveEnclosureSettings,
     editPO, printLabels, printLabelsForGrv, printPOById, togglePO, importGrvFile, deleteGrv, discardGrvDraft,
     toggleRedeemPoints,
-    flushQueue,
+    flushQueue, openSyncQueue, discardQueueItem,
     payOpen, payClose, payPick, cashChange, confirmCash, splitCalc, confirmSplit, completeSale,
     custOpen, custClose, custClear, custSearch, custAttach, custCreate, custHistory, renderCustBody,
     profileWholesale, saveWholesale, removeWholesaleRow,
