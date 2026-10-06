@@ -10,7 +10,9 @@
 //   XERO_REVENUE_ACCOUNT[_<BIZ>]         — sales revenue account code (default 200)
 //   XERO_BANK_ACCOUNT[_<BIZ>]            — bank/clearing account code for the payment
 //   XERO_TAX_TYPE[_<BIZ>]                — optional output-VAT tax type override
-import { getStore } from '@netlify/blobs';
+import { getStore, connectLambda } from '@netlify/blobs';
+// Lambda-style handlers must call this with their event before using Blobs.
+export function connectBlobs(event) { try { connectLambda(event); } catch (e) { /* local runs */ } }
 
 export const BIZ_KEYS = ['bellville', 'pinkfoot', 'repticube'];
 

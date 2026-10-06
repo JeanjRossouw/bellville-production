@@ -2590,7 +2590,7 @@
         const note = r.failed.join(' · ');
         if (note !== webSyncFailNote) { webSyncFailNote = note; toast('⚠ ' + r.failed.length + ' web order' + (r.failed.length === 1 ? '' : 's') + ' could not import — ' + r.failed[0]); }
       }
-      again = !!(r && r.more); // server stopped early (big backlog) — keep going
+      again = !!(r && r.more && r.created > 0); // big backlog and still making progress — keep going
     } catch (e) { /* quiet — next run retries */ }
     webSyncBusy = false;
     if (again) setTimeout(syncWebOrdersTill, 2500);
