@@ -8,7 +8,7 @@
 // touches stock — it never pushes back to Shopify (Shopify already decremented
 // its own inventory for the order), avoiding a sync loop.
 import crypto from 'node:crypto';
-import { getStore } from '@netlify/blobs';
+import { getStore, connectLambda } from '@netlify/blobs';
 import { readDoc, writeDoc } from './lib/firestore.mjs';
 
 const BIZ_KEYS = ['bellville', 'pinkfoot', 'repticube'];
@@ -31,6 +31,7 @@ function decrementItem(item, qty) {
 }
 
 export const handler = async (event) => {
+  try { connectLambda(event); } catch (e) { /* Blobs creds come from the event in Lambda-style functions */ }
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'POST only' };
 
   const biz = event.queryStringParameters?.biz;

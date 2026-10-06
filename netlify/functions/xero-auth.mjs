@@ -7,7 +7,7 @@
 //         tenant id, and store the token set under that business key.
 //
 // Register XERO_REDIRECT_URI (this function's callback URL) in your Xero app.
-import { clientCreds, exchangeCode, getConnections, saveTokens, loadTokens, AUTHORIZE_URL, SCOPES, BIZ_KEYS } from './lib/xero.mjs';
+import { clientCreds, exchangeCode, getConnections, saveTokens, loadTokens, AUTHORIZE_URL, SCOPES, BIZ_KEYS, connectBlobs } from './lib/xero.mjs';
 
 function html(status, title, body) {
   return {
@@ -20,6 +20,7 @@ function html(status, title, body) {
 }
 
 export const handler = async (event) => {
+  connectBlobs(event);
   const action = event.queryStringParameters?.action;
   const redirectUri = process.env.XERO_REDIRECT_URI;
 

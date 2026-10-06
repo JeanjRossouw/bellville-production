@@ -6,7 +6,7 @@
 // Flow: ensure a "POS Customer" contact → create an AUTHORISED ACCREC invoice
 // (line amounts VAT-inclusive, matching the till) → apply a Payment so it shows
 // as paid. Idempotent on the sale's local id (used as the invoice Reference).
-import { xeroApi, getPosContactId, bizConfig, BIZ_KEYS } from './lib/xero.mjs';
+import { xeroApi, getPosContactId, bizConfig, BIZ_KEYS, connectBlobs } from './lib/xero.mjs';
 import { requireUser } from './lib/auth.mjs';
 
 const json = (status, obj) => ({
@@ -16,6 +16,7 @@ const json = (status, obj) => ({
 });
 
 export const handler = async (event) => {
+  connectBlobs(event);
   if (event.httpMethod !== 'POST') return json(405, { error: 'POST only' });
 
   try {

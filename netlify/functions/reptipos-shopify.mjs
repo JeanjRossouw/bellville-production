@@ -12,7 +12,7 @@
 //   SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET  (or *_REPTICUBE)
 //
 // Phase 1 action: "getProducts". (Phase 2 will add "createOrder".)
-import { getStore } from '@netlify/blobs';
+import { getStore, connectLambda } from '@netlify/blobs';
 import { readDoc, writeDoc } from './lib/firestore.mjs';
 const API_VERSION = '2024-10';
 
@@ -66,6 +66,24 @@ async function shopify(path, { method = 'GET', body } = {}, _retry = 0) {
   let json = null; try { json = text ? JSON.parse(text) : null; } catch { /* non-JSON */ }
   if (!res.ok) { const e = new Error(`Shopify ${method} ${path} (${res.status}): ${text.slice(0, 300)}`); e.status = res.status; throw e; }
   return { json, headers: res.headers };
+}
+
+// EVERY open draft order, following Shopify's page links. A single
+// '?limit=100' call only ever returns the OLDEST 100 drafts, so once more
+// than that are open, newer sales orders / parked sales / quotes silently
+// vanish from the till — and the web-order import can't see what it already
+// created. Capped so a runaway can't hang the function.
+async function allOpenDrafts() {
+  const out = [];
+  let path = '/draft_orders.json?status=open&limit=250';
+  for (let page = 0; path && page < 40; page++) {
+    const { json, headers } = await shopify(path);
+    out.push(...((json && json.draft_orders) || []));
+    const link = (headers && headers.get('link')) || '';
+    const m = link.match(/<[^>]*[?&]page_info=([^&>]+)[^>]*>;\s*rel="next"/);
+    path = m ? '/draft_orders.json?limit=250&page_info=' + m[1] : null;
+  }
+  return out;
 }
 
 // GraphQL Admin API — used for gift cards + store credit, which have no REST
@@ -326,11 +344,10 @@ async function syncWebOrders() {
     .sort((a, b) => new Date(a.created_at) - new Date(b.created_at)); // import oldest first
   if (!candidates.length) return { created: 0, names: [], failed: [], more: false };
   // Orders already represented by an open sales order / quote on the till.
+  // Must succeed: if we can't see what's already on the till, create nothing
+  // (an import that can't check for duplicates is how 2,700 copies happened).
   const have = new Set();
-  try {
-    const { json: dj } = await shopify('/draft_orders.json?status=open&limit=100');
-    (dj.draft_orders || []).forEach(d => { const doc = parseDocNote(d.note); if (doc && doc.originalOrderId) have.add(String(doc.originalOrderId)); });
-  } catch (e) { /* if drafts can't load, the Blobs ledger still guards dupes */ }
+  (await allOpenDrafts()).forEach(d => { const doc = parseDocNote(d.note); if (doc && doc.originalOrderId) have.add(String(doc.originalOrderId)); });
   // Read the whole import ledger in ONE listing. A Blobs read per candidate
   // (the old way) grows with the open-order backlog until the function times
   // out before creating anything — which silently froze the import.
@@ -341,13 +358,17 @@ async function syncWebOrders() {
   }
   const cents = v => Math.round(parseFloat(v || '0') * 100);
   const names = []; const failed = []; let more = false;
+  const t0 = Date.now();
   for (const o of candidates) {
     const oid = String(o.id);
     if (have.has(oid) || ledger.has('order-' + oid)) continue;
     if (store && !ledgerOk) { try { if (await store.get('order-' + oid)) continue; } catch (e) {} }
     // Work budget: stop before the platform kills the function mid-run; the
     // caller sees more:true and runs again until the backlog is drained.
-    if (names.length >= 10 || Date.now() - started > 6000) { more = true; break; }
+    if (names.length >= 10 || Date.now() - t0 > 5000 || Date.now() - started > 8000) { more = true; break; }
+    // Claim the order in the ledger BEFORE creating, so a second till syncing
+    // at the same moment skips it instead of making a twin.
+    if (store) { try { await store.setJSON('order-' + oid, { claimed: true, name: o.name, at: new Date().toISOString() }); } catch (e) {} }
     try {
       const items = (o.line_items || []).map(li => {
         const qty = Number(li.quantity) || 1;
@@ -372,10 +393,12 @@ async function syncWebOrders() {
         customerId: o.customer ? o.customer.id : undefined, tags: 'pos,sales-order', doc
       });
       if (store) { try { await store.setJSON('order-' + oid, { draftId: saved.id, name: o.name, at: new Date().toISOString() }); } catch (e) {} }
+      have.add(oid);
       names.push(o.name + ' → ' + saved.name);
     } catch (e) {
       // One bad order must never block the ones behind it.
       failed.push(o.name + ': ' + String(e.message || e).slice(0, 140));
+      if (store) { try { await store.delete('order-' + oid); } catch (e2) {} } // release the claim so it retries
     }
   }
   return { created: names.length, names, failed, more };
@@ -644,8 +667,7 @@ async function draftCreate({ lineItems, customerId, parkData }) {
   return { id: String(json.draft_order.id), name: json.draft_order.name };
 }
 async function draftList() {
-  const { json } = await shopify('/draft_orders.json?status=open&limit=50');
-  return (json.draft_orders || []).filter(d => d.note && d.note.startsWith(PARK_MARKER)).map(d => {
+  return (await allOpenDrafts()).filter(d => d.note && d.note.startsWith(PARK_MARKER)).map(d => {
     let parkData = null;
     try { parkData = JSON.parse(d.note.slice(PARK_MARKER.length)); } catch (e) {}
     return {
@@ -699,8 +721,7 @@ async function docSave({ id, lineItems, customerId, tags, doc }) {
   return { id: String(json.draft_order.id), name: json.draft_order.name };
 }
 async function docList(type, customerId) {
-  const { json } = await shopify('/draft_orders.json?status=open&limit=100');
-  return (json.draft_orders || []).map(d => {
+  return (await allOpenDrafts()).map(d => {
     const doc = parseDocNote(d.note);
     return {
       id: String(d.id), name: d.name, createdAt: d.created_at,
@@ -921,6 +942,10 @@ async function salesReport({ since, until }) {
 }
 
 export const handler = async (event) => {
+  // Lambda-style functions must hand Blobs its credentials from the event;
+  // without this every getStore() throws and all the Blobs-backed guards
+  // (sale idempotency, web-order ledger, GRV/refund dedupe) silently do nothing.
+  try { connectLambda(event); } catch (e) { /* local runs without Blobs */ }
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'POST only' };
   let body;
   try { body = JSON.parse(event.body || '{}'); } catch { return { statusCode: 400, body: 'Invalid JSON' }; }
