@@ -1,7 +1,6 @@
 // Factory floor — the week planner, fabric watch-list and printable job
 // cards. Everything here is a view over the orders collection; it adds two
-// fields to an order: planWeek (the Monday of the week it is built) and
-// builder (who has it).
+// field to an order: planWeek (the Monday of the week it is built).
 import * as store from './store.js';
 import { allOrders, orderById, setStatus } from './orders.js';
 import { esc, money, today, niceDate, daysUntil, statusChip, fabricChip, FABRIC_STATES, openModal, toast, empty } from './ui.js';
@@ -9,7 +8,6 @@ import { qrSvg, scanUrl } from './qr.js';
 
 let settings = {};
 export const setFloorSettings = (cfg) => { settings = cfg || {}; };
-const staffNames = () => Array.isArray(settings.staff) ? settings.staff : [];
 
 let floorView = 'planner';   // planner | fabric
 
@@ -60,10 +58,6 @@ export async function startBuild(id) {
   await setStatus(id, 'in-production');
 }
 
-export async function setBuilder(id, name) {
-  await store.update('orders', id, { builder: String(name || '').trim() }, name ? 'Assigned to ' + name : 'Unassigned');
-}
-
 export function moveMenu(id) {
   const o = orderById(id);
   if (!o) return;
@@ -94,7 +88,6 @@ function dueBadge(o) {
 
 function planCard(o) {
   const waiting = o.fabric && o.fabricStatus !== 'received';
-  const staff = staffNames();
   return `
     <div class="pcard ${waiting ? 'waiting' : ''}" draggable="true" data-drag="${esc(o.id)}">
       <div class="pcard-top">
@@ -109,12 +102,6 @@ function planCard(o) {
       </div>
       <div class="pcard-controls">
         ${o.status === 'new' ? `<button class="btn ghost sm" data-act="start" data-id="${esc(o.id)}" title="The floor has started on it">Start</button>` : ''}
-        ${staff.length
-          ? `<select data-act="builder" data-id="${esc(o.id)}" title="Who is building it">
-              <option value="">— builder —</option>
-              ${staff.map(n => `<option value="${esc(n)}"${o.builder === n ? ' selected' : ''}>${esc(n)}</option>`).join('')}
-             </select>`
-          : `<input data-act="builder" data-id="${esc(o.id)}" value="${esc(o.builder || '')}" placeholder="builder" title="Who is building it (add names under Settings for a list)">`}
       </div>
       <div class="pcard-actions">
         ${o.status !== 'ready' ? `<button class="btn primary sm" data-act="mark-ready" data-id="${esc(o.id)}">Ready</button>` : ''}
@@ -162,7 +149,7 @@ function plannerHtml(rows) {
       <div class="pcol-body">${items.map(planCard).join('') || '<div class="pcol-empty">Drop orders here</div>'}</div>
     </div>`;
   return `
-    <p class="muted" style="margin:-.3rem 0 .7rem">Drag an order into the week it gets built, or tap ⋮ on a phone. Pick the builder on the card.</p>
+    <p class="muted" style="margin:-.3rem 0 .7rem">Drag an order into the week it gets built, or tap ⋮ on a phone.</p>
     <div class="pgrid">
       ${wks.map((w, i) => col(w.mon, w.title, w.range + ' · ' + by[w.mon].length, by[w.mon], i === 0 ? 'current' : '')).join('')}
     </div>
@@ -265,7 +252,6 @@ function jobCardHtml(o) {
       <tr><th>Fabric</th><td>${o.fabric ? '<b>' + esc(o.fabric) + '</b> &nbsp;·&nbsp; ' + esc(fab) : '<i>none</i>'}</td></tr>
       <tr><th>Due out</th><td class="big">${esc(niceDate(o.dueDate) || '—')}</td></tr>
       <tr><th>Planned week</th><td>${o.planWeek ? 'Week of ' + esc(niceDate(o.planWeek)) : '<i>not planned</i>'}</td></tr>
-      <tr><th>Builder</th><td>${esc(o.builder || '')}&nbsp;</td></tr>
       ${o.priceEach ? `<tr><th>Price</th><td>${esc(money(o.priceEach, cur))} each</td></tr>` : ''}
     </table>
     <div class="sign">
@@ -297,10 +283,10 @@ export function printPlanner() {
   wks.forEach(w => { by[w.mon] = []; });
   rows.forEach(o => { const b = bucketOf(o, wks); (by[b] = by[b] || []).push(o); });
   const table = (items) => items.length
-    ? `<table class="pl"><tr><th>Order</th><th>Product</th><th>Customer</th><th>Fabric</th><th>Builder</th><th>Due</th></tr>
+    ? `<table class="pl"><tr><th>Order</th><th>Product</th><th>Customer</th><th>Fabric</th><th>Due</th></tr>
        ${items.map(o => `<tr><td><b>${esc(o.orderNo || '')}</b></td><td>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' × ' + esc(o.qty) : ''}</td><td>${esc(o.customerName || '')}</td>
          <td>${esc(o.fabric || '')}${o.fabric && o.fabricStatus !== 'received' ? ' <b>(' + esc((FABRIC_STATES.find(f => f.key === o.fabricStatus) || FABRIC_STATES[0]).label) + ')</b>' : ''}</td>
-         <td>${esc(o.builder || '')}</td><td>${esc(niceDate(o.dueDate))}</td></tr>`).join('')}</table>`
+         <td>${esc(niceDate(o.dueDate))}</td></tr>`).join('')}</table>`
     : '<p><i>Nothing planned</i></p>';
   const body = `<div class="page">
     <div class="hd"><div class="co">${esc((settings.name || 'COUCH POTATO').toUpperCase())}<small>PRODUCTION PLANNER</small></div>

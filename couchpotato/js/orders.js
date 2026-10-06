@@ -205,7 +205,7 @@ function orderCard(o) {
             ${o.fabric ? `<div>${esc(o.fabric)}</div>` : ''}
             ${o.paidDate ? `<div class="muted">Paid ${esc(niceDate(o.paidDate))}</div>` : ''}
             ${o.priceEach ? `<div class="muted">${esc(money(o.priceEach, cur))} each · ${esc(money(o.priceEach * (o.qty || 1), cur))} total</div>` : ''}
-            ${(o.planWeek || o.builder) ? `<div class="muted">${[o.planWeek ? 'week of ' + niceDate(o.planWeek) : '', o.builder ? 'builder: ' + o.builder : ''].filter(Boolean).map(esc).join(' · ')}</div>` : ''}
+            ${o.planWeek ? `<div class="muted">Planned for the week of ${esc(niceDate(o.planWeek))}</div>` : ''}
           </div>
         </div>
         <div class="order-chips">
@@ -226,23 +226,10 @@ function orderCard(o) {
       </div>
       <div class="card-actions">
         ${next ? `<button class="btn primary sm" data-act="status" data-id="${esc(o.id)}" data-to="${next.key}">${esc(next.label)}</button>` : ''}
-        <button class="btn ghost sm" data-act="history" data-id="${esc(o.id)}">History</button>
         <button class="btn ghost sm" data-act="edit-order" data-id="${esc(o.id)}">Edit</button>
         <button class="btn danger sm" data-act="del-order" data-id="${esc(o.id)}">Delete</button>
       </div>
     </div>`;
-}
-
-export function showHistory(id) {
-  const o = orderById(id);
-  if (!o) return;
-  const ev = (o.events || []).slice().reverse();
-  openModal('History — ' + (o.orderNo || 'order'),
-    ev.length
-      ? `<ul class="history">${ev.map(e => `<li><strong>${esc(e.what)}</strong>
-          <span class="muted">${esc(e.by || '')} · ${esc(String(e.at || '').slice(0, 16).replace('T', ' '))}</span></li>`).join('')}</ul>`
-      : '<p class="muted">Nothing recorded on this order yet.</p>',
-    { okLabel: 'Close', cancelLabel: '', onOk: () => true });
 }
 
 export function renderOrders(host) {

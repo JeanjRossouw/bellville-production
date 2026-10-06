@@ -5,10 +5,10 @@ import { esc, field, row, toast, money, daysUntil } from './ui.js';
 import { startCustomers, renderCustomers, newCustomer, editCustomer, deleteCustomer } from './customers.js';
 import {
   startOrders, renderOrders, newOrder, editOrder, deleteOrder, setStatus, setFabric,
-  setDue, setFilter, getFilter, setOrderSettings, allOrders, showHistory
+  setDue, setFilter, getFilter, setOrderSettings, allOrders
 } from './orders.js';
 import {
-  renderFloor, setFloorView, setFloorSettings, startBuild, setBuilder, moveMenu,
+  renderFloor, setFloorView, setFloorSettings, startBuild, moveMenu,
   printJobCard, printWeekJobCards, printPlanner
 } from './floor.js';
 import { renderScan, setScanSettings, startCamera, stopCamera, manualFind, confirmDispatch, notifyCustomer } from './scan.js';
@@ -184,8 +184,6 @@ function renderSettings(host) {
       ${row(field('Phone', 's-phone', { value: s.phone }), field('Email', 's-email', { value: s.email, type: 'email' }))}
       ${field('Address', 's-address', { value: s.address, type: 'textarea' })}
       ${field('Bank details for invoices', 's-bank', { value: s.bankDetails, type: 'textarea', placeholder: 'Bank, account name, account number, branch code' })}
-      <h2>Factory floor</h2>
-      ${field('Builders / staff (comma separated)', 's-staff', { value: (s.staff || []).join(', '), placeholder: 'e.g. Sipho, Johan, Thandi' })}
       <h2>Numbering and terms</h2>
       ${row(field('Order number prefix', 's-oprefix', { value: s.orderPrefix }), field('Next order number', 's-ofirst', { value: s.firstOrderNo, type: 'number', min: 1 }))}
       ${row(field('Invoice prefix', 's-iprefix', { value: s.invoicePrefix }), field('Default payment terms (days)', 's-terms', { value: s.paymentTermsDays, type: 'number', min: 0 }))}
@@ -217,7 +215,6 @@ async function saveSettings() {
     email: g('s-email'),
     address: g('s-address'),
     bankDetails: g('s-bank'),
-    staff: g('s-staff').split(',').map(x => x.trim()).filter(Boolean),
     orderPrefix: g('s-oprefix') || 'CP-',
     firstOrderNo: parseInt(g('s-ofirst'), 10) || 1001,
     invoicePrefix: g('s-iprefix') || 'INV-',
@@ -248,7 +245,6 @@ async function onAction(e) {
     case 'edit-order': return editOrder(id);
     case 'del-order': return deleteOrder(id);
     case 'status': return setStatus(id, b.dataset.to);
-    case 'history': return showHistory(id);
     case 'new-customer': return newCustomer();
     case 'edit-customer': return editCustomer(id);
     case 'del-customer': return deleteCustomer(id, parseInt(b.dataset.n, 10) || 0);
@@ -311,7 +307,6 @@ function onChangeEvent(e) {
   const act = t.dataset ? t.dataset.act : '';
   if (act === 'fabric') return setFabric(t.dataset.id, t.value);
   if (act === 'due') return setDue(t.dataset.id, t.value);
-  if (act === 'builder') return setBuilder(t.dataset.id, t.value);
   if (t.id === 'inv-filter') { setInvFilter(t.value); return paint(); }
   if (t.id === 'stmt-cust') { setStmtCustomer(t.value); return paint(); }
 }
