@@ -235,21 +235,21 @@ export function renderCosting(host) {
     <div class="page-head">
       <div><h1>Costing</h1><p class="sub">Materials + labour + a share of overheads = what a piece really costs</p></div>
       <div class="btn-row">
-        <button class="btn ghost" data-act="print-pricesheet">🖨️ Price sheet</button>
-        <button class="btn ghost" data-act="print-costsheet">🖨️ Cost sheet</button>
+        <button class="btn ghost" data-act="print-pricesheet">Price sheet</button>
+        <button class="btn ghost" data-act="print-costsheet">Cost sheet</button>
       </div>
     </div>
-    <div class="btn-row" style="margin-bottom:.9rem">${tab('products', '📦 Products')}${tab('materials', '🧱 Materials')}${tab('overheads', '🏢 Overheads & labour')}</div>
+    <div class="btn-row" style="margin-bottom:.9rem">${tab('products', 'Products')}${tab('materials', 'Materials')}${tab('overheads', 'Overheads & labour')}</div>
     ${body}`;
 }
 
 function productsHtml(cur) {
   const oh = overheadPerUnit();
   const warn = !oh || !labourRate()
-    ? `<div class="notice-inline">⚠ ${!labourRate() ? 'No labour rate set' : ''}${!labourRate() && !oh ? ' and ' : ''}${!oh ? 'no overheads or pieces-per-month set' : ''} — costs below are incomplete. Fill in the Overheads & labour tab.</div>` : '';
+    ? `<div class="notice-inline">${!labourRate() ? 'No labour rate set' : ''}${!labourRate() && !oh ? ' and ' : ''}${!oh ? 'no overheads or pieces-per-month set' : ''} — costs below are incomplete. Fill in the Overheads & labour tab.</div>` : '';
   const head = `<div class="page-head" style="margin:0 0 .6rem"><p class="sub">${products.length} product${products.length === 1 ? '' : 's'} · overhead share ${esc(money(oh, cur))} per piece · labour ${esc(money(labourRate(), cur))}/h</p>
     <button class="btn primary" data-act="new-product">＋ New product</button></div>`;
-  if (!products.length) return head + warn + empty('📦', 'No products costed yet', 'Add a product and its bill of materials to see what it costs to build.');
+  if (!products.length) return head + warn + empty('', 'No products costed yet', 'Add a product and its bill of materials to see what it costs to build.');
   const cats = {};
   products.forEach(p => { (cats[p.category || 'Uncategorised'] = cats[p.category || 'Uncategorised'] || []).push(p); });
   return head + warn + Object.keys(cats).sort().map(cat => `
@@ -266,9 +266,9 @@ function productsHtml(cur) {
           <td class="r">${c.price ? esc(money(c.price, cur)) : '<span class="muted">not set</span>'}</td>
           <td class="r ${c.price ? (c.margin < 0 ? 'bad' : c.marginPct < 0.2 ? 'warn' : 'good') : ''}">${c.price ? esc(money(c.margin, cur)) + '<div class="muted">' + Math.round(c.marginPct * 100) + '%</div>' : ''}</td>
           <td class="r nowrap">
-            <button class="btn ghost sm" data-act="edit-product" data-id="${esc(p.id)}">✏️</button>
-            <button class="btn ghost sm" data-act="dup-product" data-id="${esc(p.id)}" title="Copy">⧉</button>
-            <button class="btn danger sm" data-act="del-product" data-id="${esc(p.id)}">🗑</button>
+            <button class="btn ghost sm" data-act="edit-product" data-id="${esc(p.id)}">Edit</button>
+            <button class="btn ghost sm" data-act="dup-product" data-id="${esc(p.id)}" title="Copy">Copy</button>
+            <button class="btn danger sm" data-act="del-product" data-id="${esc(p.id)}">Delete</button>
           </td></tr>`; }).join('')}</tbody>
       </table>
     </div>`).join('');
@@ -279,7 +279,7 @@ function materialsHtml(cur) {
   products.forEach(p => (p.materials || []).forEach(l => { usage[l.materialId] = (usage[l.materialId] || 0) + 1; }));
   const head = `<div class="page-head" style="margin:0 0 .6rem"><p class="sub">${materials.length} material${materials.length === 1 ? '' : 's'} · change a price here and every product using it updates</p>
     <button class="btn primary" data-act="new-material">＋ New material</button></div>`;
-  if (!materials.length) return head + empty('🧱', 'No materials yet', 'Timber, foam, webbing, fabric, feet, glue — add each with its current price.');
+  if (!materials.length) return head + empty('', 'No materials yet', 'Timber, foam, webbing, fabric, feet, glue — add each with its current price.');
   return head + `<div class="card" style="padding:0; overflow:auto"><table class="tbl">
     <thead><tr><th>Material</th><th>Unit</th><th class="r">Cost / unit</th><th>Supplier</th><th class="r">Used in</th><th></th></tr></thead>
     <tbody>${materials.map(m => `<tr>
@@ -288,7 +288,7 @@ function materialsHtml(cur) {
       <td class="r">${esc(money(m.cost, cur))}</td>
       <td>${esc(m.supplier || '')}</td>
       <td class="r">${usage[m.id] || 0} product${(usage[m.id] || 0) === 1 ? '' : 's'}</td>
-      <td class="r nowrap"><button class="btn ghost sm" data-act="edit-material" data-id="${esc(m.id)}">✏️</button> <button class="btn danger sm" data-act="del-material" data-id="${esc(m.id)}">🗑</button></td>
+      <td class="r nowrap"><button class="btn ghost sm" data-act="edit-material" data-id="${esc(m.id)}">Edit</button> <button class="btn danger sm" data-act="del-material" data-id="${esc(m.id)}">Delete</button></td>
     </tr>`).join('')}</tbody></table></div>`;
 }
 
@@ -312,7 +312,7 @@ function overheadsHtml(cur) {
         field('Labour rate per hour (' + cur + ')', 'oh-rate', { value: settings.labourRate == null ? '' : settings.labourRate, type: 'number', min: 0, step: '0.01', placeholder: 'e.g. 85' })
       )}
       <div class="cost-live"><div class="tot"><span>Overhead share per piece</span><strong id="oh-per">${esc(money(overheadPerUnit(), cur))}</strong></div></div>
-      <div class="card-actions"><button class="btn primary" data-act="save-overheads">💾 Save</button></div>
+      <div class="card-actions"><button class="btn primary" data-act="save-overheads">Save</button></div>
     </div>`;
 }
 function ohRow(o) {
@@ -341,7 +341,7 @@ const PRINT_CSS = `
 `;
 function openPrint(title, body) {
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${PRINT_CSS}</style></head><body>
-    <div class="no-print"><button onclick="window.print()" style="padding:8px 16px;font-weight:800;background:#000;color:#fff;border:0;cursor:pointer">🖨️ PRINT</button>
+    <div class="no-print"><button onclick="window.print()" style="padding:8px 16px;font-weight:800;background:#000;color:#fff;border:0;cursor:pointer">PRINT</button>
     <button onclick="window.close()" style="padding:8px 16px;margin-left:8px;cursor:pointer">CLOSE</button></div>${body}</body></html>`;
   const win = window.open('', '_blank');
   if (!win) { toast('Pop-up blocked — allow pop-ups for this site, then try again', 'warn'); return; }

@@ -75,7 +75,7 @@ export function newInvoiceFor(orderIds) {
     <div class="cost-live" id="iv-live"></div>
     ${field('Note on the invoice', 'iv-note', { value: '', type: 'textarea', placeholder: 'e.g. Delivered to Bellville showroom' })}`,
     {
-      okLabel: '🧾 Issue invoice',
+      okLabel: 'Issue invoice',
       onOk: async (w) => {
         const lines = [];
         w.querySelectorAll('.inv-line').forEach((r, i) => {
@@ -134,7 +134,7 @@ export function recordPayment(id) {
     ${row(field('Amount received', 'pm-amt', { value: due, type: 'number', min: 0, step: '0.01' }), field('Date', 'pm-date', { value: today(), type: 'date' }))}
     ${row(field('Method', 'pm-method', { type: 'select', value: 'EFT', options: ['EFT', 'Cash', 'Card', 'Other'].map(x => ({ value: x, label: x })) }), field('Reference', 'pm-ref', { value: '', placeholder: 'Bank reference / receipt no.' }))}`,
     {
-      okLabel: '💰 Record payment',
+      okLabel: 'Record payment',
       onOk: async (w) => {
         const amount = parseFloat(val(w, 'pm-amt')) || 0;
         if (amount <= 0) { toast('Enter the amount received', 'warn'); return false; }
@@ -181,7 +181,7 @@ export function renderInvoices(host) {
   host.innerHTML = `
     <div class="page-head">
       <div><h1>Invoices</h1><p class="sub">Everything dispatched gets billed; everything billed gets chased</p></div>
-      <div class="btn-row"><button class="btn ghost" data-act="inv-export">⬇️ Export for the accountant</button></div>
+      <div class="btn-row"><button class="btn ghost" data-act="inv-export">Export for the accountant</button></div>
     </div>
     <div class="tiles">
       ${tile(q.length, 'Waiting to be invoiced', q.length ? 'amber' : '')}
@@ -189,12 +189,12 @@ export function renderInvoices(host) {
       <div class="tile ${owing ? 'amber' : ''}"><div class="tile-n">${esc(money(owing, cur))}</div><div class="tile-l">Owed to the factory</div></div>
       <div class="tile wide"><div class="tile-n">${esc(money(thisMonth, cur))}</div><div class="tile-l">Invoiced this month</div></div>
     </div>
-    <div class="btn-row" style="margin-bottom:.9rem">${tab('queue', '📥 To invoice', q.length)}${tab('invoices', '🧾 Invoices', live.length)}${tab('statements', '📊 Statements')}</div>
+    <div class="btn-row" style="margin-bottom:.9rem">${tab('queue', 'To invoice', q.length)}${tab('invoices', 'Invoices', live.length)}${tab('statements', 'Statements')}</div>
     ${body}`;
 }
 
 function queueHtml(q, cur) {
-  if (!q.length) return empty('📥', 'Nothing waiting', 'Orders appear here the moment they are scanned out at the door.');
+  if (!q.length) return empty('', 'Nothing waiting', 'Orders appear here the moment they are scanned out at the door.');
   const byCust = {};
   q.forEach(o => { (byCust[o.customerId] = byCust[o.customerId] || []).push(o); });
   return `<p class="muted" style="margin:-.3rem 0 .7rem">One invoice per customer. Invoice everything for a customer in one go, or tick the orders you want on it.</p>` + Object.keys(byCust).map(cid => {
@@ -204,8 +204,8 @@ function queueHtml(q, cur) {
     return `<div class="card">
       <div class="page-head" style="margin:0 0 .5rem"><div><h2>${esc(c.name || '')}</h2><p class="sub">${rows.length} order${rows.length === 1 ? '' : 's'} · ${esc(money(total, cur))} excl. VAT</p></div>
         <div class="btn-row">
-          <button class="btn ghost sm" data-act="inv-selected" data-cust="${esc(cid)}">🧾 Invoice ticked</button>
-          <button class="btn primary sm" data-act="inv-customer" data-cust="${esc(cid)}">🧾 Invoice all ${rows.length}</button>
+          <button class="btn ghost sm" data-act="inv-selected" data-cust="${esc(cid)}">Invoice ticked</button>
+          <button class="btn primary sm" data-act="inv-customer" data-cust="${esc(cid)}">Invoice all ${rows.length}</button>
         </div></div>
       <table class="tbl"><thead><tr><th></th><th>Order</th><th>Product</th><th>Dispatched</th><th class="r">Amount</th></tr></thead><tbody>
         ${rows.map(o => `<tr><td><input type="checkbox" class="q-pick" data-cust="${esc(cid)}" value="${esc(o.id)}"></td>
@@ -224,7 +224,7 @@ export function pickedIds(host, cid) {
 function statusChipInv(inv) {
   if (inv.status === 'void') return '<span class="chip warn-soft">void</span>';
   if (inv.status === 'paid') return '<span class="chip st-disp">✓ Paid</span>';
-  if (isOverdue(inv)) return '<span class="chip late">⚠ Overdue</span>';
+  if (isOverdue(inv)) return '<span class="chip late">Overdue</span>';
   return paidAmount(inv) > 0 ? '<span class="chip soon">Part paid</span>' : '<span class="chip st-prod">Issued</span>';
 }
 
@@ -232,7 +232,7 @@ function listHtml(cur) {
   const rows = invoices.filter(i => invFilter === 'all' ? true : invFilter === 'paid' ? i.status === 'paid' : i.status === 'issued');
   const sel = `<select id="inv-filter" style="font:inherit; font-size:13px; padding:.4rem .6rem; border:1px solid var(--line); border-radius:8px">
     <option value="open"${invFilter === 'open' ? ' selected' : ''}>Unpaid</option><option value="paid"${invFilter === 'paid' ? ' selected' : ''}>Paid</option><option value="all"${invFilter === 'all' ? ' selected' : ''}>All (incl. void)</option></select>`;
-  if (!rows.length) return sel + empty('🧾', 'No invoices here', invoices.length ? 'Try another filter.' : 'Issue the first one from the To invoice tab.');
+  if (!rows.length) return sel + empty('', 'No invoices here', invoices.length ? 'Try another filter.' : 'Issue the first one from the To invoice tab.');
   return sel + `<div class="card" style="padding:0; overflow:auto; margin-top:.6rem"><table class="tbl">
     <thead><tr><th>Invoice</th><th>Customer</th><th>Date</th><th>Due</th><th class="r">Total</th><th class="r">Owing</th><th>Status</th><th></th></tr></thead>
     <tbody>${rows.map(i => `<tr${i.status === 'void' ? ' style="opacity:.5"' : ''}>
@@ -241,8 +241,8 @@ function listHtml(cur) {
       <td class="r">${esc(money(i.total, cur))}</td><td class="r">${i.status === 'void' ? '—' : esc(money(balance(i), cur))}</td>
       <td>${statusChipInv(i)}</td>
       <td class="r nowrap">
-        <button class="btn ghost sm" data-act="inv-print" data-id="${esc(i.id)}" title="View / print">🖨️</button>
-        ${i.status === 'issued' ? `<button class="btn primary sm" data-act="inv-pay" data-id="${esc(i.id)}">💰 Payment</button>` : ''}
+        <button class="btn ghost sm" data-act="inv-print" data-id="${esc(i.id)}" title="View / print">Print</button>
+        ${i.status === 'issued' ? `<button class="btn primary sm" data-act="inv-pay" data-id="${esc(i.id)}">Payment</button>` : ''}
         ${i.status !== 'void' && !paidAmount(i) ? `<button class="btn danger sm" data-act="inv-void" data-id="${esc(i.id)}" title="Void">✕</button>` : ''}
       </td></tr>`).join('')}</tbody></table></div>`;
 }
@@ -252,10 +252,10 @@ function statementsHtml(cur) {
   const cid = stmtCustomer || (custs[0] && custs[0].id) || '';
   const c = customerById(cid);
   const sel = `<select id="stmt-cust" style="font:inherit; font-size:14px; padding:.5rem .7rem; border:1px solid var(--line); border-radius:8px">${custs.map(x => `<option value="${esc(x.id)}"${x.id === cid ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select>`;
-  if (!c) return empty('📊', 'No customers yet', '');
+  if (!c) return empty('', 'No customers yet', '');
   const rows = invoices.filter(i => i.customerId === cid && i.status !== 'void').sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
   const owing = rows.reduce((s, i) => s + balance(i), 0);
-  return `<div class="btn-row" style="margin-bottom:.8rem; align-items:center">${sel}<button class="btn ghost" data-act="stmt-print" data-cust="${esc(cid)}">🖨️ Print statement</button></div>
+  return `<div class="btn-row" style="margin-bottom:.8rem; align-items:center">${sel}<button class="btn ghost" data-act="stmt-print" data-cust="${esc(cid)}">Print statement</button></div>
     <div class="card" style="padding:0; overflow:auto"><table class="tbl">
       <thead><tr><th>Date</th><th>Invoice</th><th>Due</th><th class="r">Total</th><th class="r">Paid</th><th class="r">Owing</th><th>Status</th></tr></thead>
       <tbody>${rows.length ? rows.map(i => `<tr><td>${esc(niceDate(i.date))}</td><td><strong>${esc(i.invoiceNo)}</strong></td><td>${esc(niceDate(i.dueDate))}</td>
@@ -281,7 +281,7 @@ const PRINT_CSS = `
 `;
 function openPrint(title, body) {
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${PRINT_CSS}</style></head><body>
-    <div class="no-print"><button onclick="window.print()" style="padding:8px 16px;font-weight:800;background:#000;color:#fff;border:0;cursor:pointer">🖨️ PRINT</button>
+    <div class="no-print"><button onclick="window.print()" style="padding:8px 16px;font-weight:800;background:#000;color:#fff;border:0;cursor:pointer">PRINT</button>
     <button onclick="window.close()" style="padding:8px 16px;margin-left:8px;cursor:pointer">CLOSE</button></div>${body}</body></html>`;
   const win = window.open('', '_blank');
   if (!win) { toast('Pop-up blocked — allow pop-ups for this site, then try again', 'warn'); return; }

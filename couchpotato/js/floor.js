@@ -87,8 +87,8 @@ export function moveMenu(id) {
 function dueBadge(o) {
   const d = daysUntil(o.dueDate);
   if (d == null) return '';
-  if (d < 0) return `<span class="chip late">⚠ ${Math.abs(d)}d late</span>`;
-  if (d <= 7) return `<span class="chip soon">⏳ ${d === 0 ? 'today' : d + 'd'}</span>`;
+  if (d < 0) return `<span class="chip late">${Math.abs(d)}d late</span>`;
+  if (d <= 7) return `<span class="chip soon">${d === 0 ? 'today' : d + 'd'}</span>`;
   return `<span class="chip calm">${esc(niceDate(o.dueDate).replace(/ \d{4}$/, ''))}</span>`;
 }
 
@@ -108,7 +108,7 @@ function planCard(o) {
         ${o.status === 'ready' ? statusChip('ready') : ''}
       </div>
       <div class="pcard-controls">
-        ${o.status === 'new' ? `<button class="btn ghost sm" data-act="start" data-id="${esc(o.id)}" title="The floor has started on it">🔧 Start</button>` : ''}
+        ${o.status === 'new' ? `<button class="btn ghost sm" data-act="start" data-id="${esc(o.id)}" title="The floor has started on it">Start</button>` : ''}
         ${staff.length
           ? `<select data-act="builder" data-id="${esc(o.id)}" title="Who is building it">
               <option value="">— builder —</option>
@@ -117,8 +117,8 @@ function planCard(o) {
           : `<input data-act="builder" data-id="${esc(o.id)}" value="${esc(o.builder || '')}" placeholder="builder" title="Who is building it (add names under Settings for a list)">`}
       </div>
       <div class="pcard-actions">
-        ${o.status !== 'ready' ? `<button class="btn primary sm" data-act="mark-ready" data-id="${esc(o.id)}">📦 Ready</button>` : ''}
-        <button class="btn ghost sm" data-act="print-job" data-id="${esc(o.id)}" title="Print job card">🖨️</button>
+        ${o.status !== 'ready' ? `<button class="btn primary sm" data-act="mark-ready" data-id="${esc(o.id)}">Ready</button>` : ''}
+        <button class="btn ghost sm" data-act="print-job" data-id="${esc(o.id)}" title="Print job card">Print</button>
         <button class="btn ghost sm" data-act="plan-move" data-id="${esc(o.id)}" title="Move to another week">⋮</button>
       </div>
     </div>`;
@@ -139,12 +139,12 @@ export function renderFloor(host, overviewHtml) {
     <div class="page-head">
       <div><h1>Factory floor</h1><p class="sub">${rows.length} piece${rows.length === 1 ? '' : 's'} on the floor</p></div>
       <div class="btn-row">
-        <button class="btn ghost" data-act="print-planner">🖨️ Planner</button>
-        <button class="btn ghost" data-act="print-week-jobs">🖨️ This week's job cards</button>
+        <button class="btn ghost" data-act="print-planner">Planner</button>
+        <button class="btn ghost" data-act="print-week-jobs">This week's job cards</button>
       </div>
     </div>
     ${overviewHtml || ''}
-    <div class="btn-row" style="margin-bottom:.9rem">${tab('planner', '📅 Planner')}${tab('fabric', '🧵 Fabric')}</div>
+    <div class="btn-row" style="margin-bottom:.9rem">${tab('planner', 'Planner')}${tab('fabric', 'Fabric')}</div>
     ${body}`;
   wireDragDrop(host);
 }
@@ -166,9 +166,9 @@ function plannerHtml(rows) {
     <div class="pgrid">
       ${wks.map((w, i) => col(w.mon, w.title, w.range + ' · ' + by[w.mon].length, by[w.mon], i === 0 ? 'current' : '')).join('')}
     </div>
-    ${by.later.length ? `<div class="card" style="margin-top:1rem"><h2>📆 Later (${by.later.length})</h2><div class="ppool">${by.later.map(planCard).join('')}</div></div>` : ''}
+    ${by.later.length ? `<div class="card" style="margin-top:1rem"><h2>Later (${by.later.length})</h2><div class="ppool">${by.later.map(planCard).join('')}</div></div>` : ''}
     <div class="card pool" data-drop="" style="margin-top:1rem">
-      <h2>📥 Unscheduled (${by.pool.length})</h2>
+      <h2>Unscheduled (${by.pool.length})</h2>
       <p class="muted">Not yet given a week, or planned for a week that has passed.</p>
       <div class="ppool">${by.pool.map(planCard).join('') || '<div class="pcol-empty">Everything is planned</div>'}</div>
     </div>`;
@@ -177,7 +177,7 @@ function plannerHtml(rows) {
 function fabricHtml(rows) {
   const waiting = rows.filter(o => o.fabric && o.fabricStatus !== 'received')
     .sort((a, b) => String(a.dueDate || '9').localeCompare(String(b.dueDate || '9')));
-  if (!waiting.length) return empty('🧵', 'No fabric outstanding', 'Every order on the floor has its fabric in.');
+  if (!waiting.length) return empty('', 'No fabric outstanding', 'Every order on the floor has its fabric in.');
   return `
     <p class="muted" style="margin:-.3rem 0 .7rem">Pieces that cannot be finished until fabric arrives, soonest due first.</p>
     <div class="card">
@@ -240,7 +240,7 @@ const PRINT_CSS = `
 
 function openPrint(title, body) {
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${PRINT_CSS}</style></head><body>
-    <div class="no-print"><button onclick="window.print()" style="padding:8px 16px;font-weight:800;background:#000;color:#fff;border:0;cursor:pointer">🖨️ PRINT</button>
+    <div class="no-print"><button onclick="window.print()" style="padding:8px 16px;font-weight:800;background:#000;color:#fff;border:0;cursor:pointer">PRINT</button>
     <button onclick="window.close()" style="padding:8px 16px;margin-left:8px;cursor:pointer">CLOSE</button></div>${body}</body></html>`;
   const win = window.open('', '_blank');
   if (!win) { toast('Pop-up blocked — allow pop-ups for this site, then try again', 'warn'); return; }

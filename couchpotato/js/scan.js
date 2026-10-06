@@ -45,13 +45,13 @@ export function confirmDispatch(id) {
     <div class="scan-hit">
       <div class="scan-no">${esc(o.orderNo || '')}</div>
       <h2>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' × ' + esc(o.qty) : ''}</h2>
-      ${o.fabric ? `<p>🧵 ${esc(o.fabric)}</p>` : ''}
-      <p>🏷️ ${esc(o.customerName || '')}${o.externalRef ? ' · their ref ' + esc(o.externalRef) : ''}</p>
-      ${c.address || c.area ? `<p>📍 ${esc([c.address, c.area].filter(Boolean).join(', '))}</p>` : ''}
+      ${o.fabric ? `<p>${esc(o.fabric)}</p>` : ''}
+      <p>${esc(o.customerName || '')}${o.externalRef ? ' · their ref ' + esc(o.externalRef) : ''}</p>
+      ${c.address || c.area ? `<p>${esc([c.address, c.area].filter(Boolean).join(', '))}</p>` : ''}
       ${o.priceEach ? `<p class="muted">${esc(money(o.priceEach * (o.qty || 1), cur))} to invoice</p>` : ''}
-      ${notReady ? `<div class="notice-inline">⚠ This order is not marked Ready yet (it is <strong>${esc(o.status)}</strong>). Dispatching it anyway will mark it done.</div>` : ''}
+      ${notReady ? `<div class="notice-inline">This order is not marked Ready yet (it is <strong>${esc(o.status)}</strong>). Dispatching it anyway will mark it done.</div>` : ''}
     </div>`, {
-    okLabel: '🚚 Yes, it has left',
+    okLabel: 'Yes, it has left',
     onOk: async () => {
       await setStatus(id, 'dispatched');
       setTimeout(() => notifyCustomer(id), 80);
@@ -86,9 +86,9 @@ export function notifyCustomer(id) {
     <p class="muted" style="margin-bottom:.6rem">${esc(o.orderNo || '')} is marked dispatched${o.dispatchedBy ? ' by ' + esc(o.dispatchedBy) : ''}. Send ${esc(c.name || o.customerName || 'the customer')} the news:</p>
     <textarea id="nt-msg" rows="4" style="width:100%; font:inherit; font-size:14px; padding:.6rem; border:1px solid #d6d3d1; border-radius:10px">${esc(msg)}</textarea>
     <div class="notify-btns">
-      ${wa ? `<a class="btn primary" target="_blank" rel="noopener" id="nt-wa" href="https://wa.me/${wa}?text=${encodeURIComponent(msg)}">💬 WhatsApp ${esc(c.phone)}</a>` : '<span class="muted">No phone number on this customer.</span>'}
-      ${c.email ? `<a class="btn" target="_blank" rel="noopener" id="nt-em" href="mailto:${esc(c.email)}?subject=${subject}&body=${encodeURIComponent(msg)}">✉️ Email ${esc(c.email)}</a>` : '<span class="muted">No email on this customer.</span>'}
-      <button type="button" class="btn ghost" id="nt-copy">📋 Copy message</button>
+      ${wa ? `<a class="btn primary" target="_blank" rel="noopener" id="nt-wa" href="https://wa.me/${wa}?text=${encodeURIComponent(msg)}">WhatsApp ${esc(c.phone)}</a>` : '<span class="muted">No phone number on this customer.</span>'}
+      ${c.email ? `<a class="btn" target="_blank" rel="noopener" id="nt-em" href="mailto:${esc(c.email)}?subject=${subject}&body=${encodeURIComponent(msg)}">Email ${esc(c.email)}</a>` : '<span class="muted">No email on this customer.</span>'}
+      <button type="button" class="btn ghost" id="nt-copy">Copy message</button>
     </div>
     ${o.notifiedAt ? `<p class="muted">Already notified ${esc(niceDate(o.notifiedAt))} via ${esc(o.notifiedVia || '')}.</p>` : ''}`,
     { okLabel: 'Done', cancelLabel: '', onOk: () => true });
@@ -195,16 +195,16 @@ export function renderScan(host) {
     <div class="card scan-cam">
       <div class="scan-cam-grid">
         <div>
-          <h2>📷 Scanner</h2>
+          <h2>Scanner</h2>
           <p id="scan-msg" class="muted">Start the camera and point it at the QR code on the job card. Any phone’s own camera app works too — the code opens this page on the right order.</p>
           <video id="scan-video" playsinline muted hidden></video>
           <div class="btn-row" style="margin-top:.5rem">
-            <button class="btn primary" id="scan-start" data-act="scan-start">📷 Start camera</button>
+            <button class="btn primary" id="scan-start" data-act="scan-start">Start camera</button>
             <button class="btn" id="scan-stop" data-act="scan-stop" hidden>■ Stop</button>
           </div>
         </div>
         <div>
-          <h2>⌨️ Or type the order number</h2>
+          <h2>Or type the order number</h2>
           <div class="btn-row">
             <input id="scan-manual" placeholder="e.g. CP-1003" style="flex:1 1 160px; font:inherit; font-size:15px; padding:.6rem .7rem; border:1px solid #d6d3d1; border-radius:10px" onkeydown="if(event.key==='Enter'){event.preventDefault(); this.closest('.scan-cam').querySelector('[data-act=scan-find]').click()}">
             <button class="btn" data-act="scan-find">Find</button>
@@ -212,11 +212,11 @@ export function renderScan(host) {
         </div>
       </div>
     </div>
-    <h2 class="cat">📦 Ready to go (${ready.length})</h2>
-    ${ready.length ? ready.map(o => line(o, `<button class="btn primary sm" data-act="dispatch" data-id="${esc(o.id)}">🚚 Dispatch</button>`)).join('')
+    <h2 class="cat">Ready to go (${ready.length})</h2>
+    ${ready.length ? ready.map(o => line(o, `<button class="btn primary sm" data-act="dispatch" data-id="${esc(o.id)}">Dispatch</button>`)).join('')
       : '<div class="card muted">Nothing is marked Ready on the floor.</div>'}
-    <h2 class="cat">🚚 Dispatched today (${todayOut.length})</h2>
-    ${todayOut.length ? todayOut.map(o => line(o, `<button class="btn ghost sm" data-act="notify" data-id="${esc(o.id)}">💬 Tell customer</button>`)).join('')
+    <h2 class="cat">Dispatched today (${todayOut.length})</h2>
+    ${todayOut.length ? todayOut.map(o => line(o, `<button class="btn ghost sm" data-act="notify" data-id="${esc(o.id)}">Tell customer</button>`)).join('')
       : '<div class="card muted">Nothing has gone out yet today.</div>'}
     ${toInvoice.length ? `<p class="muted" style="margin-top:.8rem">${toInvoice.length} dispatched order${toInvoice.length === 1 ? '' : 's'} waiting under <strong>Invoices</strong>.</p>` : ''}`;
 }

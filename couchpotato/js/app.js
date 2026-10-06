@@ -32,13 +32,13 @@ let pendingScan = new URLSearchParams(location.search).get('scan') || '';
 if (pendingScan) history.replaceState(null, '', location.pathname);
 
 const NAV = [
-  { key: 'orders', icon: '📋', label: 'Orders' },
-  { key: 'customers', icon: '👥', label: 'Customers' },
-  { key: 'factory', icon: '🏭', label: 'Factory floor' },
-  { key: 'costing', icon: '💰', label: 'Costing' },
-  { key: 'scan', icon: '📷', label: 'Scan out' },
-  { key: 'invoices', icon: '🧾', label: 'Invoices' },
-  { key: 'settings', icon: '⚙️', label: 'Settings' }
+  { key: 'orders', icon: '', label: 'Orders' },
+  { key: 'customers', icon: '', label: 'Customers' },
+  { key: 'factory', icon: '', label: 'Factory floor' },
+  { key: 'costing', icon: '', label: 'Costing' },
+  { key: 'scan', icon: '', label: 'Scan out' },
+  { key: 'invoices', icon: '', label: 'Invoices' },
+  { key: 'settings', icon: '', label: 'Settings' }
 ];
 
 // ------------------------------------------------------------------ boot ----
@@ -113,7 +113,7 @@ function showApp(user) {
       </div>
     </header>
     <nav class="tabs" id="tabs">
-      ${NAV.map(n => `<button class="tab" data-view="${n.key}">${n.icon} <span>${esc(n.label)}</span></button>`).join('')}
+      ${NAV.map(n => `<button class="tab" data-view="${n.key}"><span>${esc(n.label)}</span></button>`).join('')}
     </nav>
     <main class="shell" id="screen"></main>`;
 
@@ -193,7 +193,7 @@ function renderSettings(host) {
         field('VAT registered', 's-vatreg', { type: 'select', value: s.vatRegistered ? 'yes' : 'no', options: [{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }] }),
         field('VAT rate (%)', 's-vatrate', { value: Math.round((s.vatRate || 0) * 100), type: 'number', min: 0, step: '0.01' })
       )}
-      <div class="card-actions"><button class="btn primary" data-act="save-settings">💾 Save settings</button></div>
+      <div class="card-actions"><button class="btn primary" data-act="save-settings">Save settings</button></div>
     </div>
     <div class="card">
       <h2>How this system is wired</h2>

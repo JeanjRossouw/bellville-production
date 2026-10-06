@@ -184,8 +184,8 @@ function dueBadge(o) {
   if (o.status === 'dispatched' || o.status === 'invoiced') return '';
   const d = daysUntil(o.dueDate);
   if (d == null) return '<span class="chip warn-soft">No due date</span>';
-  if (d < 0) return `<span class="chip late">⚠ ${Math.abs(d)} day${Math.abs(d) === 1 ? '' : 's'} late</span>`;
-  if (d <= 7) return `<span class="chip soon">⏳ ${d === 0 ? 'Due today' : 'Due in ' + d + ' day' + (d === 1 ? '' : 's')}</span>`;
+  if (d < 0) return `<span class="chip late">${Math.abs(d)} day${Math.abs(d) === 1 ? '' : 's'} late</span>`;
+  if (d <= 7) return `<span class="chip soon">${d === 0 ? 'Due today' : 'Due in ' + d + ' day' + (d === 1 ? '' : 's')}</span>`;
   return `<span class="chip calm">${esc(niceDate(o.dueDate))}</span>`;
 }
 
@@ -197,15 +197,15 @@ function orderCard(o) {
       <div class="order-top">
         <div>
           <div class="order-no">${esc(o.orderNo || '—')}
-            ${o.source === 'feed' ? '<span class="chip feed" title="Came through automatically from the customer’s system">↙ auto</span>' : ''}
+            ${o.source === 'feed' ? '<span class="chip feed" title="Came through automatically from the customer’s system">auto</span>' : ''}
           </div>
           <h2>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' <span class="qty">× ' + esc(o.qty) + '</span>' : ''}</h2>
           <div class="meta">
-            <div>🏷️ ${esc(o.customerName || 'No customer')}${o.externalRef ? ' · their ref ' + esc(o.externalRef) : ''}</div>
-            ${o.fabric ? `<div>🧵 ${esc(o.fabric)}</div>` : ''}
+            <div>${esc(o.customerName || 'No customer')}${o.externalRef ? ' · their ref ' + esc(o.externalRef) : ''}</div>
+            ${o.fabric ? `<div>${esc(o.fabric)}</div>` : ''}
             ${o.paidDate ? `<div class="muted">Paid ${esc(niceDate(o.paidDate))}</div>` : ''}
             ${o.priceEach ? `<div class="muted">${esc(money(o.priceEach, cur))} each · ${esc(money(o.priceEach * (o.qty || 1), cur))} total</div>` : ''}
-            ${(o.planWeek || o.builder) ? `<div class="muted">🏭 ${[o.planWeek ? 'week of ' + niceDate(o.planWeek) : '', o.builder ? 'builder: ' + o.builder : ''].filter(Boolean).map(esc).join(' · ')}</div>` : ''}
+            ${(o.planWeek || o.builder) ? `<div class="muted">${[o.planWeek ? 'week of ' + niceDate(o.planWeek) : '', o.builder ? 'builder: ' + o.builder : ''].filter(Boolean).map(esc).join(' · ')}</div>` : ''}
           </div>
         </div>
         <div class="order-chips">
@@ -214,7 +214,7 @@ function orderCard(o) {
           ${o.fabric ? fabricChip(o.fabricStatus) : ''}
         </div>
       </div>
-      ${o.notes ? `<p class="notes">📝 ${esc(o.notes)}</p>` : ''}
+      ${o.notes ? `<p class="notes">${esc(o.notes)}</p>` : ''}
       <div class="order-controls">
         <label class="inline">Due
           <input type="date" value="${esc(o.dueDate || '')}" data-act="due" data-id="${esc(o.id)}">
@@ -225,10 +225,10 @@ function orderCard(o) {
           </select></label>` : ''}
       </div>
       <div class="card-actions">
-        ${next ? `<button class="btn primary sm" data-act="status" data-id="${esc(o.id)}" data-to="${next.key}">${next.icon} ${esc(next.label)}</button>` : ''}
-        <button class="btn ghost sm" data-act="history" data-id="${esc(o.id)}">🕘 History</button>
-        <button class="btn ghost sm" data-act="edit-order" data-id="${esc(o.id)}">✏️ Edit</button>
-        <button class="btn danger sm" data-act="del-order" data-id="${esc(o.id)}">🗑</button>
+        ${next ? `<button class="btn primary sm" data-act="status" data-id="${esc(o.id)}" data-to="${next.key}">${esc(next.label)}</button>` : ''}
+        <button class="btn ghost sm" data-act="history" data-id="${esc(o.id)}">History</button>
+        <button class="btn ghost sm" data-act="edit-order" data-id="${esc(o.id)}">Edit</button>
+        <button class="btn danger sm" data-act="del-order" data-id="${esc(o.id)}">Delete</button>
       </div>
     </div>`;
 }
@@ -267,11 +267,11 @@ export function renderOrders(host) {
 
     <div class="stat-strip">
       ${STATUSES.map(s => `<button class="stat ${filter.status === s.key ? 'on' : ''}" data-act="filter-status" data-to="${s.key}" title="${esc(s.help)}">
-        <span class="stat-n">${counts[s.key]}</span><span class="stat-l">${s.icon} ${esc(s.label)}</span></button>`).join('')}
+        <span class="stat-n">${counts[s.key]}</span><span class="stat-l">${esc(s.label)}</span></button>`).join('')}
     </div>
 
     <div class="toolbar">
-      <input id="o-search" class="search" type="search" placeholder="🔍 Order no., product, fabric, customer…" value="${esc(filter.q)}">
+      <input id="o-search" class="search" type="search" placeholder="Order no., product, fabric, customer…" value="${esc(filter.q)}">
       <select id="o-filter-cust">
         <option value="">All customers</option>
         ${allCustomers().map(c => `<option value="${esc(c.id)}"${c.id === filter.customer ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}
@@ -284,6 +284,6 @@ export function renderOrders(host) {
     </div>
 
     ${rows.length ? `<div class="grid cards">${rows.map(orderCard).join('')}</div>`
-      : empty('📋', 'Nothing here', orders.length ? 'No orders match this filter.' : 'Capture the factory’s first order to get going.')}
+      : empty('', 'Nothing here', orders.length ? 'No orders match this filter.' : 'Capture the factory’s first order to get going.')}
   `;
 }
