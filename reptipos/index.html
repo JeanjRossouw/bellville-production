@@ -2574,18 +2574,26 @@
   // Web-order sync: the server turns every paid-but-unfulfilled online order
   // into a sales order on this list (once, ever — it keeps a ledger). Runs on
   // start, every 5 minutes, and whenever the Orders list opens.
-  let webSyncBusy = false;
+  let webSyncBusy = false, webSyncFailNote = '';
   async function syncWebOrdersTill() {
     if (isDemo() || webSyncBusy || !navigator.onLine) return;
     webSyncBusy = true;
+    let again = false;
     try {
       const r = await api('syncWebOrders');
       if (r && r.created > 0) {
         toast('🌐 ' + r.created + ' web order' + (r.created === 1 ? '' : 's') + ' added to Sales orders');
         if (document.getElementById('docs-modal').classList.contains('show')) docsTab(docsType);
       }
+      if (r && r.failed && r.failed.length) {
+        // Say it once per distinct problem, not every 5 minutes forever.
+        const note = r.failed.join(' · ');
+        if (note !== webSyncFailNote) { webSyncFailNote = note; toast('⚠ ' + r.failed.length + ' web order' + (r.failed.length === 1 ? '' : 's') + ' could not import — ' + r.failed[0]); }
+      }
+      again = !!(r && r.more); // server stopped early (big backlog) — keep going
     } catch (e) { /* quiet — next run retries */ }
     webSyncBusy = false;
+    if (again) setTimeout(syncWebOrdersTill, 2500);
   }
   setInterval(syncWebOrdersTill, 5 * 60 * 1000);
 

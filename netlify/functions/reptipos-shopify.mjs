@@ -316,51 +316,69 @@ async function fulfillOrder({ orderId }) {
 // every order ever imported, so it happens exactly once — across tills, and
 // even if the sales order is later removed from the list by hand.
 async function syncWebOrders() {
+  const started = Date.now();
   let store = null;
   try { store = getStore('reptipos-websync'); } catch (e) { /* degrade to draft-check only */ }
   const { json } = await shopify('/orders.json?status=open&financial_status=paid&fulfillment_status=unfulfilled&limit=100');
   const candidates = (json.orders || []).filter(o =>
     o.source_name !== 'reptipos' &&                       // till sales are already tracked
-    !String(o.tags || '').includes('lightspeed-import')); // backdated history, not live work
-  if (!candidates.length) return { created: 0, names: [] };
+    !String(o.tags || '').includes('lightspeed-import'))  // backdated history, not live work
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at)); // import oldest first
+  if (!candidates.length) return { created: 0, names: [], failed: [], more: false };
   // Orders already represented by an open sales order / quote on the till.
   const have = new Set();
   try {
     const { json: dj } = await shopify('/draft_orders.json?status=open&limit=100');
     (dj.draft_orders || []).forEach(d => { const doc = parseDocNote(d.note); if (doc && doc.originalOrderId) have.add(String(doc.originalOrderId)); });
   } catch (e) { /* if drafts can't load, the Blobs ledger still guards dupes */ }
+  // Read the whole import ledger in ONE listing. A Blobs read per candidate
+  // (the old way) grows with the open-order backlog until the function times
+  // out before creating anything — which silently froze the import.
+  const ledger = new Set(); let ledgerOk = false;
+  if (store) {
+    try { const { blobs } = await store.list({ prefix: 'order-' }); (blobs || []).forEach(b => ledger.add(b.key)); ledgerOk = true; }
+    catch (e) { /* fall back to per-order reads below */ }
+  }
   const cents = v => Math.round(parseFloat(v || '0') * 100);
-  const names = [];
+  const names = []; const failed = []; let more = false;
   for (const o of candidates) {
     const oid = String(o.id);
-    if (have.has(oid)) continue;
-    if (store) { try { if (await store.get('order-' + oid)) continue; } catch (e) {} }
-    const items = (o.line_items || []).map(li => {
-      const qty = Number(li.quantity) || 1;
-      const total = cents(li.price) * qty - cents(li.total_discount);
-      return { custom: true, name: li.title, qty, priceCents: Math.round(total / qty), lineTotalCents: total };
-    });
-    const ship = cents(o.total_shipping_price_set && o.total_shipping_price_set.shop_money ? o.total_shipping_price_set.shop_money.amount : 0);
-    if (ship > 0) items.push({ custom: true, name: 'Delivery / shipping', qty: 1, priceCents: ship, lineTotalCents: ship });
-    const totalCents = cents(o.total_price);
-    const custName = o.customer ? ([o.customer.first_name, o.customer.last_name].filter(Boolean).join(' ') || o.customer.email || 'Customer') : 'Online customer';
-    const a = o.shipping_address;
-    const addr = a ? [a.address1, a.address2, a.city, a.zip, a.province].filter(Boolean).join(', ') : '';
-    const doc = {
-      type: 'salesorder', status: 'ready', items, totalCents, depositCents: totalCents,
-      payments: [{ method: 'online', amountCents: totalCents, kind: 'deposit', at: o.created_at }],
-      expectedDate: '', note: 'Paid online · web order ' + o.name, deliveryAddress: addr,
-      createdAt: o.created_at, staff: null, originalOrderId: oid, originalOrderName: o.name,
-      customer: o.customer ? { id: String(o.customer.id), name: custName } : null
-    };
-    const saved = await docSave({
-      lineItems: items.map(i => ({ custom: true, title: i.name, qty: i.qty, priceCents: i.priceCents })),
-      customerId: o.customer ? o.customer.id : undefined, tags: 'pos,sales-order', doc
-    });
-    if (store) { try { await store.setJSON('order-' + oid, { draftId: saved.id, name: o.name, at: new Date().toISOString() }); } catch (e) {} }
-    names.push(o.name + ' → ' + saved.name);
+    if (have.has(oid) || ledger.has('order-' + oid)) continue;
+    if (store && !ledgerOk) { try { if (await store.get('order-' + oid)) continue; } catch (e) {} }
+    // Work budget: stop before the platform kills the function mid-run; the
+    // caller sees more:true and runs again until the backlog is drained.
+    if (names.length >= 10 || Date.now() - started > 6000) { more = true; break; }
+    try {
+      const items = (o.line_items || []).map(li => {
+        const qty = Number(li.quantity) || 1;
+        const total = cents(li.price) * qty - cents(li.total_discount);
+        return { custom: true, name: li.title, qty, priceCents: Math.round(total / qty), lineTotalCents: total };
+      });
+      const ship = cents(o.total_shipping_price_set && o.total_shipping_price_set.shop_money ? o.total_shipping_price_set.shop_money.amount : 0);
+      if (ship > 0) items.push({ custom: true, name: 'Delivery / shipping', qty: 1, priceCents: ship, lineTotalCents: ship });
+      const totalCents = cents(o.total_price);
+      const custName = o.customer ? ([o.customer.first_name, o.customer.last_name].filter(Boolean).join(' ') || o.customer.email || 'Customer') : 'Online customer';
+      const a = o.shipping_address;
+      const addr = a ? [a.address1, a.address2, a.city, a.zip, a.province].filter(Boolean).join(', ') : '';
+      const doc = {
+        type: 'salesorder', status: 'ready', items, totalCents, depositCents: totalCents,
+        payments: [{ method: 'online', amountCents: totalCents, kind: 'deposit', at: o.created_at }],
+        expectedDate: '', note: 'Paid online · web order ' + o.name, deliveryAddress: addr,
+        createdAt: o.created_at, staff: null, originalOrderId: oid, originalOrderName: o.name,
+        customer: o.customer ? { id: String(o.customer.id), name: custName } : null
+      };
+      const saved = await docSave({
+        lineItems: items.map(i => ({ custom: true, title: i.name, qty: i.qty, priceCents: i.priceCents })),
+        customerId: o.customer ? o.customer.id : undefined, tags: 'pos,sales-order', doc
+      });
+      if (store) { try { await store.setJSON('order-' + oid, { draftId: saved.id, name: o.name, at: new Date().toISOString() }); } catch (e) {} }
+      names.push(o.name + ' → ' + saved.name);
+    } catch (e) {
+      // One bad order must never block the ones behind it.
+      failed.push(o.name + ': ' + String(e.message || e).slice(0, 140));
+    }
   }
-  return { created: names.length, names };
+  return { created: names.length, names, failed, more };
 }
 
 // Receive goods into stock: increment Shopify inventory at the primary location
