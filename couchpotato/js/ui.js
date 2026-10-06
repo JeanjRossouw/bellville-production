@@ -33,7 +33,7 @@ export function daysUntil(iso) {
 export const STATUSES = [
   { key: 'new', label: 'New', icon: '', cls: 'st-new', help: 'Accepted, not started on the floor yet' },
   { key: 'in-production', label: 'In production', icon: '', cls: 'st-prod', help: 'Being built' },
-  { key: 'ready', label: 'Ready', icon: '', cls: 'st-ready', help: 'Finished, waiting to go out' },
+  { key: 'ready', label: 'Done', icon: '', cls: 'st-ready', help: 'Built and finished, waiting to go out' },
   { key: 'dispatched', label: 'Dispatched', icon: '', cls: 'st-disp', help: 'Scanned out to the customer' },
   { key: 'invoiced', label: 'Invoiced', icon: '', cls: 'st-inv', help: 'Billed to the customer' }
 ];

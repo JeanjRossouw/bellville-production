@@ -49,7 +49,7 @@ export function confirmDispatch(id) {
       <p>${esc(o.customerName || '')}${o.externalRef ? ' · their ref ' + esc(o.externalRef) : ''}</p>
       ${c.address || c.area ? `<p>${esc([c.address, c.area].filter(Boolean).join(', '))}</p>` : ''}
       ${o.priceEach ? `<p class="muted">${esc(money(o.priceEach * (o.qty || 1), cur))} to invoice</p>` : ''}
-      ${notReady ? `<div class="notice-inline">This order is not marked Ready yet (it is <strong>${esc(o.status)}</strong>). Dispatching it anyway will mark it done.</div>` : ''}
+      ${notReady ? `<div class="notice-inline">This order is not marked Done yet (it is <strong>${esc(o.status)}</strong>). Dispatching it anyway will mark it done.</div>` : ''}
     </div>`, {
     okLabel: 'Yes, it has left',
     onOk: async () => {
@@ -185,9 +185,9 @@ export function renderScan(host) {
       <div class="btn-row">${action}</div>
     </div>`;
   host.innerHTML = `
-    <div class="page-head"><div><h1>Scan out</h1><p class="sub">Scan the job card at the door, or pick from the Ready list</p></div></div>
+    <div class="page-head"><div><h1>Scan out</h1><p class="sub">Scan the job card at the door, or pick from the Done list</p></div></div>
     <div class="tiles">
-      ${tile(ready.length, 'Ready to go', ready.length ? 'amber' : '')}
+      ${tile(ready.length, 'Done, to go out', ready.length ? 'amber' : '')}
       ${tile(todayOut.length, 'Dispatched today')}
       ${tile(toInvoice.length, 'Awaiting invoice', toInvoice.length ? 'amber' : '')}
       <div class="tile wide"><div class="tile-n">${esc(money(toInvoice.reduce((s, o) => s + (Number(o.priceEach) || 0) * (o.qty || 1), 0), cur))}</div><div class="tile-l">Dispatched, not yet invoiced</div></div>
@@ -212,9 +212,9 @@ export function renderScan(host) {
         </div>
       </div>
     </div>
-    <h2 class="cat">Ready to go (${ready.length})</h2>
+    <h2 class="cat">Done, waiting to go out (${ready.length})</h2>
     ${ready.length ? ready.map(o => line(o, `<button class="btn primary sm" data-act="dispatch" data-id="${esc(o.id)}">Dispatch</button>`)).join('')
-      : '<div class="card muted">Nothing is marked Ready on the floor.</div>'}
+      : '<div class="card muted">Nothing is marked Done on the floor.</div>'}
     <h2 class="cat">Dispatched today (${todayOut.length})</h2>
     ${todayOut.length ? todayOut.map(o => line(o, `<button class="btn ghost sm" data-act="notify" data-id="${esc(o.id)}">Tell customer</button>`)).join('')
       : '<div class="card muted">Nothing has gone out yet today.</div>'}

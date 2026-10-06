@@ -101,10 +101,10 @@ function planCard(o) {
         ${o.status === 'ready' ? statusChip('ready') : ''}
       </div>
       <div class="pcard-controls">
-        ${o.status === 'new' ? `<button class="btn ghost sm" data-act="start" data-id="${esc(o.id)}" title="The floor has started on it">Start</button>` : ''}
+        ${o.status === 'new' ? `<button class="btn ghost sm" data-act="start" data-id="${esc(o.id)}" title="The floor has started on it">In production</button>` : ''}
       </div>
       <div class="pcard-actions">
-        ${o.status !== 'ready' ? `<button class="btn primary sm" data-act="mark-ready" data-id="${esc(o.id)}">Ready</button>` : ''}
+        ${o.status !== 'ready' ? `<button class="btn primary sm" data-act="mark-ready" data-id="${esc(o.id)}">Done</button>` : ''}
         <button class="btn ghost sm" data-act="print-job" data-id="${esc(o.id)}" title="Print job card">Print</button>
         <button class="btn ghost sm" data-act="plan-move" data-id="${esc(o.id)}" title="Move to another week">⋮</button>
       </div>
