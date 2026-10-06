@@ -1,7 +1,7 @@
 // Couch Potato factory system — boot, navigation and the Settings screen.
 import * as store from './store.js';
 import { FACTORY_DEFAULTS, isCloudConfigured } from './config.js';
-import { esc, field, row, toast, phaseStub, money, daysUntil } from './ui.js';
+import { esc, field, row, toast, money, daysUntil } from './ui.js';
 import { startCustomers, renderCustomers, newCustomer, editCustomer, deleteCustomer } from './customers.js';
 import {
   startOrders, renderOrders, newOrder, editOrder, deleteOrder, setStatus, setFabric,
@@ -12,6 +12,10 @@ import {
   printJobCard, printWeekJobCards, printPlanner
 } from './floor.js';
 import { renderScan, setScanSettings, startCamera, stopCamera, manualFind, confirmDispatch, notifyCustomer } from './scan.js';
+import {
+  startInvoices, renderInvoices, setInvoiceSettings, setInvView, setInvFilter, setStmtCustomer, newInvoiceFor,
+  invoiceCustomerQueue, pickedIds, recordPayment, voidInvoice, printInvoice, printStatement, exportCsv
+} from './invoices.js';
 import {
   startCosting, renderCosting, setCostingSettings, setCostView, newMaterial, editMaterial, deleteMaterial,
   newProduct, editProduct, duplicateProduct, deleteProduct, saveOverheads, addOverheadRow, liveOverheads,
@@ -52,6 +56,8 @@ async function boot() {
       setFloorSettings(settings);
       setCostingSettings(settings);
       setScanSettings(settings);
+      setInvoiceSettings(settings);
+      startInvoices(() => { if (view === 'invoices' || view === 'orders') paint(); }, settings);
       startCosting(() => { if (view === 'costing' || view === 'orders') paint(); }, settings);
       startCustomers(() => { if (view === 'customers' || view === 'orders') paint(); });
       startOrders(() => {
@@ -138,13 +144,7 @@ function paint() {
   if (view === 'factory') return renderFloor(screen, overview());
   if (view === 'costing') return renderCosting(screen);
   if (view === 'scan') return renderScan(screen);
-  if (view === 'invoices') return screen.innerHTML = phaseStub(5, 'Invoices', [
-    'An invoice queue fed by scan-outs, so nothing dispatched goes unbilled',
-    'Invoices in Couch Potato’s own name, numbering and VAT',
-    'Per-customer statements and what is still outstanding',
-    'Payments recorded against invoices',
-    'A monthly export for their accountant'
-  ]);
+  if (view === 'invoices') return renderInvoices(screen);
   screen.innerHTML = '';
 }
 
@@ -231,6 +231,7 @@ async function saveSettings() {
   setFloorSettings(settings);
   setCostingSettings(settings);
   setScanSettings(settings);
+  setInvoiceSettings(settings);
   const bn = document.querySelector('.brand-name');
   if (bn) bn.textContent = settings.name;
   toast('Settings saved');
@@ -282,6 +283,18 @@ async function onAction(e) {
     case 'scan-find': return manualFind(document.getElementById('screen'));
     case 'dispatch': return confirmDispatch(id);
     case 'notify': return notifyCustomer(id);
+    case 'inv-view': setInvView(b.dataset.to); return paint();
+    case 'inv-customer': return invoiceCustomerQueue(b.dataset.cust);
+    case 'inv-selected': {
+      const ids = pickedIds(document.getElementById('screen'), b.dataset.cust);
+      if (!ids.length) { toast('Tick the orders to put on the invoice first', 'warn'); return; }
+      return newInvoiceFor(ids);
+    }
+    case 'inv-pay': return recordPayment(id);
+    case 'inv-void': return voidInvoice(id);
+    case 'inv-print': return printInvoice(id);
+    case 'stmt-print': return printStatement(b.dataset.cust);
+    case 'inv-export': return exportCsv();
     case 'filter-status': {
       // Tapping the tile you are already filtered to clears it again.
       const cur = getFilter().status;
@@ -299,6 +312,8 @@ function onChangeEvent(e) {
   if (act === 'fabric') return setFabric(t.dataset.id, t.value);
   if (act === 'due') return setDue(t.dataset.id, t.value);
   if (act === 'builder') return setBuilder(t.dataset.id, t.value);
+  if (t.id === 'inv-filter') { setInvFilter(t.value); return paint(); }
+  if (t.id === 'stmt-cust') { setStmtCustomer(t.value); return paint(); }
 }
 
 let searchTimer = null;

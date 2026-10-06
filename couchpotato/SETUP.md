@@ -116,7 +116,7 @@ first, since later phases print from them.
 | Factory floor: week planner, fabric watch-list, job cards | Built |
 | Costing: materials, bills of material, overheads, price list | Built |
 | Scan out by QR code, with customer notification | Built |
-| Invoicing, statements and the accountant's export | Phase 5 |
+| Invoicing, statements and the accountant's export | Built |
 
 ## How Bellville's orders will arrive
 
