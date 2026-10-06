@@ -18,6 +18,7 @@ couchpotato/
   js/ui.js          shared rendering helpers
   js/customers.js   customer screen
   js/orders.js      order capture, status, history
+  js/floor.js       planner, stages, fabric list, job cards
   js/app.js         boot, navigation, settings
 ```
 
@@ -42,8 +43,9 @@ rather than reaching for Firestore directly.
 ## Status
 
 Built: customers, orders with their own numbering, status flow, due dates,
-fabric tracking, search and per-order change history.
+fabric tracking, search and per-order change history; the factory floor with a
+four-week drag-and-drop planner, build stages board, fabric watch-list, printable
+job cards and a printable planner.
 
-Next: factory floor planner and job cards (phase 2), costing and bills of
-material (phase 3), QR scan-out with customer notification (phase 4), invoicing
-and statements (phase 5).
+Next: costing and bills of material (phase 3), QR scan-out with customer
+notification (phase 4), invoicing and statements (phase 5).

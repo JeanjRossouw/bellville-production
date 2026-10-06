@@ -250,6 +250,11 @@ export function seedDemoIfEmpty() {
     d.setDate(d.getDate() + offset);
     return d.toISOString().split('T')[0];
   };
+  const monday = (offset) => {
+    const d = new Date(); d.setDate(d.getDate() + offset);
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    return d.toISOString().split('T')[0];
+  };
   const mk = (n, over) => ({
     orderNo: 'CP-' + n, customerId: custId, customerName: 'Bellville Furniture',
     externalRef: String(3200 + (n - 1000)), source: 'feed',
@@ -259,11 +264,12 @@ export function seedDemoIfEmpty() {
     createdAt: nowIso(), createdBy: 'demo', updatedAt: nowIso(), updatedBy: 'demo', ...over
   });
   demoWrite('orders', {
-    'd1': mk(1001, { status: 'in-production', fabricStatus: 'received', product: '3 Seater Chesterfield', paidDate: day(-24), dueDate: day(4) }),
+    'd1': mk(1001, { status: 'in-production', fabricStatus: 'received', product: '3 Seater Chesterfield', paidDate: day(-24), dueDate: day(4), planWeek: monday(0), stage: 'upholstery', builder: 'Sipho' }),
     'd2': mk(1002, { status: 'new', product: '2 Seater Amber', fabric: 'Adore : Flint Grey', priceEach: 6400, paidDate: day(-6), dueDate: day(22) }),
-    'd3': mk(1003, { status: 'ready', product: 'Corner Unit 2.8 x 2.8', fabric: 'Magical : Eclipse', priceEach: 15900, fabricStatus: 'received', paidDate: day(-30), dueDate: day(-2) }),
-    'd4': { ...mk(1004, { status: 'new', product: 'Daybed 2.4m', priceEach: 11200, paidDate: day(-10), dueDate: day(18), fabricStatus: 'ordered' }), customerId: 'd-walkin', customerName: 'Private client — J. Marais', source: 'manual', externalRef: '' }
+    'd3': mk(1003, { status: 'ready', product: 'Corner Unit 2.8 x 2.8', fabric: 'Magical : Eclipse', priceEach: 15900, fabricStatus: 'received', paidDate: day(-30), dueDate: day(-2), planWeek: monday(0), stage: 'finishing', builder: 'Johan' }),
+    'd4': { ...mk(1004, { status: 'new', product: 'Daybed 2.4m', priceEach: 11200, paidDate: day(-10), dueDate: day(18), fabricStatus: 'ordered', planWeek: monday(7) }), customerId: 'd-walkin', customerName: 'Private client — J. Marais', source: 'manual', externalRef: '' }
   });
   demoWrite('counters', { orderNo: { value: 1005 } });
+  demoWrite('settings', { factory: { staff: ['Sipho', 'Johan', 'Thandi'], phone: '021 000 0000', email: 'factory@couchpotato.co.za' } });
   return true;
 }

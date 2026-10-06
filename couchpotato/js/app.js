@@ -7,6 +7,11 @@ import {
   startOrders, renderOrders, newOrder, editOrder, deleteOrder, setStatus, setFabric,
   setDue, setFilter, getFilter, setOrderSettings, allOrders, showHistory
 } from './orders.js';
+import {
+  renderFloor, setFloorView, setFloorSettings, setStage, setBuilder, moveMenu,
+  printJobCard, printWeekJobCards, printPlanner
+} from './floor.js';
+
 
 let settings = { ...FACTORY_DEFAULTS };
 let view = 'orders';
@@ -31,9 +36,10 @@ async function boot() {
     if (user.role === 'none') { showNoAccess(user); return; }
     if (!booted) {
       booted = true;
+      store.seedDemoIfEmpty();
       settings = await store.loadSettings(FACTORY_DEFAULTS);
       setOrderSettings(settings);
-      store.seedDemoIfEmpty();
+      setFloorSettings(settings);
       startCustomers(() => { if (view === 'customers' || view === 'orders') paint(); });
       startOrders(() => { if (view !== 'settings') paint(); }, settings);
     }
@@ -74,9 +80,8 @@ function showApp(user) {
   app.innerHTML = `
     <header class="topbar">
       <div class="brand">
-        <span class="logo">🛋️</span>
         <span class="brand-name">${esc(settings.name || 'Couch Potato')}</span>
-        <span class="brand-sub">Factory system</span>
+        <span class="brand-sub">Factory</span>
       </div>
       <div class="top-right">
         ${store.storeMode() === 'demo' ? '<span class="chip demo-chip" title="No database connected — data stays in this browser">DEMO</span>' : ''}
@@ -112,12 +117,7 @@ function paint() {
   if (view === 'orders') return renderOrders(screen);
   if (view === 'customers') return renderCustomers(screen, allOrders());
   if (view === 'settings') return renderSettings(screen);
-  if (view === 'factory') return screen.innerHTML = overview() + phaseStub(2, 'Factory floor', [
-    'A week-by-week planner: drag each order into the week it gets built',
-    'Printable job cards per couch, with the cut list and fabric',
-    'Build stages so the floor can see what is at frames, foam, upholstery or finishing',
-    'Who is working on what, and what is waiting on fabric'
-  ]);
+  if (view === 'factory') return renderFloor(screen, overview());
   if (view === 'costing') return screen.innerHTML = phaseStub(3, 'Costing', [
     'Materials library with current prices: timber, foam, webbing, fabric, feet, glue',
     'A bill of materials per product, so a true cost comes out automatically',
@@ -178,6 +178,8 @@ function renderSettings(host) {
       ${row(field('Phone', 's-phone', { value: s.phone }), field('Email', 's-email', { value: s.email, type: 'email' }))}
       ${field('Address', 's-address', { value: s.address, type: 'textarea' })}
       ${field('Bank details for invoices', 's-bank', { value: s.bankDetails, type: 'textarea', placeholder: 'Bank, account name, account number, branch code' })}
+      <h2>Factory floor</h2>
+      ${field('Builders / staff (comma separated)', 's-staff', { value: (s.staff || []).join(', '), placeholder: 'e.g. Sipho, Johan, Thandi' })}
       <h2>Numbering and terms</h2>
       ${row(field('Order number prefix', 's-oprefix', { value: s.orderPrefix }), field('Next order number', 's-ofirst', { value: s.firstOrderNo, type: 'number', min: 1 }))}
       ${row(field('Invoice prefix', 's-iprefix', { value: s.invoicePrefix }), field('Default payment terms (days)', 's-terms', { value: s.paymentTermsDays, type: 'number', min: 0 }))}
@@ -209,6 +211,7 @@ async function saveSettings() {
     email: g('s-email'),
     address: g('s-address'),
     bankDetails: g('s-bank'),
+    staff: g('s-staff').split(',').map(x => x.trim()).filter(Boolean),
     orderPrefix: g('s-oprefix') || 'CP-',
     firstOrderNo: parseInt(g('s-ofirst'), 10) || 1001,
     invoicePrefix: g('s-iprefix') || 'INV-',
@@ -219,6 +222,7 @@ async function saveSettings() {
   await store.saveSettings(patch);
   settings = { ...settings, ...patch };
   setOrderSettings(settings);
+  setFloorSettings(settings);
   const bn = document.querySelector('.brand-name');
   if (bn) bn.textContent = settings.name;
   toast('Settings saved');
@@ -240,6 +244,12 @@ async function onAction(e) {
     case 'edit-customer': return editCustomer(id);
     case 'del-customer': return deleteCustomer(id, parseInt(b.dataset.n, 10) || 0);
     case 'save-settings': return saveSettings();
+    case 'floor-view': setFloorView(b.dataset.to); return paint();
+    case 'plan-move': return moveMenu(id);
+    case 'mark-ready': return setStatus(id, 'ready');
+    case 'print-job': return printJobCard(id);
+    case 'print-week-jobs': return printWeekJobCards();
+    case 'print-planner': return printPlanner();
     case 'filter-status': {
       // Tapping the tile you are already filtered to clears it again.
       const cur = getFilter().status;
@@ -256,6 +266,8 @@ function onChangeEvent(e) {
   const act = t.dataset ? t.dataset.act : '';
   if (act === 'fabric') return setFabric(t.dataset.id, t.value);
   if (act === 'due') return setDue(t.dataset.id, t.value);
+  if (act === 'stage') return setStage(t.dataset.id, t.value);
+  if (act === 'builder') return setBuilder(t.dataset.id, t.value);
 }
 
 let searchTimer = null;
