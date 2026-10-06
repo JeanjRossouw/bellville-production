@@ -5,6 +5,7 @@
 // so there is always an answer to "who changed this and when".
 import * as store from './store.js';
 import { allCustomers, customerById } from './customers.js';
+import { allProducts, productByName } from './costing.js';
 import {
   esc, money, field, row, val, openModal, toast, empty, today, addDays,
   niceDate, daysUntil, statusChip, statusMeta, STATUSES, fabricChip, FABRIC_STATES
@@ -41,7 +42,7 @@ function form(o) {
     field('Customer', 'o-cust', { type: 'select', options: custOptions, value: o.customerId || '' }),
     field('Their order / invoice no.', 'o-ref', { value: o.externalRef, placeholder: 'So both sides can match it up' })
   ) + row(
-    field('Product', 'o-product', { value: o.product, placeholder: 'e.g. 3 Seater Chesterfield' }),
+    field('Product', 'o-product', { value: o.product, placeholder: 'e.g. 3 Seater Chesterfield', list: 'o-product-list' }),
     field('Qty', 'o-qty', { value: o.qty || 1, type: 'number', min: 1 })
   ) + row(
     field('Fabric / colour', 'o-fabric', { value: o.fabric, placeholder: 'e.g. Moldova : Oatmeal' }),
@@ -49,7 +50,18 @@ function form(o) {
   ) + row(
     field('Date paid / order placed', 'o-paid', { value: paid, type: 'date' }),
     field('Due out of the factory', 'o-due', { value: o.dueDate || addDays(paid, 28), type: 'date' })
-  ) + field('Notes for the floor', 'o-notes', { value: o.notes, type: 'textarea', placeholder: 'Anything the builders must know' });
+  ) + field('Notes for the floor', 'o-notes', { value: o.notes, type: 'textarea', placeholder: 'Anything the builders must know' })
+    + `<datalist id="o-product-list">${allProducts().map(p => `<option value="${esc(p.name)}"></option>`).join('')}</datalist>`;
+}
+
+// Picking a catalogue product fills in its selling price (unless a price was typed already).
+function wireProductPrice(wrap) {
+  const prod = wrap.querySelector('#o-product'), price = wrap.querySelector('#o-price');
+  let priceTouched = !!price.value;
+  price.addEventListener('input', () => { priceTouched = !!price.value; });
+  const fill = () => { const p = productByName(prod.value); if (p && p.sellingPrice && !priceTouched) price.value = p.sellingPrice; };
+  prod.addEventListener('change', fill);
+  prod.addEventListener('input', fill);
 }
 
 function read(wrap) {
@@ -96,6 +108,7 @@ export function newOrder() {
   // unless they have deliberately changed it themselves.
   const paid = wrap.querySelector('#o-paid');
   const due = wrap.querySelector('#o-due');
+  wireProductPrice(wrap);
   let dueTouched = false;
   due.addEventListener('input', () => { dueTouched = true; });
   paid.addEventListener('change', () => { if (!dueTouched) due.value = addDays(paid.value, 28); });
@@ -104,7 +117,7 @@ export function newOrder() {
 export function editOrder(id) {
   const o = orderById(id);
   if (!o) return;
-  openModal('Edit ' + (o.orderNo || 'order'), form(o), {
+  const { wrap: editWrap } = openModal('Edit ' + (o.orderNo || 'order'), form(o), {
     okLabel: 'Save changes',
     onOk: async (w) => {
       const d = read(w);
@@ -114,6 +127,7 @@ export function editOrder(id) {
       toast('Order updated');
     }
   });
+  wireProductPrice(editWrap);
 }
 
 export async function deleteOrder(id) {

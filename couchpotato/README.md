@@ -18,7 +18,8 @@ couchpotato/
   js/ui.js          shared rendering helpers
   js/customers.js   customer screen
   js/orders.js      order capture, status, history
-  js/floor.js       planner, stages, fabric list, job cards
+  js/floor.js       planner, fabric list, job cards
+  js/costing.js     materials, bills of material, overheads, price sheet
   js/app.js         boot, navigation, settings
 ```
 
@@ -47,5 +48,10 @@ fabric tracking, search and per-order change history; the factory floor with a
 four-week drag-and-drop planner, fabric watch-list, printable
 job cards and a printable planner.
 
-Next: costing and bills of material (phase 3), QR scan-out with customer
-notification (phase 4), invoicing and statements (phase 5).
+Also built: costing — a materials library with current prices, a bill of
+materials per product, labour and an overhead share per piece, margin against
+the selling price, a printable price list for customers and an internal cost
+sheet. Capturing an order from the catalogue fills in its price.
+
+Next: QR scan-out with customer notification (phase 4), invoicing and
+statements (phase 5).

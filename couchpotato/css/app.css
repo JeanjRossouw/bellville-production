@@ -496,6 +496,23 @@ code { background: var(--line); padding: 1px 5px; border-radius: 4px; font-size:
 .tbl td { padding: .5rem; border-bottom: 1px solid var(--line); vertical-align: middle; }
 .tbl select { font: inherit; font-size: 12.5px; padding: .3rem .4rem; border: 1px solid var(--line); border-radius: 6px; }
 
+/* ---------------------------------------------------------------- costing */
+
+.cat { margin: 1rem 0 .4rem; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.tbl .r { text-align: right; }
+.tbl .nowrap { white-space: nowrap; }
+.tbl.cost td { vertical-align: top; }
+.good { color: var(--green); } .bad { color: var(--red); } .warn { color: var(--amber); }
+.notice-inline { background: var(--amber-soft); color: #78350f; border-radius: 10px; padding: .6rem .8rem; font-size: 12.5px; margin-bottom: .8rem; }
+.bom-row { display: grid; grid-template-columns: 1fr 86px 84px 28px; gap: .35rem; align-items: center; margin-bottom: .35rem; }
+.bom-row select, .bom-row input { font: inherit; font-size: 13px; padding: .45rem .5rem; border: 1px solid #d6d3d1; border-radius: 8px; min-width: 0; }
+.bom-line { text-align: right; font-size: 12px; }
+.oh-row { display: grid; grid-template-columns: 1fr 150px 28px; gap: .35rem; align-items: center; margin-bottom: .35rem; }
+.oh-row input { font: inherit; font-size: 14px; padding: .5rem .6rem; border: 1px solid #d6d3d1; border-radius: 8px; min-width: 0; }
+.cost-live { background: var(--paper); border-radius: 10px; padding: .5rem .8rem; margin: .5rem 0 .8rem; font-size: 13px; }
+.cost-live > div { display: flex; justify-content: space-between; gap: 1rem; padding: .2rem 0; }
+.cost-live .tot { border-top: 1px solid var(--line); margin-top: .2rem; padding-top: .4rem; font-weight: 700; }
+
 @media (max-width: 560px) {
   h1 { font-size: 20px; }
   .shell { padding: .85rem .7rem 4rem; }
@@ -508,4 +525,6 @@ code { background: var(--line); padding: 1px 5px; border-radius: 4px; font-size:
   .pgrid { grid-template-columns: 1fr; }
   .ppool { grid-template-columns: 1fr; }
   .btn-row .btn { flex: 1 1 auto; }
+  .bom-row { grid-template-columns: 1fr 70px 24px; }
+  .bom-line { display: none; }
 }

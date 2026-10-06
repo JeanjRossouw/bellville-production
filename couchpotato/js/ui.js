@@ -127,7 +127,7 @@ export function field(label, id, opts) {
   }
   return `<label class="fld"><span>${esc(label)}</span>
     <input id="${id}" type="${type}" value="${esc(o.value == null ? '' : o.value)}"
-      placeholder="${esc(o.placeholder || '')}"${o.min != null ? ` min="${o.min}"` : ''}${o.step ? ` step="${o.step}"` : ''}></label>`;
+      placeholder="${esc(o.placeholder || '')}"${o.min != null ? ` min="${o.min}"` : ''}${o.step ? ` step="${o.step}"` : ''}${o.list ? ` list="${o.list}" autocomplete="off"` : ''}></label>`;
 }
 
 export const row = (...cells) => `<div class="fld-row">${cells.join('')}</div>`;

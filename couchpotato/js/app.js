@@ -11,6 +11,11 @@ import {
   renderFloor, setFloorView, setFloorSettings, startBuild, setBuilder, moveMenu,
   printJobCard, printWeekJobCards, printPlanner
 } from './floor.js';
+import {
+  startCosting, renderCosting, setCostingSettings, setCostView, newMaterial, editMaterial, deleteMaterial,
+  newProduct, editProduct, duplicateProduct, deleteProduct, saveOverheads, addOverheadRow, liveOverheads,
+  printPriceSheet, printCostSheet
+} from './costing.js';
 
 
 let settings = { ...FACTORY_DEFAULTS };
@@ -40,6 +45,8 @@ async function boot() {
       settings = await store.loadSettings(FACTORY_DEFAULTS);
       setOrderSettings(settings);
       setFloorSettings(settings);
+      setCostingSettings(settings);
+      startCosting(() => { if (view === 'costing' || view === 'orders') paint(); }, settings);
       startCustomers(() => { if (view === 'customers' || view === 'orders') paint(); });
       startOrders(() => { if (view !== 'settings') paint(); }, settings);
     }
@@ -118,13 +125,7 @@ function paint() {
   if (view === 'customers') return renderCustomers(screen, allOrders());
   if (view === 'settings') return renderSettings(screen);
   if (view === 'factory') return renderFloor(screen, overview());
-  if (view === 'costing') return screen.innerHTML = phaseStub(3, 'Costing', [
-    'Materials library with current prices: timber, foam, webbing, fabric, feet, glue',
-    'A bill of materials per product, so a true cost comes out automatically',
-    'Labour per piece plus a share of monthly overheads',
-    'Cost versus the price charged, per product and per customer',
-    'A price sheet Couch Potato can quote from, in their own name'
-  ]);
+  if (view === 'costing') return renderCosting(screen);
   if (view === 'scan') return screen.innerHTML = phaseStub(4, 'Scan out', [
     'A QR code printed on each job card, unique to that couch',
     'Any phone or tablet camera scans it at the loading door',
@@ -223,6 +224,7 @@ async function saveSettings() {
   settings = { ...settings, ...patch };
   setOrderSettings(settings);
   setFloorSettings(settings);
+  setCostingSettings(settings);
   const bn = document.querySelector('.brand-name');
   if (bn) bn.textContent = settings.name;
   toast('Settings saved');
@@ -251,6 +253,24 @@ async function onAction(e) {
     case 'print-job': return printJobCard(id);
     case 'print-week-jobs': return printWeekJobCards();
     case 'print-planner': return printPlanner();
+    case 'cost-view': setCostView(b.dataset.to); return paint();
+    case 'new-material': return newMaterial();
+    case 'edit-material': return editMaterial(id);
+    case 'del-material': return deleteMaterial(id);
+    case 'new-product': return newProduct();
+    case 'edit-product': return editProduct(id);
+    case 'dup-product': return duplicateProduct(id);
+    case 'del-product': return deleteProduct(id);
+    case 'oh-add': addOverheadRow(document.getElementById('screen')); return;
+    case 'oh-del': b.closest('.oh-row').remove(); return liveOverheads(document.getElementById('screen'));
+    case 'save-overheads': {
+      const patch = await saveOverheads(document.getElementById('screen'));
+      settings = { ...settings, ...patch };
+      setOrderSettings(settings); setFloorSettings(settings); setCostingSettings(settings);
+      return paint();
+    }
+    case 'print-pricesheet': return printPriceSheet();
+    case 'print-costsheet': return printCostSheet();
     case 'filter-status': {
       // Tapping the tile you are already filtered to clears it again.
       const cur = getFilter().status;
@@ -272,6 +292,7 @@ function onChangeEvent(e) {
 
 let searchTimer = null;
 function onInput(e) {
+  if (e.target.closest && e.target.closest('.oh-row, #oh-units')) return liveOverheads(document.getElementById('screen'));
   if (e.target.id !== 'o-search') return;
   clearTimeout(searchTimer);
   const v = e.target.value;
