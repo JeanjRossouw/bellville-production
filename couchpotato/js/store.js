@@ -231,7 +231,13 @@ export async function saveSettings(patch) {
 // system can be walked through without typing anything first.
 export function seedDemoIfEmpty() {
   if (mode !== 'demo') return false;
-  if (Object.keys(demoRead('orders')).length) return false;
+  const had = Object.keys(demoRead('orders')).length > 0;
+  if (!had) seedDemoBase();
+  seedDemoExtras();
+  return !had;
+}
+
+function seedDemoBase() {
   const custId = 'd-bellville';
   demoWrite('customers', {
     [custId]: {
@@ -264,15 +270,15 @@ export function seedDemoIfEmpty() {
     createdAt: nowIso(), createdBy: 'demo', updatedAt: nowIso(), updatedBy: 'demo', ...over
   });
   demoWrite('orders', {
-    'd1': mk(1001, { status: 'in-production', fabricStatus: 'received', product: '3 Seater Chesterfield', paidDate: day(-24), dueDate: day(4), planWeek: monday(0), builder: 'Sipho' }),
+    'd1': mk(1001, { status: 'in-production', fabricStatus: 'received', product: '3 Seater Chesterfield', paidDate: day(-24), dueDate: day(4), planWeek: monday(0) }),
     'd2': mk(1002, { status: 'new', product: '2 Seater Amber', fabric: 'Adore : Flint Grey', priceEach: 6400, paidDate: day(-6), dueDate: day(22) }),
-    'd3': mk(1003, { status: 'ready', product: 'Corner Unit 2.8 x 2.8', fabric: 'Magical : Eclipse', priceEach: 15900, fabricStatus: 'received', paidDate: day(-30), dueDate: day(-2), planWeek: monday(0), builder: 'Johan' }),
+    'd3': mk(1003, { status: 'ready', product: 'Corner Unit 2.8 x 2.8', fabric: 'Magical : Eclipse', priceEach: 15900, fabricStatus: 'received', paidDate: day(-30), dueDate: day(-2), planWeek: monday(0) }),
     'd5': mk(1005, { status: 'dispatched', product: 'Ottoman 900mm', fabric: 'Adore : Flint Grey', priceEach: 2400, qty: 2, fabricStatus: 'received', paidDate: day(-35), dueDate: day(-7), dispatchedAt: new Date(Date.now() - 86400000).toISOString(), dispatchedBy: 'Thandi' }),
     'd4': { ...mk(1004, { status: 'new', product: 'Daybed 2.4m', priceEach: 11200, paidDate: day(-10), dueDate: day(18), fabricStatus: 'ordered', planWeek: monday(7) }), customerId: 'd-walkin', customerName: 'Private client — J. Marais', source: 'manual', externalRef: '' }
   });
   demoWrite('counters', { orderNo: { value: 1006 }, invoiceNo: { value: 1 } });
   demoWrite('settings', { factory: {
-    staff: ['Sipho', 'Johan', 'Thandi'], phone: '021 000 0000', email: 'factory@couchpotato.co.za',
+    phone: '021 000 0000', email: 'factory@couchpotato.co.za',
     labourRate: 85, unitsPerMonth: 60,
     vatRegistered: true, vatNo: '4123456789', regNo: '2015/123456/07', address: '21 Induland Crescent, Lansdowne, Cape Town',
     bankDetails: 'FNB · Couch Potato Factory (Pty) Ltd · Acc 62012345678 · Branch 250655',
@@ -302,5 +308,64 @@ export function seedDemoIfEmpty() {
   };
   Object.keys(prods).forEach(k => { prods[k].createdAt = nowIso(); prods[k].createdBy = 'demo'; });
   demoWrite('products', prods);
-  return true;
+}
+
+// Twenty more orders, generated from a fixed seed so every demo browser gets
+// the same believable mix: several customers, every catalogue product, orders
+// at each stage, some late, some waiting on fabric, a few already out the door.
+function seedDemoExtras() {
+  const orders = demoRead('orders');
+  if (orders['r1']) return;
+  let seed = 20261006;
+  const rnd = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
+  const day = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return d.toISOString().split('T')[0]; };
+  const monday = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.toISOString().split('T')[0]; };
+
+  const customers = demoRead('customers');
+  const extraCust = {
+    'd-stellenbosch': { name: 'Stellenbosch Interiors', contact: 'Anél', phone: '021 887 0000', email: 'orders@stbinteriors.co.za', area: 'Stellenbosch', address: '4 Dorp Street, Stellenbosch', termsDays: 30 },
+    'd-durbanville': { name: 'Durbanville Décor', contact: 'Pieter', phone: '021 975 0000', email: 'hello@durbanvilledecor.co.za', area: 'Durbanville', address: 'Shop 12, Tyger Valley Centre', termsDays: 14 },
+    'd-botha': { name: 'Private client — M. Botha', contact: 'Marius Botha', phone: '083 222 4455', email: '', area: 'Somerset West', address: '18 Vineyard Road, Somerset West', termsDays: 0 }
+  };
+  Object.keys(extraCust).forEach(id => { if (!customers[id]) customers[id] = { ...extraCust[id], createdAt: nowIso(), createdBy: 'demo' }; });
+  demoWrite('customers', customers);
+
+  const custIds = ['d-bellville', 'd-bellville', 'd-bellville', 'd-stellenbosch', 'd-durbanville', 'd-walkin', 'd-botha'];
+  const products = [
+    ['3 Seater Chesterfield', 8500], ['2 Seater Amber', 6400], ['Corner Unit 2.8 x 2.8', 15900], ['Daybed 2.4m', 11200], ['Ottoman 900mm', 2400],
+    ['Alaska 3 Seater 2.4m', 9200], ['Paris Chesterfield', 12800], ['Wingback Chair', 4600]
+  ];
+  const fabrics = ['Moldova : Oatmeal', 'Adore : Flint Grey', 'Magical : Eclipse', 'Hertex Velvet : Forest', 'Linen Look : Natural', 'Boucle : Cream', 'Leather : Tan', ''];
+  const statuses = ['new', 'new', 'new', 'in-production', 'in-production', 'in-production', 'in-production', 'ready', 'ready', 'dispatched'];
+  let n = 1006;
+  let bvRef = 3210;
+  for (let i = 1; i <= 20; i++) {
+    const cid = pick(custIds);
+    const c = customers[cid] || {};
+    const [product, price] = pick(products);
+    const status = pick(statuses);
+    const fabric = pick(fabrics);
+    const paidOffset = -Math.floor(rnd() * 42);
+    const paidDate = day(paidOffset);
+    const dueDate = day(paidOffset + 28);
+    const qty = rnd() < 0.15 ? 2 : 1;
+    const o = {
+      orderNo: 'CP-' + n++, customerId: cid, customerName: c.name || '',
+      externalRef: cid === 'd-bellville' ? String(bvRef++) : '', source: cid === 'd-bellville' ? 'feed' : 'manual',
+      product, qty, fabric,
+      fabricStatus: !fabric ? 'none' : status === 'new' ? pick(['none', 'ordered', 'ordered', 'received']) : pick(['ordered', 'received', 'received', 'received']),
+      notes: pick(['', '', '', 'Client wants dark feet', 'Extra scatter cushions ×2', 'Deliver before month end', 'Firm seat foam please']),
+      paidDate, dueDate, priceEach: price, status, events: [{ at: nowIso(), by: 'demo', what: 'Order captured' }],
+      createdAt: nowIso(), createdBy: 'demo', updatedAt: nowIso(), updatedBy: 'demo'
+    };
+    if (status === 'in-production' || status === 'ready') o.planWeek = monday(pick([0, 0, 7, 7, 14]));
+    if (status === 'new' && rnd() < 0.5) o.planWeek = monday(pick([7, 14, 21]));
+    if (status === 'dispatched') { o.dispatchedAt = new Date(Date.now() - Math.floor(rnd() * 5 + 1) * 86400000).toISOString(); o.dispatchedBy = pick(['Sipho', 'Thandi']); }
+    orders['r' + i] = o;
+  }
+  demoWrite('orders', orders);
+  const counters = demoRead('counters');
+  counters.orderNo = { value: Math.max(n, (counters.orderNo && counters.orderNo.value) || 0) };
+  demoWrite('counters', counters);
 }

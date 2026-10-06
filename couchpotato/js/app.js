@@ -5,10 +5,10 @@ import { esc, field, row, toast, money, daysUntil } from './ui.js';
 import { startCustomers, renderCustomers, newCustomer, editCustomer, deleteCustomer } from './customers.js';
 import {
   startOrders, renderOrders, newOrder, editOrder, deleteOrder, setStatus, setFabric,
-  setDue, setFilter, getFilter, setOrderSettings, allOrders, showHistory
+  setDue, setFilter, getFilter, setOrderSettings, allOrders
 } from './orders.js';
 import {
-  renderFloor, setFloorView, setFloorSettings, startBuild, setBuilder, moveMenu,
+  renderFloor, setFloorView, setFloorSettings, startBuild, moveMenu,
   printJobCard, printWeekJobCards, printPlanner
 } from './floor.js';
 import { renderScan, setScanSettings, startCamera, stopCamera, manualFind, confirmDispatch, notifyCustomer } from './scan.js';
@@ -32,13 +32,13 @@ let pendingScan = new URLSearchParams(location.search).get('scan') || '';
 if (pendingScan) history.replaceState(null, '', location.pathname);
 
 const NAV = [
-  { key: 'orders', icon: '📋', label: 'Orders' },
-  { key: 'customers', icon: '👥', label: 'Customers' },
-  { key: 'factory', icon: '🏭', label: 'Factory floor' },
-  { key: 'costing', icon: '💰', label: 'Costing' },
-  { key: 'scan', icon: '📷', label: 'Scan out' },
-  { key: 'invoices', icon: '🧾', label: 'Invoices' },
-  { key: 'settings', icon: '⚙️', label: 'Settings' }
+  { key: 'orders', icon: '', label: 'Orders' },
+  { key: 'customers', icon: '', label: 'Customers' },
+  { key: 'factory', icon: '', label: 'Factory floor' },
+  { key: 'costing', icon: '', label: 'Costing' },
+  { key: 'scan', icon: '', label: 'Scan out' },
+  { key: 'invoices', icon: '', label: 'Invoices' },
+  { key: 'settings', icon: '', label: 'Settings' }
 ];
 
 // ------------------------------------------------------------------ boot ----
@@ -113,7 +113,7 @@ function showApp(user) {
       </div>
     </header>
     <nav class="tabs" id="tabs">
-      ${NAV.map(n => `<button class="tab" data-view="${n.key}">${n.icon} <span>${esc(n.label)}</span></button>`).join('')}
+      ${NAV.map(n => `<button class="tab" data-view="${n.key}"><span>${esc(n.label)}</span></button>`).join('')}
     </nav>
     <main class="shell" id="screen"></main>`;
 
@@ -184,8 +184,6 @@ function renderSettings(host) {
       ${row(field('Phone', 's-phone', { value: s.phone }), field('Email', 's-email', { value: s.email, type: 'email' }))}
       ${field('Address', 's-address', { value: s.address, type: 'textarea' })}
       ${field('Bank details for invoices', 's-bank', { value: s.bankDetails, type: 'textarea', placeholder: 'Bank, account name, account number, branch code' })}
-      <h2>Factory floor</h2>
-      ${field('Builders / staff (comma separated)', 's-staff', { value: (s.staff || []).join(', '), placeholder: 'e.g. Sipho, Johan, Thandi' })}
       <h2>Numbering and terms</h2>
       ${row(field('Order number prefix', 's-oprefix', { value: s.orderPrefix }), field('Next order number', 's-ofirst', { value: s.firstOrderNo, type: 'number', min: 1 }))}
       ${row(field('Invoice prefix', 's-iprefix', { value: s.invoicePrefix }), field('Default payment terms (days)', 's-terms', { value: s.paymentTermsDays, type: 'number', min: 0 }))}
@@ -193,7 +191,7 @@ function renderSettings(host) {
         field('VAT registered', 's-vatreg', { type: 'select', value: s.vatRegistered ? 'yes' : 'no', options: [{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }] }),
         field('VAT rate (%)', 's-vatrate', { value: Math.round((s.vatRate || 0) * 100), type: 'number', min: 0, step: '0.01' })
       )}
-      <div class="card-actions"><button class="btn primary" data-act="save-settings">💾 Save settings</button></div>
+      <div class="card-actions"><button class="btn primary" data-act="save-settings">Save settings</button></div>
     </div>
     <div class="card">
       <h2>How this system is wired</h2>
@@ -217,7 +215,6 @@ async function saveSettings() {
     email: g('s-email'),
     address: g('s-address'),
     bankDetails: g('s-bank'),
-    staff: g('s-staff').split(',').map(x => x.trim()).filter(Boolean),
     orderPrefix: g('s-oprefix') || 'CP-',
     firstOrderNo: parseInt(g('s-ofirst'), 10) || 1001,
     invoicePrefix: g('s-iprefix') || 'INV-',
@@ -248,7 +245,6 @@ async function onAction(e) {
     case 'edit-order': return editOrder(id);
     case 'del-order': return deleteOrder(id);
     case 'status': return setStatus(id, b.dataset.to);
-    case 'history': return showHistory(id);
     case 'new-customer': return newCustomer();
     case 'edit-customer': return editCustomer(id);
     case 'del-customer': return deleteCustomer(id, parseInt(b.dataset.n, 10) || 0);
@@ -311,7 +307,6 @@ function onChangeEvent(e) {
   const act = t.dataset ? t.dataset.act : '';
   if (act === 'fabric') return setFabric(t.dataset.id, t.value);
   if (act === 'due') return setDue(t.dataset.id, t.value);
-  if (act === 'builder') return setBuilder(t.dataset.id, t.value);
   if (t.id === 'inv-filter') { setInvFilter(t.value); return paint(); }
   if (t.id === 'stmt-cust') { setStmtCustomer(t.value); return paint(); }
 }

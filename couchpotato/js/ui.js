@@ -31,18 +31,18 @@ export function daysUntil(iso) {
 }
 
 export const STATUSES = [
-  { key: 'new', label: 'New', icon: '🆕', cls: 'st-new', help: 'Accepted, not started on the floor yet' },
-  { key: 'in-production', label: 'In production', icon: '🔧', cls: 'st-prod', help: 'Being built' },
-  { key: 'ready', label: 'Ready', icon: '📦', cls: 'st-ready', help: 'Finished, waiting to go out' },
-  { key: 'dispatched', label: 'Dispatched', icon: '🚚', cls: 'st-disp', help: 'Scanned out to the customer' },
-  { key: 'invoiced', label: 'Invoiced', icon: '🧾', cls: 'st-inv', help: 'Billed to the customer' }
+  { key: 'new', label: 'New', icon: '', cls: 'st-new', help: 'Accepted, not started on the floor yet' },
+  { key: 'in-production', label: 'In production', icon: '', cls: 'st-prod', help: 'Being built' },
+  { key: 'ready', label: 'Done', icon: '', cls: 'st-ready', help: 'Built and finished, waiting to go out' },
+  { key: 'dispatched', label: 'Dispatched', icon: '', cls: 'st-disp', help: 'Scanned out to the customer' },
+  { key: 'invoiced', label: 'Invoiced', icon: '', cls: 'st-inv', help: 'Billed to the customer' }
 ];
 
 export const statusMeta = (key) => STATUSES.find(s => s.key === key) || STATUSES[0];
 
 export function statusChip(key) {
   const s = statusMeta(key);
-  return `<span class="chip ${s.cls}">${s.icon} ${esc(s.label)}</span>`;
+  return `<span class="chip ${s.cls}">${esc(s.label)}</span>`;
 }
 
 export const FABRIC_STATES = [
@@ -53,7 +53,7 @@ export const FABRIC_STATES = [
 
 export function fabricChip(key) {
   const f = FABRIC_STATES.find(x => x.key === key) || FABRIC_STATES[0];
-  return `<span class="chip ${f.cls}">🧵 ${esc(f.label)}</span>`;
+  return `<span class="chip ${f.cls}">${esc(f.label)}</span>`;
 }
 
 let toastTimer = null;

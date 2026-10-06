@@ -109,20 +109,20 @@ export function renderCustomers(host, orders) {
           <span class="count">${openCounts[c.id] || 0} open</span>
         </div>
         <div class="meta">
-          ${c.contact ? `<div>👤 ${esc(c.contact)}</div>` : ''}
-          ${c.phone ? `<div>📱 ${esc(c.phone)}</div>` : ''}
-          ${c.email ? `<div>✉️ ${esc(c.email)}</div>` : ''}
-          ${c.area || c.address ? `<div>📍 ${esc([c.address, c.area].filter(Boolean).join(', '))}</div>` : ''}
+          ${c.contact ? `<div>${esc(c.contact)}</div>` : ''}
+          ${c.phone ? `<div>${esc(c.phone)}</div>` : ''}
+          ${c.email ? `<div>${esc(c.email)}</div>` : ''}
+          ${c.area || c.address ? `<div>${esc([c.address, c.area].filter(Boolean).join(', '))}</div>` : ''}
           <div class="muted">Terms: ${c.termsDays ? c.termsDays + ' days' : 'on collection'} · ${counts[c.id] || 0} order${(counts[c.id] || 0) === 1 ? '' : 's'} all time</div>
           ${c.createdAt ? `<div class="muted">Added ${esc(niceDate(c.createdAt))}</div>` : ''}
           <div class="muted" title="Used when another system feeds orders in for this customer">Feed id: <code>${esc(c.id)}</code></div>
         </div>
         ${c.notes ? `<p class="notes">${esc(c.notes)}</p>` : ''}
         <div class="card-actions">
-          <button class="btn ghost sm" data-act="edit-customer" data-id="${esc(c.id)}">✏️ Edit</button>
-          <button class="btn danger sm" data-act="del-customer" data-id="${esc(c.id)}" data-n="${counts[c.id] || 0}">🗑 Remove</button>
+          <button class="btn ghost sm" data-act="edit-customer" data-id="${esc(c.id)}">Edit</button>
+          <button class="btn danger sm" data-act="del-customer" data-id="${esc(c.id)}" data-n="${counts[c.id] || 0}">Remove</button>
         </div>
       </div>`).join('')}</div>`
-      : empty('👥', 'No customers yet', 'Add the factory’s first customer to start capturing orders against it.')}
+      : empty('', 'No customers yet', 'Add the factory’s first customer to start capturing orders against it.')}
   `;
 }
