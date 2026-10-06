@@ -11,6 +11,7 @@ import {
   renderFloor, setFloorView, setFloorSettings, startBuild, setBuilder, moveMenu,
   printJobCard, printWeekJobCards, printPlanner
 } from './floor.js';
+import { renderScan, setScanSettings, startCamera, stopCamera, manualFind, confirmDispatch, notifyCustomer } from './scan.js';
 import {
   startCosting, renderCosting, setCostingSettings, setCostView, newMaterial, editMaterial, deleteMaterial,
   newProduct, editProduct, duplicateProduct, deleteProduct, saveOverheads, addOverheadRow, liveOverheads,
@@ -21,6 +22,10 @@ import {
 let settings = { ...FACTORY_DEFAULTS };
 let view = 'orders';
 let booted = false;
+// A job-card QR opens the app with ?scan=<order id>: remember it until the
+// orders have loaded, then go straight to the dispatch screen for that order.
+let pendingScan = new URLSearchParams(location.search).get('scan') || '';
+if (pendingScan) history.replaceState(null, '', location.pathname);
 
 const NAV = [
   { key: 'orders', icon: '📋', label: 'Orders' },
@@ -46,9 +51,14 @@ async function boot() {
       setOrderSettings(settings);
       setFloorSettings(settings);
       setCostingSettings(settings);
+      setScanSettings(settings);
       startCosting(() => { if (view === 'costing' || view === 'orders') paint(); }, settings);
       startCustomers(() => { if (view === 'customers' || view === 'orders') paint(); });
-      startOrders(() => { if (view !== 'settings') paint(); }, settings);
+      startOrders(() => {
+        if (view !== 'settings') paint();
+        if (pendingScan) { const id = pendingScan; pendingScan = ''; view = 'scan'; paint(); confirmDispatch(id); }
+      }, settings);
+      if (pendingScan) view = 'scan';
     }
     showApp(user);
   });
@@ -121,18 +131,13 @@ function paint() {
   const screen = document.getElementById('screen');
   if (!screen) return;
   document.querySelectorAll('#tabs .tab').forEach(t => t.classList.toggle('on', t.dataset.view === view));
+  if (view !== 'scan') stopCamera(screen);
   if (view === 'orders') return renderOrders(screen);
   if (view === 'customers') return renderCustomers(screen, allOrders());
   if (view === 'settings') return renderSettings(screen);
   if (view === 'factory') return renderFloor(screen, overview());
   if (view === 'costing') return renderCosting(screen);
-  if (view === 'scan') return screen.innerHTML = phaseStub(4, 'Scan out', [
-    'A QR code printed on each job card, unique to that couch',
-    'Any phone or tablet camera scans it at the loading door',
-    'Scanning marks the order dispatched and stamps who sent it out and when',
-    'The customer is notified automatically that their couch has left',
-    'The item drops straight into the invoice queue for the bookkeeper'
-  ]);
+  if (view === 'scan') return renderScan(screen);
   if (view === 'invoices') return screen.innerHTML = phaseStub(5, 'Invoices', [
     'An invoice queue fed by scan-outs, so nothing dispatched goes unbilled',
     'Invoices in Couch Potato’s own name, numbering and VAT',
@@ -225,6 +230,7 @@ async function saveSettings() {
   setOrderSettings(settings);
   setFloorSettings(settings);
   setCostingSettings(settings);
+  setScanSettings(settings);
   const bn = document.querySelector('.brand-name');
   if (bn) bn.textContent = settings.name;
   toast('Settings saved');
@@ -271,6 +277,11 @@ async function onAction(e) {
     }
     case 'print-pricesheet': return printPriceSheet();
     case 'print-costsheet': return printCostSheet();
+    case 'scan-start': return startCamera(document.getElementById('screen'));
+    case 'scan-stop': return stopCamera(document.getElementById('screen'));
+    case 'scan-find': return manualFind(document.getElementById('screen'));
+    case 'dispatch': return confirmDispatch(id);
+    case 'notify': return notifyCustomer(id);
     case 'filter-status': {
       // Tapping the tile you are already filtered to clears it again.
       const cur = getFilter().status;

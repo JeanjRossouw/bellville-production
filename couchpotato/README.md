@@ -20,10 +20,12 @@ couchpotato/
   js/orders.js      order capture, status, history
   js/floor.js       planner, fabric list, job cards
   js/costing.js     materials, bills of material, overheads, price sheet
+  js/scan.js        scan out at the door, dispatch, tell the customer
+  js/qr.js          QR codes for job cards (vendor/qrcode.js, MIT)
   js/app.js         boot, navigation, settings
 ```
 
-No build step and no dependencies. The files are served exactly as they are, so
+No build step. The only third-party code is the vendored QR generator. The files are served exactly as they are, so
 a change is live the moment it deploys.
 
 ## The one rule
@@ -53,5 +55,11 @@ materials per product, labour and an overhead share per piece, margin against
 the selling price, a printable price list for customers and an internal cost
 sheet. Capturing an order from the catalogue fills in its price.
 
-Next: QR scan-out with customer notification (phase 4), invoicing and
-statements (phase 5).
+Also built: scan out — every job card carries a QR code that opens the app
+on that order; the Scan out screen reads it with the camera (or takes a typed
+order number), marks the piece dispatched with who and when, and offers a
+one-tap WhatsApp or email to the customer. Dispatched orders queue for
+invoicing.
+
+Next: invoicing and statements (phase 5), then the one-way order feed from
+Bellville.

@@ -5,6 +5,7 @@
 import * as store from './store.js';
 import { allOrders, orderById, setStatus } from './orders.js';
 import { esc, money, today, niceDate, daysUntil, statusChip, fabricChip, FABRIC_STATES, openModal, toast, empty } from './ui.js';
+import { qrSvg, scanUrl } from './qr.js';
 
 let settings = {};
 export const setFloorSettings = (cfg) => { settings = cfg || {}; };
@@ -223,6 +224,7 @@ const PRINT_CSS = `
   .no-print { margin-bottom: 12px; } @media print { .no-print { display: none; } .page { page-break-after: always; } .page:last-child { page-break-after: auto; } }
   .page { padding: 4px 0 18px; }
   .hd { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #000; padding-bottom: 8px; margin-bottom: 12px; }
+  .hd-r { display: flex; gap: 14px; align-items: flex-start; } .qr svg { width: 100%; height: 100%; display: block; } .qr-wrap { text-align: center; } .qr-wrap small { display: block; font-size: 8.5px; color: #444; letter-spacing: .04em; margin-top: 2px; }
   .co { font-size: 20px; font-weight: 900; letter-spacing: .08em; } .co small { display: block; font-size: 10px; font-weight: 400; letter-spacing: .12em; color: #444; }
   .jc { text-align: right; } .jc .t { font-size: 11px; letter-spacing: .14em; color: #444; } .jc .n { font-size: 30px; font-weight: 900; line-height: 1; }
   table { width: 100%; border-collapse: collapse; } th, td { border: 1px solid #000; padding: 6px 8px; text-align: left; vertical-align: top; }
@@ -252,7 +254,10 @@ function jobCardHtml(o) {
   return `<div class="page">
     <div class="hd">
       <div class="co">${esc((settings.name || 'COUCH POTATO').toUpperCase())}<small>${esc([settings.phone, settings.email].filter(Boolean).join(' · ') || 'FACTORY JOB CARD')}</small></div>
-      <div class="jc"><div class="t">JOB CARD</div><div class="n">${esc(o.orderNo || '')}</div></div>
+      <div class="hd-r">
+        <div class="jc"><div class="t">JOB CARD</div><div class="n">${esc(o.orderNo || '')}</div></div>
+        <div class="qr-wrap">${qrSvg(scanUrl(o.id), 92)}<small>SCAN AT THE DOOR</small></div>
+      </div>
     </div>
     <table>
       <tr><th>Product</th><td class="big">${esc(o.product || '')}${(o.qty || 1) > 1 ? ' × ' + esc(o.qty) : ''}</td></tr>
