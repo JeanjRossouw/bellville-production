@@ -21,6 +21,7 @@ couchpotato/
   js/floor.js       planner, fabric list, job cards
   js/costing.js     materials, bills of material, overheads, price sheet
   js/scan.js        scan out at the door, dispatch, tell the customer
+  js/invoices.js    invoice queue, invoices, payments, statements, export
   js/qr.js          QR codes for job cards (vendor/qrcode.js, MIT)
   js/app.js         boot, navigation, settings
 ```
@@ -61,5 +62,10 @@ order number), marks the piece dispatched with who and when, and offers a
 one-tap WhatsApp or email to the customer. Dispatched orders queue for
 invoicing.
 
-Next: invoicing and statements (phase 5), then the one-way order feed from
-Bellville.
+Also built: invoicing — dispatched orders wait in a queue until they are on
+an invoice; invoices are raised per customer in Couch Potato's own numbering,
+with VAT when registered, printed in their name with their bank details;
+payments are recorded against them; per-customer statements; a CSV export
+of every invoice line for the accountant.
+
+Next: the one-way order feed from Bellville.

@@ -513,6 +513,16 @@ code { background: var(--line); padding: 1px 5px; border-radius: 4px; font-size:
 .cost-live > div { display: flex; justify-content: space-between; gap: 1rem; padding: .2rem 0; }
 .cost-live .tot { border-top: 1px solid var(--line); margin-top: .2rem; padding-top: .4rem; font-weight: 700; }
 
+/* --------------------------------------------------------------- invoices */
+
+.inv-lines-head, .inv-line { display: grid; grid-template-columns: 1fr 64px 110px 96px; gap: .35rem; align-items: center; }
+.inv-lines-head { font-size: 10.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: .25rem; }
+.inv-line { margin-bottom: .35rem; }
+.inv-line input { font: inherit; font-size: 13px; padding: .45rem .5rem; border: 1px solid #d6d3d1; border-radius: 8px; min-width: 0; }
+.il-tot { text-align: right; font-size: 12.5px; }
+.tbl tfoot th { text-align: right; padding: .5rem; font-size: 13px; }
+.q-pick { width: 18px; height: 18px; }
+
 /* --------------------------------------------------------------- scan out */
 
 .scan-cam-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 1.2rem; }
@@ -540,6 +550,8 @@ code { background: var(--line); padding: 1px 5px; border-radius: 4px; font-size:
   .btn-row .btn { flex: 1 1 auto; }
   .bom-row { grid-template-columns: 1fr 70px 24px; }
   .scan-cam-grid { grid-template-columns: 1fr; }
+  .inv-lines-head, .inv-line { grid-template-columns: 1fr 52px 84px; }
+  .il-tot, .inv-lines-head span:last-child { display: none; }
   .scan-row { flex-direction: column; align-items: stretch; }
   .bom-line { display: none; }
 }

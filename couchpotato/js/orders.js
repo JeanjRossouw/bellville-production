@@ -209,7 +209,7 @@ function orderCard(o) {
           </div>
         </div>
         <div class="order-chips">
-          ${statusChip(o.status)}
+          ${statusChip(o.status)}${o.invoiceNo ? ' <span class="chip st-inv">' + esc(o.invoiceNo) + '</span>' : ''}
           ${dueBadge(o)}
           ${o.fabric ? fabricChip(o.fabricStatus) : ''}
         </div>
