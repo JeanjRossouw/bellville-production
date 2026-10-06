@@ -20,7 +20,10 @@ const TOKEN_URL = 'https://identity.xero.com/connect/token';
 export const AUTHORIZE_URL = 'https://login.xero.com/identity/connect/authorize';
 const CONNECTIONS_URL = 'https://api.xero.com/connections';
 const API_BASE = 'https://api.xero.com/api.xro/2.0';
-export const SCOPES = 'openid profile email accounting.transactions accounting.contacts offline_access';
+// Granular scopes: Xero rejects the old broad accounting.transactions with
+// invalid_scope for every app created on or after 2 March 2026. We only
+// create invoices, apply payments and look up/create the POS contact.
+export const SCOPES = 'openid profile email accounting.invoices accounting.payments accounting.contacts offline_access';
 
 function tokenStore() { return getStore('xero-tokens'); }
 export async function loadTokens(biz) { return await tokenStore().get(biz, { type: 'json' }); }
