@@ -44,7 +44,7 @@ rather than reaching for Firestore directly.
 
 Built: customers, orders with their own numbering, status flow, due dates,
 fabric tracking, search and per-order change history; the factory floor with a
-four-week drag-and-drop planner, build stages board, fabric watch-list, printable
+four-week drag-and-drop planner, fabric watch-list, printable
 job cards and a printable planner.
 
 Next: costing and bills of material (phase 3), QR scan-out with customer

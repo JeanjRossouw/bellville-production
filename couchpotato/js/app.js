@@ -8,7 +8,7 @@ import {
   setDue, setFilter, getFilter, setOrderSettings, allOrders, showHistory
 } from './orders.js';
 import {
-  renderFloor, setFloorView, setFloorSettings, setStage, setBuilder, moveMenu,
+  renderFloor, setFloorView, setFloorSettings, startBuild, setBuilder, moveMenu,
   printJobCard, printWeekJobCards, printPlanner
 } from './floor.js';
 
@@ -247,6 +247,7 @@ async function onAction(e) {
     case 'floor-view': setFloorView(b.dataset.to); return paint();
     case 'plan-move': return moveMenu(id);
     case 'mark-ready': return setStatus(id, 'ready');
+    case 'start': return startBuild(id);
     case 'print-job': return printJobCard(id);
     case 'print-week-jobs': return printWeekJobCards();
     case 'print-planner': return printPlanner();
@@ -266,7 +267,6 @@ function onChangeEvent(e) {
   const act = t.dataset ? t.dataset.act : '';
   if (act === 'fabric') return setFabric(t.dataset.id, t.value);
   if (act === 'due') return setDue(t.dataset.id, t.value);
-  if (act === 'stage') return setStage(t.dataset.id, t.value);
   if (act === 'builder') return setBuilder(t.dataset.id, t.value);
 }
 

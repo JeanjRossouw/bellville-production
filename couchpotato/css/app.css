@@ -442,7 +442,6 @@ code { background: var(--line); padding: 1px 5px; border-radius: 4px; font-size:
   overflow-x: auto;
   padding-bottom: .3rem;
 }
-.pgrid.stages { grid-template-columns: repeat(6, minmax(240px, 1fr)); }
 .pcol, .pcol-body > * { min-width: 0; }          /* cards shrink with their column instead of spilling out */
 .pcol {
   background: #f3f1ee;
@@ -506,7 +505,7 @@ code { background: var(--line); padding: 1px 5px; border-radius: 4px; font-size:
   .tile.wide { grid-column: span 1; }
   .page-head .btn { width: 100%; }
   .toolbar select { flex: 1 1 100%; }
-  .pgrid, .pgrid.stages { grid-template-columns: 1fr; }
+  .pgrid { grid-template-columns: 1fr; }
   .ppool { grid-template-columns: 1fr; }
   .btn-row .btn { flex: 1 1 auto; }
 }

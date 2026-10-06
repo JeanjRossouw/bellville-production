@@ -113,7 +113,7 @@ first, since later phases print from them.
 |---|---|
 | Customers | Built |
 | Orders, with their own numbering and full change history | Built |
-| Factory floor: week planner, build stages, fabric watch-list, job cards | Built |
+| Factory floor: week planner, fabric watch-list, job cards | Built |
 | Costing, bill of materials and price sheets | Phase 3 |
 | Scan out by QR code, with customer notification | Phase 4 |
 | Invoicing, statements and the accountant's export | Phase 5 |

@@ -191,7 +191,7 @@ function orderCard(o) {
             ${o.fabric ? `<div>🧵 ${esc(o.fabric)}</div>` : ''}
             ${o.paidDate ? `<div class="muted">Paid ${esc(niceDate(o.paidDate))}</div>` : ''}
             ${o.priceEach ? `<div class="muted">${esc(money(o.priceEach, cur))} each · ${esc(money(o.priceEach * (o.qty || 1), cur))} total</div>` : ''}
-            ${(o.planWeek || o.stage || o.builder) ? `<div class="muted">🏭 ${[o.planWeek ? 'week of ' + niceDate(o.planWeek) : '', o.stage ? 'stage: ' + o.stage : '', o.builder ? 'builder: ' + o.builder : ''].filter(Boolean).map(esc).join(' · ')}</div>` : ''}
+            ${(o.planWeek || o.builder) ? `<div class="muted">🏭 ${[o.planWeek ? 'week of ' + niceDate(o.planWeek) : '', o.builder ? 'builder: ' + o.builder : ''].filter(Boolean).map(esc).join(' · ')}</div>` : ''}
           </div>
         </div>
         <div class="order-chips">

@@ -1,25 +1,16 @@
-// Factory floor — the week planner, build stages, fabric watch-list and
-// printable job cards. Everything here is a view over the orders collection;
-// it adds three fields to an order: planWeek (the Monday of the week it is
-// built), stage (where it is on the floor) and builder (who has it).
+// Factory floor — the week planner, fabric watch-list and printable job
+// cards. Everything here is a view over the orders collection; it adds two
+// fields to an order: planWeek (the Monday of the week it is built) and
+// builder (who has it).
 import * as store from './store.js';
 import { allOrders, orderById, setStatus } from './orders.js';
 import { esc, money, today, niceDate, daysUntil, statusChip, fabricChip, FABRIC_STATES, openModal, toast, empty } from './ui.js';
-
-export const STAGES = [
-  { key: '', label: 'Not started', icon: '▫️' },
-  { key: 'frame', label: 'Frame', icon: '🪚' },
-  { key: 'foam', label: 'Foam & webbing', icon: '🧽' },
-  { key: 'upholstery', label: 'Upholstery', icon: '🧵' },
-  { key: 'finishing', label: 'Finishing', icon: '✨' }
-];
-export const stageMeta = (key) => STAGES.find(s => s.key === (key || '')) || STAGES[0];
 
 let settings = {};
 export const setFloorSettings = (cfg) => { settings = cfg || {}; };
 const staffNames = () => Array.isArray(settings.staff) ? settings.staff : [];
 
-let floorView = 'planner';   // planner | stages | fabric
+let floorView = 'planner';   // planner | fabric
 
 // --------------------------------------------------------------- weeks ------
 
@@ -64,13 +55,8 @@ export async function setPlanWeek(id, mon) {
     mon ? 'Planned for the week of ' + niceDate(mon) : 'Taken off the planner');
 }
 
-export async function setStage(id, stage) {
-  const o = orderById(id);
-  if (!o) return;
-  const patch = { stage: stage || '' };
-  // The floor starting on a piece is what "in production" means.
-  if (stage && o.status === 'new') patch.status = 'in-production';
-  await store.update('orders', id, patch, stage ? 'Stage: ' + stageMeta(stage).label : 'Stage cleared');
+export async function startBuild(id) {
+  await setStatus(id, 'in-production');
 }
 
 export async function setBuilder(id, name) {
@@ -121,9 +107,7 @@ function planCard(o) {
         ${o.status === 'ready' ? statusChip('ready') : ''}
       </div>
       <div class="pcard-controls">
-        <select data-act="stage" data-id="${esc(o.id)}" title="Build stage">
-          ${STAGES.map(s => `<option value="${s.key}"${(o.stage || '') === s.key ? ' selected' : ''}>${s.icon} ${esc(s.label)}</option>`).join('')}
-        </select>
+        ${o.status === 'new' ? `<button class="btn ghost sm" data-act="start" data-id="${esc(o.id)}" title="The floor has started on it">🔧 Start</button>` : ''}
         ${staff.length
           ? `<select data-act="builder" data-id="${esc(o.id)}" title="Who is building it">
               <option value="">— builder —</option>
@@ -148,7 +132,6 @@ export function renderFloor(host, overviewHtml) {
   const tab = (key, label) => `<button class="btn ${floorView === key ? 'primary' : 'ghost'} sm" data-act="floor-view" data-to="${key}">${label}</button>`;
   let body = '';
   if (floorView === 'planner') body = plannerHtml(rows);
-  else if (floorView === 'stages') body = stagesHtml(rows);
   else body = fabricHtml(rows);
 
   host.innerHTML = `
@@ -160,7 +143,7 @@ export function renderFloor(host, overviewHtml) {
       </div>
     </div>
     ${overviewHtml || ''}
-    <div class="btn-row" style="margin-bottom:.9rem">${tab('planner', '📅 Planner')}${tab('stages', '🧱 Stages')}${tab('fabric', '🧵 Fabric')}</div>
+    <div class="btn-row" style="margin-bottom:.9rem">${tab('planner', '📅 Planner')}${tab('fabric', '🧵 Fabric')}</div>
     ${body}`;
   wireDragDrop(host);
 }
@@ -178,7 +161,7 @@ function plannerHtml(rows) {
       <div class="pcol-body">${items.map(planCard).join('') || '<div class="pcol-empty">Drop orders here</div>'}</div>
     </div>`;
   return `
-    <p class="muted" style="margin:-.3rem 0 .7rem">Drag an order into the week it gets built, or tap ⋮ on a phone. Set the stage and the builder on the card.</p>
+    <p class="muted" style="margin:-.3rem 0 .7rem">Drag an order into the week it gets built, or tap ⋮ on a phone. Pick the builder on the card.</p>
     <div class="pgrid">
       ${wks.map((w, i) => col(w.mon, w.title, w.range + ' · ' + by[w.mon].length, by[w.mon], i === 0 ? 'current' : '')).join('')}
     </div>
@@ -187,19 +170,6 @@ function plannerHtml(rows) {
       <h2>📥 Unscheduled (${by.pool.length})</h2>
       <p class="muted">Not yet given a week, or planned for a week that has passed.</p>
       <div class="ppool">${by.pool.map(planCard).join('') || '<div class="pcol-empty">Everything is planned</div>'}</div>
-    </div>`;
-}
-
-function stagesHtml(rows) {
-  const cols = STAGES.map(s => ({ key: 'stage:' + s.key, title: s.icon + ' ' + s.label, items: rows.filter(o => (o.stage || '') === s.key && o.status !== 'ready') }));
-  cols.push({ key: 'stage:ready', title: '📦 Ready to go', items: rows.filter(o => o.status === 'ready') });
-  return `
-    <p class="muted" style="margin:-.3rem 0 .7rem">Where each piece is on the floor. Drag between columns, or use the stage dropdown on the card.</p>
-    <div class="pgrid stages">
-      ${cols.map(c => `<div class="pcol" data-drop="${esc(c.key)}">
-        <div class="pcol-head"><div class="pcol-title">${esc(c.title)}</div><div class="pcol-sub">${c.items.length}</div></div>
-        <div class="pcol-body">${c.items.map(planCard).join('') || '<div class="pcol-empty">—</div>'}</div>
-      </div>`).join('')}
     </div>`;
 }
 
@@ -241,13 +211,7 @@ function wireDragDrop(host) {
       e.preventDefault(); col.classList.remove('over');
       let id = ''; try { id = e.dataTransfer.getData('text/plain'); } catch (x) {}
       if (!id) return;
-      const target = col.dataset.drop;
-      if (target.startsWith('stage:')) {
-        const st = target.slice(6);
-        if (st === 'ready') await setStatus(id, 'ready'); else await setStage(id, st);
-      } else {
-        await setPlanWeek(id, target);
-      }
+      await setPlanWeek(id, col.dataset.drop);
     });
   });
 }
@@ -264,9 +228,9 @@ const PRINT_CSS = `
   table { width: 100%; border-collapse: collapse; } th, td { border: 1px solid #000; padding: 6px 8px; text-align: left; vertical-align: top; }
   th { background: #eee; width: 26%; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
   .big { font-size: 18px; font-weight: 800; }
-  .stages { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
-  .st { border: 1px solid #000; padding: 8px; min-height: 70px; } .st b { display: block; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 18px; }
-  .st .ln { border-bottom: 1px solid #000; height: 16px; } .st small { color: #444; font-size: 9px; }
+  .sign { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+  .sg { border: 1px solid #000; padding: 8px; min-height: 60px; } .sg b { display: block; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 18px; }
+  .sg .ln { border-bottom: 1px solid #000; height: 16px; } .sg small { color: #444; font-size: 9px; }
   .notes { border: 1px solid #000; padding: 8px; min-height: 60px; margin-top: 12px; white-space: pre-wrap; }
   .ft { margin-top: 10px; font-size: 10px; color: #444; display: flex; justify-content: space-between; }
   .pl th { width: auto; } .pl td { font-size: 11px; } .pl h2 { font-size: 13px; margin: 14px 0 4px; border-bottom: 2px solid #000; }
@@ -299,8 +263,8 @@ function jobCardHtml(o) {
       <tr><th>Builder</th><td>${esc(o.builder || '')}&nbsp;</td></tr>
       ${o.priceEach ? `<tr><th>Price</th><td>${esc(money(o.priceEach, cur))} each</td></tr>` : ''}
     </table>
-    <div class="stages">
-      ${STAGES.filter(s => s.key).map(s => `<div class="st"><b>${esc(s.label)}</b><div class="ln"></div><small>name / date</small></div>`).join('')}
+    <div class="sign">
+      ${['Built by', 'Checked by', 'Dispatched by'].map(l => `<div class="sg"><b>${l}</b><div class="ln"></div><small>name / date</small></div>`).join('')}
     </div>
     <div class="notes"><b>Notes</b><br>${esc(o.notes || '')}</div>
     <div class="ft"><span>Order placed ${esc(niceDate(o.paidDate || o.createdAt))}</span><span>Printed ${esc(niceDate(today()))}</span></div>
@@ -328,10 +292,10 @@ export function printPlanner() {
   wks.forEach(w => { by[w.mon] = []; });
   rows.forEach(o => { const b = bucketOf(o, wks); (by[b] = by[b] || []).push(o); });
   const table = (items) => items.length
-    ? `<table class="pl"><tr><th>Order</th><th>Product</th><th>Customer</th><th>Fabric</th><th>Stage</th><th>Builder</th><th>Due</th></tr>
+    ? `<table class="pl"><tr><th>Order</th><th>Product</th><th>Customer</th><th>Fabric</th><th>Builder</th><th>Due</th></tr>
        ${items.map(o => `<tr><td><b>${esc(o.orderNo || '')}</b></td><td>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' × ' + esc(o.qty) : ''}</td><td>${esc(o.customerName || '')}</td>
          <td>${esc(o.fabric || '')}${o.fabric && o.fabricStatus !== 'received' ? ' <b>(' + esc((FABRIC_STATES.find(f => f.key === o.fabricStatus) || FABRIC_STATES[0]).label) + ')</b>' : ''}</td>
-         <td>${esc(stageMeta(o.stage).label)}</td><td>${esc(o.builder || '')}</td><td>${esc(niceDate(o.dueDate))}</td></tr>`).join('')}</table>`
+         <td>${esc(o.builder || '')}</td><td>${esc(niceDate(o.dueDate))}</td></tr>`).join('')}</table>`
     : '<p><i>Nothing planned</i></p>';
   const body = `<div class="page">
     <div class="hd"><div class="co">${esc((settings.name || 'COUCH POTATO').toUpperCase())}<small>PRODUCTION PLANNER</small></div>
