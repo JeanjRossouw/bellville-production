@@ -115,6 +115,7 @@ export function renderCustomers(host, orders) {
           ${c.area || c.address ? `<div>📍 ${esc([c.address, c.area].filter(Boolean).join(', '))}</div>` : ''}
           <div class="muted">Terms: ${c.termsDays ? c.termsDays + ' days' : 'on collection'} · ${counts[c.id] || 0} order${(counts[c.id] || 0) === 1 ? '' : 's'} all time</div>
           ${c.createdAt ? `<div class="muted">Added ${esc(niceDate(c.createdAt))}</div>` : ''}
+          <div class="muted" title="Used when another system feeds orders in for this customer">Feed id: <code>${esc(c.id)}</code></div>
         </div>
         ${c.notes ? `<p class="notes">${esc(c.notes)}</p>` : ''}
         <div class="card-actions">
