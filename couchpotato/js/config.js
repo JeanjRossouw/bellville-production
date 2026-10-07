@@ -36,6 +36,7 @@ export const FACTORY_DEFAULTS = {
   vatRegistered: false,
   currency: 'R',
   paymentTermsDays: 30,
+  leadDays: 28,
   bankDetails: ''
 };
 

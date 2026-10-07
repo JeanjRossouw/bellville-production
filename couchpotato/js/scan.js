@@ -173,7 +173,7 @@ export function renderScan(host) {
   const t = today();
   const todayOut = rows.filter(o => (o.status === 'dispatched' || o.status === 'invoiced') && String(o.dispatchedAt || '').slice(0, 10) === t)
     .sort((a, b) => String(b.dispatchedAt || '').localeCompare(String(a.dispatchedAt || '')));
-  const toInvoice = rows.filter(o => o.status === 'dispatched');
+  const toInvoice = rows.filter(o => o.status === 'dispatched' && !o.invoiceId);
   const tile = (n, label, cls) => `<div class="tile ${cls || ''}"><div class="tile-n">${n}</div><div class="tile-l">${esc(label)}</div></div>`;
   const line = (o, action) => `
     <div class="card scan-row">

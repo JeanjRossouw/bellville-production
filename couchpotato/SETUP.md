@@ -117,6 +117,8 @@ first, since later phases print from them.
 | Costing: materials, bills of material, overheads, price list | Built |
 | Scan out by QR code, with customer notification | Built |
 | Invoicing, statements and the accountant's export | Built |
+| Point of sale (showroom till), linked to orders and invoices | Built |
+| Order feed from Bellville | Built, needs the feed variables (FEED-SETUP.md) |
 
 ## How Bellville's orders will arrive
 

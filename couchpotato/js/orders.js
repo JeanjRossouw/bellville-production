@@ -149,6 +149,8 @@ export async function setStatus(id, status) {
     patch.dispatchedAt = store.nowIso();
     patch.dispatchedBy = (store.getUser() || {}).name || 'system';
   }
+  // Sold at the till: already on an invoice, so leaving the door completes it.
+  if (status === 'dispatched' && o.invoiceId) patch.status = 'invoiced';
   await store.update('orders', id, patch, 'Moved to ' + meta.label);
   toast((o.orderNo || 'Order') + ' → ' + meta.label);
 }

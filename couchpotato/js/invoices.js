@@ -49,7 +49,7 @@ function totalsFor(lines) {
 
 // ---------------------------------------------------------------- queue -----
 
-export const queue = () => allOrders().filter(o => o.status === 'dispatched');
+export const queue = () => allOrders().filter(o => o.status === 'dispatched' && !o.invoiceId);
 
 // Raise one invoice for a set of dispatched orders belonging to one customer.
 export function newInvoiceFor(orderIds) {

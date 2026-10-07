@@ -115,6 +115,9 @@ function productForm(p) {
   ) + row(
     field('Labour hours per piece', 'p-hours', { value: p.labourHours == null ? '' : p.labourHours, type: 'number', min: 0, step: '0.25' }),
     field('Selling price each (excl. VAT)', 'p-price', { value: p.sellingPrice == null ? '' : p.sellingPrice, type: 'number', min: 0, step: '0.01' })
+  ) + row(
+    field('In stock on the showroom floor', 'p-stock', { value: p.stock == null ? '' : p.stock, type: 'number', min: 0, placeholder: '0 = made to order only' }),
+    '<div class="fld"></div>'
   ) + `<div class="fld"><span>Bill of materials</span>
       <div id="bom">${(p.materials && p.materials.length ? p.materials : [{}]).map(bomRow).join('')}</div>
       <button type="button" class="btn ghost sm" id="bom-add" style="margin-top:.4rem">＋ Add a material</button>
@@ -135,6 +138,7 @@ function readProduct(w) {
     name: val(w, 'p-name'), category: val(w, 'p-cat'),
     labourHours: parseFloat(val(w, 'p-hours')) || 0,
     sellingPrice: parseFloat(val(w, 'p-price')) || 0,
+    stock: parseInt(val(w, 'p-stock'), 10) || 0,
     materials: lines, notes: val(w, 'p-notes')
   };
 }
@@ -258,7 +262,7 @@ function productsHtml(cur) {
       <table class="tbl cost">
         <thead><tr><th>Product</th><th class="r">Materials</th><th class="r">Labour</th><th class="r">Overhead</th><th class="r">Cost</th><th class="r">Price</th><th class="r">Margin</th><th></th></tr></thead>
         <tbody>${cats[cat].map(p => { const c = costOf(p); const missing = c.lines.some(l => l.missing); return `<tr>
-          <td><strong>${esc(p.name)}</strong>${missing ? ' <span class="chip late">material missing</span>' : ''}<div class="muted">${c.lines.length} material${c.lines.length === 1 ? '' : 's'} · ${p.labourHours || 0}h</div></td>
+          <td><strong>${esc(p.name)}</strong>${missing ? ' <span class="chip late">material missing</span>' : ''}<div class="muted">${c.lines.length} material${c.lines.length === 1 ? '' : 's'} · ${p.labourHours || 0}h${Number(p.stock) > 0 ? ' · ' + Number(p.stock) + ' in stock' : ''}</div></td>
           <td class="r">${esc(money(c.material, cur))}</td>
           <td class="r">${esc(money(c.labour, cur))}</td>
           <td class="r">${esc(money(c.overhead, cur))}</td>

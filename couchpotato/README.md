@@ -22,6 +22,7 @@ couchpotato/
   js/costing.js     materials, bills of material, overheads, price sheet
   js/scan.js        scan out at the door, dispatch, tell the customer
   js/invoices.js    invoice queue, invoices, payments, statements, export
+  js/pos.js         point of sale: the showroom till
   js/qr.js          QR codes for job cards (vendor/qrcode.js, MIT)
   js/app.js         boot, navigation, settings
 ```
@@ -68,4 +69,9 @@ with VAT when registered, printed in their name with their bank details;
 payments are recorded against them; per-customer statements; a CSV export
 of every invoice line for the accountant.
 
-Next: the one-way order feed from Bellville.
+Also built: the one-way order feed from Bellville (netlify/functions/
+couchpotato-feed.mjs), and a point of sale. The till rings up sales from the
+same catalogue against the same customers; each line is made to order (an order
+is created on the spot and goes to the factory) or from stock (the showroom
+count drops). Every sale raises an invoice with the payment on it, so orders
+born at the till are already billed. The till link is `?pos=1`.
