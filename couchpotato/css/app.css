@@ -523,6 +523,45 @@ code { background: var(--line); padding: 1px 5px; border-radius: 4px; font-size:
 .tbl tfoot th { text-align: right; padding: .5rem; font-size: 13px; }
 .q-pick { width: 18px; height: 18px; }
 
+/* ----------------------------------------------------------- point of sale */
+
+.pos { display: grid; grid-template-columns: 1fr 400px; gap: 1rem; align-items: start; }
+.pos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: .6rem; }
+.pos-tile { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: .8rem .85rem; text-align: left; cursor: pointer; font: inherit; color: var(--ink); display: grid; gap: .15rem; min-height: 108px; }
+.pos-tile:hover { border-color: var(--ink); }
+.pos-tile:active { background: var(--paper); }
+.pos-tile-cat { font-family: var(--font-ui); font-size: 9px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.pos-tile-name { font-weight: 700; font-size: 14px; }
+.pos-tile-price { font-family: var(--font-ui); font-weight: 600; font-size: 14px; margin-top: .2rem; }
+.pos-tile-stock { font-size: 11px; color: var(--muted); }
+.pos-cart { position: sticky; top: 1rem; }
+.pos-cust { width: 100%; text-align: left; background: var(--paper); border: 1px solid var(--line); border-radius: 4px; padding: .6rem .75rem; cursor: pointer; font: inherit; display: grid; gap: .1rem; margin-bottom: .6rem; }
+.pos-cust strong { font-size: 14px; } .pos-cust span { font-size: 12px; color: var(--muted); }
+.pos-lines { max-height: 46vh; overflow: auto; margin: 0 -.2rem; padding: 0 .2rem; }
+.pos-line { border-top: 1px solid var(--line); padding: .6rem 0; display: grid; gap: .4rem; }
+.pos-line-top { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+.pos-line-ctl { display: grid; grid-template-columns: auto 1fr auto; gap: .5rem; align-items: center; }
+.pos-line-ctl .qty { display: inline-flex; align-items: center; gap: .35rem; } .pos-line-ctl .qty b { min-width: 1.4em; text-align: center; }
+.pos-line-ctl input { font: inherit; font-size: 13px; padding: .4rem .5rem; border: 1px solid var(--line-2); border-radius: 3px; min-width: 0; text-align: right; }
+.pos-line > input { font: inherit; font-size: 13px; padding: .4rem .5rem; border: 1px solid var(--line-2); border-radius: 3px; }
+.pos-kind { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line-2); border-radius: 3px; overflow: hidden; }
+.pos-kind button { font-family: var(--font-ui); font-weight: 600; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; padding: .45rem .3rem; border: 0; background: #fff; color: var(--muted); cursor: pointer; }
+.pos-kind button.on { background: var(--ink); color: #fff; }
+.pos-totals { border-top: 2px solid var(--ink); margin-top: .5rem; padding-top: .5rem; font-size: 13px; }
+.pos-totals > div { display: flex; justify-content: space-between; align-items: center; gap: .6rem; padding: .18rem 0; }
+.pos-totals .tot { font-family: var(--font-ui); font-weight: 600; font-size: 16px; border-top: 1px solid var(--line); margin-top: .3rem; padding-top: .5rem; }
+.pos-totals input { font: inherit; font-size: 13px; padding: .3rem .4rem; border: 1px solid var(--line-2); border-radius: 3px; }
+.pos-charge { flex: 1; padding: .9rem 1rem; font-size: 12.5px; }
+.pay-kinds { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin: .8rem 0; }
+.pk-list { max-height: 220px; overflow: auto; border: 1px solid var(--line); border-radius: 4px; }
+.pk-row { display: grid; width: 100%; text-align: left; background: #fff; border: 0; border-bottom: 1px solid var(--line); padding: .55rem .7rem; cursor: pointer; font: inherit; }
+.pk-row:hover { background: var(--paper); } .pk-row span { font-size: 12px; color: var(--muted); }
+/* the till: bigger targets, nothing but the sale */
+.till .tabs { display: none; }
+.till .pos-tile { min-height: 130px; padding: 1rem; } .till .pos-tile-name { font-size: 16px; }
+.till .pos-charge { padding: 1.1rem 1rem; font-size: 14px; }
+.till .btn.sm { padding: .55rem .8rem; }
+
 /* --------------------------------------------------------------- scan out */
 
 .scan-cam-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 1.2rem; }
@@ -550,6 +589,9 @@ code { background: var(--line); padding: 1px 5px; border-radius: 4px; font-size:
   .btn-row .btn { flex: 1 1 auto; }
   .bom-row { grid-template-columns: 1fr 70px 24px; }
   .scan-cam-grid { grid-template-columns: 1fr; }
+  .pos { grid-template-columns: 1fr; }
+  .pos-cart { position: static; }
+  .pos-lines { max-height: none; }
   .inv-lines-head, .inv-line { grid-template-columns: 1fr 52px 84px; }
   .il-tot, .inv-lines-head span:last-child { display: none; }
   .scan-row { flex-direction: column; align-items: stretch; }

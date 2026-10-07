@@ -12,6 +12,7 @@ import {
   printJobCard, printWeekJobCards, printPlanner
 } from './floor.js';
 import { renderScan, setScanSettings, startCamera, stopCamera, manualFind, confirmDispatch, notifyCustomer } from './scan.js';
+import { startPos, renderPos, setPosSettings, posAction, posInput } from './pos.js';
 import {
   startInvoices, renderInvoices, setInvoiceSettings, setInvView, setInvFilter, setStmtCustomer, newInvoiceFor,
   invoiceCustomerQueue, pickedIds, recordPayment, voidInvoice, printInvoice, printStatement, exportCsv
@@ -23,8 +24,13 @@ import {
 } from './costing.js';
 
 
+// ?pos=1 is the till link: opens straight onto the point of sale with bigger
+// touch targets, for the tablet at the showroom counter.
+const TILL = new URLSearchParams(location.search).get('pos') === '1';
+if (TILL) document.documentElement.classList.add('till');
+
 let settings = { ...FACTORY_DEFAULTS };
-let view = 'orders';
+let view = TILL ? 'pos' : 'orders';
 let booted = false;
 // A job-card QR opens the app with ?scan=<order id>: remember it until the
 // orders have loaded, then go straight to the dispatch screen for that order.
@@ -32,6 +38,7 @@ let pendingScan = new URLSearchParams(location.search).get('scan') || '';
 if (pendingScan) history.replaceState(null, '', location.pathname);
 
 const NAV = [
+  { key: 'pos', icon: '', label: 'Point of sale' },
   { key: 'orders', icon: '', label: 'Orders' },
   { key: 'customers', icon: '', label: 'Customers' },
   { key: 'factory', icon: '', label: 'Factory floor' },
@@ -57,9 +64,11 @@ async function boot() {
       setCostingSettings(settings);
       setScanSettings(settings);
       setInvoiceSettings(settings);
+      setPosSettings(settings);
+      startPos(() => { if (view === 'pos') paint(); }, settings);
       startInvoices(() => { if (view === 'invoices' || view === 'orders') paint(); }, settings);
-      startCosting(() => { if (view === 'costing' || view === 'orders') paint(); }, settings);
-      startCustomers(() => { if (view === 'customers' || view === 'orders') paint(); });
+      startCosting(() => { if (view === 'costing' || view === 'orders' || view === 'pos') paint(); }, settings);
+      startCustomers(() => { if (view === 'customers' || view === 'orders' || view === 'pos') paint(); });
       startOrders(() => {
         if (view !== 'settings') paint();
         if (pendingScan) { const id = pendingScan; pendingScan = ''; view = 'scan'; paint(); confirmDispatch(id); }
@@ -145,6 +154,7 @@ function paint() {
   if (view === 'costing') return renderCosting(screen);
   if (view === 'scan') return renderScan(screen);
   if (view === 'invoices') return renderInvoices(screen);
+  if (view === 'pos') return renderPos(screen);
   screen.innerHTML = '';
 }
 
@@ -187,6 +197,7 @@ function renderSettings(host) {
       <h2>Numbering and terms</h2>
       ${row(field('Order number prefix', 's-oprefix', { value: s.orderPrefix }), field('Next order number', 's-ofirst', { value: s.firstOrderNo, type: 'number', min: 1 }))}
       ${row(field('Invoice prefix', 's-iprefix', { value: s.invoicePrefix }), field('Default payment terms (days)', 's-terms', { value: s.paymentTermsDays, type: 'number', min: 0 }))}
+      ${row(field('Made-to-order lead time (days)', 's-lead', { value: s.leadDays == null ? 28 : s.leadDays, type: 'number', min: 1 }), '<div class="fld"></div>')}
       ${row(
         field('VAT registered', 's-vatreg', { type: 'select', value: s.vatRegistered ? 'yes' : 'no', options: [{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }] }),
         field('VAT rate (%)', 's-vatrate', { value: Math.round((s.vatRate || 0) * 100), type: 'number', min: 0, step: '0.01' })
@@ -219,6 +230,7 @@ async function saveSettings() {
     firstOrderNo: parseInt(g('s-ofirst'), 10) || 1001,
     invoicePrefix: g('s-iprefix') || 'INV-',
     paymentTermsDays: parseInt(g('s-terms'), 10) || 0,
+    leadDays: parseInt(g('s-lead'), 10) || 28,
     vatRegistered: g('s-vatreg') === 'yes',
     vatRate: (parseFloat(g('s-vatrate')) || 0) / 100
   };
@@ -229,6 +241,7 @@ async function saveSettings() {
   setCostingSettings(settings);
   setScanSettings(settings);
   setInvoiceSettings(settings);
+  setPosSettings(settings);
   const bn = document.querySelector('.brand-name');
   if (bn) bn.textContent = settings.name;
   toast('Settings saved');
@@ -240,6 +253,7 @@ async function onAction(e) {
   const b = e.target.closest('[data-act]');
   if (!b) return;
   const id = b.dataset.id;
+  if (b.dataset.act.startsWith('pos-')) return posAction(b.dataset.act, b);
   switch (b.dataset.act) {
     case 'new-order': return newOrder();
     case 'edit-order': return editOrder(id);
@@ -302,6 +316,7 @@ async function onAction(e) {
 
 function onChangeEvent(e) {
   const t = e.target;
+  if (t.classList && t.classList.contains('pos-in')) return posInput(t);
   if (t.id === 'o-filter-cust') { setFilter({ customer: t.value }); return paint(); }
   if (t.id === 'o-filter-status') { setFilter({ status: t.value }); return paint(); }
   const act = t.dataset ? t.dataset.act : '';
@@ -313,6 +328,10 @@ function onChangeEvent(e) {
 
 let searchTimer = null;
 function onInput(e) {
+  if (e.target.classList && e.target.classList.contains('pos-in')) {
+    if (e.target.id === 'pos-search') { clearTimeout(searchTimer); searchTimer = setTimeout(() => posInput(e.target), 160); return; }
+    return posInput(e.target);
+  }
   if (e.target.closest && e.target.closest('.oh-row, #oh-units')) return liveOverheads(document.getElementById('screen'));
   if (e.target.id !== 'o-search') return;
   clearTimeout(searchTimer);

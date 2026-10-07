@@ -49,7 +49,7 @@ function totalsFor(lines) {
 
 // ---------------------------------------------------------------- queue -----
 
-export const queue = () => allOrders().filter(o => o.status === 'dispatched');
+export const queue = () => allOrders().filter(o => o.status === 'dispatched' && !o.invoiceId);
 
 // Raise one invoice for a set of dispatched orders belonging to one customer.
 export function newInvoiceFor(orderIds) {
@@ -306,7 +306,7 @@ export function printInvoice(id) {
       <div class="box"><h4>Orders</h4>${(inv.lines || []).map(l => esc(l.orderNo) + (l.externalRef ? ' (their ref ' + esc(l.externalRef) + ')' : '')).join('<br>')}</div>
     </div>
     <table><tr><th>Description</th><th class="r">Qty</th><th class="r">Each</th><th class="r">Amount</th></tr>
-      ${(inv.lines || []).map(l => `<tr><td>${esc(l.description)}<br><small>Order ${esc(l.orderNo)}</small></td><td class="r">${esc(l.qty)}</td><td class="r">${esc(money(l.unitPrice, cur))}</td><td class="r">${esc(money(l.qty * l.unitPrice, cur))}</td></tr>`).join('')}
+      ${(inv.lines || []).map(l => `<tr><td>${esc(l.description)}${l.orderNo ? '<br><small>Order ' + esc(l.orderNo) + '</small>' : ''}</td><td class="r">${esc(l.qty)}</td><td class="r">${esc(money(l.unitPrice, cur))}</td><td class="r">${esc(money(l.qty * l.unitPrice, cur))}</td></tr>`).join('')}
       <tr class="tot"><td colspan="3" class="r">Subtotal</td><td class="r">${esc(money(inv.subtotal, cur))}</td></tr>
       ${inv.vat ? `<tr class="tot"><td colspan="3" class="r">VAT ${Math.round((inv.vatRate || 0) * 100)}%</td><td class="r">${esc(money(inv.vat, cur))}</td></tr>` : ''}
       <tr class="tot big"><td colspan="3" class="r">TOTAL</td><td class="r">${esc(money(inv.total, cur))}</td></tr>
