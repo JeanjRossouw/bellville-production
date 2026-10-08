@@ -17,7 +17,7 @@
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
     import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
-    import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+    import { getFirestore, doc, setDoc, getDoc, deleteDoc, onSnapshot, collection, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
     
     const firebaseConfig = {
       apiKey: "AIzaSyB5QfSiuwjDGwZOZMHzN3BhziK_AKVeBNg",
@@ -46,7 +46,7 @@
       signOut,
       onAuthStateChanged,
       signInAnonymously,
-      doc, setDoc, getDoc, onSnapshot, collection
+      doc, setDoc, getDoc, deleteDoc, onSnapshot, collection
     };
     
     // Trigger app init once Firebase is ready
@@ -9882,6 +9882,7 @@ ${_PRODUCTION_PRINT_STYLES}
       if (digits) actions += '<button onclick="deliverySendBookingLink(\'' + r.biz + '\', \'' + _escape(o.id) + '\')" title="Let the client pick a slot" style="padding:7px 12px; border-radius:999px; border:1.5px solid #25d366; background:#f0fdf4; color:#166534; font-weight:700; font-size:12px; cursor:pointer">💬 Client picks slot</button>';
       actions += '<button onclick="deliveryMarkDelivered(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #16a34a; background:#16a34a; color:#fff; font-weight:800; font-size:12px; cursor:pointer">✅ Delivered</button>';
     }
+    if (o.status === 'delivered') actions += '<button onclick="deliveryUndo(\'' + _escape(o.id) + '\')" title="Put it back on the delivery list and remove the note" style="padding:7px 12px; border-radius:999px; border:1.5px solid #f59e0b; background:#fffbeb; color:#92400e; font-weight:700; font-size:12px; cursor:pointer">↩️ Not delivered</button>';
     actions += '<label style="padding:7px 12px; border-radius:999px; border:1.5px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:700; font-size:12px; cursor:pointer; margin:0">📎 ' + (o.deliveryNoteId ? 'Replace note' : 'Delivery note') + '<input type="file" accept="image/*,application/pdf" capture="environment" style="display:none" onchange="deliveryNoteUpload(\'' + _escape(o.id) + '\', this)"></label>';
     if (o.deliveryNoteId) actions += '<button onclick="deliveryNoteView(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">👁 View note' + (o.deliverySignedBy ? ' ✍️' : '') + '</button>';
     actions += '<label style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; color:#111; font-weight:700; font-size:12px; cursor:pointer; margin:0" title="The driver shows this to the client on the tablet">🧾 ' + (o.deliveryInvoiceId ? 'Replace invoice' : 'Attach invoice') + '<input type="file" accept="image/*,application/pdf" style="display:none" onchange="deliveryDocUpload(\'' + _escape(o.id) + '\', \'inv\', this)"></label>';
@@ -10064,6 +10065,26 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof render === 'function') render();
     if (typeof toast === 'function') toast('✅ #' + (o.invoice || o.id) + ' delivered', 'success', 3000);
   }
+  // Marked delivered by mistake (a test run, the wrong order): back to the
+  // delivery list, the note taken off, the driver's status cleared.
+  function deliveryUndo(orderId) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o) return;
+    if (!confirm('Put #' + (o.invoice || o.id) + ' — ' + (o.product || '') + ' back on the delivery list and remove its delivery note?')) return;
+    snapshotState();
+    o.status = 'done';
+    delete o.deliveredDate; delete o.deliveredBy; delete o.deliverySignedBy; delete o.deliverySignedAt;
+    delete o.driverStatus; delete o.driverStatusAt; delete o.driverStatusNote;
+    const noteId = o.deliveryNoteId; delete o.deliveryNoteId; delete o.deliveryNoteAt;
+    if (Array.isArray(o.deliveryComments)) o.deliveryComments = o.deliveryComments.filter(c => !/^(✍️|📤|🚐)/.test(String(c.text || '')));
+    if (noteId && window.firebaseFns && window.firebaseFns.deleteDoc) {
+      window.firebaseFns.deleteDoc(window.firebaseFns.doc(window.firebaseDb, 'shared-data', noteId)).catch(e => console.warn('note not removed:', e.message));
+    }
+    saveData();
+    if (typeof render === 'function') render();
+    if (typeof toast === 'function') toast('↩️ #' + (o.invoice || o.id) + ' back on the delivery list', 'success', 3000);
+  }
+  window.deliveryUndo = deliveryUndo;
   function deliveryAddComment(orderId) {
     const o = _findOrderAnyBiz(orderId);
     const el = document.getElementById('dlv-comment-' + orderId);
