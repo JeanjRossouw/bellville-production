@@ -796,3 +796,25 @@ h2 { font-family: var(--font-ui); font-weight: 600; font-size: 12px; letter-spac
   .po-row { grid-template-columns: 1fr 1fr 34px; }
   .po-row .po-mat { grid-column: 1 / -1; }
 }
+
+/* ----------------------------------------------------------------- quotes */
+.modal-card.wide { width: min(860px, calc(100vw - 1.5rem)); }
+.q-head, .q-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1.3fr) 64px minmax(90px, .9fr) 34px; gap: .45rem; align-items: center; }
+.q-head { font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .25rem; }
+.q-row { margin-bottom: .55rem; }
+.q-row input { width: 100%; }
+.q-hint { grid-column: 1 / -1; font-size: 12px; margin-top: -.2rem; min-height: 0; }
+.q-hint:empty { display: none; }
+.q-total { text-align: right; margin: .2rem 0 .8rem; }
+.q-total .muted { font-size: 12px; margin-top: .2rem; }
+@media (max-width: 640px) {
+  .q-head { display: none; }
+  .q-row { grid-template-columns: 1fr 1fr 34px; }
+  .q-row .q-desc, .q-row .q-fabric { grid-column: 1 / -1; }
+}
+
+/* ----------------------------------------------------------------- profit */
+.profit-two { display: grid; grid-template-columns: 1fr 1.3fr; gap: 1rem; margin-top: 1rem; }
+.profit-two h2 { margin: 0 0 .6rem; }
+.tbl tr.sel td { background: #f4f1ea; }
+@media (max-width: 900px) { .profit-two { grid-template-columns: 1fr; } }
