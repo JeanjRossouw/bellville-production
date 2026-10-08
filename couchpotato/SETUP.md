@@ -138,6 +138,16 @@ the day, without prices. It uses the same `FACTORY_SERVICE_ACCOUNT` as billing
 link stops working at once. Only roles with **Edit** on Deliveries can see or
 send driver links.
 
+## The online shop (Shopify)
+
+Each company connects its own Shopify store under **Settings → Online shop**
+(the owner only). Online orders then come in as factory orders within a
+minute, the shop's products come into the price list, and stock sold at the
+till comes off the shop's count. The keys are kept on the server only. It uses
+the same `FACTORY_SERVICE_ACCOUNT` as billing, with no other settings; the
+15-minute check (`factory-shopify-poll`) runs on its own once deployed. What
+the company does in Shopify, and the details, are in `SHOPIFY-SETUP.md`.
+
 ## 5. Make yourself the seller, once
 
 The seller sees a **Clients** tab listing every company: who is on a trial,

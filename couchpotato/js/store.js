@@ -23,6 +23,7 @@
 //           demonstrated before any database is created
 import { FIREBASE_CONFIG, isCloudConfigured, TRIAL_DAYS } from './config.js';
 import { DEFAULT_ROLES, WRITE_AREAS, OWNER_PERMS, canSee, canEdit } from './permissions.js';
+import { wantOrder, orderLines, orderDocId, customerOf, mapLine, mapProduct } from './shopify-map.js';
 
 const FB_VERSION = '10.13.0';
 const FB = (m) => `https://www.gstatic.com/firebasejs/${FB_VERSION}/firebase-${m}.js`;
@@ -186,6 +187,122 @@ function demoBilling(action) {
   company = { id: company.id, ...c };
   emitCompany();
   return { demo: true, ok: true };
+}
+
+// ---- the online shop (Shopify) ----
+// The keys never come to the browser: connecting, bringing products and
+// orders in, and sending stock out all happen on the server
+// (netlify/functions/factory-shopify.mjs). The status shows in Settings.
+
+const SHOPIFY_URL = '/.netlify/functions/factory-shopify';
+
+export async function shopifyCall(action, payload) {
+  if (mode === 'demo') return demoShopify(action, payload || {});
+  const token = await cloud.auth.currentUser.getIdToken();
+  const r = await fetch(SHOPIFY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ action, ...(payload || {}) }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+
+// A till sale took pieces off the shelf: Shopify takes the same off its
+// count. Quietly, in the background; a failure shows in Settings.
+export function shopifyPushSale(saleId, lines) {
+  if (!(lines || []).some(l => l.kind === 'stock' && l.productId)) return;
+  shopifyCall('pushSale', { saleId }).catch(e => console.warn('Shopify stock not sent:', e.message));
+}
+
+// In demo mode there is no real shop: a made-up one shows the whole flow,
+// using the same rules as the server for what an online order becomes.
+const DEMO_SHOP = [
+  { title: '3 Seater Chesterfield', price: 18999, tracked: false, qoh: 0, category: 'Couches' },
+  { title: 'Wingback Chair', price: 7499, tracked: false, qoh: 0, category: 'Chairs' },
+  { title: 'Linen Scatter Cushion 50cm', price: 449, tracked: true, qoh: 24, category: 'Accessories' },
+  { title: 'Oak Side Table', price: 2899, tracked: true, qoh: 6, category: 'Tables' }
+].map((p, i) => ({ ...p, shopifyProductId: String(8100 + i), shopifyVariantId: String(4400 + i), shopifyInventoryItemId: String(5500 + i), sku: 'OS-' + (100 + i) }));
+
+function demoShopify(action, p) {
+  const ints = demoRead('integrations');
+  const st = ints.shopify || {};
+  const save = (patch) => { ints.shopify = { ...st, ...patch }; demoWrite('integrations', ints); return ints.shopify; };
+  const vat = () => { const s = (demoRead('settings').factory) || {}; return { settings: s, vatRate: s.vatRegistered ? (s.vatRate == null ? 0.15 : Number(s.vatRate) || 0) : 0 }; };
+  if (action === 'connect') {
+    const domain = String(p.domain || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    const full = /\.myshopify\.com$/.test(domain) ? domain : domain + '.myshopify.com';
+    if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(full)) throw new Error('That does not look like a Shopify store. Use the address that ends in .myshopify.com');
+    if (!String(p.clientId || '').trim() || !String(p.clientSecret || '').trim()) throw new Error('Paste both the Client ID and the Client secret');
+    const name = full.replace('.myshopify.com', '').split('-').map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
+    save({ connected: true, domain: full, shopName: name, currency: 'ZAR', taxesIncluded: true, connectedAt: nowIso(), connectedBy: (currentUser || {}).name || '',
+      lastCheckedAt: nowIso(), importWhen: p.importWhen === 'placed' ? 'placed' : 'paid', webhooks: 'on', lastError: '', ordersIn: Number(st.ordersIn) || 0, demo: true });
+    return { ok: true, shopName: name, webhooks: 'on' };
+  }
+  if (!st.connected) throw new Error('Connect the shop first');
+  if (action === 'disconnect') { save({ connected: false, disconnectedAt: nowIso(), webhooks: '' }); return { ok: true }; }
+  if (action === 'settings') { save({ importWhen: p.importWhen === 'placed' ? 'placed' : 'paid' }); return { ok: true }; }
+  if (action === 'pushSale') return { ok: true, adjusted: 0 };
+  if (action === 'products') {
+    const { vatRate } = vat();
+    const map = demoRead('products');
+    let created = 0, updated = 0, linked = 0;
+    for (const v of DEMO_SHOP) {
+      const d = mapProduct(v, { taxesIncluded: true, vatRate });
+      const id = Object.keys(map).find(k => map[k].shopifyVariantId === v.shopifyVariantId)
+        || Object.keys(map).find(k => !map[k].shopifyVariantId && String(map[k].name || '').trim().toLowerCase() === v.title.toLowerCase());
+      if (id) {
+        if (map[id].shopifyVariantId) updated++; else linked++;
+        const { name, category, ...keep } = d;
+        map[id] = { ...map[id], ...keep, ...(map[id].category ? {} : { category }), updatedAt: nowIso(), updatedBy: 'Shopify' };
+      } else {
+        created++;
+        map['shopify-' + v.shopifyVariantId] = { labourHours: 0, materials: [], notes: 'From the online shop (SKU ' + v.sku + ')', stock: 0, ...d, source: 'shopify', createdAt: nowIso(), createdBy: 'Shopify', updatedAt: nowIso(), updatedBy: 'Shopify' };
+      }
+    }
+    demoWrite('products', map);
+    save({ productsAt: nowIso(), productsCount: DEMO_SHOP.length });
+    return { ok: true, total: DEMO_SHOP.length, created, updated, linked };
+  }
+  if (action === 'sync') {
+    // a customer buys a couch (built to order) and two cushions (on the shelf)
+    const n = 1001 + (Number(st.ordersIn) || 0);
+    const couch = DEMO_SHOP[0], cushion = DEMO_SHOP[2];
+    const o = {
+      id: 7000000 + n, name: '#' + n, order_number: n, created_at: nowIso(), processed_at: nowIso(), financial_status: 'paid', taxes_included: true,
+      email: 'naledi.k@example.com', note: 'Please phone before delivery',
+      customer: { id: 990001, first_name: 'Naledi', last_name: 'Khumalo', phone: '082 555 0142' },
+      shipping_address: { name: 'Naledi Khumalo', address1: '14 Kloof Street', city: 'Gardens, Cape Town', zip: '8001', phone: '082 555 0142' },
+      line_items: [
+        { id: n * 10 + 1, product_id: Number(couch.shopifyProductId), variant_id: Number(couch.shopifyVariantId), title: couch.title, variant_title: 'Charcoal Velvet', quantity: 1, price: String(couch.price), sku: couch.sku, tax_lines: [{ rate: 0.15 }] },
+        { id: n * 10 + 2, product_id: Number(cushion.shopifyProductId), variant_id: Number(cushion.shopifyVariantId), title: cushion.title, variant_title: '', quantity: 2, price: String(cushion.price), sku: cushion.sku, tax_lines: [{ rate: 0.15 }] }
+      ]
+    };
+    if (!wantOrder(o, st.importWhen)) return { ok: true, looked: 1, brought: [] };
+    const { settings, vatRate } = vat();
+    const c = customerOf(o);
+    const custs = demoRead('customers');
+    let customerId = Object.keys(custs).find(k => c.email && String(custs[k].email || '').toLowerCase() === c.email);
+    if (!customerId) { customerId = 'shopify-c-' + o.customer.id; custs[customerId] = { ...c, notes: 'Added from online order ' + o.name, source: 'shopify', createdAt: nowIso(), createdBy: 'Shopify', updatedAt: nowIso(), updatedBy: 'Shopify' }; demoWrite('customers', custs); }
+    const customerName = custs[customerId].name;
+    const products = demoRead('products');
+    const orders = demoRead('orders');
+    const made = [];
+    for (const li of orderLines(o)) {
+      const pid = Object.keys(products).find(k => products[k].shopifyVariantId === String(li.variant_id));
+      const product = pid ? { id: pid, ...products[pid] } : null;
+      const fromStock = !!(product && Number(product.stock) >= li.quantity);
+      const doc = mapLine(o, li, { customerId, customerName, product, fromStock, leadDays: settings.leadDays, vatRate });
+      const counters = demoRead('counters');
+      const next = (counters.orderNo && counters.orderNo.value) || settings.firstOrderNo || 1001;
+      counters.orderNo = { value: next + 1 }; demoWrite('counters', counters);
+      doc.orderNo = (settings.orderPrefix || 'CP-') + next;
+      orders[orderDocId(o, li)] = doc; made.push(doc.orderNo);
+      if (fromStock) { products[pid].stock = Number(products[pid].stock) - li.quantity; }
+    }
+    demoWrite('products', products);
+    demoWrite('orders', orders);
+    save({ ordersIn: (Number(st.ordersIn) || 0) + 1, lastOrderAt: nowIso(), lastOrderName: o.name, lastCheckedAt: nowIso() });
+    return { ok: true, looked: 1, brought: [{ order: o.name, orders: made }] };
+  }
+  throw new Error('Unknown action');
 }
 
 // ---- the seller's own view of every company ----

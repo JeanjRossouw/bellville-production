@@ -189,9 +189,12 @@ async function completeSale(amount, method, ref) {
   for (const l of lines) if (l.orderId) await store.update('orders', l.orderId, { invoiceId, invoiceNo });
 
   // 3. the sale itself
-  await store.create('sales', { saleNo, date: today(), customerId: c ? c.id : '', customerName: c ? c.name : 'Walk-in customer',
+  const saleId = await store.create('sales', { saleNo, date: today(), customerId: c ? c.id : '', customerName: c ? c.name : 'Walk-in customer',
     lines, subtotal: t.subtotal, discount: t.discount, vat: t.vat, total: t.total, paidNow: r2(amount), method, ref, balance: r2(t.total - amount),
     invoiceId, invoiceNo, note: cart.note, by: who });
+
+  // pieces from the shelf also come off the online shop's count
+  store.shopifyPushSale(saleId, lines);
 
   const made = lines.filter(l => l.kind === 'order').length;
   cart = { lines: [], customerId: '', discount: 0, note: '' }; persist();

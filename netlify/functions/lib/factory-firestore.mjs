@@ -6,7 +6,9 @@
 // project's key used by the Bellville feed) — the service-account JSON.
 import { SignJWT, importPKCS8 } from 'jose';
 
-const FS_BASE = 'https://firestore.googleapis.com/v1';
+// FIRESTORE_EMULATOR_HOST (tests only) points everything at the local emulator.
+const EMU = process.env.FIRESTORE_EMULATOR_HOST || '';
+const FS_BASE = EMU ? `http://${EMU}/v1` : 'https://firestore.googleapis.com/v1';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
 export function serviceAccount() {
@@ -18,6 +20,7 @@ export const projectId = () => serviceAccount().project_id;
 
 let tokenCache = { at: 0, token: null };
 async function accessToken() {
+  if (EMU) return 'owner';
   if (tokenCache.token && Date.now() - tokenCache.at < 3000000) return tokenCache.token;
   const sa = serviceAccount();
   const key = await importPKCS8(sa.private_key, 'RS256');
@@ -93,4 +96,90 @@ export async function query(parentPath, collectionId, filters, limit = 300) {
   if (!res.ok) throw new Error(`Firestore query ${parentPath}/${collectionId} failed: ${await res.text()}`);
   const rows = await res.json();
   return rows.filter(r => r.document).map(r => ({ id: r.document.name.split('/').pop(), ...Object.fromEntries(Object.entries(r.document.fields || {}).map(([k, x]) => [k, fromFs(x)])) }));
+}
+
+// Create a document only if it is not there yet. false when it already was,
+// so two runs bringing in the same thing can never both write it.
+export async function createDoc(path, data) {
+  const res = await call('PATCH', `${root()}/${enc(path)}?currentDocument.exists=false`, { fields: toFs(data).mapValue.fields });
+  if (res.ok) return true;
+  const t = await res.text();
+  if (res.status === 409 || /ALREADY_EXISTS|FAILED_PRECONDITION/.test(t)) return false;
+  throw new Error(`Firestore create ${path} failed: ${t}`);
+}
+
+// A new document with an id Firestore picks; returns the id.
+export async function addDoc(collPath, data) {
+  const res = await call('POST', `${root()}/${enc(collPath)}`, { fields: toFs(data).mapValue.fields });
+  if (!res.ok) throw new Error(`Firestore add ${collPath} failed: ${await res.text()}`);
+  return (await res.json()).name.split('/').pop();
+}
+
+export async function deleteDoc(path) {
+  const res = await call('DELETE', `${root()}/${enc(path)}`);
+  if (!res.ok && res.status !== 404) throw new Error(`Firestore delete ${path} failed: ${await res.text()}`);
+}
+
+// Every document in a collection (up to `max`), e.g. listDocs('shopifyLinks').
+export async function listDocs(collPath, max = 1000) {
+  const out = [];
+  let token = '';
+  do {
+    const res = await call('GET', `${root()}/${enc(collPath)}?pageSize=300${token ? '&pageToken=' + encodeURIComponent(token) : ''}`);
+    if (!res.ok) throw new Error(`Firestore list ${collPath} failed: ${await res.text()}`);
+    const j = await res.json();
+    (j.documents || []).forEach(d => out.push({ id: d.name.split('/').pop(), ...Object.fromEntries(Object.entries(d.fields || {}).map(([k, x]) => [k, fromFs(x)])) }));
+    token = j.nextPageToken || '';
+  } while (token && out.length < max);
+  return out;
+}
+
+const docName = (path) => `projects/${projectId()}/databases/(default)/documents/${path}`;
+
+// Many writes at once (at most 500), all or nothing. Each item:
+//   { path, data }            set the named fields (creating the document if needed)
+//   { path, inc: { f: n } }   add n to a number field without reading it
+export async function commitWrites(items) {
+  for (let i = 0; i < items.length; i += 450) {
+    const writes = items.slice(i, i + 450).map(w => w.inc
+      ? { transform: { document: docName(w.path), fieldTransforms: Object.entries(w.inc).map(([f, n]) => ({ fieldPath: f, increment: toFs(n) })) } }
+      : { update: { name: docName(w.path), fields: toFs(w.data).mapValue.fields }, updateMask: { fieldPaths: Object.keys(w.data) } });
+    const res = await call('POST', `${root()}:commit`, { writes });
+    if (!res.ok) throw new Error(`Firestore commit failed: ${await res.text()}`);
+  }
+}
+
+// The company's next number in a sequence (orderNo, invoiceNo …), the way
+// the app hands them out. The counter is written only if nobody changed it
+// since we read it; if somebody did, read again and retry. So two people (or
+// a webhook and the 15-minute check) can never be given the same number.
+export async function nextNumber(cid, key, first) {
+  const path = `companies/${cid}/counters/${key}`;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const g = await call('GET', `${root()}/${enc(path)}`);
+    let next = Number(first) || 1, pre = { exists: false };
+    if (g.ok) {
+      const d = await g.json();
+      const v = fromFs((d.fields || {}).value);
+      if (Number(v) > 0) next = Number(v);
+      pre = { updateTime: d.updateTime };
+    } else if (g.status !== 404) throw new Error('Firestore counter read failed: ' + await g.text());
+    const w = await call('POST', `${root()}:commit`, { writes: [{ update: { name: docName(path), fields: { value: toFs(next + 1) } }, updateMask: { fieldPaths: ['value'] }, currentDocument: pre }] });
+    if (w.ok) return next;
+    const txt = await w.text();
+    if (w.status !== 409 && w.status !== 400 && !/FAILED_PRECONDITION|ALREADY_EXISTS/.test(txt)) throw new Error('Firestore counter write failed: ' + txt);
+    await new Promise(r => setTimeout(r, 60 * (attempt + 1) + Math.random() * 80));
+  }
+  throw new Error('Could not get the next ' + key + ' (too busy), try again');
+}
+
+// Is the company allowed to work (trial running, paid up, or free)? The same
+// test as companyActive() in firestore.rules.
+export function companyActive(c, now = Date.now()) {
+  if (!c) return false;
+  if (c.status === 'free') return true;
+  const created = Date.parse(c.createdAt || '') || 0;
+  const trialEnd = c.trialEndsAt ? Date.parse(c.trialEndsAt) : created + 14 * 86400000;
+  if (c.status === 'trial' && now < trialEnd) return true;
+  return !!(c.paidUntil && now < Date.parse(c.paidUntil));
 }

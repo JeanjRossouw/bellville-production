@@ -34,6 +34,8 @@ couchpotato/
   js/deliveries.js  booking deliveries, drivers, runs, signed notes
   js/driver.js      the driver's page (no login, big buttons, client signs)
   (../netlify/functions/factory-billing.mjs  PayFast subscriptions, server side)
+  js/shopify-map.js how a Shopify order becomes factory orders (shared with the server)
+  (../netlify/functions/factory-shopify.mjs  the online shop: orders, products, stock)
   js/qr.js          QR codes for job cards (vendor/qrcode.js, MIT)
   js/app.js         sign-in and sign-up, navigation by role, settings, roles, the team
   js/permissions.js the screens, levels, starting roles and what each may change

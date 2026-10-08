@@ -2,7 +2,7 @@
 import * as store from './store.js';
 import { FACTORY_DEFAULTS, isCloudConfigured, PRODUCT, TRIAL_DAYS } from './config.js';
 import { AREAS, LEVELS, levelOf } from './permissions.js';
-import { esc, field, row, toast, money, daysUntil } from './ui.js';
+import { esc, field, row, toast, money, daysUntil, openModal } from './ui.js';
 import { startCustomers, renderCustomers, newCustomer, editCustomer, deleteCustomer } from './customers.js';
 import {
   startOrders, renderOrders, newOrder, editOrder, deleteOrder, setStatus, setFabric,
@@ -89,6 +89,7 @@ let rolesStarted = false;
 let lastAllowed = '';
 let team = { members: [], invites: [] };
 let billing = { plan: null, configured: false, payments: [] };
+let shop = null;          // the online shop's connection status (integrations/shopify)
 let clients = [];
 let readOnlyOk = false;      // chose "look around (read only)" on the lock screen
 let lastAccess = 'ok';
@@ -122,6 +123,7 @@ async function boot() {
         store.watch('members', rows => { team.members = rows; if (view === 'settings') paint(); });
         store.watch('invites', rows => { team.invites = rows; if (view === 'settings') paint(); });
         store.watch('payments', rows => { billing.payments = rows; if (view === 'settings') paint(); });
+        store.watch('integrations', rows => { shop = rows.find(r => r.id === 'shopify') || null; if (view === 'settings') paint(); });
         store.getPlan().then(r => { billing.plan = r.plan; billing.configured = !!r.configured; if (view === 'settings') paint(); });
       }
       // a payment, a cancellation or an extended trial takes effect live
@@ -495,7 +497,7 @@ function renderSettings(host) {
       )}
       <div class="card-actions"><button class="btn primary" data-act="save-settings">Save settings</button></div>
     </div>
-    ${store.getUser().role === 'owner' ? billingCard() + rolesCard() + teamCard() : ''}
+    ${store.getUser().role === 'owner' ? billingCard() + shopCard() + rolesCard() + teamCard() : ''}
     <div class="card">
       <h2>How this system is wired</h2>
       <ul class="plain">
@@ -536,6 +538,87 @@ function billingCard() {
     </div>
     ${pays.length ? `<h2>Payments</h2>` + pays.map(x => `<div class="team-row"><div><div class="who-n">${esc(longDate(x.at))}</div><div class="who-e">${esc(x.reference ? 'PayFast ' + x.reference : '')}</div></div><div>${esc(money(x.amount, 'R'))}</div><div class="team-acts muted">${esc(String(x.status || '').toLowerCase())}</div></div>`).join('') : ''}
   </div>`;
+}
+
+// ---------------------------------------------------------- online shop ----
+// Shopify: online orders come in as factory orders, the shop's products
+// come into the price list, and till sales take stock off the shop too.
+
+const ago = (iso) => { if (!iso) return ''; const m = Math.round((Date.now() - Date.parse(iso)) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : longDate(iso); };
+
+function shopCard() {
+  const s = shop || {};
+  if (!s.connected) return `<div class="card">
+    <h2>Online shop</h2>
+    <p>Connect your Shopify store and every online order comes in as a factory order by itself, with the customer, the fabric and the delivery address. Your shop’s products come into your price list, and pieces sold from stock at the till come off the shop’s count too.</p>
+    <div class="card-actions"><button class="btn primary" data-act="shop-connect">Connect Shopify</button></div>
+  </div>`;
+  const when = s.importWhen === 'placed' ? 'placed' : 'paid';
+  return `<div class="card">
+    <h2>Online shop</h2>
+    <p><strong>Connected to ${esc(s.shopName || s.domain)}</strong> <span class="muted">(${esc(s.domain || '')})</span>. Online orders come in by themselves${s.webhooks === 'on' ? ' within a minute' : ', every 15 minutes'}.</p>
+    <p class="muted">Orders brought in: ${esc(String(s.ordersIn || 0))}${s.lastOrderName ? ' · last ' + esc(s.lastOrderName) + ' ' + esc(ago(s.lastOrderAt)) : ''} · last checked ${esc(ago(s.lastCheckedAt) || 'not yet')}${s.productsAt ? ' · products brought in ' + esc(ago(s.productsAt)) : ''}</p>
+    ${s.webhooks && s.webhooks !== 'on' ? `<p class="notice-inline">Shopify could not be asked to send orders straight away (${esc(s.webhooks)}). They still come in every 15 minutes.</p>` : ''}
+    ${s.lastError ? `<p class="notice-inline">${esc(s.lastError)}</p>` : ''}
+    ${field('Bring online orders in', 'shop-when', { type: 'select', value: when, options: [{ value: 'paid', label: 'Once they are paid (recommended)' }, { value: 'placed', label: 'As soon as they are placed, paid or not' }] })}
+    <div class="card-actions">
+      <button class="btn primary" data-act="shop-sync">Check for orders now</button>
+      <button class="btn ghost" data-act="shop-products">Bring in products</button>
+      <button class="btn ghost" data-act="shop-disconnect">Disconnect</button>
+    </div>
+  </div>`;
+}
+
+function shopConnect() {
+  const demo = store.storeMode() === 'demo';
+  openModal('Connect Shopify', `
+    <ol class="steps">
+      <li>In your Shopify admin open <strong>Settings → Apps and sales channels → Develop apps</strong>, then <strong>Build apps in Dev Dashboard</strong>.</li>
+      <li>Create an app called <em>${esc(PRODUCT.name)}</em>. Under access give it: <code>read_products</code>, <code>read_orders</code>, <code>read_customers</code>, <code>read_inventory</code>, <code>write_inventory</code>, <code>read_locations</code>.</li>
+      <li>Under <strong>Protected customer data</strong>, allow name, email, phone and address, so orders arrive with who and where. Then release the app and install it on your store.</li>
+      <li>Copy the app’s <strong>Client ID</strong> and <strong>Client secret</strong> into the boxes below.</li>
+    </ol>
+    ${field('Your store', 'sh-domain', { placeholder: 'your-store.myshopify.com' })}
+    ${row(field('Client ID', 'sh-id'), field('Client secret', 'sh-secret', { type: 'password' }))}
+    ${field('Bring online orders in', 'sh-when', { type: 'select', value: 'paid', options: [{ value: 'paid', label: 'Once they are paid (recommended)' }, { value: 'placed', label: 'As soon as they are placed, paid or not' }] })}
+    <p class="muted">The secret is kept on the server only. Nobody on your team can see it again, and only orders from now on come in.${demo ? ' <strong>Demo mode:</strong> any store name and keys work, and a made-up shop is used.' : ''}</p>`, {
+    okLabel: 'Connect',
+    onOk: async (w) => {
+      const g = (id) => (w.querySelector('#' + id) || {}).value || '';
+      const ok = w.querySelector('#modal-ok'); ok.disabled = true; ok.textContent = 'Connecting…';
+      try {
+        const r = await store.shopifyCall('connect', { domain: g('sh-domain'), clientId: g('sh-id'), clientSecret: g('sh-secret'), importWhen: g('sh-when') });
+        toast('Connected to ' + (r.shopName || 'your shop') + '. Now bring your products in.');
+      } catch (e) { toast(e.message, 'warn'); ok.disabled = false; ok.textContent = 'Connect'; return false; }
+    }
+  });
+}
+
+async function shopRun(action, label, btn, payload) {
+  const was = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = label; }
+  try { return await store.shopifyCall(action, payload); }
+  catch (e) { toast(e.message, 'warn'); return null; }
+  finally { if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = was; } }
+}
+
+async function shopProducts(btn) {
+  const r = await shopRun('products', 'Bringing products in…', btn);
+  if (r) toast(r.total + ' products in your shop: ' + r.created + ' new, ' + r.linked + ' matched to yours by name, ' + r.updated + ' updated. Prices come from the shop; recipes and costs are yours.');
+}
+async function shopSync(btn) {
+  const r = await shopRun('sync', 'Checking…', btn);
+  if (!r) return;
+  if (r.skipped) { toast('Not checked: ' + r.skipped, 'warn'); return; }
+  const n = (r.brought || []).filter(x => x.orders && x.orders.length);
+  toast(n.length ? n.map(x => x.order + ' → ' + x.orders.join(', ')).join(' · ') : 'No new online orders');
+}
+async function shopDisconnect() {
+  if (!confirm('Disconnect ' + ((shop && shop.shopName) || 'the shop') + '? Online orders stop coming in. Orders already here stay.')) return;
+  if (await shopRun('disconnect')) toast('Shop disconnected');
+}
+async function shopWhen(value) {
+  if (await shopRun('settings', '', null, { importWhen: value })) toast(value === 'placed' ? 'Online orders come in as soon as they are placed' : 'Online orders come in once they are paid');
 }
 
 // ------------------------------------------------------------ the seller ----
@@ -811,6 +894,10 @@ async function onAction(e) {
     case 'po-receive': return receivePurchaseOrder(id);
     case 'po-cancel': return cancelPurchaseOrder(id);
     case 'cancel-sub': return cancelSubscription();
+    case 'shop-connect': return shopConnect();
+    case 'shop-products': return shopProducts(b);
+    case 'shop-sync': return shopSync(b);
+    case 'shop-disconnect': return shopDisconnect();
     case 'client-extend': return clientExtend(id);
     case 'client-free': return clientFree(id);
     case 'invite': return sendInvite();
@@ -895,6 +982,7 @@ function onChangeEvent(e) {
   if (act === 'due') return setDue(t.dataset.id, t.value);
   if (t.id === 'inv-filter') { setInvFilter(t.value); return paint(); }
   if (t.id === 'stmt-cust') { setStmtCustomer(t.value); return paint(); }
+  if (t.id === 'shop-when') return shopWhen(t.value);
 }
 
 let searchTimer = null;
