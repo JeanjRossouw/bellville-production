@@ -28,6 +28,8 @@ couchpotato/
   js/invoices.js    invoice queue, invoices, payments, statements, export
   js/pos.js         point of sale: the showroom till
   js/stock.js       materials on hand, purchase orders, stock movements
+  js/quotes.js      quotations that turn into orders
+  js/profit.js      profit per month, product and piece
   (../netlify/functions/factory-billing.mjs  PayFast subscriptions, server side)
   js/qr.js          QR codes for job cards (vendor/qrcode.js, MIT)
   js/app.js         sign-in and sign-up, navigation by role, settings, the team
@@ -114,6 +116,14 @@ now list per supplier that drafts the purchase order with the amounts. A
 purchase order is sent by WhatsApp, email or print, and received in full or
 in part. Every change is listed under Movements.
 
-Next: quotes that turn into orders, a profit report per order and month,
-per-role limits on what each role can change, and terms of service and a
-privacy policy for the website.
+Also built: quotes (js/quotes.js) — priced from the catalogue with the cost
+and margin of every line shown only to the person quoting, for an existing
+or a new customer; sent by WhatsApp, email or PDF; accepted with one tap
+into factory orders (discount spread over the lines, new customer added);
+declined with a reason; expired when past their date. And a profit report
+(js/profit.js) — per month sales, materials, labour, gross profit,
+overheads and net profit, plus by product and every piece weakest margin
+first, from dispatched orders and till sales from stock.
+
+Next: per-role limits on what each role can change, and terms of service
+and a privacy policy for the website.

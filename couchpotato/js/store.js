@@ -699,8 +699,25 @@ function seedDemoStock() {
   const c = demoRead('counters'); c.poNo = { value: 2 }; demoWrite('counters', c);
 }
 
+// Three quotes: one waiting on the customer, one won, one still a draft.
+function seedDemoQuotes() {
+  const q = demoRead('quotes');
+  if (q['q1']) return;
+  const d = (n) => new Date(Date.now() + n * 86400000).toISOString();
+  const mk = (no, over) => ({ quoteNo: no, lines: [], discount: 0, notes: 'Lead time 4 weeks from deposit. Delivery in the Cape Town metro included.', events: [], createdBy: 'demo', updatedAt: d(0), updatedBy: 'demo', ...over });
+  q['q1'] = mk('Q-0001', { customerId: 'd-durbanville', customerName: 'Durbanville Décor', status: 'accepted', createdAt: d(-20), sentAt: d(-20), acceptedAt: d(-17), validUntil: d(10).slice(0, 10),
+    lines: [{ productId: 'p-3s', description: '3 Seater Chesterfield', fabric: 'Linen Look : Natural', qty: 2, unitPrice: 8500 }], orderNos: ['CP-1010'] });
+  q['q2'] = mk('Q-0002', { customerId: '', customerName: '', prospect: { name: 'Sarah van Wyk', phone: '082 777 1234', email: 'sarah@example.com', address: 'Constantia' }, status: 'sent', createdAt: d(-3), sentAt: d(-3), validUntil: d(27).slice(0, 10),
+    lines: [{ productId: 'p-corner', description: 'Corner Unit 2.8 x 2.8', fabric: 'Boucle : Cream', qty: 1, unitPrice: 15900 }, { productId: 'p-ott', description: 'Ottoman 900mm', fabric: 'Boucle : Cream', qty: 1, unitPrice: 2400 }], discount: 500 });
+  q['q3'] = mk('Q-0003', { customerId: 'd-stellenbosch', customerName: 'Stellenbosch Interiors', status: 'draft', createdAt: d(-1), validUntil: d(29).slice(0, 10),
+    lines: [{ productId: 'p-daybed', description: 'Daybed 2.4m', fabric: '', qty: 3, unitPrice: 11200 }] });
+  demoWrite('quotes', q);
+  const c = demoRead('counters'); c.quoteNo = { value: 4 }; demoWrite('counters', c);
+}
+
 function seedDemoExtras() {
   seedDemoStock();
+  seedDemoQuotes();
   const orders = demoRead('orders');
   if (orders['r1']) return;
   let seed = 20261006;

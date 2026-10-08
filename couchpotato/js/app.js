@@ -12,7 +12,9 @@ import {
   printJobCard, printWeekJobCards, printPlanner
 } from './floor.js';
 import { renderScan, setScanSettings, startCamera, stopCamera, manualFind, confirmDispatch, notifyCustomer } from './scan.js';
-import { startPos, renderPos, setPosSettings, posAction, posInput } from './pos.js';
+import { startPos, renderPos, setPosSettings, posAction, posInput, allSales } from './pos.js';
+import { startQuotes, renderQuotes, setQuoteSettings, setQuoteFilter, newQuote, editQuote, copyQuote, sendQuote, printQuote, acceptQuote, declineQuote } from './quotes.js';
+import { renderProfit, setProfitSettings, setProfitMonth } from './profit.js';
 import {
   startStock, renderStock, setStockSettings, setStockView, countMaterial, newPurchaseOrder, draftForSupplier,
   editPurchaseOrder, sendPurchaseOrder, printPurchaseOrder, receivePurchaseOrder, cancelPurchaseOrder
@@ -44,12 +46,14 @@ if (pendingScan) history.replaceState(null, '', location.pathname);
 const NAV = [
   { key: 'pos', icon: '', label: 'Point of sale' },
   { key: 'orders', icon: '', label: 'Orders' },
+  { key: 'quotes', icon: '', label: 'Quotes' },
   { key: 'customers', icon: '', label: 'Customers' },
   { key: 'factory', icon: '', label: 'Factory floor' },
   { key: 'costing', icon: '', label: 'Costing' },
   { key: 'stock', icon: '', label: 'Stock' },
   { key: 'scan', icon: '', label: 'Scan out' },
   { key: 'invoices', icon: '', label: 'Invoices' },
+  { key: 'profit', icon: '', label: 'Profit' },
   { key: 'settings', icon: '', label: 'Settings' },
   { key: 'clients', icon: '', label: 'Clients' }
 ];
@@ -58,7 +62,7 @@ const NAV = [
 const ROLE_VIEWS = {
   owner: NAV.map(n => n.key).filter(k => k !== 'clients'),
   office: NAV.map(n => n.key).filter(k => k !== 'clients'),
-  sales: ['pos', 'orders', 'customers'],
+  sales: ['pos', 'quotes', 'orders', 'customers'],
   factory: ['factory', 'scan', 'stock', 'orders']
 };
 let seller = false;          // the seller's own login: sees every company under Clients
@@ -103,13 +107,16 @@ async function boot() {
       setInvoiceSettings(settings);
       setPosSettings(settings);
       setStockSettings(settings);
+      setQuoteSettings(settings);
+      setProfitSettings(settings);
+      startQuotes(() => { if (view === 'quotes') paint(); }, settings);
       startStock(() => { if (view === 'stock') paint(); }, settings);
-      startPos(() => { if (view === 'pos') paint(); }, settings);
+      startPos(() => { if (view === 'pos' || view === 'profit') paint(); }, settings);
       startInvoices(() => { if (view === 'invoices' || view === 'orders') paint(); }, settings);
       startCosting(() => { if (view === 'costing' || view === 'orders' || view === 'pos' || view === 'stock') paint(); }, settings);
       startCustomers(() => { if (view === 'customers' || view === 'orders' || view === 'pos') paint(); });
       startOrders(() => {
-        if (view !== 'settings') paint();   // includes Stock: what open orders need
+        if (view !== 'settings') paint();   // includes Stock (what open orders need) and Profit
         if (pendingScan) { const id = pendingScan; pendingScan = ''; view = 'scan'; paint(); confirmDispatch(id); }
       }, settings);
       if (pendingScan) view = 'scan';
@@ -319,6 +326,8 @@ function paint() {
   if (view === 'factory') return renderFloor(screen, overview());
   if (view === 'costing') return renderCosting(screen);
   if (view === 'stock') return renderStock(screen, allOrders());
+  if (view === 'quotes') return renderQuotes(screen);
+  if (view === 'profit') return renderProfit(screen, allOrders(), allSales());
   if (view === 'scan') return renderScan(screen);
   if (view === 'invoices') return renderInvoices(screen);
   if (view === 'pos') return renderPos(screen);
@@ -562,6 +571,8 @@ async function saveSettings() {
   setInvoiceSettings(settings);
   setPosSettings(settings);
   setStockSettings(settings);
+  setQuoteSettings(settings);
+  setProfitSettings(settings);
   const bn = document.querySelector('.brand-name');
   if (bn) bn.textContent = settings.name;
   toast('Settings saved');
@@ -585,6 +596,15 @@ async function onAction(e) {
     case 'save-settings': return saveSettings();
     case 'subscribe': return startCheckout();
     case 'stock-view': setStockView(b.dataset.to); return paint();
+    case 'quote-filter': setQuoteFilter(b.dataset.to); return paint();
+    case 'quote-new': return newQuote();
+    case 'quote-edit': return editQuote(id);
+    case 'quote-copy': return copyQuote(id);
+    case 'quote-send': return sendQuote(id);
+    case 'quote-print': return printQuote(id);
+    case 'quote-accept': return acceptQuote(id);
+    case 'quote-decline': return declineQuote(id);
+    case 'profit-month': setProfitMonth(b.dataset.to); return paint();
     case 'stock-count': return countMaterial(id);
     case 'po-new': return newPurchaseOrder();
     case 'po-draft': return draftForSupplier(b.dataset.supplier, allOrders());
@@ -629,7 +649,7 @@ async function onAction(e) {
     case 'save-overheads': {
       const patch = await saveOverheads(document.getElementById('screen'));
       settings = { ...settings, ...patch };
-      setOrderSettings(settings); setFloorSettings(settings); setCostingSettings(settings); setStockSettings(settings);
+      setOrderSettings(settings); setFloorSettings(settings); setCostingSettings(settings); setStockSettings(settings); setProfitSettings(settings); setQuoteSettings(settings);
       return paint();
     }
     case 'print-pricesheet': return printPriceSheet();
@@ -667,6 +687,7 @@ function onChangeEvent(e) {
   if (t.id === 'o-filter-status') { setFilter({ status: t.value }); return paint(); }
   const act = t.dataset ? t.dataset.act : '';
   if (act === 'member-role') return memberRole(t.dataset.id, t.value);
+  if (t.id === 'pf-month') { setProfitMonth(t.value); return paint(); }
   if (act === 'fabric') return setFabric(t.dataset.id, t.value);
   if (act === 'due') return setDue(t.dataset.id, t.value);
   if (t.id === 'inv-filter') { setInvFilter(t.value); return paint(); }

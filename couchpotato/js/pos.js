@@ -31,6 +31,7 @@ export function startPos(cb, cfg) {
   try { const saved = JSON.parse(localStorage.getItem('cp-pos-cart') || 'null'); if (saved && Array.isArray(saved.lines)) cart = saved; } catch (e) {}
 }
 export const setPosSettings = (cfg) => { settings = cfg || {}; };
+export const allSales = () => sales;
 export const setPosTab = (t) => { posTab = t; };
 const persist = () => { try { localStorage.setItem('cp-pos-cart', JSON.stringify(cart)); } catch (e) {} };
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
