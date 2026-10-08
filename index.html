@@ -4430,6 +4430,7 @@ ${_PRODUCTION_PRINT_STYLES}
       if (typeof renderDriverPage === 'function') renderDriverPage();
       return;
     }
+    if (typeof IS_DOC_MODE !== 'undefined' && IS_DOC_MODE) return;
     if (typeof IS_BUILDER_MODE !== 'undefined' && IS_BUILDER_MODE) {
       if (typeof renderBuilderPortal === 'function') renderBuilderPortal();
       return;
@@ -9886,8 +9887,8 @@ ${_PRODUCTION_PRINT_STYLES}
     actions += '<label style="padding:7px 12px; border-radius:999px; border:1.5px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:700; font-size:12px; cursor:pointer; margin:0">📎 ' + (o.deliveryNoteId ? 'Replace note' : 'Delivery note') + '<input type="file" accept="image/*,application/pdf" capture="environment" style="display:none" onchange="deliveryNoteUpload(\'' + _escape(o.id) + '\', this)"></label>';
     if (o.deliveryNoteId) actions += '<button onclick="deliveryNoteView(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">👁 View note' + (o.deliverySignedBy ? ' ✍️' : '') + '</button>';
     actions += '<label style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; color:#111; font-weight:700; font-size:12px; cursor:pointer; margin:0" title="The driver shows this to the client on the tablet">🧾 ' + (o.deliveryInvoiceId ? 'Replace invoice' : 'Attach invoice') + '<input type="file" accept="image/*,application/pdf" style="display:none" onchange="deliveryDocUpload(\'' + _escape(o.id) + '\', \'inv\', this)"></label>';
-    if (o.deliveryInvoiceId) actions += '<button onclick="deliveryDocView(\'' + _escape(o.id) + '\', \'inv\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">👁 Invoice</button><button onclick="deliveryDocSend(\'' + _escape(o.id) + '\', \'inv\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer" title="WhatsApp the invoice to the client">📤 Send invoice</button>';
-    if (o.deliveryNoteId) actions += '<button onclick="deliveryDocSend(\'' + _escape(o.id) + '\', \'dn\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer" title="WhatsApp the delivery note to the client">📤 Send note</button>';
+    if (o.deliveryInvoiceId) actions += '<button onclick="deliveryDocView(\'' + _escape(o.id) + '\', \'inv\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">👁 Invoice</button>';
+    if (o.deliveryNoteId || o.deliveryInvoiceId) actions += '<button onclick="deliveryDocsSend(\'' + _escape(o.id) + '\', \'client\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #25d366; background:#f0fdf4; color:#166534; font-weight:700; font-size:12px; cursor:pointer" title="WhatsApp the delivery note and invoice links to the client">📤 Send docs</button>';
     actions += '<button onclick="builderPortalPrintCard(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">🖨️ Job card</button>';
     return '<div style="background:#fff; border-radius:12px; padding:12px 14px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,0.07); border-left:4px solid ' + (o.status === 'delivered' ? '#16a34a' : o.deliveryScheduled ? '#2563eb' : '#f59e0b') + '">'
       + '<div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:flex-start"><div>'
@@ -10075,7 +10076,7 @@ ${_PRODUCTION_PRINT_STYLES}
     o.status = 'done';
     delete o.deliveredDate; delete o.deliveredBy; delete o.deliverySignedBy; delete o.deliverySignedAt;
     delete o.driverStatus; delete o.driverStatusAt; delete o.driverStatusNote;
-    const noteId = o.deliveryNoteId; delete o.deliveryNoteId; delete o.deliveryNoteAt;
+    const noteId = o.deliveryNoteId; delete o.deliveryNoteId; delete o.deliveryNoteAt; delete o.deliveryNotePub;
     if (Array.isArray(o.deliveryComments)) o.deliveryComments = o.deliveryComments.filter(c => !/^(✍️|📤|🚐)/.test(String(c.text || '')));
     if (noteId && window.firebaseFns && window.firebaseFns.deleteDoc) {
       window.firebaseFns.deleteDoc(window.firebaseFns.doc(window.firebaseDb, 'shared-data', noteId)).catch(e => console.warn('note not removed:', e.message));
@@ -10119,7 +10120,7 @@ ${_PRODUCTION_PRINT_STYLES}
       window.firebaseFns.setDoc(ref, { orderId: orderId, kind: kind, dataUrl: dataUrl, type: file.type || '', at: new Date().toISOString(), by: (typeof _driverName === 'function' && _driverName()) || _staffDisplayName('staff') })
         .then(() => {
           const o = _findOrderAnyBiz(orderId);
-          if (o) { snapshotState(); if (kind === 'inv') { o.deliveryInvoiceId = _deliveryDocId(orderId, 'inv'); } else { o.deliveryNoteId = _deliveryDocId(orderId, 'dn'); o.deliveryNoteAt = new Date().toISOString(); } saveData(); if (typeof render === 'function') render(); }
+          if (o) { snapshotState(); if (kind === 'inv') { o.deliveryInvoiceId = _deliveryDocId(orderId, 'inv'); delete o.deliveryInvoicePub; } else { o.deliveryNoteId = _deliveryDocId(orderId, 'dn'); o.deliveryNoteAt = new Date().toISOString(); delete o.deliveryNotePub; } saveData(); if (typeof render === 'function') render(); }
           if (typeof toast === 'function') toast(kind === 'inv' ? '🧾 Invoice attached' : '📎 Delivery note saved', 'success', 2500);
           if (typeof IS_DRIVER_MODE !== 'undefined' && IS_DRIVER_MODE && typeof renderDriverPage === 'function') renderDriverPage();
         })
@@ -10152,40 +10153,93 @@ ${_PRODUCTION_PRINT_STYLES}
       w.document.close();
     }).catch(e => alert('Could not load it: ' + e.message));
   }
-  // WhatsApp a document to the client. wa.me links cannot carry a file, so
-  // the phone's share sheet does it: the driver picks WhatsApp and the
-  // client's chat, the file and a short message are already in it. Where
-  // sharing files is not possible (a desktop browser) the file is saved and
-  // WhatsApp opens with the message, ready for the file to be attached.
-  function deliveryDocSend(orderId, kind) {
-    const o = _findOrderAnyBiz(orderId); if (!o) return;
-    const ref = window.firebaseFns.doc(window.firebaseDb, 'shared-data', _deliveryDocId(orderId, kind));
-    window.firebaseFns.getDoc(ref).then(async snap => {
-      if (!snap.exists()) { alert(kind === 'inv' ? 'No invoice attached to this order.' : 'No delivery note yet — let the client sign first.'); return; }
+  // Sending a document over WhatsApp. A wa.me link cannot carry a file, so
+  // each document gets a private link (shared-data/pub-<random token>, read by
+  // the ?doc= page) and the link goes in the message, straight to the
+  // client's number — the driver only presses Send.
+  function _deliveryDocPublish(orderId, kind) {
+    const o = _findOrderAnyBiz(orderId); if (!o) return Promise.resolve(null);
+    const have = kind === 'inv' ? o.deliveryInvoicePub : o.deliveryNotePub;
+    const srcId = kind === 'inv' ? o.deliveryInvoiceId : o.deliveryNoteId;
+    if (!srcId) return Promise.resolve(null);
+    if (have) return Promise.resolve(have);
+    const fns = window.firebaseFns, db = window.firebaseDb;
+    return fns.getDoc(fns.doc(db, 'shared-data', srcId)).then(snap => {
+      if (!snap.exists()) return null;
       const d = snap.data();
+      const token = d.pub || _newToken();
       const biz = (typeof BIZ_DISPLAY !== 'undefined' && BIZ_DISPLAY[_bizOfOrder(orderId)]) || 'Bellville Furniture';
-      const who = (o.customer || '').split(' ')[0] || 'there';
-      const label = kind === 'inv' ? 'invoice' : 'signed delivery note';
-      const text = 'Hi ' + who + ', ' + biz + ' here. Here is your ' + label + ' for order #' + (o.invoice || o.id) + ' (' + (o.product || '') + '). Thank you!';
-      const isPdf = /^data:application\/pdf/.test(d.dataUrl);
-      const fname = (kind === 'inv' ? 'Invoice-' : 'Delivery-note-') + (o.invoice || o.id) + (isPdf ? '.pdf' : '.jpg');
-      let file = null;
-      try { const blob = await (await fetch(d.dataUrl)).blob(); file = new File([blob], fname, { type: isPdf ? 'application/pdf' : 'image/jpeg' }); } catch (e) {}
-      if (file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-        try { await navigator.share({ files: [file], title: fname, text: text }); } catch (e) { if (e && e.name !== 'AbortError') alert('Could not share: ' + e.message); return; }
-        snapshotState(); if (!Array.isArray(o.deliveryComments)) o.deliveryComments = [];
-        o.deliveryComments.push({ by: (typeof _driverName === 'function' && _driverName()) || _staffDisplayName('staff'), at: new Date().toISOString(), text: '📤 ' + (kind === 'inv' ? 'Invoice' : 'Delivery note') + ' sent to the client' });
-        saveData(); if (typeof IS_DRIVER_MODE !== 'undefined' && IS_DRIVER_MODE && typeof renderDriverPage === 'function') renderDriverPage(); else if (typeof render === 'function') render();
-        return;
-      }
-      // fallback: save the file, open WhatsApp with the message
-      const a = document.createElement('a'); a.href = d.dataUrl; a.download = fname; document.body.appendChild(a); a.click(); a.remove();
-      const phone = _waDigits(o.phone);
-      if (phone) { alert('The ' + label + ' was saved as ' + fname + '. WhatsApp opens next — attach that file to the message.'); window.open('https://wa.me/' + phone + '?text=' + encodeURIComponent(text), '_blank'); }
-      else alert('The ' + label + ' was saved as ' + fname + '. This client has no cell number — send it by hand.');
-    }).catch(e => alert('Could not load it: ' + e.message));
+      const pub = { kind: kind, orderNo: String(o.invoice || o.id), customer: o.customer || '', product: o.product || '', biz: biz, dataUrl: d.dataUrl, type: d.type || '', at: d.at || new Date().toISOString(), signedBy: d.signedBy || '' };
+      return fns.setDoc(fns.doc(db, 'shared-data', 'pub-' + token), pub)
+        .then(() => d.pub ? null : fns.setDoc(fns.doc(db, 'shared-data', srcId), { pub: token }, { merge: true }).catch(() => {}))
+        .then(() => { if (kind === 'inv') o.deliveryInvoicePub = token; else o.deliveryNotePub = token; return token; });
+    });
   }
-  window.deliveryDocUpload = deliveryDocUpload; window.deliveryDocView = deliveryDocView; window.deliveryDocSend = deliveryDocSend;
+  function _deliveryDocUrl(token) { return location.origin + location.pathname + '?doc=' + token; }
+  // Prepare the links (so a later tap can open WhatsApp synchronously).
+  function deliveryDocsPrepare(orderId) {
+    return Promise.all([_deliveryDocPublish(orderId, 'dn'), _deliveryDocPublish(orderId, 'inv')]).then(r => ({ dn: r[0], inv: r[1] }));
+  }
+  // The WhatsApp message with whatever documents the order has.
+  function _deliveryDocsMessage(o, to) {
+    const biz = (typeof BIZ_DISPLAY !== 'undefined' && BIZ_DISPLAY[_bizOfOrder(o.id)]) || 'Bellville Furniture';
+    const parts = [];
+    if (o.deliveryNotePub) parts.push('📄 Delivery note' + (o.deliverySignedBy ? ' (signed)' : '') + ': ' + _deliveryDocUrl(o.deliveryNotePub));
+    if (o.deliveryInvoicePub) parts.push('🧾 Invoice: ' + _deliveryDocUrl(o.deliveryInvoicePub));
+    if (!parts.length) return '';
+    const ref = '#' + (o.invoice || o.id) + ' (' + (o.product || '') + ')';
+    if (to === 'shop') return 'Order ' + ref + ' — ' + (o.customer || '') + ':\n' + parts.join('\n') + '\n— ' + ((typeof _driverName === 'function' && _driverName()) || 'driver');
+    const who = (o.customer || '').split(' ')[0] || 'there';
+    return 'Hi ' + who + ', ' + biz + ' here. Thank you — your order ' + ref + ' has been delivered.\n' + parts.join('\n') + '\nEnjoy!';
+  }
+  // Open WhatsApp to the client (or the shop) with the links. Must run from a
+  // tap, or the phone blocks the new window — so the links are prepared first.
+  function deliveryDocsSend(orderId, to) {
+    const o = _findOrderAnyBiz(orderId); if (!o) return;
+    const go = () => {
+      const msg = _deliveryDocsMessage(o, to);
+      if (!msg) { alert('Nothing to send yet — no delivery note or invoice on this order.'); return; }
+      const phone = _waDigits(to === 'shop' ? _driverOfficePhone() : o.phone);
+      if (!phone) { alert(to === 'shop' ? 'No shop number — add one under Drivers → contacts.' : 'This client has no cell number — tell the shop.'); return; }
+      window.open('https://wa.me/' + phone + '?text=' + encodeURIComponent(msg), '_blank');
+      snapshotState(); if (!Array.isArray(o.deliveryComments)) o.deliveryComments = [];
+      o.deliveryComments.push({ by: (typeof _driverName === 'function' && _driverName()) || _staffDisplayName('staff'), at: new Date().toISOString(), text: '📤 ' + [o.deliveryNotePub ? 'Delivery note' : '', o.deliveryInvoicePub ? 'Invoice' : ''].filter(Boolean).join(' + ') + ' sent to ' + (to === 'shop' ? 'the shop' : 'the client') });
+      saveData();
+    };
+    const ready = (!o.deliveryNoteId || o.deliveryNotePub) && (!o.deliveryInvoiceId || o.deliveryInvoicePub);
+    if (ready) { go(); return; }
+    // links not made yet (an older order): make them, then the next tap sends
+    deliveryDocsPrepare(orderId).then(() => { saveData(); if (confirm('Documents ready. Open WhatsApp now?')) go(); }).catch(e => alert('Could not prepare the documents: ' + e.message));
+  }
+  // The page a client opens from the link: ?doc=<token>.
+  const DOC_TOKEN = (function () { try { return String(new URLSearchParams(window.location.search).get('doc') || '').replace(/[^a-f0-9]/gi, '').slice(0, 32); } catch (e) { return ''; } })();
+  const IS_DOC_MODE = !!DOC_TOKEN;
+  function enterDocOnlyMode() {
+    ['main-app', 'login-overlay', 'dashboard-only-view', 'reserved-only-view', 'booking-only-view', 'builder-only-view', 'confirm-only-view', 'driver-only-view'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    let v = document.getElementById('doc-only-view');
+    if (!v) { v = document.createElement('div'); v.id = 'doc-only-view'; v.style.cssText = 'position:fixed; inset:0; background:#f2f0ec; color:#1c1917; z-index:9000; overflow:auto; font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif'; document.body.appendChild(v); }
+    v.style.display = 'block';
+    document.title = 'Your document';
+    if (!v.innerHTML) v.innerHTML = '<div style="background:#000; color:#fff; padding:1rem; text-align:center"><div id="doc-biz" style="font-size:12px; letter-spacing:0.3em; text-transform:uppercase; opacity:0.85">Bellville Furniture</div><div id="doc-title" style="font-size:20px; font-weight:900; margin-top:0.2rem">Loading…</div></div><div id="doc-content" style="max-width:820px; margin:0 auto; padding:12px"></div>';
+  }
+  function renderDocPage() {
+    const host = document.getElementById('doc-content'); if (!host) return;
+    if (!window.firebaseFns || !window.firebaseDb) return;
+    window.firebaseFns.getDoc(window.firebaseFns.doc(window.firebaseDb, 'shared-data', 'pub-' + DOC_TOKEN)).then(snap => {
+      if (!snap.exists()) { host.innerHTML = '<div style="background:#fff; border-radius:14px; padding:2rem; text-align:center; color:#991b1b">This link is not valid any more.</div>'; return; }
+      const d = snap.data();
+      const title = (d.kind === 'inv' ? 'Invoice' : 'Delivery note') + ' #' + d.orderNo;
+      document.title = title; const t = document.getElementById('doc-title'); if (t) t.textContent = title; const b = document.getElementById('doc-biz'); if (b) b.textContent = d.biz || 'Bellville Furniture';
+      const isPdf = /^data:application\/pdf/.test(d.dataUrl || '');
+      const fname = (d.kind === 'inv' ? 'Invoice-' : 'Delivery-note-') + d.orderNo + (isPdf ? '.pdf' : '.jpg');
+      host.innerHTML = '<div style="font-size:13px; color:#57534e; margin:4px 0 10px">' + _escape(d.customer || '') + (d.product ? ' · ' + _escape(d.product) : '') + (d.signedBy ? ' · ✍️ signed by ' + _escape(d.signedBy) : '') + ' · ' + _escape(String(d.at || '').slice(0, 10)) + '</div>'
+        + (isPdf ? '<iframe src="' + d.dataUrl + '" style="width:100%; height:80vh; border:0; background:#fff; border-radius:10px"></iframe>' : '<img src="' + d.dataUrl + '" style="width:100%; border-radius:10px; background:#fff; box-shadow:0 1px 4px rgba(0,0,0,0.1)">')
+        + '<a href="' + d.dataUrl + '" download="' + fname + '" style="display:block; margin:14px auto 0; max-width:320px; text-align:center; padding:14px; border-radius:12px; background:#111; color:#fff; font-weight:800; text-decoration:none">⬇️ Save ' + (d.kind === 'inv' ? 'invoice' : 'delivery note') + '</a>';
+    }).catch(e => { host.innerHTML = '<div style="background:#fff; border-radius:14px; padding:2rem; text-align:center; color:#991b1b">Could not load the document — please try again.</div>'; console.warn(e); });
+  }
+  window.enterDocOnlyMode = enterDocOnlyMode; window.renderDocPage = renderDocPage;
+  if (IS_DOC_MODE) { try { enterDocOnlyMode(); } catch (e) { console.warn('Doc boot failed:', e); } }
+  window.deliveryDocUpload = deliveryDocUpload; window.deliveryDocView = deliveryDocView; window.deliveryDocsSend = deliveryDocsSend; window.deliveryDocsPrepare = deliveryDocsPrepare;
 
   // ---- the client signs on the tablet: a delivery note drawn from the order,
   // a finger-signature box, saved as the order's delivery note (an image). ----
@@ -10260,10 +10314,22 @@ ${_PRODUCTION_PRINT_STYLES}
         if (!Array.isArray(o.deliveryComments)) o.deliveryComments = [];
         o.deliveryComments.push({ by: (typeof _driverName === 'function' && _driverName()) || 'Driver', at: now.toISOString(), text: '✍️ Delivery note signed by ' + name });
         saveData();
-        deliverySignCancel();
-        if (typeof toast === 'function') toast('✍️ Signed — note saved', 'success', 2500);
         if (typeof IS_DRIVER_MODE !== 'undefined' && IS_DRIVER_MODE && typeof renderDriverPage === 'function') renderDriverPage(); else if (typeof render === 'function') render();
-        if (confirm('WhatsApp the signed note to ' + ((o.customer || '').split(' ')[0] || 'the client') + ' now?')) deliveryDocSend(orderId, 'dn');
+        // Links for the note and the invoice, then the send screen: one tap
+        // opens WhatsApp to the client with both already in the message.
+        const v = document.getElementById('sign-view');
+        if (v) v.innerHTML = '<div style="max-width:720px; margin:40px auto; text-align:center"><div style="font-size:60px">✅</div><div style="font-size:22px; font-weight:900">Signed by ' + _escape(name) + '</div><div style="font-size:15px; color:#57534e; margin-top:6px">Preparing the documents…</div></div>';
+        deliveryDocsPrepare(orderId).catch(() => null).then(() => {
+          saveData();
+          const who = (o.customer || '').split(' ')[0] || 'the client';
+          const phone = _waDigits(o.phone);
+          const docs = [o.deliveryNotePub ? 'signed delivery note' : '', o.deliveryInvoicePub ? 'invoice' : ''].filter(Boolean).join(' and ');
+          const v2 = document.getElementById('sign-view'); if (!v2) return;
+          v2.innerHTML = '<div style="max-width:720px; margin:30px auto; text-align:center"><div style="font-size:60px">✅</div><div style="font-size:22px; font-weight:900">Signed by ' + _escape(name) + '</div>'
+            + '<div style="font-size:16px; color:#57534e; margin:10px 0 20px">' + (docs ? 'The ' + docs + ' ' + (docs.indexOf(' and ') > 0 ? 'are' : 'is') + ' ready to send to ' + _escape(who) + (phone ? '.' : ', but this client has no cell number — tell the shop.') : 'No documents to send.') + '</div>'
+            + (docs && phone ? '<button onclick="deliveryDocsSend(\'' + _escape(orderId) + '\', \'client\'); deliverySignCancel()" style="width:100%; min-height:70px; border-radius:16px; border:2px solid #16a34a; background:#16a34a; color:#fff; font-weight:900; font-size:20px">📤 Send to ' + _escape(who) + ' on WhatsApp</button>' : '')
+            + '<button onclick="deliverySignCancel()" style="width:100%; min-height:52px; margin-top:12px; border-radius:16px; border:2px solid #d6d3d1; background:#fff; color:#555; font-weight:900; font-size:16px">' + (docs && phone ? 'Not now' : 'Close') + '</button></div>';
+        });
       })
       .catch(e => alert('Could not save the signature: ' + e.message));
   }
@@ -10781,8 +10847,8 @@ ${_PRODUCTION_PRINT_STYLES}
         + (isDel && o.deliveryComments && o.deliveryComments.length ? '<div style="font-size:14px; color:#57534e; background:#f5f5f4; border-radius:10px; padding:8px 10px; margin-top:8px">📝 ' + _escape(o.deliveryComments[o.deliveryComments.length - 1].text) + '</div>' : '')
         + (s.done ? '<div style="font-size:16px; font-weight:800; color:#166534; margin-top:8px">✅ Delivered ' + _escape(o.deliveredDate || '') + (o.deliverySignedBy ? ' · ✍️ signed by ' + _escape(o.deliverySignedBy) : o.deliveryNoteId ? ' · 📎 note saved' : '') + '</div>'
             + (o.deliveryNoteId || o.deliveryInvoiceId ? '<div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap">'
-              + (o.deliveryNoteId ? '<button onclick="deliveryDocSend(\'' + _escape(o.id) + '\', \'dn\')" style="flex:1; min-height:52px; border-radius:14px; border:2px solid #16a34a; background:#16a34a; color:#fff; font-weight:900; font-size:15px">📤 WhatsApp note<br>to client</button>' : '')
-              + (o.deliveryInvoiceId ? '<button onclick="deliveryDocSend(\'' + _escape(o.id) + '\', \'inv\')" style="flex:1; min-height:52px; border-radius:14px; border:2px solid #111; background:#fff; color:#111; font-weight:900; font-size:15px">📤 WhatsApp invoice<br>to client</button>' : '')
+              + '<button onclick="deliveryDocsSend(\'' + _escape(o.id) + '\', \'client\')" style="flex:1; min-height:52px; border-radius:14px; border:2px solid #16a34a; background:#16a34a; color:#fff; font-weight:900; font-size:15px">📤 WhatsApp docs<br>to client</button>'
+              + (office ? '<button onclick="deliveryDocsSend(\'' + _escape(o.id) + '\', \'shop\')" style="flex:1; min-height:52px; border-radius:14px; border:2px solid #111; background:#fff; color:#111; font-weight:900; font-size:15px">📤 WhatsApp docs<br>to shop</button>' : '')
               + '</div>' : '')
             + (o.deliveryNoteId ? '' : '<div style="display:flex; gap:8px; margin-top:8px">'
               + '<button onclick="deliverySignOpen(\'' + _escape(o.id) + '\')" style="flex:2; min-height:58px; border-radius:14px; border:2px solid #111; background:#111; color:#fff; font-weight:900; font-size:17px">✍️ Client signs here</button>'
@@ -10794,7 +10860,7 @@ ${_PRODUCTION_PRINT_STYLES}
             + (isDel ? _driverBtn('✅ Delivered', 'driverDelivered(' + idArg + ')', '#16a34a', '#fff') : _driverBtn('✅ Done', 'driverRepairDone(' + idArg + ')', '#16a34a', '#fff'))
             + _driverBtn('⚠️ Problem', 'driverProblemMenu(' + idArg + ', this)', '#fee2e2', '#991b1b', '#ef4444')
             + (phone ? _driverBtn('📞 Call client', 'location.href=\'tel:' + phone + '\'', '#fff', '#111', '#d6d3d1') : '')
-            + (isDel && o.deliveryInvoiceId ? _driverBtn('🧾 Show invoice', 'deliveryDocView(\'' + _escape(o.id) + '\', \'inv\')', '#fff', '#111', '#d6d3d1') + _driverBtn('📤 WhatsApp invoice', 'deliveryDocSend(\'' + _escape(o.id) + '\', \'inv\')', '#fff', '#111', '#d6d3d1') : '')
+            + (isDel && o.deliveryInvoiceId ? _driverBtn('🧾 Show invoice', 'deliveryDocView(\'' + _escape(o.id) + '\', \'inv\')', '#fff', '#111', '#d6d3d1') + _driverBtn('📤 WhatsApp invoice', 'deliveryDocsSend(\'' + _escape(o.id) + '\', \'client\')', '#fff', '#111', '#d6d3d1') : '')
             + (isDel ? _driverBtn('✍️ Client signs', 'deliverySignOpen(\'' + _escape(o.id) + '\')', '#fff', '#111', '#111') : '')
             + '</div>'
             + '<div id="drv-menu-' + _escape(o.id) + '" style="margin-top:8px"></div>'
@@ -14825,6 +14891,9 @@ ${totalsSection}
         } else if (typeof IS_DRIVER_MODE !== 'undefined' && IS_DRIVER_MODE) {
           // A driver's day — private link, works for anonymous sign-ins too
           enterDriverOnlyMode();
+        } else if (typeof IS_DOC_MODE !== 'undefined' && IS_DOC_MODE) {
+          // A client opening their delivery note / invoice link
+          enterDocOnlyMode(); renderDocPage();
         } else if (IS_BUILDER_MODE) {
           // Manufacturer portal (Couch Potato etc.)
           enterBuilderOnlyMode();
@@ -14867,6 +14936,17 @@ ${totalsSection}
             });
           } else if (typeof bookingStaticFallback === 'function') {
             bookingStaticFallback();
+          }
+          return;
+        }
+        if (typeof IS_DOC_MODE !== 'undefined' && IS_DOC_MODE) {
+          document.getElementById('login-overlay').style.display = 'none';
+          enterDocOnlyMode();
+          if (window.firebaseFns && window.firebaseFns.signInAnonymously) {
+            window.firebaseFns.signInAnonymously(window.firebaseAuth).catch(() => {
+              const h = document.getElementById('doc-content');
+              if (h) h.innerHTML = '<div style="background:#fff; border-radius:14px; padding:2rem; text-align:center; color:#991b1b">Could not load the document — please try again later.</div>';
+            });
           }
           return;
         }
