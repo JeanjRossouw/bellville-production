@@ -9885,7 +9885,8 @@ ${_PRODUCTION_PRINT_STYLES}
     actions += '<label style="padding:7px 12px; border-radius:999px; border:1.5px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:700; font-size:12px; cursor:pointer; margin:0">📎 ' + (o.deliveryNoteId ? 'Replace note' : 'Delivery note') + '<input type="file" accept="image/*,application/pdf" capture="environment" style="display:none" onchange="deliveryNoteUpload(\'' + _escape(o.id) + '\', this)"></label>';
     if (o.deliveryNoteId) actions += '<button onclick="deliveryNoteView(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">👁 View note' + (o.deliverySignedBy ? ' ✍️' : '') + '</button>';
     actions += '<label style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; color:#111; font-weight:700; font-size:12px; cursor:pointer; margin:0" title="The driver shows this to the client on the tablet">🧾 ' + (o.deliveryInvoiceId ? 'Replace invoice' : 'Attach invoice') + '<input type="file" accept="image/*,application/pdf" style="display:none" onchange="deliveryDocUpload(\'' + _escape(o.id) + '\', \'inv\', this)"></label>';
-    if (o.deliveryInvoiceId) actions += '<button onclick="deliveryDocView(\'' + _escape(o.id) + '\', \'inv\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">👁 Invoice</button>';
+    if (o.deliveryInvoiceId) actions += '<button onclick="deliveryDocView(\'' + _escape(o.id) + '\', \'inv\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">👁 Invoice</button><button onclick="deliveryDocSend(\'' + _escape(o.id) + '\', \'inv\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer" title="WhatsApp the invoice to the client">📤 Send invoice</button>';
+    if (o.deliveryNoteId) actions += '<button onclick="deliveryDocSend(\'' + _escape(o.id) + '\', \'dn\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer" title="WhatsApp the delivery note to the client">📤 Send note</button>';
     actions += '<button onclick="builderPortalPrintCard(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">🖨️ Job card</button>';
     return '<div style="background:#fff; border-radius:12px; padding:12px 14px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,0.07); border-left:4px solid ' + (o.status === 'delivered' ? '#16a34a' : o.deliveryScheduled ? '#2563eb' : '#f59e0b') + '">'
       + '<div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:flex-start"><div>'
@@ -10130,7 +10131,40 @@ ${_PRODUCTION_PRINT_STYLES}
       w.document.close();
     }).catch(e => alert('Could not load it: ' + e.message));
   }
-  window.deliveryDocUpload = deliveryDocUpload; window.deliveryDocView = deliveryDocView;
+  // WhatsApp a document to the client. wa.me links cannot carry a file, so
+  // the phone's share sheet does it: the driver picks WhatsApp and the
+  // client's chat, the file and a short message are already in it. Where
+  // sharing files is not possible (a desktop browser) the file is saved and
+  // WhatsApp opens with the message, ready for the file to be attached.
+  function deliveryDocSend(orderId, kind) {
+    const o = _findOrderAnyBiz(orderId); if (!o) return;
+    const ref = window.firebaseFns.doc(window.firebaseDb, 'shared-data', _deliveryDocId(orderId, kind));
+    window.firebaseFns.getDoc(ref).then(async snap => {
+      if (!snap.exists()) { alert(kind === 'inv' ? 'No invoice attached to this order.' : 'No delivery note yet — let the client sign first.'); return; }
+      const d = snap.data();
+      const biz = (typeof BIZ_DISPLAY !== 'undefined' && BIZ_DISPLAY[_bizOfOrder(orderId)]) || 'Bellville Furniture';
+      const who = (o.customer || '').split(' ')[0] || 'there';
+      const label = kind === 'inv' ? 'invoice' : 'signed delivery note';
+      const text = 'Hi ' + who + ', ' + biz + ' here. Here is your ' + label + ' for order #' + (o.invoice || o.id) + ' (' + (o.product || '') + '). Thank you!';
+      const isPdf = /^data:application\/pdf/.test(d.dataUrl);
+      const fname = (kind === 'inv' ? 'Invoice-' : 'Delivery-note-') + (o.invoice || o.id) + (isPdf ? '.pdf' : '.jpg');
+      let file = null;
+      try { const blob = await (await fetch(d.dataUrl)).blob(); file = new File([blob], fname, { type: isPdf ? 'application/pdf' : 'image/jpeg' }); } catch (e) {}
+      if (file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: fname, text: text }); } catch (e) { if (e && e.name !== 'AbortError') alert('Could not share: ' + e.message); return; }
+        snapshotState(); if (!Array.isArray(o.deliveryComments)) o.deliveryComments = [];
+        o.deliveryComments.push({ by: (typeof _driverName === 'function' && _driverName()) || _staffDisplayName('staff'), at: new Date().toISOString(), text: '📤 ' + (kind === 'inv' ? 'Invoice' : 'Delivery note') + ' sent to the client' });
+        saveData(); if (typeof IS_DRIVER_MODE !== 'undefined' && IS_DRIVER_MODE && typeof renderDriverPage === 'function') renderDriverPage(); else if (typeof render === 'function') render();
+        return;
+      }
+      // fallback: save the file, open WhatsApp with the message
+      const a = document.createElement('a'); a.href = d.dataUrl; a.download = fname; document.body.appendChild(a); a.click(); a.remove();
+      const phone = _waDigits(o.phone);
+      if (phone) { alert('The ' + label + ' was saved as ' + fname + '. WhatsApp opens next — attach that file to the message.'); window.open('https://wa.me/' + phone + '?text=' + encodeURIComponent(text), '_blank'); }
+      else alert('The ' + label + ' was saved as ' + fname + '. This client has no cell number — send it by hand.');
+    }).catch(e => alert('Could not load it: ' + e.message));
+  }
+  window.deliveryDocUpload = deliveryDocUpload; window.deliveryDocView = deliveryDocView; window.deliveryDocSend = deliveryDocSend;
 
   // ---- the client signs on the tablet: a delivery note drawn from the order,
   // a finger-signature box, saved as the order's delivery note (an image). ----
@@ -10208,6 +10242,7 @@ ${_PRODUCTION_PRINT_STYLES}
         deliverySignCancel();
         if (typeof toast === 'function') toast('✍️ Signed — note saved', 'success', 2500);
         if (typeof IS_DRIVER_MODE !== 'undefined' && IS_DRIVER_MODE && typeof renderDriverPage === 'function') renderDriverPage(); else if (typeof render === 'function') render();
+        if (confirm('WhatsApp the signed note to ' + ((o.customer || '').split(' ')[0] || 'the client') + ' now?')) deliveryDocSend(orderId, 'dn');
       })
       .catch(e => alert('Could not save the signature: ' + e.message));
   }
@@ -10536,7 +10571,33 @@ ${_PRODUCTION_PRINT_STYLES}
   // shop is written for them and opened in WhatsApp, they only press Send.
   function _drivers() { return Array.isArray(data.drivers) ? data.drivers : []; }
   function _driverById(id) { return _drivers().find(d => d.id === id) || null; }
-  function _driverOfficePhone() { return (data.deliverySettings && data.deliverySettings.officePhone) || ''; }
+  // Contacts the driver can call or WhatsApp: the shop, the factory, staff.
+  // The first one is "the shop" (the problem/late messages go there).
+  function _driverContacts() {
+    const st = data.deliverySettings || {};
+    if (Array.isArray(st.contacts) && st.contacts.length) return st.contacts;
+    return st.officePhone ? [{ id: 'shop', name: 'Shop', phone: st.officePhone }] : [];
+  }
+  function _driverOfficePhone() { const c = _driverContacts()[0]; return c ? c.phone : ''; }
+  function driverContactAdd() {
+    const name = prompt('Who is it? (e.g. Shop, Factory, Lehandra)', _driverContacts().length ? '' : 'Shop'); if (!name) return;
+    const phone = prompt('WhatsApp / cell number for ' + name.trim() + ':'); if (!phone) return;
+    snapshotState();
+    const list = _driverContacts().slice(); list.push({ id: 'c' + Date.now().toString(36), name: name.trim(), phone: phone.trim() });
+    data.deliverySettings = Object.assign({}, data.deliverySettings || {}, { contacts: list }); saveData(); render();
+  }
+  function driverContactEdit(id) {
+    const list = _driverContacts().slice(); const c = list.find(x => x.id === id); if (!c) return;
+    const name = prompt('Name:', c.name); if (name === null) return;
+    const phone = prompt('Number:', c.phone); if (phone === null) return;
+    snapshotState(); c.name = name.trim() || c.name; c.phone = phone.trim();
+    data.deliverySettings = Object.assign({}, data.deliverySettings || {}, { contacts: list }); saveData(); render();
+  }
+  function driverContactRemove(id) {
+    const c = _driverContacts().find(x => x.id === id); if (!c || !confirm('Remove ' + c.name + ' from the driver\'s contacts?')) return;
+    snapshotState(); data.deliverySettings = Object.assign({}, data.deliverySettings || {}, { contacts: _driverContacts().filter(x => x.id !== id), officePhone: '' }); saveData(); render();
+  }
+  window.driverContactAdd = driverContactAdd; window.driverContactEdit = driverContactEdit; window.driverContactRemove = driverContactRemove;
   function _driverLink(d) { return location.origin + location.pathname + '?driver=' + encodeURIComponent(d.token); }
   function _newToken() { let t = ''; for (let i = 0; i < 24; i++) t += Math.floor(Math.random() * 16).toString(16); return t; }
   // A driver select (falls back to a text box when no drivers exist yet).
@@ -10624,8 +10685,12 @@ ${_PRODUCTION_PRINT_STYLES}
     const list = _drivers();
     const today = new Date().toISOString().split('T')[0];
     let html = '<div style="font-size:12px; color:#57534e; margin-bottom:8px">Each driver gets a private link to save on their phone. It opens their stops for the day with big buttons: navigate, on my way, running late, delivered, photo of the note, message the shop. Every message to a client is written for them and sent through WhatsApp — they never type.</div>';
-    html += '<div style="background:#fff; border-radius:12px; padding:12px 14px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,0.07)"><div style="font-size:12px; font-weight:800; color:#57534e; margin-bottom:4px">Shop / factory WhatsApp number (the driver\'s "message the shop" button)</div>'
-      + '<input value="' + _escape(_driverOfficePhone()) + '" placeholder="e.g. 082 555 1234" onchange="driverSetOfficePhone(this.value)" style="padding:7px 9px; border:1px solid #d6d3d1; border-radius:6px; width:220px"></div>';
+    const contacts = _driverContacts();
+    html += '<div style="background:#fff; border-radius:12px; padding:12px 14px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,0.07)"><div style="font-size:12px; font-weight:800; color:#57534e; margin-bottom:6px">📒 Driver\'s contacts — the shop, the factory, staff. The first one is "the shop": problems and late notices go there.</div>'
+      + (contacts.length ? contacts.map((c, i) => '<div style="display:flex; gap:8px; align-items:center; padding:5px 0; border-top:1px solid #f5f5f4; font-size:13px"><span style="font-weight:800; min-width:90px">' + (i === 0 ? '🏪 ' : '👤 ') + _escape(c.name) + '</span><span style="color:#57534e; flex:1">' + _escape(c.phone) + '</span>'
+          + '<button onclick="driverContactEdit(\'' + _escape(c.id) + '\')" style="padding:4px 9px; border-radius:999px; border:1px solid #d6d3d1; background:#fff; font-size:11px; cursor:pointer">✏️</button><button onclick="driverContactRemove(\'' + _escape(c.id) + '\')" style="padding:4px 9px; border-radius:999px; border:1px solid #fca5a5; background:#fff; color:#991b1b; font-size:11px; cursor:pointer">✕</button></div>').join('')
+        : '<div style="font-size:12px; color:#991b1b; padding:4px 0">No contacts yet — add the shop\'s WhatsApp number.</div>')
+      + '<button onclick="driverContactAdd()" style="margin-top:8px; padding:6px 12px; border-radius:999px; border:1.5px solid #111; background:#111; color:#fff; font-weight:700; font-size:12px; cursor:pointer">+ Add contact</button></div>';
     html += list.map(d => {
       const n = _driverStopsFor(d.id, today).length;
       return '<div style="background:#fff; border-radius:12px; padding:12px 14px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,0.07); display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center">'
@@ -10694,6 +10759,10 @@ ${_PRODUCTION_PRINT_STYLES}
         + '<div style="font-size:17px; color:#44403c; margin-top:2px">📍 ' + (addr ? _escape(addr) : '<span style="color:#991b1b">no address — ask the shop</span>') + '</div>'
         + (isDel && o.deliveryComments && o.deliveryComments.length ? '<div style="font-size:14px; color:#57534e; background:#f5f5f4; border-radius:10px; padding:8px 10px; margin-top:8px">📝 ' + _escape(o.deliveryComments[o.deliveryComments.length - 1].text) + '</div>' : '')
         + (s.done ? '<div style="font-size:16px; font-weight:800; color:#166534; margin-top:8px">✅ Delivered ' + _escape(o.deliveredDate || '') + (o.deliverySignedBy ? ' · ✍️ signed by ' + _escape(o.deliverySignedBy) : o.deliveryNoteId ? ' · 📎 note saved' : '') + '</div>'
+            + (o.deliveryNoteId || o.deliveryInvoiceId ? '<div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap">'
+              + (o.deliveryNoteId ? '<button onclick="deliveryDocSend(\'' + _escape(o.id) + '\', \'dn\')" style="flex:1; min-height:52px; border-radius:14px; border:2px solid #16a34a; background:#16a34a; color:#fff; font-weight:900; font-size:15px">📤 WhatsApp note<br>to client</button>' : '')
+              + (o.deliveryInvoiceId ? '<button onclick="deliveryDocSend(\'' + _escape(o.id) + '\', \'inv\')" style="flex:1; min-height:52px; border-radius:14px; border:2px solid #111; background:#fff; color:#111; font-weight:900; font-size:15px">📤 WhatsApp invoice<br>to client</button>' : '')
+              + '</div>' : '')
             + (o.deliveryNoteId ? '' : '<div style="display:flex; gap:8px; margin-top:8px">'
               + '<button onclick="deliverySignOpen(\'' + _escape(o.id) + '\')" style="flex:2; min-height:58px; border-radius:14px; border:2px solid #111; background:#111; color:#fff; font-weight:900; font-size:17px">✍️ Client signs here</button>'
               + '<label style="flex:1; display:flex; align-items:center; justify-content:center; padding:8px; border-radius:14px; border:2px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:900; font-size:15px; text-align:center; cursor:pointer">📷 Photo of paper note<input type="file" accept="image/*" capture="environment" style="display:none" onchange="deliveryNoteUpload(\'' + _escape(o.id) + '\', this)"></label></div>')
@@ -10704,7 +10773,7 @@ ${_PRODUCTION_PRINT_STYLES}
             + (isDel ? _driverBtn('✅ Delivered', 'driverDelivered(' + idArg + ')', '#16a34a', '#fff') : _driverBtn('✅ Done', 'driverRepairDone(' + idArg + ')', '#16a34a', '#fff'))
             + _driverBtn('⚠️ Problem', 'driverProblemMenu(' + idArg + ', this)', '#fee2e2', '#991b1b', '#ef4444')
             + (phone ? _driverBtn('📞 Call client', 'location.href=\'tel:' + phone + '\'', '#fff', '#111', '#d6d3d1') : '')
-            + (isDel && o.deliveryInvoiceId ? _driverBtn('🧾 Show invoice', 'deliveryDocView(\'' + _escape(o.id) + '\', \'inv\')', '#fff', '#111', '#d6d3d1') : '')
+            + (isDel && o.deliveryInvoiceId ? _driverBtn('🧾 Show invoice', 'deliveryDocView(\'' + _escape(o.id) + '\', \'inv\')', '#fff', '#111', '#d6d3d1') + _driverBtn('📤 WhatsApp invoice', 'deliveryDocSend(\'' + _escape(o.id) + '\', \'inv\')', '#fff', '#111', '#d6d3d1') : '')
             + (isDel ? _driverBtn('✍️ Client signs', 'deliverySignOpen(\'' + _escape(o.id) + '\')', '#fff', '#111', '#111') : '')
             + '</div>'
             + '<div id="drv-menu-' + _escape(o.id) + '" style="margin-top:8px"></div>'
@@ -10717,6 +10786,11 @@ ${_PRODUCTION_PRINT_STYLES}
       + '<div style="flex:1; background:#fff; border-radius:14px; padding:10px; text-align:center"><div style="font-size:26px; font-weight:900; color:#166534">' + done.length + '</div><div style="font-size:12px; color:#78716c; font-weight:700">DONE</div></div>'
       + (office ? '<button onclick="window.open(\'https://wa.me/' + office + '?text=' + encodeURIComponent('Hi, it\'s ' + d.name + ' (driver). ') + '\', \'_blank\')" style="flex:1; border-radius:14px; border:2px solid #111; background:#111; color:#fff; font-weight:900; font-size:15px; cursor:pointer">💬 Message<br>the shop</button>' : '')
       + '</div>';
+    const contacts = _driverContacts();
+    if (contacts.length) html += '<details style="background:#fff; border-radius:14px; padding:10px 14px; margin-bottom:12px"><summary style="font-size:14px; font-weight:900; letter-spacing:0.06em; color:#44403c; cursor:pointer">📒 CONTACTS (' + contacts.length + ')</summary>'
+      + contacts.map(c => { const dg = _waDigits(c.phone); return '<div style="display:flex; gap:8px; align-items:center; padding:8px 0; border-top:1px solid #f5f5f4"><div style="flex:1; font-size:17px; font-weight:800">' + _escape(c.name) + '<div style="font-size:12px; color:#78716c; font-weight:400">' + _escape(c.phone) + '</div></div>'
+        + (dg ? '<button onclick="window.open(\'https://wa.me/' + dg + '?text=' + encodeURIComponent('Hi, it\'s ' + d.name + ' (driver). ') + '\', \'_blank\')" style="min-height:48px; padding:0 14px; border-radius:12px; border:2px solid #16a34a; background:#16a34a; color:#fff; font-weight:900; font-size:15px">💬</button><button onclick="location.href=\'tel:' + dg + '\'" style="min-height:48px; padding:0 14px; border-radius:12px; border:2px solid #111; background:#fff; color:#111; font-weight:900; font-size:15px">📞</button>' : '') + '</div>'; }).join('')
+      + '</details>';
     if (!stops.length) html += '<div style="background:#fff; border-radius:16px; padding:2rem; text-align:center; color:#78716c; font-size:19px">Nothing for you today 👍<div style="font-size:13px; margin-top:6px">The shop will send your stops when they are planned.</div></div>';
     html += open.map(card).join('');
     if (done.length) html += '<div style="font-size:12px; font-weight:900; letter-spacing:0.1em; color:#78716c; margin:14px 0 6px">DONE TODAY</div>' + done.map(card).join('');
