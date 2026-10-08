@@ -15,7 +15,8 @@
 //
 // Env (Netlify → Site configuration → Environment variables):
 //   FIREBASE_SERVICE_ACCOUNT      Bellville's (already set for the Shopify sync)
-//   COUCHPOTATO_SERVICE_ACCOUNT   Couch Potato's project service-account JSON
+//   COUCHPOTATO_SERVICE_ACCOUNT   the app's Firebase project service-account JSON
+//   COUCHPOTATO_COMPANY_ID        Couch Potato's company id in the app (Settings → Team)
 //   COUCHPOTATO_CUSTOMER_ID       the Bellville Furniture customer's id in Couch Potato's system
 //   COUCHPOTATO_CUSTOMER_NAME     optional, default "Bellville Furniture"
 //   COUCHPOTATO_BUILDER_NAME      optional, the supplier name as stored in Bellville, default "Couch Patato"

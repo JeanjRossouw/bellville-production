@@ -740,3 +740,27 @@ h2 { font-family: var(--font-ui); font-weight: 600; font-size: 12px; letter-spac
 .scan-row { border-radius: var(--radius); }
 .qr-wrap small { font-family: var(--font-ui); }
 .brand-sub { padding-left: .7rem; }
+
+/* ------------------------------------------------- accounts and the team */
+.login-switch { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #3a3a3a; margin: 0 0 1.1rem; }
+.login-switch button { background: none; border: 0; color: #9a9a9a; font: inherit; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; padding: .7rem .4rem; cursor: pointer; }
+.login-switch button.on { background: #fff; color: #000; font-weight: 600; }
+.login-lead { color: #bdbdbd; font-size: 13px; line-height: 1.5; margin: 0 0 1rem; text-align: center; }
+.login-lead:empty { display: none; }
+.login-link { display: block; margin: .9rem auto 0; background: none; border: 0; color: #9a9a9a; font: inherit; font-size: 12px; text-decoration: underline; cursor: pointer; }
+.login-status.ok { color: #86efac; }
+.trial-chip { border: 1px solid #555; color: #ddd; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; padding: .2rem .55rem; border-radius: 2px; white-space: nowrap; }
+.trial-chip.low { border-color: #f59e0b; color: #fbbf24; }
+.team-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; gap: .6rem; align-items: center; padding: .6rem 0; border-top: 1px solid var(--line, #e7e5e4); }
+.team-row:first-of-type { border-top: 0; }
+.team-row .who-n { font-weight: 600; }
+.team-row .who-e { font-size: 12px; color: var(--muted, #78716c); overflow-wrap: anywhere; }
+.team-row select { width: 100%; }
+.team-acts { display: flex; gap: .35rem; flex-wrap: wrap; justify-content: flex-end; }
+.team-invite { display: grid; grid-template-columns: 1fr 1.3fr 1fr auto; gap: .6rem; align-items: end; margin-top: .9rem; }
+.roles-help { font-size: 12px; color: var(--muted, #78716c); margin: .4rem 0 0; padding-left: 1.1rem; }
+@media (max-width: 640px) {
+  .team-row { grid-template-columns: 1fr; }
+  .team-acts { justify-content: flex-start; }
+  .team-invite { grid-template-columns: 1fr; }
+}
