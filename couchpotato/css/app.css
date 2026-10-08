@@ -764,3 +764,13 @@ h2 { font-family: var(--font-ui); font-weight: 600; font-size: 12px; letter-spac
   .team-acts { justify-content: flex-start; }
   .team-invite { grid-template-columns: 1fr; }
 }
+
+/* --------------------------------------------------------------- billing */
+.lock-card { max-width: 560px; margin: 3rem auto; text-align: center; }
+.lock-card .card-actions { justify-content: center; }
+.lock-co { font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); margin: 0 0 .4rem; }
+.lock-price { margin: 1.2rem 0 .4rem; font-size: 15px; }
+.lock-price strong { font-size: 26px; }
+.readonly-bar { background: #7f1d1d; color: #fff; text-align: center; font-size: 13px; padding: .55rem 1rem; display: flex; gap: .8rem; justify-content: center; align-items: center; flex-wrap: wrap; }
+.readonly-bar .btn { background: #fff; color: #7f1d1d; border-color: #fff; }
+.client-row { grid-template-columns: minmax(0, 1.6fr) auto auto; }

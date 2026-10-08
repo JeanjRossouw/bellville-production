@@ -72,14 +72,86 @@ Roles:
 The owner can change a role or remove someone at any time; a removed person's
 login stops opening anything immediately.
 
+## 4. Switch on payments (PayFast), once
+
+Each company pays a monthly subscription through PayFast, by card or instant
+EFT. PayFast debits it every month until the company cancels. The price is
+**R 799 per month** until you change it (step 4 below).
+
+1. Open a PayFast merchant account at <https://payfast.io> in your business's name.
+   While testing, use a **sandbox** account from <https://sandbox.payfast.co.za>
+   instead; it takes test cards and moves no money.
+2. In PayFast: **Settings → Developer settings**. Note the **Merchant ID** and
+   **Merchant Key**, and set a **Passphrase** (any long phrase). Turn on
+   **Recurring billing** / subscriptions if PayFast asks.
+3. In the app's Firebase project: **Project settings → Service accounts →
+   Generate new private key**. A JSON file downloads. This is a secret.
+4. On the Netlify site that serves the app → **Site configuration →
+   Environment variables**, add:
+
+   | Variable | Value |
+   |---|---|
+   | `PAYFAST_MERCHANT_ID` | from step 2 |
+   | `PAYFAST_MERCHANT_KEY` | from step 2 |
+   | `PAYFAST_PASSPHRASE` | the passphrase from step 2 |
+   | `PAYFAST_SANDBOX` | `true` while testing; delete it to take real money |
+   | `FACTORY_SERVICE_ACCOUNT` | the whole JSON from step 3, as one line |
+   | `FACTORY_PRICE` | optional: the monthly price in rands, e.g. `799` |
+   | `FACTORY_PLAN_NAME` | optional: the plan's name, default `Standard` |
+   | `FACTORY_APP_PATH` | optional: where the app lives on the site, default `couchpotato/`; set to `/` once it has its own site |
+
+5. Redeploy. The owner of each company now sees **Settings → Billing** with a
+   **Subscribe** button.
+
+How a payment flows: the owner taps **Subscribe**, the app's server signs the
+payment form, and the owner pays on PayFast's own page. PayFast then sends the
+server a payment notice. The server checks the notice's signature, checks it
+with PayFast directly, checks the amount against the price, and only then marks
+the company paid up for another month. Each later monthly payment extends it
+again. The browser can never mark a company as paid: the database rules refuse
+it.
+
+## 5. Make yourself the seller, once
+
+The seller sees a **Clients** tab listing every company: who is on a trial,
+who is paying, who has stopped, and your monthly income. From there you can
+extend someone's trial by 14 days or give a company free access (for example
+Couch Potato, as your first client).
+
+1. Sign up in the app yourself, with your own email.
+2. Firebase → **Authentication → Users**: copy your **User UID**.
+3. Firebase → **Firestore → Start collection**: name it `admins`, set the
+   document id to your User UID, and add one field, `email`, with your email.
+4. Sign out and in again. The **Clients** tab appears.
+
+Nobody can make themselves a seller from the app; only an entry you create
+by hand in the Firebase console counts.
+
+## What happens when a trial ends or a payment stops
+
+- **Trial ends (14 days) without subscribing:** the company becomes **read
+  only**. Everyone can still sign in and look at everything they captured, but
+  nothing can be added or changed. The owner sees a **Subscribe now** button;
+  everyone else is told to ask the owner.
+- **Paying:** full use. Each payment extends access to the next billing date
+  plus 5 days' grace, so a day-late payment never locks anyone out.
+- **A monthly payment fails:** access runs to the end of the grace days, then
+  read only until they subscribe again.
+- **Owner cancels** (Settings → Billing): no more payments are taken; full use
+  continues until the end of the month already paid for, then read only.
+- Settings, the team and billing always stay open, so a locked company can
+  still fix its details and pay.
+
+The database rules enforce all of this, not only the screens.
+
 ## Things to know
 
-- **The trial is not enforced yet.** The header shows the days left, but nothing
-  locks when it reaches zero. Billing (PayFast or Paystack) and what happens at
-  the end of a trial come in the next step.
 - **Roles limit what people see, not yet what they can change.** The database
-  rules enforce company separation, team management, settings and the plan.
-  Within a company, a factory login could still change an invoice through the
-  database directly. Tightening that per record type is a later step.
+  rules enforce company separation, team management, settings, billing and the
+  read-only lock. Within a company, a factory login could still change an
+  invoice through the database directly. Tightening that per record type is a
+  later step.
 - **One login, one company.** Someone who works for two companies needs two
   email addresses for now.
+- **TRIAL_DAYS** is set in `js/config.js` and repeated in `firestore.rules`;
+  change both together.

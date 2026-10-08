@@ -45,11 +45,127 @@ export const ROLES = [
 ];
 const lower = (e) => String(e || '').trim().toLowerCase();
 
-// Days left on the free trial (null once the company is on a paid plan).
-export function trialDaysLeft() {
-  if (!company || company.plan !== 'trial') return null;
+// ------------------------------------------------------------- paying ------
+//
+// A company may add and change records while its trial runs, while it is paid
+// up, or when the seller has given it free access. Otherwise it is read only.
+// The database rules enforce exactly this; the app mirrors it so people see
+// why, instead of a failed save.
+
+export function trialEndsAt() {
+  if (!company) return null;
+  if (company.trialEndsAt) return Date.parse(company.trialEndsAt);
   const start = Date.parse(company.createdAt || '') || Date.now();
-  return Math.max(0, Math.ceil((start + TRIAL_DAYS * 86400000 - Date.now()) / 86400000));
+  return start + TRIAL_DAYS * 86400000;
+}
+
+// Days left on the free trial (null when not on a trial).
+export function trialDaysLeft() {
+  if (!company || company.status !== 'trial') return null;
+  return Math.max(0, Math.ceil((trialEndsAt() - Date.now()) / 86400000));
+}
+
+// 'ok' | 'trial-ended' | 'unpaid' | 'ended'
+export function accessState() {
+  if (!company) return 'ok';
+  const now = Date.now();
+  if (company.status === 'free') return 'ok';
+  if (company.status === 'trial' && now < trialEndsAt()) return 'ok';
+  if (company.paidUntil && now < Date.parse(company.paidUntil)) return 'ok';
+  if (company.status === 'trial') return 'trial-ended';
+  return company.status === 'cancelled' ? 'ended' : 'unpaid';
+}
+
+const LOCK_FREE = ['settings', 'members', 'invites'];
+function guardWrite(coll) {
+  if (LOCK_FREE.includes(coll) || accessState() === 'ok') return;
+  throw Object.assign(new Error('Read only: the subscription is not active. The owner can subscribe under Settings → Billing.'), { code: 'subscription' });
+}
+
+const companyWatchers = [];
+// Live company record: a payment, a cancellation or the seller extending a
+// trial shows up without signing in again.
+export function watchCompany(cb) {
+  companyWatchers.push(cb);
+  if (mode === 'demo' || !currentUser || !currentUser.companyId) { cb(company); return () => {}; }
+  return cloud.fns.onSnapshot(cloud.fns.doc(cloud.db, 'companies', currentUser.companyId), (snap) => {
+    if (!snap.exists()) return;
+    company = { id: snap.id, ...normCompany(snap.data()) };
+    companyWatchers.forEach(w => { try { w(company); } catch (e) { console.error(e); } });
+  }, (err) => console.error('watchCompany failed:', err));
+}
+function emitCompany() { companyWatchers.forEach(w => { try { w(company); } catch (e) { console.error(e); } }); }
+
+const BILLING_URL = '/.netlify/functions/factory-billing';
+const DEMO_PLAN = { id: 'standard', name: 'Standard', amount: 799, currency: 'ZAR', interval: 'month', includes: 'Every feature, unlimited users and orders' };
+
+export async function getPlan() {
+  if (mode === 'demo') return { plan: DEMO_PLAN, configured: true, demo: true };
+  try {
+    const r = await fetch(BILLING_URL + '?plan=1');
+    if (r.ok) return await r.json();
+  } catch (e) { /* offline */ }
+  return { plan: DEMO_PLAN, configured: false };
+}
+
+// checkout → { action, fields } to post to PayFast; cancel → { ok }
+export async function billingCall(action) {
+  if (mode === 'demo') return demoBilling(action);
+  const token = await cloud.auth.currentUser.getIdToken();
+  const r = await fetch(BILLING_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ action }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+
+// In demo mode paying is simulated, so the whole flow can be shown.
+function demoBilling(action) {
+  const all = demoCompanies();
+  const c = all[company.id] || {};
+  const now = new Date();
+  if (action === 'checkout') {
+    const base = c.paidUntil && Date.parse(c.paidUntil) > now.getTime() ? new Date(Date.parse(c.paidUntil) - 5 * 86400000) : now;
+    const next = new Date(base); next.setMonth(next.getMonth() + 1);
+    Object.assign(c, { status: 'active', plan: 'standard', paidUntil: new Date(next.getTime() + 5 * 86400000).toISOString(), lastPaymentAt: now.toISOString(), lastPaymentAmount: DEMO_PLAN.amount, payfastToken: 'demo-token' });
+    const pays = demoRead('payments'); pays['demo' + now.getTime()] = { at: now.toISOString(), status: 'COMPLETE', amount: DEMO_PLAN.amount, fee: 0, reference: 'DEMO', item: 'Standard (monthly)' }; demoWrite('payments', pays);
+  } else if (action === 'cancel') {
+    Object.assign(c, { status: 'cancelled', cancelledAt: now.toISOString() });
+  }
+  all[company.id] = c; localStorage.setItem('cp-demo-companies', JSON.stringify(all));
+  company = { id: company.id, ...c };
+  emitCompany();
+  return { demo: true, ok: true };
+}
+
+// ---- the seller's own view of every company ----
+
+export async function isSeller() {
+  if (mode === 'demo') return !!(currentUser && currentUser.companyId === 'demo' && currentUser.role === 'owner');
+  try { return (await cloud.fns.getDoc(cloud.fns.doc(cloud.db, 'admins', currentUser.uid))).exists(); }
+  catch (e) { return false; }
+}
+
+export function watchAllCompanies(cb) {
+  if (mode === 'demo') {
+    const send = () => { const m = demoCompanies(); cb(Object.keys(m).map(id => ({ id, ...m[id] }))); };
+    send(); companyWatchers.push(send); return () => {};
+  }
+  return cloud.fns.onSnapshot(cloud.fns.collection(cloud.db, 'companies'), (snap) => {
+    const rows = []; snap.forEach(d => rows.push({ id: d.id, ...normCompany(d.data()) })); cb(rows);
+  }, (err) => console.error('watchAllCompanies failed:', err));
+}
+
+// The seller may extend a trial or give free access; nothing else.
+export async function sellerUpdateCompany(id, patch) {
+  const allowed = {};
+  ['status', 'trialEndsAt', 'adminNote'].forEach(k => { if (k in patch) allowed[k] = patch[k]; });
+  if (mode === 'demo') {
+    const all = demoCompanies(); all[id] = { ...(all[id] || {}), ...allowed }; localStorage.setItem('cp-demo-companies', JSON.stringify(all));
+    if (company && company.id === id) company = { id, ...all[id] };
+    emitCompany(); return;
+  }
+  if (allowed.trialEndsAt) allowed.trialEndsAt = cloud.fns.Timestamp.fromDate(new Date(allowed.trialEndsAt));
+  await cloud.fns.updateDoc(cloud.fns.doc(cloud.db, 'companies', id), allowed);
 }
 
 // ---------------------------------------------------------------- boot ------
@@ -64,7 +180,8 @@ export async function initStore() {
       ensureDemoCompany();
       if (!jget(demoPrefix('demo') + 'members')[currentUser.uid]) demoMemberSet('demo', currentUser.uid, { email: currentUser.email, name: currentUser.name, role: currentUser.role || 'owner' });
     }
-    company = currentUser && currentUser.companyId ? demoCompanies()[currentUser.companyId] || null : null;
+    const dc = currentUser && currentUser.companyId ? demoCompanies()[currentUser.companyId] : null;
+    company = dc ? { id: currentUser.companyId, ...dc } : null;
     setTimeout(() => emitUser(), 0);
     return mode;
   }
@@ -117,7 +234,9 @@ async function resolveUser(u) {
 
 function normCompany(d) {
   const c = { ...d };
-  if (c.createdAt && typeof c.createdAt.toDate === 'function') c.createdAt = c.createdAt.toDate().toISOString();
+  ['createdAt', 'paidUntil', 'trialEndsAt', 'lastPaymentAt', 'cancelledAt'].forEach(k => {
+    if (c[k] && typeof c[k].toDate === 'function') c[k] = c[k].toDate().toISOString();
+  });
   return c;
 }
 
@@ -375,6 +494,7 @@ export async function getOne(coll, id) {
 }
 
 export async function create(coll, data) {
+  guardWrite(coll);
   const who = currentUser ? currentUser.name : 'system';
   const record = { ...data, createdAt: nowIso(), createdBy: who, updatedAt: nowIso(), updatedBy: who };
   if (mode === 'demo') {
@@ -392,6 +512,7 @@ export async function create(coll, data) {
 // other fields (or other records) survive untouched. `event` optionally appends
 // a line to the record's own audit trail.
 export async function update(coll, id, patch, event) {
+  guardWrite(coll);
   const who = currentUser ? currentUser.name : 'system';
   const body = { ...patch, updatedAt: nowIso(), updatedBy: who };
   if (mode === 'demo') {
@@ -407,6 +528,7 @@ export async function update(coll, id, patch, event) {
 }
 
 export async function remove(coll, id) {
+  guardWrite(coll);
   if (mode === 'demo') {
     const map = demoRead(coll);
     delete map[id];
@@ -422,6 +544,7 @@ export async function remove(coll, id) {
 // transaction so two people capturing orders at the same moment can never be
 // handed the same number.
 export async function nextNumber(key, first) {
+  guardWrite('counters');
   if (mode === 'demo') {
     const map = demoRead('counters');
     const next = (map[key] && map[key].value) || first || 1;

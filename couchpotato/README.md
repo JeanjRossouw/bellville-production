@@ -26,6 +26,7 @@ couchpotato/
   js/scan.js        scan out at the door, dispatch, tell the customer
   js/invoices.js    invoice queue, invoices, payments, statements, export
   js/pos.js         point of sale: the showroom till
+  (../netlify/functions/factory-billing.mjs  PayFast subscriptions, server side)
   js/qr.js          QR codes for job cards (vendor/qrcode.js, MIT)
   js/app.js         sign-in and sign-up, navigation by role, settings, the team
 ```
@@ -89,5 +90,12 @@ Also built: accounts. Sign up with **Start free trial** (a new company on a
 factory), join from the invitation link, change roles, remove people, reset a
 forgotten password. Menus follow the role.
 
-Next: billing (PayFast or Paystack), what happens when a trial ends, a public
-website with pricing, and a console for the seller to see every company.
+Also built: billing. A monthly subscription through PayFast (card or instant
+EFT), started from Settings → Billing; payment notices are verified on the
+server (netlify/functions/factory-billing.mjs) and only the server can mark a
+company paid. When a trial ends or payments stop the company becomes read
+only, enforced by the database rules. The seller's Clients tab lists every
+company, the monthly income, and can extend a trial or give free access.
+
+Next: a public website with pricing, and per-role limits on what each role can
+change.

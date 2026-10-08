@@ -20,9 +20,11 @@ async function googleCerts() {
 }
 
 // Returns the decoded token payload ({ sub, email, ... }) or throws.
-export async function verifyFirebaseToken(token) {
+// `project` overrides the Firebase project the token must come from (the
+// factory app lives in its own project).
+export async function verifyFirebaseToken(token, project) {
   if (!token) throw new Error('Missing bearer token');
-  const projectId = PROJECT_ID();
+  const projectId = project || PROJECT_ID();
   const { kid } = decodeProtectedHeader(token);
   const certs = await googleCerts();
   const pem = certs[kid];

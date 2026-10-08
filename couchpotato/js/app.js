@@ -45,18 +45,27 @@ const NAV = [
   { key: 'costing', icon: '', label: 'Costing' },
   { key: 'scan', icon: '', label: 'Scan out' },
   { key: 'invoices', icon: '', label: 'Invoices' },
-  { key: 'settings', icon: '', label: 'Settings' }
+  { key: 'settings', icon: '', label: 'Settings' },
+  { key: 'clients', icon: '', label: 'Clients' }
 ];
 
 // What each role sees. The owner also gets the team under Settings.
 const ROLE_VIEWS = {
-  owner: NAV.map(n => n.key),
-  office: NAV.map(n => n.key),
+  owner: NAV.map(n => n.key).filter(k => k !== 'clients'),
+  office: NAV.map(n => n.key).filter(k => k !== 'clients'),
   sales: ['pos', 'orders', 'customers'],
   factory: ['factory', 'scan', 'orders']
 };
-const allowedViews = (user) => ROLE_VIEWS[user && user.role] || [];
+let seller = false;          // the seller's own login: sees every company under Clients
+const allowedViews = (user) => (ROLE_VIEWS[user && user.role] || []).concat(seller ? ['clients'] : []);
 let team = { members: [], invites: [] };
+let billing = { plan: null, configured: false, payments: [] };
+let clients = [];
+let readOnlyOk = false;      // chose "look around (read only)" on the lock screen
+let lastAccess = 'ok';
+// Back from PayFast: ?billing=done or ?billing=cancelled
+const BILLING_RETURN = new URLSearchParams(location.search).get('billing') || '';
+if (BILLING_RETURN) history.replaceState(null, '', location.pathname + (new URLSearchParams(location.search).get('pos') === '1' ? '?pos=1' : ''));
 
 // ------------------------------------------------------------------ boot ----
 
@@ -65,13 +74,21 @@ async function boot() {
   store.onUser(async (user) => {
     if (!user) { showLogin(); return; }
     if (user.role === 'none' || !allowedViews(user).length) { showNoAccess(user); return; }
-    if (!allowedViews(user).includes(view)) view = allowedViews(user)[0];
     if (!booted) {
       booted = true;
+      seller = await store.isSeller();
+      if (seller) store.watchAllCompanies(rows => { clients = rows; if (view === 'clients') paint(); });
       if (user.role === 'owner') {
         store.watch('members', rows => { team.members = rows; if (view === 'settings') paint(); });
         store.watch('invites', rows => { team.invites = rows; if (view === 'settings') paint(); });
+        store.watch('payments', rows => { billing.payments = rows; if (view === 'settings') paint(); });
+        store.getPlan().then(r => { billing.plan = r.plan; billing.configured = !!r.configured; if (view === 'settings') paint(); });
       }
+      // a payment, a cancellation or an extended trial takes effect live
+      store.watchCompany(() => onCompanyChange());
+      lastAccess = store.accessState();
+      if (BILLING_RETURN === 'done') toast('Thank you — your subscription starts as soon as PayFast confirms the payment, usually within a minute.');
+      if (BILLING_RETURN === 'cancelled') toast('Payment cancelled — nothing was charged.', 'warn');
       store.seedDemoIfEmpty();
       settings = await store.loadSettings(FACTORY_DEFAULTS);
       setOrderSettings(settings);
@@ -90,8 +107,79 @@ async function boot() {
       }, settings);
       if (pendingScan) view = 'scan';
     }
+    if (!allowedViews(user).includes(view)) view = allowedViews(user)[0];
+    if (store.accessState() !== 'ok' && !readOnlyOk) { showLocked(user); return; }
     showApp(user);
   });
+  // a save refused because the subscription is not active
+  window.addEventListener('unhandledrejection', (e) => {
+    if (e.reason && e.reason.code === 'subscription') { e.preventDefault(); toast(e.reason.message, 'warn'); }
+  });
+}
+
+function onCompanyChange() {
+  const user = store.getUser(); if (!user || !booted) return;
+  const now = store.accessState();
+  if (now === lastAccess) { const c = document.getElementById('status-chip'); if (c) c.outerHTML = statusChip(); if (view === 'settings' || view === 'clients') paint(); return; }
+  lastAccess = now;
+  if (now === 'ok') { readOnlyOk = false; showApp(user); toast('Subscription active — thank you.'); }
+  else if (!readOnlyOk) showLocked(user);
+  else showApp(user);
+}
+
+// ------------------------------------------------------------- lock screen --
+
+const LOCK_TEXT = {
+  'trial-ended': ['Your free trial has ended', 'Subscribe to keep adding orders, invoices and sales.'],
+  unpaid: ['Payment is overdue', 'The last monthly payment did not come through. Subscribe again to carry on.'],
+  ended: ['Your subscription has ended', 'Subscribe again to carry on where you left off.']
+};
+
+function showLocked(user) {
+  document.getElementById('login').hidden = true;
+  const app = document.getElementById('app');
+  app.hidden = false;
+  const [title, lead] = LOCK_TEXT[store.accessState()] || LOCK_TEXT['trial-ended'];
+  const owner = user.role === 'owner';
+  const p = billing.plan;
+  app.innerHTML = `<div class="shell"><div class="card lock-card">
+    <p class="lock-co">${esc((store.getCompany() || {}).name || '')}</p>
+    <h1>${esc(title)}</h1>
+    <p>${esc(lead)} Everything you captured is safe, and you can still look at all of it.</p>
+    ${owner
+      ? `<div class="lock-price">${p ? `<strong>${esc(money(p.amount, 'R'))}</strong> per month · ${esc(p.includes || '')}` : ''}</div>
+         <div class="card-actions"><button class="btn primary" id="lock-pay">Subscribe now</button></div>
+         <p class="muted">Paid securely through PayFast by card or instant EFT. Cancel any time.</p>`
+      : `<p>Ask the owner of ${esc((store.getCompany() || {}).name || 'your company')} to subscribe under Settings → Billing.</p>`}
+    <div class="card-actions">
+      <button class="btn ghost" id="lock-look">Look around (read only)</button>
+      <button class="btn ghost" id="lock-out">Sign out</button>
+    </div>
+  </div></div>`;
+  if (owner && !p) store.getPlan().then(r => { billing.plan = r.plan; billing.configured = !!r.configured; if (document.getElementById('lock-pay')) showLocked(user); });
+  if (owner) document.getElementById('lock-pay').addEventListener('click', startCheckout);
+  document.getElementById('lock-look').addEventListener('click', () => { readOnlyOk = true; showApp(user); });
+  document.getElementById('lock-out').addEventListener('click', signOutAndReset);
+}
+
+// Off to PayFast: the server signs the form, the browser posts it.
+async function startCheckout() {
+  try {
+    const r = await store.billingCall('checkout');
+    if (r.demo) { toast('Demo: payment simulated — subscribed for a month.'); return; }
+    const form = document.createElement('form');
+    form.method = 'POST'; form.action = r.action; form.style.display = 'none';
+    r.fields.forEach(([k, v]) => { const i = document.createElement('input'); i.type = 'hidden'; i.name = k; i.value = v; form.appendChild(i); });
+    document.body.appendChild(form); form.submit();
+  } catch (e) { toast('Could not start the payment: ' + e.message, 'warn'); }
+}
+
+async function cancelSubscription() {
+  const c = store.getCompany() || {};
+  const until = c.paidUntil ? new Date(c.paidUntil).toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
+  if (!confirm('Cancel the monthly subscription? No further payments will be taken' + (until ? ', and you keep full use until ' + until : '') + '.')) return;
+  try { await store.billingCall('cancel'); toast('Subscription cancelled'); }
+  catch (e) { toast('Could not cancel: ' + e.message, 'warn'); }
 }
 
 // ?join=<email> is the link an owner sends to someone they invited.
@@ -175,7 +263,7 @@ function showApp(user) {
       </div>
       <div class="top-right">
         ${store.storeMode() === 'demo' ? '<span class="chip demo-chip" title="No database connected — data stays in this browser">DEMO</span>' : ''}
-        ${trialChip()}
+        ${statusChip()}
         <span class="who">${esc(user.name || user.email)}<span class="role">${esc(user.role)}</span></span>
         <button class="btn ghost sm" id="sign-out">Sign out</button>
       </div>
@@ -183,7 +271,9 @@ function showApp(user) {
     <nav class="tabs" id="tabs">
       ${NAV.filter(n => allowedViews(user).includes(n.key)).map(n => `<button class="tab" data-view="${n.key}"><span>${esc(n.label)}</span></button>`).join('')}
     </nav>
+    ${store.accessState() !== 'ok' ? `<div class="readonly-bar">Read only — ${esc((LOCK_TEXT[store.accessState()] || [''])[0].toLowerCase())}. ${store.getUser().role === 'owner' ? '<button class="btn sm" id="ro-pay">Subscribe</button>' : 'Ask the owner to subscribe.'}</div>` : ''}
     <main class="shell" id="screen"></main>`;
+  const roPay = document.getElementById('ro-pay'); if (roPay) roPay.addEventListener('click', startCheckout);
 
   document.getElementById('sign-out').addEventListener('click', signOutAndReset);
   document.getElementById('tabs').addEventListener('click', (e) => {
@@ -196,10 +286,14 @@ function showApp(user) {
   paint();
 }
 
-function trialChip() {
+function statusChip() {
+  const state = store.accessState();
+  const c = store.getCompany() || {};
+  if (state !== 'ok') return '<span class="trial-chip low" id="status-chip">Read only</span>';
   const left = store.trialDaysLeft();
-  if (left == null) return '';
-  return `<span class="trial-chip ${left <= 3 ? 'low' : ''}" title="Free trial">${left > 0 ? 'Trial · ' + left + ' day' + (left === 1 ? '' : 's') + ' left' : 'Trial ended'}</span>`;
+  if (left != null) return `<span class="trial-chip ${left <= 3 ? 'low' : ''}" id="status-chip" title="Free trial">Trial · ${left} day${left === 1 ? '' : 's'} left</span>`;
+  if (c.status === 'cancelled' && c.paidUntil) return `<span class="trial-chip low" id="status-chip">Ends ${esc(new Date(c.paidUntil).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }))}</span>`;
+  return '<span id="status-chip"></span>';
 }
 
 // --------------------------------------------------------------- painting ---
@@ -212,6 +306,7 @@ function paint() {
   if (view === 'orders') return renderOrders(screen);
   if (view === 'customers') return renderCustomers(screen, allOrders());
   if (view === 'settings') return renderSettings(screen);
+  if (view === 'clients') return renderClients(screen);
   if (view === 'factory') return renderFloor(screen, overview());
   if (view === 'costing') return renderCosting(screen);
   if (view === 'scan') return renderScan(screen);
@@ -266,7 +361,7 @@ function renderSettings(host) {
       )}
       <div class="card-actions"><button class="btn primary" data-act="save-settings">Save settings</button></div>
     </div>
-    ${store.getUser().role === 'owner' ? teamCard() : ''}
+    ${store.getUser().role === 'owner' ? billingCard() + teamCard() : ''}
     <div class="card">
       <h2>How this system is wired</h2>
       <ul class="plain">
@@ -276,6 +371,91 @@ function renderSettings(host) {
         <li><strong>Storage:</strong> ${store.storeMode() === 'cloud' ? 'in the cloud, backed up by Google.' : 'demo mode — this browser only. See SETUP.md to connect the real database.'}</li>
       </ul>
     </div>`;
+}
+
+// --------------------------------------------------------------- billing ----
+
+const longDate = (iso) => iso ? new Date(iso).toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
+
+function billingCard() {
+  const c = store.getCompany() || {};
+  const p = billing.plan;
+  const state = store.accessState();
+  const left = store.trialDaysLeft();
+  let status;
+  if (c.status === 'free') status = 'Free access, given by ' + PRODUCT.name + '.';
+  else if (left != null && state === 'ok') status = 'Free trial — ' + left + ' day' + (left === 1 ? '' : 's') + ' left (ends ' + longDate(new Date(store.trialEndsAt()).toISOString()) + ').';
+  else if (c.status === 'active' && state === 'ok') status = 'Subscribed. Paid up to ' + longDate(c.paidUntil) + '; PayFast takes the next payment automatically.';
+  else if (c.status === 'cancelled' && state === 'ok') status = 'Cancelled. Full use until ' + longDate(c.paidUntil) + ', then read only.';
+  else status = (LOCK_TEXT[state] || [''])[0] + '. The app is read only until you subscribe.';
+  const canSubscribe = c.status !== 'free' && !(c.status === 'active' && state === 'ok');
+  const canCancel = c.status === 'active' && !!c.payfastToken;
+  const pays = billing.payments.slice().sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 6);
+  return `<div class="card">
+    <h2>Billing</h2>
+    <p>${esc(status)}</p>
+    ${p ? `<p class="muted">${esc(p.name)} plan: <strong>${esc(money(p.amount, 'R'))}</strong> per month. ${esc(p.includes || '')}.</p>` : ''}
+    ${!billing.configured && store.storeMode() === 'cloud' ? '<p class="notice-inline">Online payments are not switched on yet.</p>' : ''}
+    <div class="card-actions">
+      ${canSubscribe ? `<button class="btn primary" data-act="subscribe">${c.status === 'cancelled' ? 'Subscribe again' : 'Subscribe'}</button>` : ''}
+      ${canCancel ? '<button class="btn ghost" data-act="cancel-sub">Cancel subscription</button>' : ''}
+    </div>
+    ${pays.length ? `<h2>Payments</h2>` + pays.map(x => `<div class="team-row"><div><div class="who-n">${esc(longDate(x.at))}</div><div class="who-e">${esc(x.reference ? 'PayFast ' + x.reference : '')}</div></div><div>${esc(money(x.amount, 'R'))}</div><div class="team-acts muted">${esc(String(x.status || '').toLowerCase())}</div></div>`).join('') : ''}
+  </div>`;
+}
+
+// ------------------------------------------------------------ the seller ----
+// Every company on the app. Only logins listed in the database's admins
+// collection see this.
+
+function renderClients(host) {
+  const now = Date.now();
+  const p = billing.plan || { amount: 799 };
+  const rows = clients.slice().sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+  const stateOf = (c) => {
+    if (c.status === 'free') return ['Free', ''];
+    const trialEnd = c.trialEndsAt ? Date.parse(c.trialEndsAt) : (Date.parse(c.createdAt || '') || now) + TRIAL_DAYS * 86400000;
+    if (c.status === 'trial') return now < trialEnd ? ['Trial · ' + Math.ceil((trialEnd - now) / 86400000) + 'd left', ''] : ['Trial ended', 'red'];
+    if (c.paidUntil && now < Date.parse(c.paidUntil)) return [c.status === 'cancelled' ? 'Cancelled · until ' + longDate(c.paidUntil) : 'Paying', c.status === 'cancelled' ? 'amber' : 'green'];
+    return ['Unpaid', 'red'];
+  };
+  const paying = rows.filter(c => c.status === 'active' && c.paidUntil && now < Date.parse(c.paidUntil)).length;
+  const trials = rows.filter(c => stateOf(c)[0].startsWith('Trial ·')).length;
+  const tile = (n, label) => `<div class="tile"><div class="tile-n">${esc(String(n))}</div><div class="tile-l">${esc(label)}</div></div>`;
+  host.innerHTML = `
+    <div class="page-head"><div><h1>Clients</h1><p class="sub">Every company on ${esc(PRODUCT.name)}. Only you see this.</p></div></div>
+    <div class="tiles">${tile(rows.length, 'Companies')}${tile(paying, 'Paying')}${tile(trials, 'On trial')}<div class="tile wide"><div class="tile-n">${esc(money(paying * p.amount, 'R'))}</div><div class="tile-l">Monthly income</div></div></div>
+    <div class="card">
+      ${rows.map(c => { const [st, cls] = stateOf(c); return `<div class="team-row client-row">
+        <div><div class="who-n">${esc(c.name || '(no name)')}</div><div class="who-e">${esc([c.ownerEmail, c.createdAt ? 'since ' + longDate(c.createdAt) : '', c.lastPaymentAt ? 'last paid ' + longDate(c.lastPaymentAt) : ''].filter(Boolean).join(' · '))}</div></div>
+        <div><span class="chip ${cls === 'green' ? 'st-disp' : cls === 'red' ? 'late' : cls === 'amber' ? 'st-ready' : ''}">${esc(st)}</span></div>
+        <div class="team-acts">
+          ${c.status === 'trial' ? `<button class="btn ghost sm" data-act="client-extend" data-id="${esc(c.id)}">+14 days trial</button>` : ''}
+          <button class="btn ghost sm" data-act="client-free" data-id="${esc(c.id)}">${c.status === 'free' ? 'End free access' : 'Give free access'}</button>
+        </div>
+      </div>`; }).join('') || '<p class="muted">No companies yet.</p>'}
+    </div>`;
+}
+
+async function clientExtend(id) {
+  const c = clients.find(x => x.id === id); if (!c) return;
+  const now = Date.now();
+  const end = c.trialEndsAt ? Date.parse(c.trialEndsAt) : (Date.parse(c.createdAt || '') || now) + TRIAL_DAYS * 86400000;
+  const next = new Date(Math.max(end, now) + 14 * 86400000);
+  if (!confirm('Extend the trial for ' + (c.name || 'this company') + ' to ' + longDate(next.toISOString()) + '?')) return;
+  try { await store.sellerUpdateCompany(id, { trialEndsAt: next.toISOString() }); toast('Trial extended'); }
+  catch (e) { toast('Could not extend: ' + e.message, 'warn'); }
+}
+
+async function clientFree(id) {
+  const c = clients.find(x => x.id === id); if (!c) return;
+  const on = c.status !== 'free';
+  // ending free access: back to paying if paid up, otherwise a trial that has ended
+  const back = c.paidUntil && Date.parse(c.paidUntil) > Date.now() ? 'active' : 'trial';
+  if (!confirm(on ? 'Give ' + (c.name || 'this company') + ' free access with no payments?' : 'End free access for ' + (c.name || 'this company') + '?')) return;
+  const patch = on ? { status: 'free' } : { status: back, ...(back === 'trial' ? { trialEndsAt: new Date().toISOString() } : {}) };
+  try { await store.sellerUpdateCompany(id, patch); toast(on ? 'Free access given' : 'Free access ended'); }
+  catch (e) { toast('Could not change: ' + e.message, 'warn'); }
 }
 
 // ------------------------------------------------------------------ team ----
@@ -392,6 +572,10 @@ async function onAction(e) {
     case 'edit-customer': return editCustomer(id);
     case 'del-customer': return deleteCustomer(id, parseInt(b.dataset.n, 10) || 0);
     case 'save-settings': return saveSettings();
+    case 'subscribe': return startCheckout();
+    case 'cancel-sub': return cancelSubscription();
+    case 'client-extend': return clientExtend(id);
+    case 'client-free': return clientFree(id);
     case 'invite': return sendInvite();
     case 'member-remove': return memberRemove(id);
     case 'invite-cancel': {
