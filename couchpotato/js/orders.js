@@ -6,6 +6,7 @@
 import * as store from './store.js';
 import { allCustomers, customerById } from './customers.js';
 import { allProducts, productByName } from './costing.js';
+import { consumeForOrder, returnForOrder } from './stock.js';
 import {
   esc, money, field, row, val, openModal, toast, empty, today, addDays,
   niceDate, daysUntil, statusChip, statusMeta, STATUSES, fabricChip, FABRIC_STATES
@@ -134,6 +135,9 @@ export async function deleteOrder(id) {
   const o = orderById(id);
   if (!o) return;
   if (!confirm('Delete ' + (o.orderNo || 'this order') + ' — ' + (o.product || '') + '?')) return;
+  // its materials came off the shelf when it started: put them back if it was never built
+  if (o.materialsUsed && (o.status === 'new' || o.status === 'in-production')
+      && confirm('Put the materials for ' + (o.orderNo || 'this order') + ' back in stock?')) await returnForOrder(o, 'deleted');
   await store.remove('orders', id);
   toast('Order deleted');
 }
@@ -152,6 +156,14 @@ export async function setStatus(id, status) {
   // Sold at the till: already on an invoice, so leaving the door completes it.
   if (status === 'dispatched' && o.invoiceId) patch.status = 'invoiced';
   await store.update('orders', id, patch, 'Moved to ' + meta.label);
+  // Stock: materials come off the shelf when an order leaves New (building
+  // starts, or it skips straight past that), and go back if it is moved back
+  // to New. Orders already past New when stock tracking began are left
+  // alone: their materials were off the shelf before the first count.
+  try {
+    if (o.status === 'new' && status !== 'new' && !o.materialsUsed) await consumeForOrder(o);
+    if (status === 'new' && o.materialsUsed) await returnForOrder(o);
+  } catch (e) { console.error('stock update failed:', e); toast('Status saved, but stock could not be updated: ' + e.message, 'warn'); }
   toast((o.orderNo || 'Order') + ' → ' + meta.label);
 }
 

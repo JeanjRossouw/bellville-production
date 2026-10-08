@@ -27,6 +27,7 @@ couchpotato/
   js/scan.js        scan out at the door, dispatch, tell the customer
   js/invoices.js    invoice queue, invoices, payments, statements, export
   js/pos.js         point of sale: the showroom till
+  js/stock.js       materials on hand, purchase orders, stock movements
   (../netlify/functions/factory-billing.mjs  PayFast subscriptions, server side)
   js/qr.js          QR codes for job cards (vendor/qrcode.js, MIT)
   js/app.js         sign-in and sign-up, navigation by role, settings, the team
@@ -104,5 +105,15 @@ demo company, the live price from the billing function, a short FAQ, and
 "Start free trial" buttons that open the app's sign-up form (?signup=1). The
 product name and app address are set at the bottom of the page.
 
-Next: per-role limits on what each role can change, and terms of service and
-a privacy policy for the website.
+Also built: stock and purchase orders (js/stock.js). Materials are counted
+once, then kept up to date: an order's bill of materials comes off the shelf
+when it leaves New and goes back if it is moved back; deliveries are booked
+in against purchase orders; stock counts correct the figure. The Stock tab
+shows on hand, what open orders still need, what is on order, and an Order
+now list per supplier that drafts the purchase order with the amounts. A
+purchase order is sent by WhatsApp, email or print, and received in full or
+in part. Every change is listed under Movements.
+
+Next: quotes that turn into orders, a profit report per order and month,
+per-role limits on what each role can change, and terms of service and a
+privacy policy for the website.

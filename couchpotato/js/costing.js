@@ -69,9 +69,13 @@ function materialForm(m) {
   ) + row(
     field('Cost per unit (excl. VAT)', 'm-cost', { value: m.cost == null ? '' : m.cost, type: 'number', min: 0, step: '0.01' }),
     field('Supplier', 'm-supplier', { value: m.supplier, placeholder: 'Who you buy it from' })
+  ) + row(
+    field('Reorder when it drops below', 'm-level', { value: m.reorderLevel || '', type: 'number', min: 0, step: '0.01', placeholder: 'Leave blank to not track' }),
+    field('Usual order quantity', 'm-reqty', { value: m.reorderQty || '', type: 'number', min: 0, step: '0.01', placeholder: 'e.g. a roll or a pallet' })
   ) + field('Notes', 'm-notes', { value: m.notes, type: 'textarea', placeholder: 'Size, grade, colour code…' });
 }
-const readMaterial = (w) => ({ name: val(w, 'm-name'), unit: val(w, 'm-unit'), cost: parseFloat(val(w, 'm-cost')) || 0, supplier: val(w, 'm-supplier'), notes: val(w, 'm-notes') });
+const readMaterial = (w) => ({ name: val(w, 'm-name'), unit: val(w, 'm-unit'), cost: parseFloat(val(w, 'm-cost')) || 0, supplier: val(w, 'm-supplier'), notes: val(w, 'm-notes'),
+  reorderLevel: parseFloat(val(w, 'm-level')) || 0, reorderQty: parseFloat(val(w, 'm-reqty')) || 0 });
 
 export function newMaterial() {
   openModal('New material', materialForm(null), {

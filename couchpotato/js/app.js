@@ -14,6 +14,10 @@ import {
 import { renderScan, setScanSettings, startCamera, stopCamera, manualFind, confirmDispatch, notifyCustomer } from './scan.js';
 import { startPos, renderPos, setPosSettings, posAction, posInput } from './pos.js';
 import {
+  startStock, renderStock, setStockSettings, setStockView, countMaterial, newPurchaseOrder, draftForSupplier,
+  editPurchaseOrder, sendPurchaseOrder, printPurchaseOrder, receivePurchaseOrder, cancelPurchaseOrder
+} from './stock.js';
+import {
   startInvoices, renderInvoices, setInvoiceSettings, setInvView, setInvFilter, setStmtCustomer, newInvoiceFor,
   invoiceCustomerQueue, pickedIds, recordPayment, voidInvoice, printInvoice, printStatement, exportCsv
 } from './invoices.js';
@@ -43,6 +47,7 @@ const NAV = [
   { key: 'customers', icon: '', label: 'Customers' },
   { key: 'factory', icon: '', label: 'Factory floor' },
   { key: 'costing', icon: '', label: 'Costing' },
+  { key: 'stock', icon: '', label: 'Stock' },
   { key: 'scan', icon: '', label: 'Scan out' },
   { key: 'invoices', icon: '', label: 'Invoices' },
   { key: 'settings', icon: '', label: 'Settings' },
@@ -54,7 +59,7 @@ const ROLE_VIEWS = {
   owner: NAV.map(n => n.key).filter(k => k !== 'clients'),
   office: NAV.map(n => n.key).filter(k => k !== 'clients'),
   sales: ['pos', 'orders', 'customers'],
-  factory: ['factory', 'scan', 'orders']
+  factory: ['factory', 'scan', 'stock', 'orders']
 };
 let seller = false;          // the seller's own login: sees every company under Clients
 const allowedViews = (user) => (ROLE_VIEWS[user && user.role] || []).concat(seller ? ['clients'] : []);
@@ -97,12 +102,14 @@ async function boot() {
       setScanSettings(settings);
       setInvoiceSettings(settings);
       setPosSettings(settings);
+      setStockSettings(settings);
+      startStock(() => { if (view === 'stock') paint(); }, settings);
       startPos(() => { if (view === 'pos') paint(); }, settings);
       startInvoices(() => { if (view === 'invoices' || view === 'orders') paint(); }, settings);
-      startCosting(() => { if (view === 'costing' || view === 'orders' || view === 'pos') paint(); }, settings);
+      startCosting(() => { if (view === 'costing' || view === 'orders' || view === 'pos' || view === 'stock') paint(); }, settings);
       startCustomers(() => { if (view === 'customers' || view === 'orders' || view === 'pos') paint(); });
       startOrders(() => {
-        if (view !== 'settings') paint();
+        if (view !== 'settings') paint();   // includes Stock: what open orders need
         if (pendingScan) { const id = pendingScan; pendingScan = ''; view = 'scan'; paint(); confirmDispatch(id); }
       }, settings);
       if (pendingScan) view = 'scan';
@@ -311,6 +318,7 @@ function paint() {
   if (view === 'clients') return renderClients(screen);
   if (view === 'factory') return renderFloor(screen, overview());
   if (view === 'costing') return renderCosting(screen);
+  if (view === 'stock') return renderStock(screen, allOrders());
   if (view === 'scan') return renderScan(screen);
   if (view === 'invoices') return renderInvoices(screen);
   if (view === 'pos') return renderPos(screen);
@@ -553,6 +561,7 @@ async function saveSettings() {
   setScanSettings(settings);
   setInvoiceSettings(settings);
   setPosSettings(settings);
+  setStockSettings(settings);
   const bn = document.querySelector('.brand-name');
   if (bn) bn.textContent = settings.name;
   toast('Settings saved');
@@ -575,6 +584,15 @@ async function onAction(e) {
     case 'del-customer': return deleteCustomer(id, parseInt(b.dataset.n, 10) || 0);
     case 'save-settings': return saveSettings();
     case 'subscribe': return startCheckout();
+    case 'stock-view': setStockView(b.dataset.to); return paint();
+    case 'stock-count': return countMaterial(id);
+    case 'po-new': return newPurchaseOrder();
+    case 'po-draft': return draftForSupplier(b.dataset.supplier, allOrders());
+    case 'po-edit': return editPurchaseOrder(id);
+    case 'po-send': return sendPurchaseOrder(id);
+    case 'po-print': return printPurchaseOrder(id);
+    case 'po-receive': return receivePurchaseOrder(id);
+    case 'po-cancel': return cancelPurchaseOrder(id);
     case 'cancel-sub': return cancelSubscription();
     case 'client-extend': return clientExtend(id);
     case 'client-free': return clientFree(id);
@@ -611,7 +629,7 @@ async function onAction(e) {
     case 'save-overheads': {
       const patch = await saveOverheads(document.getElementById('screen'));
       settings = { ...settings, ...patch };
-      setOrderSettings(settings); setFloorSettings(settings); setCostingSettings(settings);
+      setOrderSettings(settings); setFloorSettings(settings); setCostingSettings(settings); setStockSettings(settings);
       return paint();
     }
     case 'print-pricesheet': return printPriceSheet();
