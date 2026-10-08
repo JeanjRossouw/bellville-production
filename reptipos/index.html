@@ -4308,7 +4308,7 @@
     const linkedPo = receivingPoId ? posCache.find(p => p.id === receivingPoId) : null;
     const supSel = document.getElementById('grv-sup'); const supId = grvSupplierId || (supSel ? supSel.value : '');
     if (!supId && !linkedPo) { toast('Select a supplier'); return; }
-    const lines = grvLines.filter(l => l.qty > 0 && l.inventoryItemId);
+    let lines = grvLines.filter(l => l.qty > 0 && l.inventoryItemId);
     if (!lines.length) {
       if (grvLines.some(l => l.qty > 0)) toast('These items aren’t linked to Shopify stock — tap ↻ to refresh the catalogue, then receive again');
       else toast('Set a quantity on at least one item');
@@ -4317,16 +4317,24 @@
     const refEl = document.getElementById('grv-ref'); const ref = refEl ? (refEl.value || '').trim() : '';
     const dateEl = document.getElementById('grv-date'); const date = (dateEl && dateEl.value) || new Date().toISOString().slice(0, 10);
     const ucEl = document.getElementById('grv-updcost'); const updateCost = ucEl ? ucEl.checked : true;
-    const total = lines.reduce((t, l) => t + l.costCents * l.qty, 0);
+    let total = lines.reduce((t, l) => t + l.costCents * l.qty, 0);
     grvInFlight = true;
     const btn = document.getElementById('grv-confirm'); if (btn) { btn.disabled = true; btn.textContent = 'Receiving…'; }
     const idemKey = uuid();
     try {
-      await callFn({ action: 'receiveStock', idemKey, updateCost, lineItems: lines.map(l => ({ inventoryItemId: l.inventoryItemId, variantId: l.variantId, qty: l.qty, costCents: l.costCents })) });
+      const resp = await callFn({ action: 'receiveStock', idemKey, updateCost, lineItems: lines.map(l => ({ inventoryItemId: l.inventoryItemId, variantId: l.variantId, qty: l.qty, costCents: l.costCents })) });
+      if (resp && resp.error) throw new Error(resp.error);
+      // Shopify may refuse the odd line (tracking off, a bundle). Those stay
+      // in the draft to try again; everything it accepted is received now.
+      const failedIds = new Set(((resp && resp.failed) || []).map(f => String(f.inventoryItemId)));
+      const refused = lines.filter(l => failedIds.has(String(l.inventoryItemId)));
+      lines = lines.filter(l => !failedIds.has(String(l.inventoryItemId)));
+      if (!lines.length) throw new Error((resp.failed && resp.failed[0] && resp.failed[0].error) || 'Shopify refused the stock lines');
       lines.forEach(l => { const p = findProduct(l.variantId); if (p) p.qty = (Number(p.qty) || 0) + l.qty; }); cacheCatalogue(); renderGrid();
       const seq = (parseInt(localStorage.getItem('reptipos-grv-seq') || '0', 10) || 0) + 1; localStorage.setItem('reptipos-grv-seq', String(seq));
       const sup = suppliersCache.find(s => s.id === supId);
       const supplierName = sup ? sup.name : (linkedPo ? linkedPo.supplierName : '');
+      total = lines.reduce((t, l) => t + l.costCents * l.qty, 0);
       const grvNumber = 'GRV-' + date.replace(/-/g, '') + '-' + String(seq).padStart(3, '0');
       const grv = { grvNumber, supplierId: supId || (linkedPo ? (linkedPo.supplierId || '') : ''), supplierName, supplierRef: ref, date, idemKey,
         poNumber: linkedPo ? linkedPo.poNumber : '',
@@ -4342,10 +4350,16 @@
       }
       printGrv(grv);
       if (confirm('Print product labels for the received items? (' + lines.reduce((n, l) => n + l.qty, 0) + ' labels)')) printLabels(grv.lineItems);
-      toast('Received into stock · ' + grvNumber + (linkedPo ? ' (' + linkedPo.poNumber + ' ' + linkedPo.status + ')' : ''));
-      grvLines = []; grvSupplierId = null; receivingPoId = null;
-      localStorage.removeItem('reptipos-grv-draft');
-      grvTab('list');
+      if (refused.length) {
+        const why = ((resp && resp.failed) || [])[0]; const reason = why && why.error ? ' — ' + why.error : '';
+        alert('Received ' + lines.length + ' line(s) as ' + grvNumber + '.\n\nShopify refused ' + refused.length + ' line(s), left in the draft to try again:\n• ' + refused.map(l => l.name).join('\n• ') + reason + '\n\nUsually that product has inventory tracking switched off in Shopify (Products → the product → Inventory → "Track quantity").');
+        grvLines = grvLines.filter(l => failedIds.has(String(l.inventoryItemId))); saveGrvDraft(); renderGrvLines(); updateGrvTotalsUI();
+      } else {
+        toast('Received into stock · ' + grvNumber + (linkedPo ? ' (' + linkedPo.poNumber + ' ' + linkedPo.status + ')' : ''));
+        grvLines = []; grvSupplierId = null; receivingPoId = null;
+        localStorage.removeItem('reptipos-grv-draft');
+        grvTab('list');
+      }
     } catch (e) { toast('Receive failed: ' + (e.message || e)); }
     finally { grvInFlight = false; const b = document.getElementById('grv-confirm'); if (b) { b.disabled = false; b.textContent = '📥 Receive into stock'; } }
   }
