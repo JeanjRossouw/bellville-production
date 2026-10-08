@@ -421,25 +421,39 @@ async function receiveStock({ lineItems, idemKey, updateCost }) {
   const locationId = await primaryLocationId(); // needs read_locations; receiving needs a location
   if (!locationId) { const e = new Error('No Shopify location to receive into'); e.status = 400; throw e; }
 
-  const received = [];
+  // One item Shopify refuses (422: tracking switched off, not stocked here,
+  // a bundle) must not sink the other thirteen on the delivery note. Each line
+  // is tried on its own: adjust → connect to the location and retry → switch
+  // the variant's inventory tracking on and retry → give up on that line only.
+  const received = [], failed = [];
+  const adjust = (invItem, qty) => shopify('/inventory_levels/adjust.json', { method: 'POST', body: { location_id: Number(locationId), inventory_item_id: invItem, available_adjustment: qty } });
+  const connect = (invItem) => shopify('/inventory_levels/connect.json', { method: 'POST', body: { location_id: Number(locationId), inventory_item_id: invItem } }).catch(() => {});
   for (const li of lines) {
     const invItem = Number(li.inventoryItemId);
     const qty = Number(li.qty) || 0;
-    const body = { location_id: Number(locationId), inventory_item_id: invItem, available_adjustment: qty };
     try {
-      await shopify('/inventory_levels/adjust.json', { method: 'POST', body });
+      try { await adjust(invItem, qty); }
+      catch (e1) {
+        await connect(invItem);
+        try { await adjust(invItem, qty); }
+        catch (e2) {
+          if (!li.variantId) throw e2;
+          await shopify(`/variants/${Number(li.variantId)}.json`, { method: 'PUT', body: { variant: { id: Number(li.variantId), inventory_management: 'shopify' } } });
+          await connect(invItem);
+          await adjust(invItem, qty);
+        }
+      }
+      if (updateCost && li.costCents != null && li.variantId) {
+        // Into the POS's own cost store, never into Shopify.
+        try { await saveCosts({ costs: { [String(li.variantId)]: li.costCents } }); } catch (e) { /* cost is non-critical */ }
+      }
+      received.push({ inventoryItemId: String(invItem), variantId: li.variantId ? String(li.variantId) : '', qty });
     } catch (e) {
-      // Item may not be stocked at this location yet — connect, then retry.
-      await shopify('/inventory_levels/connect.json', { method: 'POST', body: { location_id: Number(locationId), inventory_item_id: invItem } }).catch(() => {});
-      await shopify('/inventory_levels/adjust.json', { method: 'POST', body });
+      failed.push({ inventoryItemId: String(invItem), variantId: li.variantId ? String(li.variantId) : '', qty, error: String(e.message || e).replace(/^Shopify \w+ \S+ /, '').slice(0, 200) });
     }
-    if (updateCost && li.costCents != null && li.variantId) {
-      // Into the POS's own cost store, never into Shopify.
-      try { await saveCosts({ costs: { [String(li.variantId)]: li.costCents } }); } catch (e) { /* cost is non-critical */ }
-    }
-    received.push({ inventoryItemId: String(invItem), qty });
   }
-  const result = { received: received.length, lineItems: received, locationId: String(locationId) };
+  if (!received.length) { const e = new Error('Shopify refused every line: ' + (failed[0] ? failed[0].error : 'unknown')); e.status = 502; throw e; }
+  const result = { received: received.length, lineItems: received, failed, locationId: String(locationId) };
   if (store && idemKey) { try { await store.setJSON(idemKey, result); } catch (e) {} }
   return result;
 }
