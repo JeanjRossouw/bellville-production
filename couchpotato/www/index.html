@@ -7,7 +7,7 @@
   <meta name="description" content="Orders, the factory floor, costing, dispatch, invoicing and your showroom till in one app for furniture makers. Works on any phone, tablet or computer. 14-day free trial, no card needed.">
   <meta property="og:title" content="Factory Manager · Software for furniture makers">
   <meta property="og:description" content="Orders, the factory floor, costing, dispatch, invoicing and your showroom till in one app. 14-day free trial.">
-  <meta property="og:image" content="/couchpotato/www/img/orders.jpg">
+  <meta property="og:image" content="/couchpotato/www/img/floor.jpg">
   <meta name="theme-color" content="#000000">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛋️</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -23,6 +23,8 @@
     html { scroll-behavior: smooth; }
     body { margin: 0; font-family: var(--font); color: var(--ink); background: var(--white); line-height: 1.6; -webkit-font-smoothing: antialiased; }
     img { max-width: 100%; display: block; }
+    picture { display: block; }
+    picture img { width: 100%; height: auto; }
     a { color: inherit; }
     .wrap { max-width: 1160px; margin: 0 auto; padding: 0 24px; }
     .caps { text-transform: uppercase; letter-spacing: .18em; font-size: 11px; font-weight: 600; }
@@ -122,6 +124,12 @@
       .steps { grid-template-columns: 1fr; }
       section { padding: 72px 0; }
     }
+    @media (max-width: 700px) {
+      .shot { max-width: 360px; margin-left: auto; margin-right: auto; }
+      .shot picture { max-height: 520px; overflow: hidden; position: relative; }
+      .shot picture::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 70px; background: linear-gradient(rgba(255,255,255,0), #fff); }
+      .hero .shot { margin-bottom: -60px; }
+    }
     @media (max-width: 560px) {
       .wrap { padding: 0 16px; }
       nav.top .act .ghost { display: none; }
@@ -160,7 +168,7 @@
       <a class="btn ghost" href="#features">See what it does</a>
     </div>
     <p class="small">No card needed. Set up in a minute.</p>
-    <div class="shot"><div class="bar"><i></i><i></i><i></i></div><img src="/couchpotato/www/img/orders.jpg" alt="The orders screen: every order with its status, fabric, due date and customer" width="1280" height="800"></div>
+    <div class="shot"><div class="bar"><i></i><i></i><i></i></div><picture><source media="(max-width: 700px)" srcset="/couchpotato/www/img/floor-m.jpg" width="390" height="760"><img src="/couchpotato/www/img/floor.jpg" alt="The factory floor: four weeks of orders, what is late and what is waiting on fabric" width="1280" height="800"></picture></div>
   </div>
 </header>
 
@@ -182,7 +190,7 @@
           <li>Two people can work at the same time without overwriting each other</li>
         </ul>
       </div>
-      <div class="shot"><div class="bar"><i></i><i></i><i></i></div><img loading="lazy" src="/couchpotato/www/img/orders.jpg" alt="Orders screen" width="1280" height="800"></div>
+      <div class="shot"><div class="bar"><i></i><i></i><i></i></div><picture><source media="(max-width: 700px)" srcset="/couchpotato/www/img/orders-m.jpg" width="390" height="760"><img loading="lazy" src="/couchpotato/www/img/orders.jpg" alt="Orders: every order with its status, fabric, due date and customer" width="1280" height="800"></picture></div>
     </div>
 
     <div class="feature flip">
@@ -197,7 +205,7 @@
           <li>One tap marks a piece in production or done</li>
         </ul>
       </div>
-      <div class="shot"><div class="bar"><i></i><i></i><i></i></div><img loading="lazy" src="/couchpotato/www/img/floor.jpg" alt="Factory floor planner with four weeks of orders" width="1280" height="800"></div>
+      <div class="shot"><div class="bar"><i></i><i></i><i></i></div><picture><source media="(max-width: 700px)" srcset="/couchpotato/www/img/fabric-m.jpg" width="390" height="760"><img loading="lazy" src="/couchpotato/www/img/fabric.jpg" alt="The fabric list: pieces waiting on fabric, soonest due first" width="1280" height="800"></picture></div>
     </div>
 
     <div class="feature">
@@ -212,7 +220,7 @@
           <li>A printable price list for customers and a cost sheet for you</li>
         </ul>
       </div>
-      <div class="shot"><div class="bar"><i></i><i></i><i></i></div><img loading="lazy" src="/couchpotato/www/img/costing.jpg" alt="Costing: materials with prices and suppliers" width="1280" height="800"></div>
+      <div class="shot"><div class="bar"><i></i><i></i><i></i></div><picture><source media="(max-width: 700px)" srcset="/couchpotato/www/img/costing-m.jpg" width="390" height="760"><img loading="lazy" src="/couchpotato/www/img/costing.jpg" alt="Costing: materials with prices and suppliers" width="1280" height="800"></picture></div>
     </div>
 
     <div class="feature flip">
@@ -227,7 +235,7 @@
           <li>Discounts and VAT worked out for you</li>
         </ul>
       </div>
-      <div class="shot"><div class="bar"><i></i><i></i><i></i></div><img loading="lazy" src="/couchpotato/www/img/pos.jpg" alt="Point of sale with products and a basket" width="1280" height="800"></div>
+      <div class="shot"><div class="bar"><i></i><i></i><i></i></div><picture><source media="(max-width: 700px)" srcset="/couchpotato/www/img/pos-m.jpg" width="390" height="760"><img loading="lazy" src="/couchpotato/www/img/pos.jpg" alt="The showroom till with products and a basket" width="1280" height="800"></picture></div>
     </div>
 
     <div class="feature">
@@ -241,7 +249,7 @@
           <li>Dispatched pieces queue up for invoicing so nothing goes unbilled</li>
         </ul>
       </div>
-      <div><div class="phone"><img loading="lazy" src="/couchpotato/www/img/phone-scan.jpg" alt="Scan out on a phone" width="390" height="760"></div></div>
+      <div><div class="phone"><img loading="lazy" src="/couchpotato/www/img/scan-m.jpg" alt="Scan out on a phone" width="390" height="760"></div></div>
     </div>
 
     <div class="feature flip">
@@ -256,7 +264,7 @@
           <li>An export of every invoice line for your accountant</li>
         </ul>
       </div>
-      <div class="shot"><div class="bar"><i></i><i></i><i></i></div><img loading="lazy" src="/couchpotato/www/img/invoices.jpg" alt="Invoices waiting to be raised" width="1280" height="800"></div>
+      <div class="shot"><div class="bar"><i></i><i></i><i></i></div><picture><source media="(max-width: 700px)" srcset="/couchpotato/www/img/invoices-m.jpg" width="390" height="760"><img loading="lazy" src="/couchpotato/www/img/invoices.jpg" alt="Invoices waiting to be raised" width="1280" height="800"></picture></div>
     </div>
   </div>
 </section>
