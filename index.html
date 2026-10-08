@@ -9883,7 +9883,9 @@ ${_PRODUCTION_PRINT_STYLES}
       actions += '<button onclick="deliveryMarkDelivered(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #16a34a; background:#16a34a; color:#fff; font-weight:800; font-size:12px; cursor:pointer">✅ Delivered</button>';
     }
     actions += '<label style="padding:7px 12px; border-radius:999px; border:1.5px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:700; font-size:12px; cursor:pointer; margin:0">📎 ' + (o.deliveryNoteId ? 'Replace note' : 'Delivery note') + '<input type="file" accept="image/*,application/pdf" capture="environment" style="display:none" onchange="deliveryNoteUpload(\'' + _escape(o.id) + '\', this)"></label>';
-    if (o.deliveryNoteId) actions += '<button onclick="deliveryNoteView(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">👁 View note</button>';
+    if (o.deliveryNoteId) actions += '<button onclick="deliveryNoteView(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">👁 View note' + (o.deliverySignedBy ? ' ✍️' : '') + '</button>';
+    actions += '<label style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; color:#111; font-weight:700; font-size:12px; cursor:pointer; margin:0" title="The driver shows this to the client on the tablet">🧾 ' + (o.deliveryInvoiceId ? 'Replace invoice' : 'Attach invoice') + '<input type="file" accept="image/*,application/pdf" style="display:none" onchange="deliveryDocUpload(\'' + _escape(o.id) + '\', \'inv\', this)"></label>';
+    if (o.deliveryInvoiceId) actions += '<button onclick="deliveryDocView(\'' + _escape(o.id) + '\', \'inv\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">👁 Invoice</button>';
     actions += '<button onclick="builderPortalPrintCard(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">🖨️ Job card</button>';
     return '<div style="background:#fff; border-radius:12px; padding:12px 14px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,0.07); border-left:4px solid ' + (o.status === 'delivered' ? '#16a34a' : o.deliveryScheduled ? '#2563eb' : '#f59e0b') + '">'
       + '<div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:flex-start"><div>'
@@ -10084,6 +10086,132 @@ ${_PRODUCTION_PRINT_STYLES}
   // Delivery note photo/PDF: compressed on the phone and saved as its own record
   // (shared-data/dn-<order id>) so the main production document stays small.
   function _deliveryNoteDocId(orderId) { return 'dn-' + String(orderId).replace(/[^A-Za-z0-9_-]/g, '_'); }
+  function _deliveryDocId(orderId, kind) { return (kind === 'inv' ? 'inv-' : 'dn-') + String(orderId).replace(/[^A-Za-z0-9_-]/g, '_'); }
+  // Any file against an order (the invoice the driver shows the client, a
+  // note): compressed on the phone, saved as its own record.
+  function deliveryDocUpload(orderId, kind, input) {
+    const file = input && input.files && input.files[0];
+    if (!file) return;
+    const finish = (dataUrl) => {
+      const ref = window.firebaseFns.doc(window.firebaseDb, 'shared-data', _deliveryDocId(orderId, kind));
+      window.firebaseFns.setDoc(ref, { orderId: orderId, kind: kind, dataUrl: dataUrl, type: file.type || '', at: new Date().toISOString(), by: (typeof _driverName === 'function' && _driverName()) || _staffDisplayName('staff') })
+        .then(() => {
+          const o = _findOrderAnyBiz(orderId);
+          if (o) { snapshotState(); if (kind === 'inv') { o.deliveryInvoiceId = _deliveryDocId(orderId, 'inv'); } else { o.deliveryNoteId = _deliveryDocId(orderId, 'dn'); o.deliveryNoteAt = new Date().toISOString(); } saveData(); if (typeof render === 'function') render(); }
+          if (typeof toast === 'function') toast(kind === 'inv' ? '🧾 Invoice attached' : '📎 Delivery note saved', 'success', 2500);
+          if (typeof IS_DRIVER_MODE !== 'undefined' && IS_DRIVER_MODE && typeof renderDriverPage === 'function') renderDriverPage();
+        })
+        .catch(e => alert('Could not save the file: ' + e.message));
+    };
+    if (/^image\//.test(file.type)) {
+      const img = new Image();
+      img.onload = () => {
+        const max = 1600, sc = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement('canvas'); c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        finish(c.toDataURL('image/jpeg', 0.74));
+      };
+      img.onerror = () => alert('Could not read that image.');
+      img.src = URL.createObjectURL(file);
+    } else {
+      if (file.size > 900000) { alert('PDF too large (max 900 KB) — a photo of it works too.'); return; }
+      const rd = new FileReader(); rd.onload = () => finish(rd.result); rd.readAsDataURL(file);
+    }
+  }
+  function deliveryDocView(orderId, kind) {
+    const ref = window.firebaseFns.doc(window.firebaseDb, 'shared-data', _deliveryDocId(orderId, kind));
+    window.firebaseFns.getDoc(ref).then(snap => {
+      if (!snap.exists()) { alert('Nothing attached.'); return; }
+      const d = snap.data();
+      const w = window.open('', '_blank');
+      if (!w) { alert('Pop-up blocked — allow pop-ups to view it.'); return; }
+      const body = /^data:application\/pdf/.test(d.dataUrl) ? '<iframe src="' + d.dataUrl + '" style="width:100%; height:95vh; border:0"></iframe>' : '<img src="' + d.dataUrl + '" style="max-width:100%">';
+      w.document.write('<title>' + (kind === 'inv' ? 'Invoice' : 'Delivery note') + ' ' + _escape(orderId) + '</title><body style="margin:0; padding:10px; font-family:Arial; background:#f5f5f4"><div style="font-size:12px; color:#555; margin-bottom:6px">' + _escape(String(d.at || '').slice(0, 16).replace('T', ' ')) + (d.by ? ' · ' + _escape(d.by) : '') + '</div>' + body + '</body>');
+      w.document.close();
+    }).catch(e => alert('Could not load it: ' + e.message));
+  }
+  window.deliveryDocUpload = deliveryDocUpload; window.deliveryDocView = deliveryDocView;
+
+  // ---- the client signs on the tablet: a delivery note drawn from the order,
+  // a finger-signature box, saved as the order's delivery note (an image). ----
+  let _sigPad = null;
+  function deliverySignOpen(orderId) {
+    const o = _findOrderAnyBiz(orderId); if (!o) return;
+    let v = document.getElementById('sign-view');
+    if (!v) { v = document.createElement('div'); v.id = 'sign-view'; document.body.appendChild(v); }
+    v.style.cssText = 'position:fixed; inset:0; background:#fff; color:#111; z-index:9500; overflow:auto; font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif; padding:16px';
+    const biz = (typeof BIZ_DISPLAY !== 'undefined' && BIZ_DISPLAY[_bizOfOrder(orderId)]) || 'Bellville Furniture';
+    const today = new Date();
+    v.innerHTML = '<div style="max-width:720px; margin:0 auto">'
+      + '<div style="display:flex; justify-content:space-between; border-bottom:3px solid #000; padding-bottom:8px"><div><div style="font-size:20px; font-weight:900; letter-spacing:0.08em">' + _escape(biz.toUpperCase()) + '</div><div style="font-size:11px; letter-spacing:0.14em; color:#555">DELIVERY NOTE</div></div><div style="text-align:right"><div style="font-size:22px; font-weight:900">#' + _escape(o.invoice || o.id) + '</div><div style="font-size:12px; color:#555">' + _escape(today.toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' })) + '</div></div></div>'
+      + '<table style="width:100%; border-collapse:collapse; margin-top:12px; font-size:15px">'
+      + '<tr><td style="padding:6px 8px; border:1px solid #000; width:30%; font-size:11px; letter-spacing:0.08em; background:#eee">ITEM</td><td style="padding:6px 8px; border:1px solid #000; font-weight:800">' + _escape(o.product || '') + (o.qty > 1 ? ' × ' + _escape(o.qty) : '') + (o.fabric ? '<br><span style="font-weight:400">' + _escape(o.fabric) + '</span>' : '') + '</td></tr>'
+      + '<tr><td style="padding:6px 8px; border:1px solid #000; font-size:11px; letter-spacing:0.08em; background:#eee">DELIVERED TO</td><td style="padding:6px 8px; border:1px solid #000">' + _escape(o.customer || '') + '<br>' + _escape([o.address, o.area].filter(Boolean).join(', ')) + '</td></tr>'
+      + '<tr><td style="padding:6px 8px; border:1px solid #000; font-size:11px; letter-spacing:0.08em; background:#eee">DRIVER</td><td style="padding:6px 8px; border:1px solid #000">' + _escape((typeof _driverName === 'function' && _driverName()) || o.deliveryBy || '') + '</td></tr>'
+      + '</table>'
+      + '<div style="margin-top:14px; font-size:15px">I confirm that I have received the item(s) above <strong>in good order</strong>.</div>'
+      + '<div style="margin-top:10px; font-size:11px; letter-spacing:0.08em; color:#555">NAME</div><input id="sign-name" value="' + _escape(o.customer || '') + '" style="width:100%; font:inherit; font-size:18px; padding:10px; border:1px solid #000; border-radius:6px">'
+      + '<div style="margin-top:10px; font-size:11px; letter-spacing:0.08em; color:#555">SIGNATURE — sign in the box with your finger</div>'
+      + '<canvas id="sign-pad" style="width:100%; height:220px; border:2px dashed #000; border-radius:8px; background:#fff; touch-action:none; display:block"></canvas>'
+      + '<div style="display:flex; gap:8px; margin-top:12px">'
+      + '<button onclick="deliverySignClear()" style="flex:1; min-height:56px; border-radius:12px; border:2px solid #111; background:#fff; font-weight:900; font-size:17px">Clear</button>'
+      + '<button onclick="deliverySignCancel()" style="flex:1; min-height:56px; border-radius:12px; border:2px solid #d6d3d1; background:#fff; color:#555; font-weight:900; font-size:17px">Cancel</button>'
+      + '<button onclick="deliverySignSave(\'' + _escape(orderId) + '\')" style="flex:2; min-height:56px; border-radius:12px; border:2px solid #16a34a; background:#16a34a; color:#fff; font-weight:900; font-size:18px">✅ Save signature</button>'
+      + '</div></div>';
+    const c = document.getElementById('sign-pad');
+    const scale = window.devicePixelRatio || 1;
+    c.width = Math.round(c.clientWidth * scale); c.height = Math.round(220 * scale);
+    const ctx = c.getContext('2d'); ctx.scale(scale, scale); ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#111';
+    _sigPad = { canvas: c, ctx: ctx, drawing: false, strokes: 0 };
+    const pos = (e) => { const r = c.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+    c.onpointerdown = (e) => { e.preventDefault(); c.setPointerCapture(e.pointerId); const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); _sigPad.drawing = true; };
+    c.onpointermove = (e) => { if (!_sigPad.drawing) return; e.preventDefault(); const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); _sigPad.strokes++; };
+    c.onpointerup = c.onpointercancel = () => { _sigPad.drawing = false; };
+  }
+  function deliverySignClear() { if (!_sigPad) return; const c = _sigPad.canvas; _sigPad.ctx.clearRect(0, 0, c.width, c.height); _sigPad.strokes = 0; }
+  function deliverySignCancel() { const v = document.getElementById('sign-view'); if (v) v.remove(); _sigPad = null; }
+  function deliverySignSave(orderId) {
+    const o = _findOrderAnyBiz(orderId); if (!o || !_sigPad) return;
+    if (_sigPad.strokes < 5) { alert('Please sign in the box first.'); return; }
+    const name = (document.getElementById('sign-name') || {}).value || o.customer || '';
+    // Compose the note + signature into one image, the same shape as a photographed note.
+    const W = 1000, H = 1300, out = document.createElement('canvas'); out.width = W; out.height = H;
+    const x = out.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, W, H); x.fillStyle = '#111';
+    const biz = (typeof BIZ_DISPLAY !== 'undefined' && BIZ_DISPLAY[_bizOfOrder(orderId)]) || 'Bellville Furniture';
+    const now = new Date();
+    const line = (t, y, size, bold) => { x.font = (bold ? '900 ' : '400 ') + size + 'px Arial'; x.fillText(t, 60, y); };
+    line(biz.toUpperCase(), 100, 40, true); line('DELIVERY NOTE', 135, 20, false);
+    x.font = '900 44px Arial'; x.textAlign = 'right'; x.fillText('#' + (o.invoice || o.id), W - 60, 100); x.font = '400 22px Arial'; x.fillText(now.toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' }) + ' ' + now.toTimeString().slice(0, 5), W - 60, 135); x.textAlign = 'left';
+    x.fillRect(60, 160, W - 120, 4);
+    let y = 230;
+    const row = (k, v) => { x.font = '700 20px Arial'; x.fillStyle = '#555'; x.fillText(k, 60, y); x.fillStyle = '#111'; x.font = '400 28px Arial'; String(v).split('\n').forEach(l => { x.fillText(l, 300, y); y += 38; }); y += 14; };
+    row('ITEM', (o.product || '') + (o.qty > 1 ? ' × ' + o.qty : '') + (o.fabric ? '\n' + o.fabric : ''));
+    row('DELIVERED TO', (o.customer || '') + '\n' + [o.address, o.area].filter(Boolean).join(', '));
+    row('DRIVER', (typeof _driverName === 'function' && _driverName()) || o.deliveryBy || '');
+    y += 10; x.font = '400 26px Arial'; x.fillText('I confirm that I have received the item(s) above in good order.', 60, y); y += 60;
+    x.font = '700 20px Arial'; x.fillStyle = '#555'; x.fillText('NAME', 60, y); x.fillStyle = '#111'; x.font = '400 30px Arial'; x.fillText(name, 300, y); y += 50;
+    x.font = '700 20px Arial'; x.fillStyle = '#555'; x.fillText('SIGNATURE', 60, y); x.fillStyle = '#111';
+    const sw = W - 120, sh = Math.round(sw * (220 / Math.max(1, _sigPad.canvas.clientWidth)));
+    x.strokeStyle = '#999'; x.lineWidth = 2; x.strokeRect(60, y + 20, sw, sh);
+    x.drawImage(_sigPad.canvas, 60, y + 20, sw, sh); y += sh + 60;
+    x.font = '400 18px Arial'; x.fillStyle = '#555'; x.fillText('Signed on the tablet at ' + now.toISOString().replace('T', ' ').slice(0, 16), 60, y);
+    const dataUrl = out.toDataURL('image/jpeg', 0.8);
+    const ref = window.firebaseFns.doc(window.firebaseDb, 'shared-data', _deliveryDocId(orderId, 'dn'));
+    window.firebaseFns.setDoc(ref, { orderId: orderId, kind: 'dn', dataUrl: dataUrl, type: 'image/jpeg', at: now.toISOString(), by: (typeof _driverName === 'function' && _driverName()) || _staffDisplayName('staff'), signedBy: name })
+      .then(() => {
+        snapshotState();
+        o.deliveryNoteId = _deliveryDocId(orderId, 'dn'); o.deliveryNoteAt = now.toISOString(); o.deliverySignedBy = name; o.deliverySignedAt = now.toISOString();
+        if (o.status !== 'delivered') { o.status = 'delivered'; o.deliveredDate = now.toISOString().slice(0, 10); o.deliveredBy = (typeof _driverName === 'function' && _driverName()) || o.deliveryBy || 'Driver'; if (o.builder && !o.builderReceivedAt) o.builderReceivedAt = o.deliveredDate; o.driverStatus = 'delivered'; o.driverStatusAt = now.toISOString(); }
+        if (!Array.isArray(o.deliveryComments)) o.deliveryComments = [];
+        o.deliveryComments.push({ by: (typeof _driverName === 'function' && _driverName()) || 'Driver', at: now.toISOString(), text: '✍️ Delivery note signed by ' + name });
+        saveData();
+        deliverySignCancel();
+        if (typeof toast === 'function') toast('✍️ Signed — note saved', 'success', 2500);
+        if (typeof IS_DRIVER_MODE !== 'undefined' && IS_DRIVER_MODE && typeof renderDriverPage === 'function') renderDriverPage(); else if (typeof render === 'function') render();
+      })
+      .catch(e => alert('Could not save the signature: ' + e.message));
+  }
+  window.deliverySignOpen = deliverySignOpen; window.deliverySignClear = deliverySignClear; window.deliverySignCancel = deliverySignCancel; window.deliverySignSave = deliverySignSave;
   function deliveryNoteUpload(orderId, input) {
     const file = input && input.files && input.files[0];
     if (!file) return;
@@ -10565,8 +10693,10 @@ ${_PRODUCTION_PRINT_STYLES}
         + '<div style="font-size:18px; font-weight:700; margin-top:2px">👤 ' + _escape(o.customer || '') + '</div>'
         + '<div style="font-size:17px; color:#44403c; margin-top:2px">📍 ' + (addr ? _escape(addr) : '<span style="color:#991b1b">no address — ask the shop</span>') + '</div>'
         + (isDel && o.deliveryComments && o.deliveryComments.length ? '<div style="font-size:14px; color:#57534e; background:#f5f5f4; border-radius:10px; padding:8px 10px; margin-top:8px">📝 ' + _escape(o.deliveryComments[o.deliveryComments.length - 1].text) + '</div>' : '')
-        + (s.done ? '<div style="font-size:16px; font-weight:800; color:#166534; margin-top:8px">✅ Delivered ' + _escape(o.deliveredDate || '') + (o.deliveryNoteId ? ' · 📎 note saved' : '') + '</div>'
-            + (o.deliveryNoteId ? '' : '<label style="display:block; margin-top:8px; padding:12px; border-radius:14px; border:2px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:900; font-size:17px; text-align:center; cursor:pointer">📷 Photo of the delivery note<input type="file" accept="image/*" capture="environment" style="display:none" onchange="deliveryNoteUpload(\'' + _escape(o.id) + '\', this)"></label>')
+        + (s.done ? '<div style="font-size:16px; font-weight:800; color:#166534; margin-top:8px">✅ Delivered ' + _escape(o.deliveredDate || '') + (o.deliverySignedBy ? ' · ✍️ signed by ' + _escape(o.deliverySignedBy) : o.deliveryNoteId ? ' · 📎 note saved' : '') + '</div>'
+            + (o.deliveryNoteId ? '' : '<div style="display:flex; gap:8px; margin-top:8px">'
+              + '<button onclick="deliverySignOpen(\'' + _escape(o.id) + '\')" style="flex:2; min-height:58px; border-radius:14px; border:2px solid #111; background:#111; color:#fff; font-weight:900; font-size:17px">✍️ Client signs here</button>'
+              + '<label style="flex:1; display:flex; align-items:center; justify-content:center; padding:8px; border-radius:14px; border:2px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:900; font-size:15px; text-align:center; cursor:pointer">📷 Photo of paper note<input type="file" accept="image/*" capture="environment" style="display:none" onchange="deliveryNoteUpload(\'' + _escape(o.id) + '\', this)"></label></div>')
           : '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px">'
             + (maps ? _driverBtn('🗺️ Navigate', 'window.open(\'' + maps + '\', \'_blank\')', '#fff', '#111', '#111') : '')
             + _driverBtn('🚚 On my way', wa('Hi ' + who + ', ' + biz + ' here. I am on my way with ' + item + ', about 30–45 minutes. See you soon!') + '; driverSetStatus(' + idArg + ', \'on-way\', \'\')', '#1d4ed8', '#fff')
@@ -10574,6 +10704,8 @@ ${_PRODUCTION_PRINT_STYLES}
             + (isDel ? _driverBtn('✅ Delivered', 'driverDelivered(' + idArg + ')', '#16a34a', '#fff') : _driverBtn('✅ Done', 'driverRepairDone(' + idArg + ')', '#16a34a', '#fff'))
             + _driverBtn('⚠️ Problem', 'driverProblemMenu(' + idArg + ', this)', '#fee2e2', '#991b1b', '#ef4444')
             + (phone ? _driverBtn('📞 Call client', 'location.href=\'tel:' + phone + '\'', '#fff', '#111', '#d6d3d1') : '')
+            + (isDel && o.deliveryInvoiceId ? _driverBtn('🧾 Show invoice', 'deliveryDocView(\'' + _escape(o.id) + '\', \'inv\')', '#fff', '#111', '#d6d3d1') : '')
+            + (isDel ? _driverBtn('✍️ Client signs', 'deliverySignOpen(\'' + _escape(o.id) + '\')', '#fff', '#111', '#111') : '')
             + '</div>'
             + '<div id="drv-menu-' + _escape(o.id) + '" style="margin-top:8px"></div>'
             + '<div style="margin-top:8px; font-size:12px; color:#a8a29e">' + (phone ? 'Buttons open WhatsApp with the message ready — just press Send.' : 'No cell number for this client.') + '</div>')
