@@ -121,6 +121,22 @@ the company paid up for another month. Each later monthly payment extends it
 again. The browser can never mark a company as paid: the database rules refuse
 it.
 
+## Deliveries and the driver's link
+
+The **Deliveries** screen (under Production) books finished pieces for a day,
+a time slot (08:00 to 20:00) and a driver, and sends each driver their run on
+WhatsApp. Drivers do not log in: each gets a private link with big buttons
+(navigate, on my way, running late, problem, call) and, on Delivered, the
+client signs on the phone or tablet. The signed note is saved with the order,
+and the order moves to Dispatched, so it waits for invoicing.
+
+The driver's page runs through `netlify/functions/factory-driver.mjs`, which
+checks the link's code on the server and shows only that driver's stops for
+the day, without prices. It uses the same `FACTORY_SERVICE_ACCOUNT` as billing
+(step 4). If a phone is lost, open Deliveries → Drivers → **New link**: the old
+link stops working at once. Only roles with **Edit** on Deliveries can see or
+send driver links.
+
 ## 5. Make yourself the seller, once
 
 The seller sees a **Clients** tab listing every company: who is on a trial,

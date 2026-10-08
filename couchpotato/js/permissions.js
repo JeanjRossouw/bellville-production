@@ -19,6 +19,7 @@ export const AREAS = [
   { key: 'costing', label: 'Costing & prices', hint: 'Material costs, margins, selling prices' },
   { key: 'stock', label: 'Stock', hint: 'Material counts, purchase orders, deliveries' },
   { key: 'scan', label: 'Scan out', hint: 'Dispatch pieces at the door' },
+  { key: 'deliveries', label: 'Deliveries', hint: 'Schedule deliveries, drivers, signed delivery notes' },
   { key: 'invoices', label: 'Invoices', hint: 'Invoices, payments, statements' },
   { key: 'profit', label: 'Profit', hint: 'Sales, costs and profit per month' },
   { key: 'settings', label: 'Business settings', hint: 'Company details, numbering, VAT' }
@@ -36,14 +37,14 @@ const all = (level) => Object.fromEntries(AREAS.map(a => [a.key, level]));
 export const DEFAULT_ROLES = {
   office: { name: 'Office', perms: all('edit') },
   sales: { name: 'Sales / till', perms: { ...all('none'), pos: 'edit', quotes: 'edit', orders: 'edit', customers: 'edit' } },
-  factory: { name: 'Factory floor', perms: { ...all('none'), factory: 'edit', scan: 'edit', stock: 'edit', orders: 'view' } }
+  factory: { name: 'Factory floor', perms: { ...all('none'), factory: 'edit', scan: 'edit', stock: 'edit', orders: 'view', deliveries: 'view' } }
 };
 
 // A collection may be changed by a role with edit on any of these areas.
 // (A sale at the till creates orders and an invoice; starting a piece on the
 // floor takes materials off the shelf; and so on.)
 export const WRITE_AREAS = {
-  orders: ['orders', 'factory', 'scan', 'pos', 'quotes', 'invoices'],
+  orders: ['orders', 'factory', 'scan', 'pos', 'quotes', 'invoices', 'deliveries'],
   customers: ['customers', 'orders', 'pos', 'quotes'],
   products: ['costing', 'pos'],
   materials: ['costing', 'stock', 'orders', 'factory', 'scan'],
@@ -53,6 +54,8 @@ export const WRITE_AREAS = {
   sales: ['pos'],
   quotes: ['quotes'],
   counters: ['orders', 'pos', 'quotes', 'invoices', 'stock', 'factory', 'scan'],
+  drivers: ['deliveries'],
+  deliveryNotes: ['deliveries'],
   settings: ['settings']
 };
 
@@ -64,7 +67,9 @@ export const READ_AREAS = {
   sales: ['pos', 'profit'],
   quotes: ['quotes'],
   purchaseOrders: ['stock'],
-  stockMoves: ['stock']
+  stockMoves: ['stock'],
+  drivers: ['deliveries'],          // each driver's private link is a secret: Edit only (see app.js)
+  deliveryNotes: ['deliveries', 'orders']
 };
 
 export const levelOf = (perms, area) => (perms && perms[area]) || 'none';

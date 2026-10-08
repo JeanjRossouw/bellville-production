@@ -128,7 +128,18 @@ service cloud.firestore {
       // one of the listed screens, and a running trial or paid subscription.
       match /orders/{id} {
         allow read: if isMember(cid);
-        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'orders') || ed(cid, 'factory') || ed(cid, 'scan') || ed(cid, 'pos') || ed(cid, 'quotes') || ed(cid, 'invoices'));
+        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'orders') || ed(cid, 'factory') || ed(cid, 'scan') || ed(cid, 'pos') || ed(cid, 'quotes') || ed(cid, 'invoices') || ed(cid, 'deliveries'));
+      }
+      // Drivers carry the secret code in their private link (it works like a
+      // key): only roles that may edit deliveries read them. The driver page itself goes through the
+      // factory-driver function, which checks the code on the server.
+      match /drivers/{id} {
+        allow read: if isMember(cid) && ed(cid, 'deliveries');
+        allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'deliveries');
+      }
+      match /deliveryNotes/{id} {
+        allow read: if isMember(cid) && (sees(cid, 'deliveries') || sees(cid, 'orders'));
+        allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'deliveries');
       }
       match /customers/{id} {
         allow read: if isMember(cid);
@@ -168,9 +179,9 @@ service cloud.firestore {
       }
       // Anything else a future version keeps: the settings screen decides.
       match /{coll}/{id} {
-        allow read: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters']);
+        allow read: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes']);
         allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'settings')
-                     && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters']);
+                     && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes']);
       }
     }
   }

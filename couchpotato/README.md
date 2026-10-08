@@ -30,6 +30,8 @@ couchpotato/
   js/stock.js       materials on hand, purchase orders, stock movements
   js/quotes.js      quotations that turn into orders
   js/profit.js      profit per month, product and piece
+  js/deliveries.js  booking deliveries, drivers, runs, signed notes
+  js/driver.js      the driver's page (no login, big buttons, client signs)
   (../netlify/functions/factory-billing.mjs  PayFast subscriptions, server side)
   js/qr.js          QR codes for job cards (vendor/qrcode.js, MIT)
   js/app.js         sign-in and sign-up, navigation by role, settings, roles, the team
@@ -130,5 +132,12 @@ Also built: roles the owner designs (js/permissions.js, Settings → Roles):
 per screen Hidden, View or Edit, for any number of named roles. Menus,
 view-only screens and the data layer follow the grid, and the database
 rules enforce it per collection, tested in the Firestore emulator.
+
+Also built: deliveries (js/deliveries.js) and the driver's page
+(js/driver.js, served through netlify/functions/factory-driver.mjs): book a
+day, slot and driver; send the run on WhatsApp; the driver works from a
+private link with no login, the client signs on delivery, and the order
+moves to Dispatched. The menu groups screens into drop-downs (Sales,
+Production, Buying, Money).
 
 Next: terms of service and a privacy policy for the website.

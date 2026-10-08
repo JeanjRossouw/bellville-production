@@ -83,3 +83,14 @@ export async function patchDoc(path, patch) {
   const res = await call('PATCH', `${root()}/${enc(path)}?${mask}`, { fields: toFs(patch).mapValue.fields });
   if (!res.ok) throw new Error(`Firestore patch ${path} failed: ${await res.text()}`);
 }
+
+// Equality query on one collection under a parent document:
+//   query('companies/abc', 'orders', { driverId: 'x', deliveryDate: '2026-10-09' })
+export async function query(parentPath, collectionId, filters, limit = 300) {
+  const parts = Object.entries(filters || {}).map(([field, value]) => ({ fieldFilter: { field: { fieldPath: field }, op: 'EQUAL', value: toFs(value) } }));
+  const where = parts.length === 1 ? parts[0] : parts.length ? { compositeFilter: { op: 'AND', filters: parts } } : undefined;
+  const res = await call('POST', `${root()}/${enc(parentPath)}:runQuery`, { structuredQuery: { from: [{ collectionId }], ...(where ? { where } : {}), limit } });
+  if (!res.ok) throw new Error(`Firestore query ${parentPath}/${collectionId} failed: ${await res.text()}`);
+  const rows = await res.json();
+  return rows.filter(r => r.document).map(r => ({ id: r.document.name.split('/').pop(), ...Object.fromEntries(Object.entries(r.document.fields || {}).map(([k, x]) => [k, fromFs(x)])) }));
+}

@@ -451,6 +451,70 @@ export async function removeMember(uid) {
   await remove('members', uid);
 }
 
+// ---------------------------------------------------------- driver page ----
+//
+// Drivers do not log in: their private link carries <companyId>.<code>. In
+// the cloud the factory-driver function checks the code and returns only
+// that driver's stops; in demo mode the same is worked out from this browser.
+const DRIVER_URL = '/.netlify/functions/factory-driver';
+export const localDate = (d) => (d || new Date()).toLocaleDateString('en-CA');   // YYYY-MM-DD, phone's own day
+
+function demoStop(o) {
+  return { id: o.id, orderNo: o.orderNo || '', product: o.product || '', qty: o.qty || 1, fabric: o.fabric || '',
+    customer: o.deliveryContact || o.customerName || '', phone: o.deliveryPhone || '', address: o.deliveryAddress || '',
+    slot: o.deliverySlot || '', instructions: o.deliveryInstructions || '', driverStatus: o.driverStatus || '',
+    driverNote: o.driverNote || '', deliveredAt: o.deliveredAt || '', signedBy: o.signedBy || '' };
+}
+function demoDriver(d) {
+  const m = /^([A-Za-z0-9_-]{1,64})\.([a-f0-9]{24})$/.exec(String(d || ''));
+  if (!m) throw new Error('This link is not complete. Ask the office for your link again.');
+  const pre = demoPrefix(m[1]);
+  const drivers = jget(pre + 'drivers');
+  const id = Object.keys(drivers).find(k => drivers[k].token === m[2] && !drivers[k].disabled);
+  if (!id) throw new Error('This link does not work any more. Ask the office for a new one.');
+  return { pre, cid: m[1], id, driver: drivers[id] };
+}
+
+export async function driverLoad(d, date) {
+  const day = date || localDate();
+  if (!isCloudConfigured()) {
+    const x = demoDriver(d);
+    const orders = jget(x.pre + 'orders');
+    const st = (jget(x.pre + 'settings').factory) || {};
+    const stops = Object.keys(orders).map(id => ({ id, ...orders[id] }))
+      .filter(o => o.driverId === x.id && o.deliveryDate === day).map(demoStop)
+      .sort((a, b) => String(a.slot).localeCompare(String(b.slot)) || String(a.orderNo).localeCompare(String(b.orderNo)));
+    return { driver: { name: x.driver.name || '' }, date: day, company: { name: st.name || (demoCompanies()[x.cid] || {}).name || '', phone: st.deliveryPhone || st.phone || '' }, stops };
+  }
+  const r = await fetch(DRIVER_URL + '?d=' + encodeURIComponent(d) + '&date=' + day);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'Could not load the list (' + r.status + ')');
+  return j;
+}
+
+export async function driverAct(d, payload) {
+  if (!isCloudConfigured()) {
+    const x = demoDriver(d);
+    const orders = jget(x.pre + 'orders');
+    const o = orders[payload.orderId];
+    if (!o || o.driverId !== x.id) throw new Error('That stop is not on your list.');
+    const now = nowIso(); const by = x.driver.name || 'Driver';
+    if (payload.action === 'status') Object.assign(o, { driverStatus: payload.status, driverStatusAt: now, driverNote: payload.note || '' });
+    if (payload.action === 'delivered') {
+      if (payload.dataUrl) { const notes = jget(x.pre + 'deliveryNotes'); notes[payload.orderId] = { orderId: payload.orderId, orderNo: o.orderNo, dataUrl: payload.dataUrl, signedBy: payload.signedBy || '', at: now, driver: by }; localStorage.setItem(x.pre + 'deliveryNotes', JSON.stringify(notes)); }
+      Object.assign(o, { driverStatus: 'delivered', driverStatusAt: now, deliveredAt: now, deliveredBy: by, signedBy: payload.signedBy || '', hasDeliveryNote: !!payload.dataUrl });
+      if (['new', 'in-production', 'ready'].includes(o.status)) Object.assign(o, { status: 'dispatched', dispatchedAt: o.dispatchedAt || now, dispatchedBy: by });
+    }
+    o.updatedAt = now; o.updatedBy = by;
+    localStorage.setItem(x.pre + 'orders', JSON.stringify(orders));
+    return { ok: true };
+  }
+  const r = await fetch(DRIVER_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ d, ...payload }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'Could not save (' + r.status + ')');
+  return j;
+}
+
 // ------------------------------------------------------------ demo store ----
 
 // Demo companies keep their records in localStorage under their own prefix.
@@ -661,6 +725,7 @@ export function seedDemoIfEmpty() {
   const had = Object.keys(demoRead('orders')).length > 0;
   if (!had) seedDemoBase();
   seedDemoExtras();
+  seedDemoDeliveries();
   return !had;
 }
 
@@ -772,6 +837,27 @@ function seedDemoQuotes() {
     lines: [{ productId: 'p-daybed', description: 'Daybed 2.4m', fabric: '', qty: 3, unitPrice: 11200 }] });
   demoWrite('quotes', q);
   const c = demoRead('counters'); c.quoteNo = { value: 4 }; demoWrite('counters', c);
+}
+
+// Two drivers and some deliveries booked for today and tomorrow.
+function seedDemoDeliveries() {
+  const drv = demoRead('drivers');
+  if (drv['drv1']) return;
+  drv['drv1'] = { name: 'Sipho', phone: '082 111 2222', token: 'a1b2c3d4e5f6a7b8c9d0e1f2', createdAt: nowIso(), createdBy: 'demo' };
+  drv['drv2'] = { name: 'Johan', phone: '083 333 4444', token: 'f0e1d2c3b4a5f6e7d8c9b0a1', createdAt: nowIso(), createdBy: 'demo' };
+  demoWrite('drivers', drv);
+  const orders = demoRead('orders');
+  const today = localDate(), tomorrow = localDate(new Date(Date.now() + 86400000));
+  const book = [['d3', today, '08:00 - 10:00', 'drv1', 'Gate code 4455, ring twice'], ['r3', today, '10:00 - 12:00', 'drv1', ''], ['r8', today, '14:00 - 16:00', 'drv2', 'Second floor, no lift'], ['r12', tomorrow, '10:00 - 12:00', 'drv1', '']];
+  const custs = demoRead('customers');
+  book.forEach(([id, date, slot, d, note]) => {
+    const o = orders[id]; if (!o) return;
+    const c = custs[o.customerId] || {};
+    Object.assign(o, { deliveryDate: date, deliverySlot: slot, driverId: d, driverName: drv[d].name, deliveryContact: c.contact || o.customerName, deliveryPhone: c.phone || '',
+      deliveryAddress: c.address || c.area || '', deliveryInstructions: note, driverStatus: 'scheduled' });
+    if (o.status === 'new' || o.status === 'in-production' || o.status === 'dispatched') o.status = 'ready';
+  });
+  demoWrite('orders', orders);
 }
 
 function seedDemoExtras() {
