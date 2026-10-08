@@ -516,6 +516,16 @@
 </div>
 
 <!-- CLIENT SIZE CONFIRMATION PAGE — shown when URL has ?confirm=<token>, no login -->
+<div id="driver-only-view" style="display:none; position:fixed; inset:0; background:#f2f0ec; color:#1c1917; z-index:9000; overflow:auto; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
+  <div style="background:#000; color:#fff; padding:1.1rem 1rem 1.6rem; text-align:center">
+    <div id="driver-biz-name" style="font-size:12px; letter-spacing:0.3em; text-transform:uppercase; opacity:0.85">Bellville Furniture</div>
+    <div id="driver-hello" style="font-size:26px; font-weight:900; margin-top:0.3rem">Deliveries</div>
+    <div id="driver-date" style="font-size:14px; opacity:0.8; margin-top:0.2rem"></div>
+  </div>
+  <div style="max-width:620px; margin:-0.9rem auto 0; padding:0 0.8rem 4rem">
+    <div id="driver-content"><div style="background:#fff; border-radius:16px; padding:2rem; text-align:center; color:#78716c; font-size:18px">Loading today…</div></div>
+  </div>
+</div>
 <div id="confirm-only-view" style="display:none; position:fixed; inset:0; background:#f2f0ec; color:#1c1917; z-index:9000; overflow:auto; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
   <div style="background:linear-gradient(135deg,#000,#262626); color:#fff; padding:1.5rem 1.25rem 2.5rem; text-align:center">
     <div style="font-size:11px; letter-spacing:0.2em; text-transform:uppercase; opacity:0.85">Please confirm your couch size</div>
@@ -4414,6 +4424,10 @@ ${_PRODUCTION_PRINT_STYLES}
     }
     if (typeof IS_CONFIRM_MODE !== 'undefined' && IS_CONFIRM_MODE) {
       if (typeof renderConfirmPage === 'function') renderConfirmPage();
+      return;
+    }
+    if (typeof IS_DRIVER_MODE !== 'undefined' && IS_DRIVER_MODE) {
+      if (typeof renderDriverPage === 'function') renderDriverPage();
       return;
     }
     if (typeof IS_BUILDER_MODE !== 'undefined' && IS_BUILDER_MODE) {
@@ -9242,6 +9256,15 @@ ${_PRODUCTION_PRINT_STYLES}
   if (IS_CONFIRM_MODE) {
     try { enterConfirmOnlyMode(); } catch (e) { console.warn('Confirm boot failed:', e); }
   }
+  // A driver's private link (?driver=<token>) — no login, big buttons, WhatsApp.
+  const DRIVER_TOKEN = (function () {
+    try { return String(new URLSearchParams(window.location.search).get('driver') || '').replace(/[^a-f0-9]/gi, '').slice(0, 32); }
+    catch (e) { return ''; }
+  })();
+  const IS_DRIVER_MODE = !!DRIVER_TOKEN;
+  if (IS_DRIVER_MODE) {
+    try { enterDriverOnlyMode(); } catch (e) { console.warn('Driver boot failed:', e); }
+  }
 
   // View-only planner mode (?planner=1) — a link to share with staff: they sign
   // in and see ONLY the live planner, no tabs, no editing, no dragging.
@@ -9850,7 +9873,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const form = '<div id="dlv-form-' + _escape(o.id) + '" style="display:' + (mode === 'schedule' ? 'flex' : 'none') + '; gap:6px; flex-wrap:wrap; align-items:center; margin-top:8px; padding:8px; background:#f5f5f4; border-radius:8px">'
       + '<input type="date" id="dlv-date-' + _escape(o.id) + '" value="' + _escape(o.deliveryScheduled || '') + '" style="padding:6px; border:1px solid #d6d3d1; border-radius:6px">'
       + '<select id="dlv-slot-' + _escape(o.id) + '" style="padding:6px; border:1px solid #d6d3d1; border-radius:6px"><option value="">Any time</option>' + slotOpts + '</select>'
-      + '<input id="dlv-by-' + _escape(o.id) + '" value="' + _escape(o.deliveryBy || '') + '" placeholder="Driver / courier + waybill" style="padding:6px; border:1px solid #d6d3d1; border-radius:6px; min-width:180px">'
+      + _driverPickHtml(o.deliveryDriverId, o.deliveryBy, 'id="dlv-by-' + _escape(o.id) + '"', 'style="padding:6px; border:1px solid #d6d3d1; border-radius:6px; min-width:180px"')
       + '<button onclick="deliverySchedule(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:none; background:#111; color:#fff; font-weight:700; cursor:pointer">📅 Save</button>'
       + '</div>';
     let actions = '';
@@ -9868,7 +9891,7 @@ ${_PRODUCTION_PRINT_STYLES}
       + '<div style="font-size:12px; color:#44403c; margin-top:2px">👤 ' + _escape(o.customer || '') + (o.phone ? ' · <a href="https://wa.me/' + digits + '" target="_blank" rel="noopener" style="color:#166534; font-weight:700">📱 ' + _escape(o.phone) + '</a>' : '') + '</div>'
       + '<div style="font-size:12px; color:#44403c">📍 ' + ((o.address || o.area) ? _escape([o.address, o.area].filter(Boolean).join(', ')) : '<span style="color:#991b1b">no address — add it via ✏️ Edit on the order</span>') + '</div>'
       + '<div style="font-size:11px; color:#78716c; margin-top:2px">' + src + (o.customSize ? ' · 📐 ' + _escape(_customSizeText(o)) : '') + (!_deliveryReady(o) && o.status !== 'delivered' ? ' <span style="background:#fef3c7; color:#92400e; padding:1px 8px; border-radius:999px; font-weight:800">⏳ NOT DONE YET' + (o.dueDate ? ' — ETA ' + _escape(o.dueDate) : '') + '</span>' : '') + '</div>'
-      + (o.deliveryScheduled ? '<div style="font-size:13px; font-weight:800; color:#1d4ed8; margin-top:4px">📅 ' + _escape(o.deliveryScheduled) + (o.deliveryTimeFrom ? ' · ' + _escape(o.deliveryTimeFrom) + (o.deliveryTimeTo ? ' – ' + _escape(o.deliveryTimeTo) : '') : '') + (o.deliveryBy ? ' · 🚚 ' + _escape(o.deliveryBy) : '') + (o.deliveryBookedByClient ? ' · booked by client' : '') + '</div>' : '')
+      + (o.deliveryScheduled ? '<div style="font-size:13px; font-weight:800; color:#1d4ed8; margin-top:4px">📅 ' + _escape(o.deliveryScheduled) + (o.deliveryTimeFrom ? ' · ' + _escape(o.deliveryTimeFrom) + (o.deliveryTimeTo ? ' – ' + _escape(o.deliveryTimeTo) : '') : '') + (o.deliveryBy ? ' · 🚚 ' + _escape(o.deliveryBy) : '') + (o.deliveryBookedByClient ? ' · booked by client' : '') + ' ' + _driverStatusChip(o) + '</div>' : '')
       + (o.status === 'delivered' ? '<div style="font-size:13px; font-weight:800; color:#166534; margin-top:4px">✅ Delivered ' + _escape(o.deliveredDate || '') + (o.deliveredBy ? ' by ' + _escape(o.deliveredBy) : '') + (o.deliveryNoteId ? ' · 📎 note attached' : ' · <span style="color:#b45309">no delivery note</span>') + '</div>' : '')
       + '</div><div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center">' + actions + '</div></div>'
       + form
@@ -9895,10 +9918,11 @@ ${_PRODUCTION_PRINT_STYLES}
       + '<div class="pc-prod">' + _escape(o.product || '') + (o.qty > 1 ? ' × ' + _escape(o.qty) : '') + '</div>'
       + '<div class="pc-cust">👤 ' + _escape(o.customer || '') + (o.phone ? ' · ' + _escape(o.phone) : '') + '</div>'
       + '<div class="pc-due">📍 ' + _escape([o.address, o.area].filter(Boolean).join(', ') || 'no address') + '</div>'
+      + (o.driverStatus ? '<div class="pc-due">' + _driverStatusChip(o) + '</div>' : '')
       + (!_deliveryReady(o) ? '<div class="pc-due" style="color:#92400e; font-weight:800">⏳ Not done yet' + (o.dueDate ? ' — ETA ' + _escape(o.dueDate) : '') + '</div>' : '')
       + '<div class="pc-due" style="display:flex; gap:4px; align-items:center; flex-wrap:wrap; margin-top:4px">'
       + '<select onchange="event.stopPropagation(); deliverySetSlot(\'' + _escape(o.id) + '\', this.value)" onmousedown="event.stopPropagation()" style="font-size:11px; padding:2px 4px">' + slotOpts + '</select>'
-      + '<input value="' + _escape(o.deliveryBy || '') + '" placeholder="driver" onchange="event.stopPropagation(); deliverySetBy(\'' + _escape(o.id) + '\', this.value)" onmousedown="event.stopPropagation()" style="font-size:11px; padding:2px 4px; width:90px">'
+      + _driverPickHtml(o.deliveryDriverId, o.deliveryBy, 'onchange="event.stopPropagation(); deliverySetBy(\'' + _escape(o.id) + '\', this.value)" onmousedown="event.stopPropagation()"', 'style="font-size:11px; padding:2px 4px; max-width:110px"')
       + '<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px" onclick="event.stopPropagation(); deliveryMarkDelivered(\'' + _escape(o.id) + '\')" onmousedown="event.stopPropagation()" draggable="false">✅ Delivered</button>'
       + '</div></div>'
       + '<button type="button" class="plan-menu-trigger" title="Move" onclick="event.stopPropagation(); openDeliveryMenu(\'' + _escape(o.id) + '\', this)" onmousedown="event.stopPropagation()" draggable="false">⋮</button>'
@@ -9946,7 +9970,8 @@ ${_PRODUCTION_PRINT_STYLES}
   function deliverySetBy(orderId, by) {
     const o = _findOrderAnyBiz(orderId);
     if (!o) return;
-    snapshotState(); o.deliveryBy = String(by || '').trim(); saveData();
+    const d = _driverFromPick(by);
+    snapshotState(); o.deliveryDriverId = d.id; o.deliveryBy = d.name; saveData();
   }
   function deliveryDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
   function deliveryDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
@@ -9968,7 +9993,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const areaBlocks = (arr) => { const ga = g.byArea(arr); return Object.keys(ga).sort().map(a => '<div style="font-size:12px; font-weight:800; color:#57534e; margin:10px 0 6px">📍 ' + _escape(a) + ' (' + ga[a].length + ')</div>' + ga[a].map(r => _deliveryCard(r, '')).join('')).join(''); };
     const tab = (key, label, n, color) => '<button onclick="setDeliveryTab(\'' + key + '\')" style="padding:8px 14px; border-radius:999px; border:1.5px solid ' + color + '; background:' + (_deliveryTab === key ? color : '#fff') + '; color:' + (_deliveryTab === key ? '#fff' : color) + '; font-weight:800; font-size:12px; cursor:pointer">' + label + (n != null ? ' (' + n + ')' : '') + '</button>';
     let html = '<div style="color:#1c1917">';
-    html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px">' + tab('schedule', '🕒 To schedule', g.toSchedule.length, '#b45309') + tab('planner', '📅 Delivery planner', null, '#4f46e5') + tab('scheduled', '📋 Scheduled', g.scheduled.length, '#1d4ed8') + tab('delivered', '✅ Delivered', g.delivered.length, '#166534') + '</div>';
+    html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px">' + tab('schedule', '🕒 To schedule', g.toSchedule.length, '#b45309') + tab('planner', '📅 Delivery planner', null, '#4f46e5') + tab('scheduled', '📋 Scheduled', g.scheduled.length, '#1d4ed8') + tab('delivered', '✅ Delivered', g.delivered.length, '#166534') + tab('drivers', '🚐 Drivers', _drivers().length, '#7c3aed') + '</div>';
     if (_deliveryTab === 'schedule') {
       html += '<div style="font-size:12px; color:#57534e; margin-bottom:8px">The moment the supplier marks an order DONE it moves here from your Orders list. Schedule it here, or drag it into a day on the 📅 Delivery planner.</div>';
       html += g.toSchedule.length ? areaBlocks(g.toSchedule) : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">Nothing waiting — items appear here when the supplier marks them DONE.</div>';
@@ -9990,10 +10015,12 @@ ${_PRODUCTION_PRINT_STYLES}
       html += '</div>';
       if (later.length) html += '<div class="card" style="margin-top:10px"><div class="card-title">📆 LATER (' + later.length + ')</div><div class="plan-pool">' + later.map(_deliveryPlanCard).join('') + '</div></div>';
       html += '<div class="card" style="margin-top:10px"><div class="card-title">🕒 TO SCHEDULE (' + g.toSchedule.length + ')</div><div class="plan-pool" ondragover="deliveryDragOver(event)" ondragleave="deliveryDragLeave(event)" ondrop="deliveryDrop(event, \'\')">' + (g.toSchedule.map(_deliveryPlanCard).join('') || '<div class="empty" style="padding:0.75rem 0">Nothing waiting</div>') + '</div></div></div>';
+    } else if (_deliveryTab === 'drivers') {
+      html += _driversTabHtml();
     } else if (_deliveryTab === 'scheduled') {
       const days = Object.keys(g.byDay).sort();
       const rg = _repairGroups().byDay;
-      html += days.length ? days.map(d => '<div style="display:flex; justify-content:space-between; align-items:center; margin:12px 0 4px"><div style="font-size:13px; font-weight:800">' + _escape(new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' })) + ' <span style="color:#78716c; font-weight:600">(' + g.byDay[d].length + (rg[d] ? ' + ' + rg[d].length + ' repair' : '') + ')</span></div><button onclick="printRunSheet(\'' + d + '\')" style="padding:5px 10px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; font-weight:700; font-size:11px; cursor:pointer">🖨️ Run sheet</button></div>' + areaBlocks(g.byDay[d]) + (rg[d] ? '<div style="font-size:12px; font-weight:800; color:#9a3412; margin:8px 0 4px">🔧 Repair stops</div><div class="portal-planner"><div class="plan-pool">' + rg[d].map(_repairPlanCard).join('') + '</div></div>' : '')).join('') : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">No deliveries scheduled.</div>';
+      html += days.length ? days.map(d => '<div style="display:flex; justify-content:space-between; align-items:center; margin:12px 0 4px"><div style="font-size:13px; font-weight:800">' + _escape(new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' })) + ' <span style="color:#78716c; font-weight:600">(' + g.byDay[d].length + (rg[d] ? ' + ' + rg[d].length + ' repair' : '') + ')</span></div><span style="display:flex; gap:6px; flex-wrap:wrap"><button onclick="printRunSheet(\'' + d + '\')" style="padding:5px 10px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; font-weight:700; font-size:11px; cursor:pointer">🖨️ Run sheet</button>' + _drivers().map(dr => '<button onclick="driverSendRun(\'' + _escape(dr.id) + '\', \'' + d + '\')" title="WhatsApp the day\'s stops and the driver link" style="padding:5px 10px; border-radius:999px; border:1.5px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:700; font-size:11px; cursor:pointer">📲 ' + _escape(dr.name) + '</button>').join('') + '</span></div>' + areaBlocks(g.byDay[d]) + (rg[d] ? '<div style="font-size:12px; font-weight:800; color:#9a3412; margin:8px 0 4px">🔧 Repair stops</div><div class="portal-planner"><div class="plan-pool">' + rg[d].map(_repairPlanCard).join('') + '</div></div>' : '')).join('') : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">No deliveries scheduled.</div>';
     } else {
       html += '<div style="font-size:12px; color:#57534e; margin-bottom:8px">Delivered in the last 45 days.</div>';
       html += g.delivered.length ? g.delivered.map(r => _deliveryCard(r, '')).join('') : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">Nothing delivered yet.</div>';
@@ -10014,7 +10041,7 @@ ${_PRODUCTION_PRINT_STYLES}
     o.deliveryScheduled = date;
     const parts = slot.split('-').map(x => x.trim());
     o.deliveryTimeFrom = parts[0] || ''; o.deliveryTimeTo = parts[1] || '';
-    o.deliveryBy = by;
+    const drv = _driverFromPick(by); o.deliveryDriverId = drv.id; o.deliveryBy = drv.name;
     o.deliveryBookedByClient = false;
     saveData();
     if (typeof render === 'function') render();
@@ -10062,11 +10089,12 @@ ${_PRODUCTION_PRINT_STYLES}
     if (!file) return;
     const finish = (dataUrl) => {
       const ref = window.firebaseFns.doc(window.firebaseDb, 'shared-data', _deliveryNoteDocId(orderId));
-      window.firebaseFns.setDoc(ref, { orderId: orderId, dataUrl: dataUrl, type: file.type || '', at: new Date().toISOString(), by: _staffDisplayName('staff') })
+      window.firebaseFns.setDoc(ref, { orderId: orderId, dataUrl: dataUrl, type: file.type || '', at: new Date().toISOString(), by: (typeof _driverName === 'function' && _driverName()) || _staffDisplayName('staff') })
         .then(() => {
           const o = _findOrderAnyBiz(orderId);
           if (o) { snapshotState(); o.deliveryNoteId = _deliveryNoteDocId(orderId); o.deliveryNoteAt = new Date().toISOString(); saveData(); if (typeof render === 'function') render(); }
           if (typeof toast === 'function') toast('📎 Delivery note saved', 'success', 2500);
+          if (typeof IS_DRIVER_MODE !== 'undefined' && IS_DRIVER_MODE && typeof renderDriverPage === 'function') renderDriverPage();
         })
         .catch(e => alert('Could not save the delivery note: ' + e.message));
     };
@@ -10173,7 +10201,8 @@ ${_PRODUCTION_PRINT_STYLES}
   function repairSetDriver(id, by) {
     const f = _findRepair(id);
     if (!f) return;
-    snapshotState(); f.r.driver = String(by || '').trim(); saveData();
+    const d = _driverFromPick(by);
+    snapshotState(); f.r.driverId = d.id; f.r.driver = d.name; saveData();
   }
   function repairSetField(id, field, value) {
     const f = _findRepair(id);
@@ -10207,7 +10236,7 @@ ${_PRODUCTION_PRINT_STYLES}
       + (notReady ? '<div class="pc-due" style="color:#92400e; font-weight:800">⏳ Still in repair</div>' : '')
       + '<div class="pc-due" style="display:flex; gap:4px; align-items:center; flex-wrap:wrap; margin-top:4px">'
       + _repairSlotSelect(ev)
-      + '<input value="' + _escape(r.driver || '') + '" placeholder="driver" onchange="event.stopPropagation(); repairSetDriver(\'' + _escape(r.id) + '\', this.value)" onmousedown="event.stopPropagation()" style="font-size:11px; padding:2px 4px; width:90px">'
+      + _driverPickHtml(r.driverId, r.driver, 'onchange="event.stopPropagation(); repairSetDriver(\'' + _escape(r.id) + '\', this.value)" onmousedown="event.stopPropagation()"', 'style="font-size:11px; padding:2px 4px; max-width:110px"')
       + _repairStopAction(ev)
       + '</div></div>'
       + '<button type="button" class="plan-menu-trigger" title="Move" onclick="event.stopPropagation(); openRepairMenu(\'' + _escape(r.id) + '\', \'' + ev.kind + '\', this)" onmousedown="event.stopPropagation()" draggable="false">⋮</button>'
@@ -10265,7 +10294,7 @@ ${_PRODUCTION_PRINT_STYLES}
       + '</div><div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center">' + actions + '</div></div>'
       + (r.status !== 'returned' ? '<div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; padding:8px; background:#f5f5f4; border-radius:8px">'
         + stopRow('pickup', '⬆ Pickup', 'pickupDate', 'pickupSlot') + stopRow('dropoff', '⬇ Drop-off', 'returnDate', 'returnSlot')
-        + '<div style="display:flex; gap:6px; align-items:center; font-size:12px; font-weight:600; color:#44403c">🚚 <input value="' + _escape(r.driver || '') + '" placeholder="Driver" onchange="repairSetDriver(\'' + _escape(r.id) + '\', this.value)" style="padding:5px 7px; border-radius:6px; border:1px solid #d6d3d1; width:120px"></div>'
+        + '<div style="display:flex; gap:6px; align-items:center; font-size:12px; font-weight:600; color:#44403c">🚚 ' + _driverPickHtml(r.driverId, r.driver, 'onchange="repairSetDriver(\'' + _escape(r.id) + '\', this.value)"', 'style="padding:5px 7px; border-radius:6px; border:1px solid #d6d3d1; min-width:120px"') + '</div>'
         + '</div>' : '')
       + '</div>';
   }
@@ -10371,6 +10400,258 @@ ${_PRODUCTION_PRINT_STYLES}
   window.repairPlanSet = repairPlanSet; window.repairSetSlot = repairSetSlot; window.repairSetDriver = repairSetDriver; window.repairSetField = repairSetField;
   window.openRepairMenu = openRepairMenu; window.setRepairTab = setRepairTab; window.renderRepairsPortal = renderRepairsPortal;
   window.openRepairModal = openRepairModal; window.closeRepairModal = closeRepairModal; window.repairModalOrderPicked = repairModalOrderPicked; window.saveRepairModal = saveRepairModal;
+
+  // ===== 🚐 DRIVERS — the people who deliver, and their day =====
+  // data.drivers = [{ id, name, phone, token }] shared by every business.
+  // Each driver has a private link (?driver=<token>) that opens the driver page:
+  // today's stops, big buttons, no typing — every message to the client or the
+  // shop is written for them and opened in WhatsApp, they only press Send.
+  function _drivers() { return Array.isArray(data.drivers) ? data.drivers : []; }
+  function _driverById(id) { return _drivers().find(d => d.id === id) || null; }
+  function _driverOfficePhone() { return (data.deliverySettings && data.deliverySettings.officePhone) || ''; }
+  function _driverLink(d) { return location.origin + location.pathname + '?driver=' + encodeURIComponent(d.token); }
+  function _newToken() { let t = ''; for (let i = 0; i < 24; i++) t += Math.floor(Math.random() * 16).toString(16); return t; }
+  // A driver select (falls back to a text box when no drivers exist yet).
+  function _driverPickHtml(currentId, currentName, attrs, style) {
+    const list = _drivers();
+    if (!list.length) return '<input value="' + _escape(currentName || '') + '" placeholder="driver" ' + attrs + ' ' + style + '>';
+    return '<select ' + attrs + ' ' + style + '><option value="">— driver —</option>'
+      + list.map(d => '<option value="' + _escape(d.id) + '"' + (d.id === currentId ? ' selected' : '') + '>' + _escape(d.name) + '</option>').join('')
+      + (currentName && !currentId ? '<option value="' + _escape(currentName) + '" selected>' + _escape(currentName) + '</option>' : '') + '</select>';
+  }
+  function _driverFromPick(v) {
+    const d = _driverById(String(v || '').trim());
+    return d ? { id: d.id, name: d.name } : { id: '', name: String(v || '').trim() };
+  }
+  const _DRIVER_STATUS = { 'on-way': ['🚚 On the way', '#1d4ed8', '#dbeafe'], late: ['⏰ Running late', '#92400e', '#fef3c7'], delivered: ['✅ Delivered', '#166534', '#dcfce7'], issue: ['⚠️ Problem', '#991b1b', '#fee2e2'] };
+  function _driverStatusChip(o) {
+    const s = o && o.driverStatus && _DRIVER_STATUS[o.driverStatus];
+    if (!s) return '';
+    return '<span style="background:' + s[2] + '; color:' + s[1] + '; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:800; white-space:nowrap">' + s[0] + (o.driverStatusAt ? ' ' + _escape(String(o.driverStatusAt).slice(11, 16)) : '') + (o.driverStatusNote ? ' · ' + _escape(o.driverStatusNote) : '') + '</span>';
+  }
+  function driverAdd() {
+    const name = prompt('Driver\'s name:'); if (!name || !name.trim()) return;
+    const phone = prompt('Driver\'s cell number (for WhatsApp):') || '';
+    snapshotState();
+    if (!Array.isArray(data.drivers)) data.drivers = [];
+    data.drivers.push({ id: 'drv-' + Date.now().toString(36), name: name.trim(), phone: phone.trim(), token: _newToken() });
+    saveData(); renderDeliveryPortal();
+  }
+  function driverRemove(id) {
+    const d = _driverById(id); if (!d) return;
+    if (!confirm('Remove ' + d.name + '? Their link stops working.')) return;
+    snapshotState(); data.drivers = _drivers().filter(x => x.id !== id); saveData(); renderDeliveryPortal();
+  }
+  function driverEdit(id) {
+    const d = _driverById(id); if (!d) return;
+    const name = prompt('Driver\'s name:', d.name); if (!name || !name.trim()) return;
+    const phone = prompt('Driver\'s cell number:', d.phone || ''); 
+    snapshotState(); d.name = name.trim(); d.phone = (phone || '').trim(); saveData(); renderDeliveryPortal();
+  }
+  function driverNewLink(id) {
+    const d = _driverById(id); if (!d) return;
+    if (!confirm('Make a new link for ' + d.name + '? The old link stops working.')) return;
+    snapshotState(); d.token = _newToken(); saveData(); renderDeliveryPortal();
+  }
+  function driverCopyLink(id) {
+    const d = _driverById(id); if (!d) return;
+    const url = _driverLink(d);
+    if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => toast('🔗 Link copied for ' + d.name, 'success', 2500)); else prompt('Copy this link:', url);
+  }
+  function driverSetOfficePhone(v) {
+    snapshotState(); data.deliverySettings = Object.assign({}, data.deliverySettings || {}, { officePhone: String(v || '').trim() }); saveData();
+  }
+  // Which stops belong to a driver on a day: theirs, plus unassigned ones when
+  // they are the only driver (a one-driver business never has to assign).
+  function _driverStopsFor(driverId, dateIso) {
+    const only = _drivers().length === 1;
+    const mine = (id) => id === driverId || (!id && only);
+    const stops = [];
+    ['bellville', 'pinkfoot'].forEach(biz => {
+      ((data[biz] && data[biz].orders) || []).forEach(o => {
+        if (!o || o.deliveryScheduled !== dateIso || !mine(o.deliveryDriverId)) return;
+        stops.push({ kind: 'delivery', biz, o, slot: o.deliveryTimeFrom || '', done: o.status === 'delivered' });
+      });
+      ((data[biz] && data[biz].repairs) || []).forEach(r => {
+        if (!r || r.status === 'returned' || !mine(r.driverId)) return;
+        if (r.status === 'logged' && r.pickupDate === dateIso) stops.push({ kind: 'pickup', biz, r, slot: r.pickupSlot || '', done: false });
+        else if (r.status !== 'logged' && r.returnDate === dateIso) stops.push({ kind: 'dropoff', biz, r, slot: r.returnSlot || '', done: false });
+      });
+    });
+    stops.sort((a, b) => String(a.slot || '99').localeCompare(String(b.slot || '99')));
+    return stops;
+  }
+  function driverSendRun(driverId, dateIso) {
+    const d = _driverById(driverId); if (!d) return;
+    const stops = _driverStopsFor(driverId, dateIso);
+    const nice = new Date(dateIso + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' });
+    const lines = stops.map((s, i) => (i + 1) + '. ' + (s.kind === 'delivery' ? (s.o.product || '') + ' — ' + (s.o.customer || '') + ', ' + ([s.o.address, s.o.area].filter(Boolean).join(', ') || 'no address')
+      : (s.kind === 'pickup' ? 'PICK UP repair — ' : 'DROP OFF repair — ') + (s.r.customer || '') + ', ' + ([s.r.address, s.r.area].filter(Boolean).join(', ') || 'no address')) + (s.slot ? ' (' + s.slot + ')' : ''));
+    const msg = 'Hi ' + d.name + ', your deliveries for ' + nice + ' (' + stops.length + '):\n' + (lines.join('\n') || 'Nothing scheduled.') + '\n\nOpen your list here and tick each one off: ' + _driverLink(d);
+    const digits = _waDigits(d.phone);
+    if (digits) window.open('https://wa.me/' + digits + '?text=' + encodeURIComponent(msg), '_blank');
+    else { alert('Add ' + d.name + '\'s cell number first (Drivers tab → ✏️).'); }
+  }
+  function _driversTabHtml() {
+    const list = _drivers();
+    const today = new Date().toISOString().split('T')[0];
+    let html = '<div style="font-size:12px; color:#57534e; margin-bottom:8px">Each driver gets a private link to save on their phone. It opens their stops for the day with big buttons: navigate, on my way, running late, delivered, photo of the note, message the shop. Every message to a client is written for them and sent through WhatsApp — they never type.</div>';
+    html += '<div style="background:#fff; border-radius:12px; padding:12px 14px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,0.07)"><div style="font-size:12px; font-weight:800; color:#57534e; margin-bottom:4px">Shop / factory WhatsApp number (the driver\'s "message the shop" button)</div>'
+      + '<input value="' + _escape(_driverOfficePhone()) + '" placeholder="e.g. 082 555 1234" onchange="driverSetOfficePhone(this.value)" style="padding:7px 9px; border:1px solid #d6d3d1; border-radius:6px; width:220px"></div>';
+    html += list.map(d => {
+      const n = _driverStopsFor(d.id, today).length;
+      return '<div style="background:#fff; border-radius:12px; padding:12px 14px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,0.07); display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center">'
+        + '<div><div style="font-size:15px; font-weight:800">🚐 ' + _escape(d.name) + '</div><div style="font-size:12px; color:#78716c">' + (d.phone ? '📱 ' + _escape(d.phone) : '<span style="color:#991b1b">no cell number</span>') + ' · ' + n + ' stop' + (n === 1 ? '' : 's') + ' today</div>'
+        + '<div style="font-size:11px; color:#a8a29e; margin-top:2px; word-break:break-all">' + _escape(_driverLink(d)) + '</div></div>'
+        + '<span style="display:flex; gap:6px; flex-wrap:wrap">'
+        + '<button onclick="driverSendRun(\'' + _escape(d.id) + '\', \'' + today + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #7c3aed; background:#7c3aed; color:#fff; font-weight:700; font-size:12px; cursor:pointer">📲 Send today\'s run</button>'
+        + '<button onclick="driverCopyLink(\'' + _escape(d.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; font-weight:700; font-size:12px; cursor:pointer">🔗 Copy link</button>'
+        + '<button onclick="driverEdit(\'' + _escape(d.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">✏️</button>'
+        + '<button onclick="driverNewLink(\'' + _escape(d.id) + '\')" title="New link (old one stops working)" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">🔄</button>'
+        + '<button onclick="driverRemove(\'' + _escape(d.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #fca5a5; background:#fef2f2; color:#991b1b; font-weight:700; font-size:12px; cursor:pointer">🗑</button>'
+        + '</span></div>';
+    }).join('');
+    html += '<button onclick="driverAdd()" style="padding:9px 16px; border-radius:999px; border:none; background:#111; color:#fff; font-weight:800; font-size:13px; cursor:pointer">＋ Add a driver</button>';
+    return html;
+  }
+  window.driverAdd = driverAdd; window.driverRemove = driverRemove; window.driverEdit = driverEdit; window.driverNewLink = driverNewLink;
+  window.driverCopyLink = driverCopyLink; window.driverSetOfficePhone = driverSetOfficePhone; window.driverSendRun = driverSendRun;
+
+  // ---- the driver's page (?driver=<token>) ----
+  function _currentDriver() { return _drivers().find(d => d.token && d.token === DRIVER_TOKEN) || null; }
+  function _driverName() { if (typeof IS_DRIVER_MODE === 'undefined' || !IS_DRIVER_MODE) return ''; const d = _currentDriver(); return d ? d.name : ''; }
+  function enterDriverOnlyMode() {
+    ['main-app', 'login-overlay', 'dashboard-only-view', 'reserved-only-view', 'booking-only-view', 'builder-only-view', 'confirm-only-view'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    const v = document.getElementById('driver-only-view');
+    if (v) v.style.display = 'block';
+    document.title = 'Deliveries today';
+    renderDriverPage();
+  }
+  window.enterDriverOnlyMode = enterDriverOnlyMode;
+  function _driverBtn(label, js, bg, fg, border) {
+    return '<button onclick="' + js + '" style="flex:1 1 44%; min-height:58px; padding:10px 8px; border-radius:14px; border:2px solid ' + (border || bg) + '; background:' + bg + '; color:' + fg + '; font-weight:900; font-size:17px; cursor:pointer; line-height:1.15">' + label + '</button>';
+  }
+  function renderDriverPage() {
+    const host = document.getElementById('driver-content');
+    if (!host) return;
+    const d = _currentDriver();
+    const hasData = ['bellville', 'pinkfoot'].some(b => data[b] && Array.isArray(data[b].orders) && data[b].orders.length);
+    const today = new Date().toISOString().split('T')[0];
+    const dateEl = document.getElementById('driver-date');
+    if (dateEl) dateEl.textContent = new Date().toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' });
+    if (!d) {
+      host.innerHTML = '<div style="background:#fff; border-radius:16px; padding:2rem; text-align:center; color:#78716c; font-size:18px">' + (hasData ? 'This link does not work any more. Ask the shop for a new one.' : 'Loading today…') + '</div>';
+      return;
+    }
+    const hello = document.getElementById('driver-hello'); if (hello) hello.textContent = 'Hi ' + d.name;
+    const stops = _driverStopsFor(d.id, today);
+    const open = stops.filter(s => !s.done), done = stops.filter(s => s.done);
+    const office = _waDigits(_driverOfficePhone());
+    const card = (s, i) => {
+      const o = s.o || s.r;
+      const isDel = s.kind === 'delivery';
+      const addr = [o.address, o.area].filter(Boolean).join(', ');
+      const maps = addr ? 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(addr) : '';
+      const phone = _waDigits(o.phone);
+      const who = (o.customer || '').split(' ')[0] || 'there';
+      const biz = (typeof BIZ_DISPLAY !== 'undefined' && BIZ_DISPLAY[s.biz]) || 'Bellville Furniture';
+      const item = isDel ? (o.product || 'your order') : (s.kind === 'pickup' ? 'your couch for repair' : 'your repaired couch');
+      const wa = (text) => phone ? 'window.open(\'https://wa.me/' + phone + '?text=' + encodeURIComponent(text).replace(/'/g, '%27') + '\', \'_blank\')' : 'alert(\'No phone number for this client — tell the shop.\')';
+      const idArg = '\'' + _escape(o.id) + '\', \'' + s.kind + '\'';
+      const stChip = isDel ? _driverStatusChip(o) : '';
+      return '<div style="background:#fff; border-radius:16px; padding:14px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,0.08); border-left:6px solid ' + (s.done ? '#16a34a' : s.kind === 'pickup' ? '#ea580c' : s.kind === 'dropoff' ? '#16a34a' : '#111') + '">'
+        + '<div style="display:flex; justify-content:space-between; gap:8px; align-items:flex-start"><div style="font-size:12px; font-weight:900; letter-spacing:0.08em; color:#78716c">STOP ' + (i + 1) + (s.slot ? ' · ' + _escape(s.slot) : '') + (s.kind === 'pickup' ? ' · 🔧 PICK UP' : s.kind === 'dropoff' ? ' · 🔧 DROP OFF' : '') + '</div>' + stChip + '</div>'
+        + '<div style="font-size:22px; font-weight:900; margin-top:4px">' + _escape(isDel ? (o.product || '') + (o.qty > 1 ? ' × ' + o.qty : '') : (o.product || o.reason || 'Repair')) + '</div>'
+        + '<div style="font-size:18px; font-weight:700; margin-top:2px">👤 ' + _escape(o.customer || '') + '</div>'
+        + '<div style="font-size:17px; color:#44403c; margin-top:2px">📍 ' + (addr ? _escape(addr) : '<span style="color:#991b1b">no address — ask the shop</span>') + '</div>'
+        + (isDel && o.deliveryComments && o.deliveryComments.length ? '<div style="font-size:14px; color:#57534e; background:#f5f5f4; border-radius:10px; padding:8px 10px; margin-top:8px">📝 ' + _escape(o.deliveryComments[o.deliveryComments.length - 1].text) + '</div>' : '')
+        + (s.done ? '<div style="font-size:16px; font-weight:800; color:#166534; margin-top:8px">✅ Delivered ' + _escape(o.deliveredDate || '') + (o.deliveryNoteId ? ' · 📎 note saved' : '') + '</div>'
+            + (o.deliveryNoteId ? '' : '<label style="display:block; margin-top:8px; padding:12px; border-radius:14px; border:2px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:900; font-size:17px; text-align:center; cursor:pointer">📷 Photo of the delivery note<input type="file" accept="image/*" capture="environment" style="display:none" onchange="deliveryNoteUpload(\'' + _escape(o.id) + '\', this)"></label>')
+          : '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px">'
+            + (maps ? _driverBtn('🗺️ Navigate', 'window.open(\'' + maps + '\', \'_blank\')', '#fff', '#111', '#111') : '')
+            + _driverBtn('🚚 On my way', wa('Hi ' + who + ', ' + biz + ' here. I am on my way with ' + item + ', about 30–45 minutes. See you soon!') + '; driverSetStatus(' + idArg + ', \'on-way\', \'\')', '#1d4ed8', '#fff')
+            + _driverBtn('⏰ Running late', 'driverLateMenu(' + idArg + ', this)', '#fef3c7', '#92400e', '#f59e0b')
+            + (isDel ? _driverBtn('✅ Delivered', 'driverDelivered(' + idArg + ')', '#16a34a', '#fff') : _driverBtn('✅ Done', 'driverRepairDone(' + idArg + ')', '#16a34a', '#fff'))
+            + _driverBtn('⚠️ Problem', 'driverProblemMenu(' + idArg + ', this)', '#fee2e2', '#991b1b', '#ef4444')
+            + (phone ? _driverBtn('📞 Call client', 'location.href=\'tel:' + phone + '\'', '#fff', '#111', '#d6d3d1') : '')
+            + '</div>'
+            + '<div id="drv-menu-' + _escape(o.id) + '" style="margin-top:8px"></div>'
+            + '<div style="margin-top:8px; font-size:12px; color:#a8a29e">' + (phone ? 'Buttons open WhatsApp with the message ready — just press Send.' : 'No cell number for this client.') + '</div>')
+        + '</div>';
+    };
+    let html = '';
+    html += '<div style="display:flex; gap:8px; margin:0 0 12px">'
+      + '<div style="flex:1; background:#fff; border-radius:14px; padding:10px; text-align:center"><div style="font-size:26px; font-weight:900">' + open.length + '</div><div style="font-size:12px; color:#78716c; font-weight:700">TO DO</div></div>'
+      + '<div style="flex:1; background:#fff; border-radius:14px; padding:10px; text-align:center"><div style="font-size:26px; font-weight:900; color:#166534">' + done.length + '</div><div style="font-size:12px; color:#78716c; font-weight:700">DONE</div></div>'
+      + (office ? '<button onclick="window.open(\'https://wa.me/' + office + '?text=' + encodeURIComponent('Hi, it\'s ' + d.name + ' (driver). ') + '\', \'_blank\')" style="flex:1; border-radius:14px; border:2px solid #111; background:#111; color:#fff; font-weight:900; font-size:15px; cursor:pointer">💬 Message<br>the shop</button>' : '')
+      + '</div>';
+    if (!stops.length) html += '<div style="background:#fff; border-radius:16px; padding:2rem; text-align:center; color:#78716c; font-size:19px">Nothing for you today 👍<div style="font-size:13px; margin-top:6px">The shop will send your stops when they are planned.</div></div>';
+    html += open.map(card).join('');
+    if (done.length) html += '<div style="font-size:12px; font-weight:900; letter-spacing:0.1em; color:#78716c; margin:14px 0 6px">DONE TODAY</div>' + done.map(card).join('');
+    html += '<div style="text-align:center; font-size:12px; color:#a8a29e; margin-top:16px">Pull down to refresh · ' + _escape(biz_label()) + '</div>';
+    host.innerHTML = html;
+    function biz_label() { return (typeof BIZ_DISPLAY !== 'undefined' && BIZ_DISPLAY.bellville) || 'Bellville Furniture'; }
+  }
+  window.renderDriverPage = renderDriverPage;
+  function _driverLog(o, text) {
+    if (!Array.isArray(o.deliveryComments)) o.deliveryComments = [];
+    o.deliveryComments.push({ by: _driverName() || 'Driver', at: new Date().toISOString(), text: text });
+  }
+  function driverSetStatus(id, kind, status, note) {
+    const rec = kind === 'delivery' ? _findOrderAnyBiz(id) : (_findRepair(id) || {}).r;
+    if (!rec) return;
+    snapshotState();
+    rec.driverStatus = status; rec.driverStatusAt = new Date().toISOString(); rec.driverStatusNote = note || '';
+    const lbl = { 'on-way': 'On the way', late: 'Running late' + (note ? ' — ' + note : ''), delivered: 'Delivered', issue: 'Problem' + (note ? ' — ' + note : '') }[status] || status;
+    _driverLog(rec, '🚐 ' + lbl);
+    saveData(); renderDriverPage();
+  }
+  function driverLateMenu(id, kind, btn) {
+    const o = kind === 'delivery' ? _findOrderAnyBiz(id) : (_findRepair(id) || {}).r;
+    if (!o) return;
+    const host = document.getElementById('drv-menu-' + id); if (!host) return;
+    const phone = _waDigits(o.phone); const who = (o.customer || '').split(' ')[0] || 'there';
+    const opt = (label, by, text) => '<button onclick="' + (phone ? 'window.open(\'https://wa.me/' + phone + '?text=' + encodeURIComponent(text).replace(/'/g, '%27') + '\', \'_blank\'); ' : '') + 'driverSetStatus(\'' + _escape(id) + '\', \'' + kind + '\', \'late\', \'' + by + '\')" style="flex:1; min-height:52px; border-radius:12px; border:2px solid #f59e0b; background:#fff; color:#92400e; font-weight:900; font-size:16px; cursor:pointer">' + label + '</button>';
+    host.innerHTML = '<div style="font-size:13px; font-weight:800; color:#92400e; margin-bottom:6px">How late?</div><div style="display:flex; gap:6px">'
+      + opt('30 min', '30 min', 'Hi ' + who + ', sorry, I am running about 30 minutes late with your delivery. On my way as soon as I can.')
+      + opt('1 hour', '1 hour', 'Hi ' + who + ', sorry, I am running about an hour late with your delivery. I will let you know when I am close.')
+      + opt('Tomorrow', 'tomorrow', 'Hi ' + who + ', sorry, we cannot make your delivery today. The shop will contact you to arrange a new time.')
+      + '</div>';
+  }
+  function driverProblemMenu(id, kind, btn) {
+    const host = document.getElementById('drv-menu-' + id); if (!host) return;
+    const office = _waDigits(_driverOfficePhone());
+    const o = kind === 'delivery' ? _findOrderAnyBiz(id) : (_findRepair(id) || {}).r;
+    const ref = o ? ('#' + (o.invoice || o.orderNo || o.id) + ' ' + (o.customer || '')) : id;
+    const opt = (label, note) => '<button onclick="driverSetStatus(\'' + _escape(id) + '\', \'' + kind + '\', \'issue\', \'' + note + '\')' + (office ? '; window.open(\'https://wa.me/' + office + '?text=' + encodeURIComponent('Problem at ' + ref + ': ' + note + '. — ' + (_driverName() || 'driver')).replace(/'/g, '%27') + '\', \'_blank\')' : '') + '" style="flex:1; min-height:52px; border-radius:12px; border:2px solid #ef4444; background:#fff; color:#991b1b; font-weight:900; font-size:15px; cursor:pointer">' + label + '</button>';
+    host.innerHTML = '<div style="font-size:13px; font-weight:800; color:#991b1b; margin-bottom:6px">What is wrong? (the shop gets told)</div><div style="display:flex; gap:6px; flex-wrap:wrap">'
+      + opt('🚪 Nobody home', 'nobody home') + opt('📍 Wrong address', 'wrong address') + opt('🚪 Does not fit', 'does not fit through the door') + opt('💥 Damaged', 'item damaged')
+      + '</div>';
+  }
+  function driverDelivered(id, kind) {
+    const o = _findOrderAnyBiz(id);
+    if (!o) return;
+    if (!confirm('Delivered to ' + (o.customer || 'the client') + '?')) return;
+    snapshotState();
+    const today = new Date().toISOString().split('T')[0];
+    o.status = 'delivered'; o.deliveredDate = today; o.deliveredBy = _driverName() || o.deliveryBy || 'Driver';
+    if (o.builder && !o.builderReceivedAt) o.builderReceivedAt = today;
+    o.driverStatus = 'delivered'; o.driverStatusAt = new Date().toISOString(); o.driverStatusNote = '';
+    _driverLog(o, '🚐 Delivered');
+    saveData(); renderDriverPage();
+    const phone = _waDigits(o.phone); const who = (o.customer || '').split(' ')[0] || 'there';
+    if (phone && confirm('Send ' + who + ' a WhatsApp that it is delivered?')) window.open('https://wa.me/' + phone + '?text=' + encodeURIComponent('Hi ' + who + ', your ' + (o.product || 'order') + ' has been delivered. Thank you for your business — enjoy!'), '_blank');
+  }
+  function driverRepairDone(id, kind) {
+    const f = _findRepair(id); if (!f) return;
+    if (!confirm(kind === 'pickup' ? 'Picked up the couch?' : 'Dropped off the repaired couch?')) return;
+    snapshotState();
+    if (kind === 'pickup') { f.r.status = 'in-repair'; f.r.pickedUpAt = new Date().toISOString().slice(0, 10); }
+    else { f.r.status = 'returned'; f.r.returnedAt = new Date().toISOString().slice(0, 10); }
+    saveData(); renderDriverPage();
+  }
+  window.driverSetStatus = driverSetStatus; window.driverLateMenu = driverLateMenu; window.driverProblemMenu = driverProblemMenu;
+  window.driverDelivered = driverDelivered; window.driverRepairDone = driverRepairDone;
 
   // ---- 🔍 Portal search: filters the orders list and the planner ----
   function _portalQuery() { const el = document.getElementById('portal-search'); return el ? String(el.value || '').trim().toLowerCase() : ''; }
@@ -14314,6 +14595,9 @@ ${totalsSection}
         } else if (typeof IS_CONFIRM_MODE !== 'undefined' && IS_CONFIRM_MODE) {
           // Client confirming a custom size — works for anonymous sign-ins too
           enterConfirmOnlyMode();
+        } else if (typeof IS_DRIVER_MODE !== 'undefined' && IS_DRIVER_MODE) {
+          // A driver's day — private link, works for anonymous sign-ins too
+          enterDriverOnlyMode();
         } else if (IS_BUILDER_MODE) {
           // Manufacturer portal (Couch Potato etc.)
           enterBuilderOnlyMode();
@@ -14356,6 +14640,17 @@ ${totalsSection}
             });
           } else if (typeof bookingStaticFallback === 'function') {
             bookingStaticFallback();
+          }
+          return;
+        }
+        if (typeof IS_DRIVER_MODE !== 'undefined' && IS_DRIVER_MODE) {
+          document.getElementById('login-overlay').style.display = 'none';
+          enterDriverOnlyMode();
+          if (window.firebaseFns && window.firebaseFns.signInAnonymously) {
+            window.firebaseFns.signInAnonymously(window.firebaseAuth).catch(() => {
+              const h = document.getElementById('driver-content');
+              if (h) h.innerHTML = '<div style="background:#fff; border-radius:16px; padding:2rem; text-align:center; color:#991b1b; font-size:18px">Could not load today — check the phone has signal and open the link again.</div>';
+            });
           }
           return;
         }
