@@ -32,7 +32,8 @@ couchpotato/
   js/profit.js      profit per month, product and piece
   (../netlify/functions/factory-billing.mjs  PayFast subscriptions, server side)
   js/qr.js          QR codes for job cards (vendor/qrcode.js, MIT)
-  js/app.js         sign-in and sign-up, navigation by role, settings, the team
+  js/app.js         sign-in and sign-up, navigation by role, settings, roles, the team
+  js/permissions.js the screens, levels, starting roles and what each may change
 ```
 
 No build step. The only third-party code is the vendored QR generator. The files are served exactly as they are, so
@@ -125,5 +126,9 @@ declined with a reason; expired when past their date. And a profit report
 overheads and net profit, plus by product and every piece weakest margin
 first, from dispatched orders and till sales from stock.
 
-Next: per-role limits on what each role can change, and terms of service
-and a privacy policy for the website.
+Also built: roles the owner designs (js/permissions.js, Settings → Roles):
+per screen Hidden, View or Edit, for any number of named roles. Menus,
+view-only screens and the data layer follow the grid, and the database
+rules enforce it per collection, tested in the Firestore emulator.
+
+Next: terms of service and a privacy policy for the website.

@@ -1,6 +1,7 @@
 // The app shell — sign-in and sign-up, boot, navigation by role, Settings and the team.
 import * as store from './store.js';
 import { FACTORY_DEFAULTS, isCloudConfigured, PRODUCT, TRIAL_DAYS } from './config.js';
+import { AREAS, LEVELS, levelOf } from './permissions.js';
 import { esc, field, row, toast, money, daysUntil } from './ui.js';
 import { startCustomers, renderCustomers, newCustomer, editCustomer, deleteCustomer } from './customers.js';
 import {
@@ -58,15 +59,19 @@ const NAV = [
   { key: 'clients', icon: '', label: 'Clients' }
 ];
 
-// What each role sees. The owner also gets the team under Settings.
-const ROLE_VIEWS = {
-  owner: NAV.map(n => n.key).filter(k => k !== 'clients'),
-  office: NAV.map(n => n.key).filter(k => k !== 'clients'),
-  sales: ['pos', 'quotes', 'orders', 'customers'],
-  factory: ['factory', 'scan', 'stock', 'orders']
-};
+// What each person sees comes from their role, which the owner designs under
+// Settings → Roles. The owner sees everything, plus the team and billing.
 let seller = false;          // the seller's own login: sees every company under Clients
-const allowedViews = (user) => (ROLE_VIEWS[user && user.role] || []).concat(seller ? ['clients'] : []);
+const allowedViews = (user) => !user ? [] : NAV.map(n => n.key).filter(k =>
+  k === 'clients' ? seller : k === 'settings' ? (user.role === 'owner' || store.can('settings')) : store.can(k));
+// A screen the role may only look at: nothing on it may change data.
+const viewOnly = (k) => store.getUser() && store.getUser().role !== 'owner' && k !== 'clients' && levelOf(store.myPerms(), k) === 'view';
+// Actions that only look, print or switch what is shown — allowed on a view-only screen.
+const LOOK_ONLY = new Set(['filter-status', 'floor-view', 'cost-view', 'stock-view', 'quote-filter', 'profit-month', 'inv-view',
+  'print-job', 'print-week-jobs', 'print-planner', 'print-pricesheet', 'print-costsheet', 'inv-print', 'stmt-print', 'inv-export',
+  'po-print', 'quote-print', 'scan-start', 'scan-stop', 'scan-find', 'notify']);
+let rolesStarted = false;
+let lastAllowed = '';
 let team = { members: [], invites: [] };
 let billing = { plan: null, configured: false, payments: [] };
 let clients = [];
@@ -82,7 +87,18 @@ async function boot() {
   await store.initStore();
   store.onUser(async (user) => {
     if (!user) { showLogin(); return; }
-    if (user.role === 'none' || !allowedViews(user).length) { showNoAccess(user); return; }
+    if (user.role === 'none') { showNoAccess(user); return; }
+    // the company's roles decide the menus, so they load first (and stay live)
+    if (!rolesStarted) {
+      rolesStarted = true;
+      await new Promise(res => {
+        let first = true;
+        setTimeout(() => { if (first) { first = false; res(); } }, 6000);
+        store.watchRoles(() => { if (first) { first = false; res(); } else onRolesChange(); });
+      });
+      lastAllowed = allowedViews(user).join(',');
+    }
+    if (!allowedViews(user).length) { showNoScreens(user); return; }
     if (!booted) {
       booted = true;
       seller = await store.isSeller();
@@ -109,10 +125,11 @@ async function boot() {
       setStockSettings(settings);
       setQuoteSettings(settings);
       setProfitSettings(settings);
-      startQuotes(() => { if (view === 'quotes') paint(); }, settings);
-      startStock(() => { if (view === 'stock') paint(); }, settings);
-      startPos(() => { if (view === 'pos' || view === 'profit') paint(); }, settings);
-      startInvoices(() => { if (view === 'invoices' || view === 'orders') paint(); }, settings);
+      // only what this person's role may see is loaded at all
+      if (store.can('quotes')) startQuotes(() => { if (view === 'quotes') paint(); }, settings);
+      if (store.can('stock')) startStock(() => { if (view === 'stock') paint(); }, settings);
+      if (store.can('pos') || store.can('profit')) startPos(() => { if (view === 'pos' || view === 'profit') paint(); }, settings);
+      if (store.can('invoices') || store.can('pos') || store.can('profit')) startInvoices(() => { if (view === 'invoices' || view === 'orders') paint(); }, settings);
       startCosting(() => { if (view === 'costing' || view === 'orders' || view === 'pos' || view === 'stock') paint(); }, settings);
       startCustomers(() => { if (view === 'customers' || view === 'orders' || view === 'pos') paint(); });
       startOrders(() => {
@@ -125,10 +142,21 @@ async function boot() {
     if (store.accessState() !== 'ok' && !readOnlyOk) { showLocked(user); return; }
     showApp(user);
   });
-  // a save refused because the subscription is not active
+  // a save refused because the subscription is not active, or the role does not allow it
   window.addEventListener('unhandledrejection', (e) => {
-    if (e.reason && e.reason.code === 'subscription') { e.preventDefault(); toast(e.reason.message, 'warn'); }
+    if (e.reason && (e.reason.code === 'subscription' || e.reason.code === 'role')) { e.preventDefault(); toast(e.reason.message, 'warn'); }
   });
+}
+
+// The owner changed a role. The owner's own screen just repaints; anyone
+// whose menus changed gets a fresh start so the right screens load.
+function onRolesChange() {
+  const user = store.getUser(); if (!user) return;
+  if (!booted) { if (user.role !== 'owner' && allowedViews(user).join(',') !== lastAllowed) location.reload(); return; }
+  if (user.role === 'owner') { if (view === 'settings') paint(); return; }
+  const now = allowedViews(user).join(',');
+  if (now !== lastAllowed) { location.reload(); return; }
+  if (booted) paint();
 }
 
 function onCompanyChange() {
@@ -261,6 +289,20 @@ function showNoAccess(user) {
   });
 }
 
+// In a company, but the owner has not given their role any screens yet.
+function showNoScreens(user) {
+  document.getElementById('login').hidden = true;
+  const app = document.getElementById('app');
+  app.hidden = false;
+  app.innerHTML = `<div class="shell"><div class="card" style="max-width:560px;margin:3rem auto">
+    <h1>Nothing to show yet</h1>
+    <p>You are in <strong>${esc((store.getCompany() || {}).name || 'the company')}</strong> as <strong>${esc(store.roleLabel(user.role))}</strong>, but that role has no screens switched on yet.</p>
+    <p class="muted">Ask the owner to open Settings → Roles and choose what ${esc(store.roleLabel(user.role))} can see. This page updates by itself when they do.</p>
+    <div class="card-actions"><button class="btn ghost" id="noscreens-out">Sign out</button></div>
+  </div></div>`;
+  document.getElementById('noscreens-out').addEventListener('click', signOutAndReset);
+}
+
 // Signing out reloads the page, so nothing from one company's session can
 // linger in memory when the next person signs in.
 async function signOutAndReset() {
@@ -280,7 +322,7 @@ function showApp(user) {
       <div class="top-right">
         ${store.storeMode() === 'demo' ? '<span class="chip demo-chip" title="No database connected — data stays in this browser">DEMO</span>' : ''}
         ${statusChip()}
-        <span class="who">${esc(user.name || user.email)}<span class="role">${esc(user.role)}</span></span>
+        <span class="who">${esc(user.name || user.email)}<span class="role">${esc(store.roleLabel(user.role))}</span></span>
         <button class="btn ghost sm" id="sign-out">Sign out</button>
       </div>
     </header>
@@ -315,6 +357,12 @@ function statusChip() {
 // --------------------------------------------------------------- painting ---
 
 function paint() {
+  paintScreen();
+  const screen = document.getElementById('screen');
+  if (screen && viewOnly(view)) screen.insertAdjacentHTML('afterbegin', '<div class="viewonly-note">View only: your role can look at this screen but not change anything on it.</div>');
+}
+
+function paintScreen() {
   const screen = document.getElementById('screen');
   if (!screen) return;
   document.querySelectorAll('#tabs .tab').forEach(t => t.classList.toggle('on', t.dataset.view === view));
@@ -380,7 +428,7 @@ function renderSettings(host) {
       )}
       <div class="card-actions"><button class="btn primary" data-act="save-settings">Save settings</button></div>
     </div>
-    ${store.getUser().role === 'owner' ? billingCard() + teamCard() : ''}
+    ${store.getUser().role === 'owner' ? billingCard() + rolesCard() + teamCard() : ''}
     <div class="card">
       <h2>How this system is wired</h2>
       <ul class="plain">
@@ -477,6 +525,53 @@ async function clientFree(id) {
   catch (e) { toast('Could not change: ' + e.message, 'warn'); }
 }
 
+// ----------------------------------------------------------------- roles ----
+// The owner's grid: screens down the side, roles across the top, and for
+// each square Hidden, View or Edit. Changes apply at once to everyone.
+
+function rolesCard() {
+  const list = store.roleList().filter(r => !r.fixed);
+  const used = (key) => team.members.filter(m => m.role === key).length + team.invites.filter(i => i.role === key).length;
+  const lvl = (r, a) => LEVELS.map(l => `<option value="${l.key}" ${levelOf(r.perms, a) === l.key ? 'selected' : ''}>${esc(l.label)}</option>`).join('');
+  return `<div class="card">
+    <h2>Roles: who sees what</h2>
+    <p class="muted">Each role gets every screen as <strong>Hidden</strong> (not in their menu), <strong>View</strong> (can look, cannot change) or <strong>Edit</strong>. Changes apply straight away to everyone with that role. The owner always sees everything.</p>
+    <div class="roles-wrap"><table class="tbl roles-tbl">
+      <thead><tr><th>Screen</th><th class="c">Owner</th>${list.map(r => `<th class="c"><div class="role-name">${esc(r.label)}</div>
+        <div class="muted role-count">${used(r.key)} ${used(r.key) === 1 ? 'person' : 'people'}</div>
+        <div class="role-acts"><button class="btn ghost xs" data-act="role-rename" data-id="${esc(r.key)}">Rename</button><button class="btn ghost xs" data-act="role-del" data-id="${esc(r.key)}">Delete</button></div></th>`).join('')}</tr></thead>
+      <tbody>${AREAS.map(a => `<tr><td><strong>${esc(a.label)}</strong><div class="muted">${esc(a.hint)}</div></td><td class="c muted">Edit</td>
+        ${list.map(r => `<td class="c"><select class="lvl lvl-${levelOf(r.perms, a.key)}" data-act="role-perm" data-id="${esc(r.key)}" data-area="${a.key}">${lvl(r, a.key)}</select></td>`).join('')}</tr>`).join('')}
+      <tr><td><strong>Team and billing</strong><div class="muted">Invite people, change roles, the subscription</div></td><td class="c muted">Edit</td>${list.map(() => '<td class="c muted">Owner only</td>').join('')}</tr>
+      </tbody>
+    </table></div>
+    <div class="card-actions"><button class="btn primary" data-act="role-new">＋ New role</button></div>
+  </div>`;
+}
+
+async function rolePerm(key, area, level) {
+  const r = store.roleList().find(x => x.key === key); if (!r) return;
+  try { await store.saveRole(key, { perms: { ...r.perms, [area]: level } }); toast(r.label + ': ' + (AREAS.find(a => a.key === area) || {}).label + ' → ' + (LEVELS.find(l => l.key === level) || {}).label); }
+  catch (e) { toast('Could not save: ' + e.message, 'warn'); paint(); }
+}
+async function roleNew() {
+  const name = prompt('Name the new role (e.g. Bookkeeper, Driver, Upholsterer):', '');
+  if (!name || !name.trim()) return;
+  try { await store.createRole(name.trim()); toast(name.trim() + ' added — now choose what it can see'); }
+  catch (e) { toast('Could not add the role: ' + e.message, 'warn'); }
+}
+async function roleRename(key) {
+  const name = prompt('New name for this role:', store.roleLabel(key));
+  if (!name || !name.trim()) return;
+  await store.saveRole(key, { name: name.trim() });
+}
+async function roleDelete(key) {
+  const n = team.members.filter(m => m.role === key).length + team.invites.filter(i => i.role === key).length;
+  if (n) { toast(store.roleLabel(key) + ' is still given to ' + n + (n === 1 ? ' person' : ' people') + ' — move them to another role first', 'warn'); return; }
+  if (!confirm('Delete the role ' + store.roleLabel(key) + '?')) return;
+  await store.deleteRole(key); toast('Role deleted');
+}
+
 // ------------------------------------------------------------------ team ----
 
 const joinLink = (email) => location.origin + location.pathname + '?join=' + encodeURIComponent(email);
@@ -488,7 +583,7 @@ function inviteMessage(inv) {
 
 function teamCard() {
   const me = store.getUser();
-  const roleOpts = (cur) => store.ROLES.map(r => `<option value="${r.key}" ${r.key === cur ? 'selected' : ''}>${esc(r.label)}</option>`).join('');
+  const roleOpts = (cur) => store.roleList().map(r => `<option value="${esc(r.key)}" ${r.key === cur ? 'selected' : ''}>${esc(r.label)}</option>`).join('');
   const members = team.members.slice().sort((a, b) => (a.role === 'owner' ? 0 : 1) - (b.role === 'owner' ? 0 : 1) || String(a.name).localeCompare(String(b.name)));
   const owners = members.filter(m => m.role === 'owner').length;
   return `<div class="card">
@@ -500,7 +595,7 @@ function teamCard() {
       <div class="team-acts">${m.id === me.uid ? '' : `<button class="btn ghost sm" data-act="member-remove" data-id="${esc(m.id)}">Remove</button>`}</div>
     </div>`).join('') || '<p class="muted">Loading…</p>'}
     ${team.invites.length ? `<h2>Invited, not signed up yet</h2>` + team.invites.map(i => `<div class="team-row">
-      <div><div class="who-n">${esc(i.name || i.email)}</div><div class="who-e">${esc(i.email)} · ${esc((store.ROLES.find(r => r.key === i.role) || {}).label || i.role)}</div></div>
+      <div><div class="who-n">${esc(i.name || i.email)}</div><div class="who-e">${esc(i.email)} · ${esc(store.roleLabel(i.role))}</div></div>
       <div></div>
       <div class="team-acts">
         <button class="btn ghost sm" data-act="invite-wa" data-id="${esc(i.id)}">WhatsApp</button>
@@ -512,10 +607,10 @@ function teamCard() {
     <div class="team-invite">
       ${field('Name', 'ti-name', { placeholder: 'Their name' })}
       ${field('Email', 'ti-email', { type: 'email', placeholder: 'their@email.co.za' })}
-      ${field('Role', 'ti-role', { type: 'select', value: 'office', options: store.ROLES.filter(r => r.key !== 'owner').concat(store.ROLES.filter(r => r.key === 'owner')).map(r => ({ value: r.key, label: r.label })) })}
+      ${field('Role', 'ti-role', { type: 'select', value: (store.roleList().find(r => !r.fixed) || {}).key || 'owner', options: store.roleList().filter(r => !r.fixed).concat(store.roleList().filter(r => r.fixed)).map(r => ({ value: r.key, label: r.label })) })}
       <div class="fld"><button class="btn primary" data-act="invite">Invite</button></div>
     </div>
-    <ul class="roles-help">${store.ROLES.map(r => `<li><strong>${esc(r.label)}:</strong> ${esc(r.hint)}</li>`).join('')}</ul>
+    <p class="muted">What each role can see and change is set in the Roles grid above.</p>
     <p class="muted">Company id, for connecting other systems such as an order feed: <code>${esc((store.getCompany() || {}).id || '')}</code></p>
   </div>`;
 }
@@ -531,7 +626,7 @@ async function sendInvite() {
 
 async function memberRole(uid, role) {
   const m = team.members.find(x => x.id === uid); if (!m) return;
-  if (!confirm('Change ' + (m.name || m.email) + ' to ' + ((store.ROLES.find(r => r.key === role) || {}).label || role) + '?')) { paint(); return; }
+  if (!confirm('Change ' + (m.name || m.email) + ' to ' + store.roleLabel(role) + '?')) { paint(); return; }
   try { await store.setMemberRole(uid, role); toast('Role changed'); }
   catch (e) { toast('Could not change the role: ' + e.message, 'warn'); paint(); }
 }
@@ -583,6 +678,7 @@ async function saveSettings() {
 async function onAction(e) {
   const b = e.target.closest('[data-act]');
   if (!b) return;
+  if (viewOnly(view) && !LOOK_ONLY.has(b.dataset.act)) { toast('Your role can only look at this screen. Ask the owner if you need to change things here.', 'warn'); return; }
   const id = b.dataset.id;
   if (b.dataset.act.startsWith('pos-')) return posAction(b.dataset.act, b);
   switch (b.dataset.act) {
@@ -617,6 +713,9 @@ async function onAction(e) {
     case 'client-extend': return clientExtend(id);
     case 'client-free': return clientFree(id);
     case 'invite': return sendInvite();
+    case 'role-new': return roleNew();
+    case 'role-rename': return roleRename(id);
+    case 'role-del': return roleDelete(id);
     case 'member-remove': return memberRemove(id);
     case 'invite-cancel': {
       const inv = team.invites.find(i => i.id === id);
@@ -686,7 +785,9 @@ function onChangeEvent(e) {
   if (t.id === 'o-filter-cust') { setFilter({ customer: t.value }); return paint(); }
   if (t.id === 'o-filter-status') { setFilter({ status: t.value }); return paint(); }
   const act = t.dataset ? t.dataset.act : '';
+  if (viewOnly(view) && (act === 'fabric' || act === 'due')) { toast('Your role can only look at this screen.', 'warn'); paint(); return; }
   if (act === 'member-role') return memberRole(t.dataset.id, t.value);
+  if (act === 'role-perm') return rolePerm(t.dataset.id, t.dataset.area, t.value);
   if (t.id === 'pf-month') { setProfitMonth(t.value); return paint(); }
   if (act === 'fabric') return setFabric(t.dataset.id, t.value);
   if (act === 'due') return setDue(t.dataset.id, t.value);

@@ -818,3 +818,17 @@ h2 { font-family: var(--font-ui); font-weight: 600; font-size: 12px; letter-spac
 .profit-two h2 { margin: 0 0 .6rem; }
 .tbl tr.sel td { background: #f4f1ea; }
 @media (max-width: 900px) { .profit-two { grid-template-columns: 1fr; } }
+
+/* ------------------------------------------------------------------ roles */
+.viewonly-note { background: #fef3c7; color: #78350f; border: 1px solid #f59e0b; border-radius: 6px; padding: .55rem .8rem; font-size: 13px; margin-bottom: .9rem; }
+.roles-wrap { overflow-x: auto; margin: .6rem 0; }
+.roles-tbl th.c, .roles-tbl td.c { text-align: center; }
+.roles-tbl td:first-child { min-width: 190px; }
+.roles-tbl .role-name { font-weight: 600; text-transform: none; letter-spacing: 0; font-size: 13px; }
+.roles-tbl .role-count { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.role-acts { display: flex; gap: .25rem; justify-content: center; margin-top: .3rem; }
+.btn.xs { padding: .2rem .45rem; font-size: 9.5px; }
+.lvl { min-width: 92px; }
+.lvl-none { color: #8a8884; }
+.lvl-view { color: #92400e; background: #fffbeb; }
+.lvl-edit { color: #14532d; background: #f0fdf4; }
