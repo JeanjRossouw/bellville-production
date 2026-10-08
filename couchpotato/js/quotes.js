@@ -147,6 +147,7 @@ function wireForm(w) {
       sub += qty * price;
       const pr = productByName(r.querySelector('.q-desc').value);
       const hint = r.querySelector('.q-hint');
+      if (!store.can('costing')) { hint.textContent = ''; return; }     // costs are for roles that may see costing
       if (pr) {
         const c = costOf(pr);
         cost += c.total * qty;

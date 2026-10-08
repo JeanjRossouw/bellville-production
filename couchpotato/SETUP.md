@@ -60,14 +60,24 @@ owner login are theirs from day one.
 | Their staff | The owner opens **Settings → Team**, enters the person's email and role, and taps **WhatsApp** to send them the sign-up link. The person creates a login with that email and lands in the company with that role. |
 | Someone who forgot their password | **Forgot your password?** on the sign-in page emails a reset link. |
 
-Roles:
+Roles are the owner's to design, under **Settings → Roles**: a grid with the
+screens down the side and the roles across the top. Each square is **Hidden**
+(not in that person's menu), **View** (they can look but not change anything)
+or **Edit**. The owner can add roles (Bookkeeper, Driver, Upholsterer…),
+rename them and delete unused ones. Every company starts with three, which can
+be changed freely:
 
-| Role | Sees |
+| Role | Starts with |
 |---|---|
-| Owner | Everything, plus the team |
-| Office | Everything except the team |
-| Sales / till | Point of sale, orders, customers |
-| Factory floor | Factory floor, scan out, orders |
+| Owner | Everything, plus the team and billing (cannot be changed) |
+| Office | Every screen at Edit |
+| Sales / till | Point of sale, quotes, orders and customers |
+| Factory floor | Factory floor, stock and scan out; orders to view |
+
+Changes apply at once: anyone whose menus change gets a fresh start with the
+right screens. The database rules enforce the same grid, so a View or Hidden
+screen cannot be worked around from outside the app. Anyone without access to
+Costing does not see costs or margins on quotes.
 
 The owner can change a role or remove someone at any time; a removed person's
 login stops opening anything immediately.
@@ -146,11 +156,8 @@ The database rules enforce all of this, not only the screens.
 
 ## Things to know
 
-- **Roles limit what people see, not yet what they can change.** The database
-  rules enforce company separation, team management, settings, billing and the
-  read-only lock. Within a company, a factory login could still change an
-  invoice through the database directly. Tightening that per record type is a
-  later step.
+- **After updating the app, publish `firestore.rules` again** (Firestore →
+  Rules), so the database enforces the newest rules.
 - **One login, one company.** Someone who works for two companies needs two
   email addresses for now.
 - **TRIAL_DAYS** is set in `js/config.js` and repeated in `firestore.rules`;

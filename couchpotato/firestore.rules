@@ -9,6 +9,7 @@ rules_version = '2';
 //   companies/<cid>                the company: name, owner, plan
 //   companies/<cid>/members/<uid>  who is in the company, with their role
 //   companies/<cid>/invites/<mail> + invites/<mail>   pending invitations
+//   companies/<cid>/roles/<key>    the owner's roles: per screen none / view / edit
 //   companies/<cid>/payments/<id>  PayFast payments (written by the billing function only)
 //   companies/<cid>/<coll>/<id>    the company's records
 //   admins/<uid>                   the seller's own logins (created by hand in the console)
@@ -17,6 +18,10 @@ rules_version = '2';
 // it is paid up, or when given free access. Otherwise it can still READ
 // everything (its data stays its own) but cannot change anything until it
 // pays. TRIAL_DAYS here must match TRIAL_DAYS in js/config.js.
+//
+// Roles: the owner designs them in the app. A collection can be changed by
+// anyone whose role has 'edit' on one of the screens listed for it below,
+// the same table as WRITE_AREAS in js/permissions.js. Keep the two in step.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -26,8 +31,16 @@ service cloud.firestore {
     function isMember(cid) { return signedIn() && exists(memberPath(cid)); }
     function role(cid) { return get(memberPath(cid)).data.role; }
     function isOwner(cid) { return isMember(cid) && role(cid) == 'owner'; }
-    function canEditSettings(cid) { return isMember(cid) && role(cid) in ['owner', 'office']; }
-    function validRole(r) { return r in ['owner', 'office', 'sales', 'factory']; }
+    function rolePath(cid) { return /databases/$(database)/documents/companies/$(cid)/roles/$(role(cid)); }
+    // this person's level on one screen: the owner has edit everywhere
+    function level(cid, area) { return role(cid) == 'owner' ? 'edit' : get(rolePath(cid)).data.perms.get(area, 'none'); }
+    function ed(cid, area) { return level(cid, area) == 'edit'; }
+    function sees(cid, area) { return level(cid, area) in ['view', 'edit']; }
+    function validRole(cid, r) { return r == 'owner' || exists(/databases/$(database)/documents/companies/$(cid)/roles/$(r)); }
+    function founding(cid) {
+      return signedIn() && !exists(/databases/$(database)/documents/companies/$(cid))
+        && getAfter(/databases/$(database)/documents/companies/$(cid)).data.ownerUid == request.auth.uid;
+    }
     function isAdmin() { return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
     function companyActive(cid) {
       let c = get(/databases/$(database)/documents/companies/$(cid)).data;
@@ -50,7 +63,7 @@ service cloud.firestore {
     // Pending invitations, looked up by the invited person's email.
     match /invites/{email} {
       allow read: if signedIn() && (myEmail() == email || isOwner(resource.data.companyId));
-      allow create, update: if isOwner(request.resource.data.companyId) && validRole(request.resource.data.role)
+      allow create, update: if isOwner(request.resource.data.companyId) && validRole(request.resource.data.companyId, request.resource.data.role)
                             && request.resource.data.email == email;
       allow delete: if signedIn() && (myEmail() == email || isOwner(resource.data.companyId));
     }
@@ -72,7 +85,7 @@ service cloud.firestore {
         allow read: if isMember(cid);
         // Joining happens two ways only: founding the company (in the same
         // write as creating it), or accepting an invitation for your email.
-        allow create: if signedIn() && request.auth.uid == uid && validRole(request.resource.data.role) && (
+        allow create: if signedIn() && request.auth.uid == uid && (
                         ( request.resource.data.role == 'owner'
                           && !exists(/databases/$(database)/documents/companies/$(cid))
                           && getAfter(/databases/$(database)/documents/companies/$(cid)).data.ownerUid == request.auth.uid )
@@ -80,23 +93,28 @@ service cloud.firestore {
                           && get(/databases/$(database)/documents/invites/$(myEmail())).data.companyId == cid
                           && get(/databases/$(database)/documents/invites/$(myEmail())).data.role == request.resource.data.role ) );
         // Only an owner changes roles, and never their own (so a company is never left without one).
-        allow update: if isOwner(cid) && uid != request.auth.uid && validRole(request.resource.data.role);
+        allow update: if isOwner(cid) && uid != request.auth.uid && validRole(cid, request.resource.data.role);
         // An owner removes people; anyone may leave.
         allow delete: if isOwner(cid) && uid != request.auth.uid || (signedIn() && request.auth.uid == uid && role(cid) != 'owner');
       }
 
       match /invites/{email} {
         allow read: if isMember(cid);
-        allow create, update: if isOwner(cid) && validRole(request.resource.data.role);
+        allow create, update: if isOwner(cid) && validRole(cid, request.resource.data.role);
         allow delete: if isOwner(cid) || (signedIn() && myEmail() == email);
       }
 
-      // Settings: the founder writes them when the company is created; after that owner and office.
+      // The roles: everyone in the company reads them (their menus come from
+      // them); only the owner changes them. The founder writes the starting set.
+      match /roles/{key} {
+        allow read: if isMember(cid);
+        allow write: if isOwner(cid) || founding(cid);
+      }
+
+      // Settings: the founder writes them when the company is created; after that the settings screen.
       match /settings/{id} {
         allow read: if isMember(cid);
-        allow write: if canEditSettings(cid)
-                     || (signedIn() && getAfter(/databases/$(database)/documents/companies/$(cid)).data.ownerUid == request.auth.uid
-                         && !exists(/databases/$(database)/documents/companies/$(cid)));
+        allow write: if (isMember(cid) && ed(cid, 'settings')) || founding(cid);
       }
 
       match /payments/{id} {
@@ -104,12 +122,55 @@ service cloud.firestore {
         allow write: if false;
       }
 
-      // Everything else the company keeps: orders, customers, products,
-      // materials, invoices, sales, counters… Reading is always allowed;
-      // changing needs a running trial or a paid-up subscription.
+      // The company's records, one rule per collection. Reading money and
+      // buying records needs the matching screen; everything else is readable
+      // by every member (screens refer to each other). Changing needs edit on
+      // one of the listed screens, and a running trial or paid subscription.
+      match /orders/{id} {
+        allow read: if isMember(cid);
+        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'orders') || ed(cid, 'factory') || ed(cid, 'scan') || ed(cid, 'pos') || ed(cid, 'quotes') || ed(cid, 'invoices'));
+      }
+      match /customers/{id} {
+        allow read: if isMember(cid);
+        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'customers') || ed(cid, 'orders') || ed(cid, 'pos') || ed(cid, 'quotes'));
+      }
+      match /products/{id} {
+        allow read: if isMember(cid);
+        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'costing') || ed(cid, 'pos'));
+      }
+      match /materials/{id} {
+        allow read: if isMember(cid);
+        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'costing') || ed(cid, 'stock') || ed(cid, 'orders') || ed(cid, 'factory') || ed(cid, 'scan'));
+      }
+      match /stockMoves/{id} {
+        allow read: if isMember(cid) && sees(cid, 'stock');
+        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'stock') || ed(cid, 'orders') || ed(cid, 'factory') || ed(cid, 'scan'));
+      }
+      match /purchaseOrders/{id} {
+        allow read: if isMember(cid) && sees(cid, 'stock');
+        allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'stock');
+      }
+      match /invoices/{id} {
+        allow read: if isMember(cid) && (sees(cid, 'invoices') || sees(cid, 'pos') || sees(cid, 'profit'));
+        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'invoices') || ed(cid, 'pos'));
+      }
+      match /sales/{id} {
+        allow read: if isMember(cid) && (sees(cid, 'pos') || sees(cid, 'profit'));
+        allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'pos');
+      }
+      match /quotes/{id} {
+        allow read: if isMember(cid) && sees(cid, 'quotes');
+        allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'quotes');
+      }
+      match /counters/{id} {
+        allow read: if isMember(cid);
+        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'orders') || ed(cid, 'pos') || ed(cid, 'quotes') || ed(cid, 'invoices') || ed(cid, 'stock') || ed(cid, 'factory') || ed(cid, 'scan'));
+      }
+      // Anything else a future version keeps: the settings screen decides.
       match /{coll}/{id} {
-        allow read: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments']);
-        allow write: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments']) && companyActive(cid);
+        allow read: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters']);
+        allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'settings')
+                     && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters']);
       }
     }
   }

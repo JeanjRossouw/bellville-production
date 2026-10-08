@@ -22,6 +22,7 @@
 //   demo  — this browser's localStorage, so the system can be reviewed and
 //           demonstrated before any database is created
 import { FIREBASE_CONFIG, isCloudConfigured, TRIAL_DAYS } from './config.js';
+import { DEFAULT_ROLES, WRITE_AREAS, OWNER_PERMS, canSee, canEdit } from './permissions.js';
 
 const FB_VERSION = '10.13.0';
 const FB = (m) => `https://www.gstatic.com/firebasejs/${FB_VERSION}/firebase-${m}.js`;
@@ -37,12 +38,49 @@ export const storeMode = () => mode;
 export const getUser = () => currentUser;
 export const getCompany = () => company;
 export const nowIso = () => new Date().toISOString();
-export const ROLES = [
-  { key: 'owner', label: 'Owner', hint: 'Everything, plus the team and the subscription' },
-  { key: 'office', label: 'Office', hint: 'Orders, customers, costing, invoices, settings' },
-  { key: 'sales', label: 'Sales / till', hint: 'Point of sale, orders and customers' },
-  { key: 'factory', label: 'Factory floor', hint: 'The floor planner, job cards and scan out' }
-];
+// ------------------------------------------------------------------ roles ---
+//
+// The owner designs the roles (Settings → Roles): each one says, per screen,
+// hidden, view or edit. They live at companies/<id>/roles/<key>; a member's
+// role is one of those keys, or 'owner'.
+let roles = {};               // key -> { name, perms }
+const roleWatchers = [];
+export function roleList() {
+  return [{ key: 'owner', label: 'Owner', perms: OWNER_PERMS, fixed: true }]
+    .concat(Object.keys(roles).map(k => ({ key: k, label: roles[k].name || k, perms: roles[k].perms || {} }))
+      .sort((a, b) => a.label.localeCompare(b.label)));
+}
+export const roleLabel = (key) => key === 'owner' ? 'Owner' : ((roles[key] && roles[key].name) || key);
+export function myPerms() {
+  if (!currentUser) return {};
+  if (currentUser.role === 'owner') return OWNER_PERMS;
+  return (roles[currentUser.role] && roles[currentUser.role].perms) || {};
+}
+export const can = (area, level) => level === 'edit' ? canEdit(myPerms(), area) : canSee(myPerms(), area);
+
+// Live: an owner's change to a role reaches everyone with it at once.
+export function watchRoles(cb) {
+  roleWatchers.push(cb);
+  let first = true;
+  return watch('roles', rows => {
+    roles = {};
+    rows.forEach(r => { roles[r.id] = { name: r.name, perms: r.perms || {} }; });
+    // a company from before roles existed gets the starting set, once
+    if (first && !rows.length && currentUser && currentUser.role === 'owner') { first = false; seedRoles(); return; }
+    first = false;
+    roleWatchers.forEach(w => { try { w(roles); } catch (e) { console.error(e); } });
+  });
+}
+async function seedRoles() {
+  for (const [key, r] of Object.entries(DEFAULT_ROLES)) await setWithId('roles', key, { name: r.name, perms: r.perms });
+}
+export async function saveRole(key, patch) { await update('roles', key, patch); }
+export async function createRole(name) {
+  const key = 'r' + Date.now().toString(36);
+  await setWithId('roles', key, { name: String(name || '').trim() || 'New role', perms: {} });
+  return key;
+}
+export async function deleteRole(key) { await remove('roles', key); }
 const lower = (e) => String(e || '').trim().toLowerCase();
 
 // ------------------------------------------------------------- paying ------
@@ -78,6 +116,16 @@ export function accessState() {
 
 const LOCK_FREE = ['settings', 'members', 'invites'];
 function guardWrite(coll) {
+  // the team and the roles are the owner's alone
+  if (['members', 'invites', 'roles'].includes(coll)) {
+    if (currentUser && currentUser.role === 'owner') return;
+    throw Object.assign(new Error('Only the owner can change the team and the roles.'), { code: 'role' });
+  }
+  // the role must allow it (the database rules check the same)
+  const areas = WRITE_AREAS[coll];
+  if (areas && !areas.some(a => can(a, 'edit'))) {
+    throw Object.assign(new Error('Your role can only look at this, not change it. Ask the owner if you need to.'), { code: 'role' });
+  }
   if (LOCK_FREE.includes(coll) || accessState() === 'ok') return;
   throw Object.assign(new Error('Read only: the subscription is not active. The owner can subscribe under Settings → Billing.'), { code: 'subscription' });
 }
@@ -258,6 +306,7 @@ async function createCompanyFor(u, companyName, name) {
   b.set(doc(cloud.db, 'companies', cid, 'members', u.uid), { email, name: who, role: 'owner', joinedAt: nowIso() });
   b.set(doc(cloud.db, 'users', u.uid), { email, name: who, companyId: cid });
   b.set(doc(cloud.db, 'companies', cid, 'settings', 'factory'), { name: companyName, legalName: companyName, orderPrefix: prefixFor(companyName), email, updatedAt: nowIso() });
+  Object.entries(DEFAULT_ROLES).forEach(([key, r]) => b.set(doc(cloud.db, 'companies', cid, 'roles', key), { name: r.name, perms: r.perms }));
   await b.commit();
   company = { id: cid, name: companyName, ownerUid: u.uid, plan: 'trial', status: 'trial', createdAt: nowIso() };
   return { uid: u.uid, email, name: who, role: 'owner', companyId: cid };
@@ -363,7 +412,7 @@ export async function signOutNow() {
 export async function invite(email, role, name) {
   const e = lower(email);
   if (!e || !/@/.test(e)) throw new Error('Enter their email address');
-  if (!ROLES.some(r => r.key === role)) throw new Error('Pick a role');
+  if (role !== 'owner' && !roles[role]) throw new Error('Pick a role');
   const rec = { email: e, role, name: String(name || '').trim(), companyId: company.id, companyName: company.name || '', invitedBy: currentUser.name || currentUser.email, at: nowIso() };
   if (mode === 'demo') {
     const all = demoInvites(); all[e] = rec; localStorage.setItem('cp-demo-invites', JSON.stringify(all));
@@ -392,7 +441,7 @@ export async function cancelInvite(email) {
 }
 
 export async function setMemberRole(uid, role) {
-  if (!ROLES.some(r => r.key === role)) throw new Error('Unknown role');
+  if (role !== 'owner' && !roles[role]) throw new Error('Unknown role');
   await update('members', uid, { role });
 }
 
@@ -431,6 +480,7 @@ function demoCreateCompany(email, companyName, name) {
   localStorage.setItem('cp-demo-companies', JSON.stringify(m));
   demoMemberSet(cid, 'demo-' + email, { email, name: name || email, role: 'owner' });
   localStorage.setItem(demoPrefix(cid) + 'settings', JSON.stringify({ factory: { name: companyName, legalName: companyName, orderPrefix: prefixFor(companyName), email, updatedAt: nowIso() } }));
+  localStorage.setItem(demoPrefix(cid) + 'roles', JSON.stringify(Object.fromEntries(Object.entries(DEFAULT_ROLES).map(([k, r]) => [k, { name: r.name, perms: r.perms }]))));
   return { uid: 'demo-' + email, name: name || email, companyId: cid, role: 'owner' };
 }
 function demoJoin(email, inv, name) {
@@ -506,6 +556,15 @@ export async function create(coll, data) {
   }
   const ref = await cloud.fns.addDoc(collRef(coll), record);
   return ref.id;
+}
+
+// A record with an id we choose (role keys).
+async function setWithId(coll, id, data) {
+  guardWrite(coll);
+  const who = currentUser ? currentUser.name : 'system';
+  const record = { ...data, updatedAt: nowIso(), updatedBy: who };
+  if (mode === 'demo') { const map = demoRead(coll); map[id] = { ...(map[id] || {}), ...record }; demoWrite(coll, map); return; }
+  await cloud.fns.setDoc(docRef(coll, id), record, { merge: true });
 }
 
 // Patch-only update: just the named fields are sent, so concurrent edits to
