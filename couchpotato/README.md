@@ -14,6 +14,7 @@ web address. Until then it runs in demo mode in whatever browser opens it.
 ```
 couchpotato/
   index.html        sign-in screen and the app shell
+  www/              the public website and its screenshots
   css/app.css       one stylesheet, no framework
   js/config.js      product name, trial length, the Firebase project, defaults
   firestore.rules   the database rules that keep companies apart
@@ -97,5 +98,11 @@ company paid. When a trial ends or payments stop the company becomes read
 only, enforced by the database rules. The seller's Clients tab lists every
 company, the monthly income, and can extend a trial or give free access.
 
-Next: a public website with pricing, and per-role limits on what each role can
-change.
+Also built: the public website (couchpotato/www/index.html, served at
+/factory-manager). What the app does with real screenshots of a fictional
+demo company, the live price from the billing function, a short FAQ, and
+"Start free trial" buttons that open the app's sign-up form (?signup=1). The
+product name and app address are set at the bottom of the page.
+
+Next: per-role limits on what each role can change, and terms of service and
+a privacy policy for the website.

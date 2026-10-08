@@ -184,6 +184,7 @@ async function cancelSubscription() {
 
 // ?join=<email> is the link an owner sends to someone they invited.
 const JOIN_EMAIL = new URLSearchParams(location.search).get('join') || '';
+let SIGNUP = new URLSearchParams(location.search).get('signup') === '1';
 
 function setLoginMode(mode) {
   const form = document.getElementById('login-form');
@@ -215,6 +216,7 @@ function showLogin() {
          Sign in with any email to look around the demo factory, or start a trial to set up an empty company of your own.
        </div>`;
   if (JOIN_EMAIL) { document.getElementById('login-email').value = JOIN_EMAIL; setLoginMode('join'); }
+  else if (SIGNUP) { SIGNUP = false; setLoginMode('up'); }      // "Start free trial" on the website
   else setLoginMode(document.getElementById('login-form').dataset.mode || 'in');
 }
 
