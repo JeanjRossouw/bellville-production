@@ -149,6 +149,19 @@ export async function commitWrites(items) {
   }
 }
 
+// Create a document only if it is not there yet, and in the same write add
+// to number fields elsewhere (e.g. take stock off a product): both happen, or
+// neither. false when the document was already there.
+export async function createWith(path, data, incs) {
+  const writes = [{ update: { name: docName(path), fields: toFs(data).mapValue.fields }, currentDocument: { exists: false } }]
+    .concat((incs || []).map(w => ({ transform: { document: docName(w.path), fieldTransforms: Object.entries(w.inc).map(([f, n]) => ({ fieldPath: f, increment: toFs(n) })) } })));
+  const res = await call('POST', `${root()}:commit`, { writes });
+  if (res.ok) return true;
+  const t = await res.text();
+  if (res.status === 409 || /ALREADY_EXISTS|FAILED_PRECONDITION/.test(t)) return false;
+  throw new Error(`Firestore create ${path} failed: ${t}`);
+}
+
 // The company's next number in a sequence (orderNo, invoiceNo …), the way
 // the app hands them out. The counter is written only if nobody changed it
 // since we read it; if somebody did, read again and retry. So two people (or

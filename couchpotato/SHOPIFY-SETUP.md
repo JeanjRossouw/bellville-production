@@ -12,13 +12,14 @@ kept on the server.
   colour (the variant or a "Fabric"/"Colour" line property), the price before
   VAT after discounts, the paid date, a due date from the lead time, and the
   delivery address. Orders show an **online #1001** tag.
-  - Comes in **once paid** (deposit or full) by default, or **as soon as
+  - Comes in **once paid** (deposit, full, or paid and partly refunded) by default, or **as soon as
     placed** if the owner picks that. An order taken in unpaid gets its paid
     date filled in when Shopify says it is paid.
   - If the product is linked and enough are on the shelf, the order is sent
     **from stock** (status Done, straight to delivery) and the shelf count goes
     down. Otherwise it is built.
-  - The customer is matched by email, then cell number, or added.
+  - The customer is matched by email, then cell number, however they were
+    typed (capitals, spaces, +27 or 0), or added.
   - Only orders placed after connecting come in. Cancelled, refunded or
     already-fulfilled orders, gift cards and tips are left out.
   - Every order comes in once only, however often Shopify sends it.
@@ -30,12 +31,19 @@ kept on the server.
   ones are added.
 - **Till → shop stock.** A sale at the till of a linked product "from stock"
   takes the same number off Shopify's count. It is sent as "take 2 off", never
-  as a total, so an online sale at the same moment is not written over.
+  as a total, so an online sale at the same moment is not written over. If the
+  till is offline, the sale waits on that device and is sent with the next
+  sale or the next time the app opens; each sale counts once only.
 
 Orders arrive within a minute (Shopify webhooks), and a check every 15 minutes
-(`factory-shopify-poll`) catches anything missed. While a company's trial has
+(`factory-shopify-poll`) catches anything missed. Each check carries on
+exactly where the last one stopped, so a burst of hundreds of edited orders is
+worked through over a few runs. When the same order arrives twice at once
+(Shopify sends "created" and "paid" together), it is claimed first, so no
+order numbers are wasted. While a company's trial has
 ended or its subscription has lapsed, its online orders wait, and come in on
-the first check after it is paid up.
+the first check after it is paid up; connecting, bringing products in and
+checking by hand are read only too.
 
 ## For the company (shown in the app when they tap Connect Shopify)
 

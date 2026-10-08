@@ -17,10 +17,10 @@
 //   shopifyLinks/<cid>                     which companies the 15-minute check visits
 import { verifyFirebaseToken } from './lib/auth.mjs';
 import {
-  getDoc, patchDoc, createDoc, deleteDoc, query, commitWrites, nextNumber, companyActive, projectId
+  getDoc, patchDoc, createDoc, createWith, deleteDoc, query, commitWrites, nextNumber, companyActive, projectId
 } from './lib/factory-firestore.mjs';
 import * as shopify from './lib/factory-shopify.mjs';
-import { wantOrder, orderLines, orderDocId, customerOf, mapLine, mapProduct } from '../../couchpotato/js/shopify-map.js';
+import { wantOrder, isPaid, orderLines, orderDocId, customerOf, findCustomer, mapLine, mapProduct } from '../../couchpotato/js/shopify-map.js';
 
 const json = (status, obj) => ({ statusCode: status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, body: JSON.stringify(obj) });
 const nowIso = () => new Date().toISOString();
@@ -59,38 +59,56 @@ async function vatOf(cid) {
 // ------------------------------------------------------- online orders ----
 
 // One Shopify order into the company: its customer, then one factory order
-// per line. Safe to run twice for the same order (webhook and the 15-minute
-// check can both see it): every line has a fixed id and is only created once.
+// per line. The webhook and the 15-minute check can both see the same order,
+// often at the same moment (orders/create and orders/paid arrive together),
+// so the order is claimed first: only the run that claims it takes order
+// numbers. A claim left unfinished (the run was cut off) is taken over after
+// a few minutes, and lines already made are not made again.
+const CLAIM_STALE_MS = 3 * 60000;
+export class Busy extends Error {}
+
 export async function importOrder(cid, o, ctx) {
   const st = ctx.status || {};
-  const marker = `companies/${cid}/shopifyOrders/${o.id}`;
-  const seen = await getDoc(marker);
-  const paidNow = ['paid', 'partially_paid'].includes(String(o.financial_status || ''));
-  if (seen) {
-    // brought in before it was paid ("as soon as placed"): note the payment
+  const parent = 'companies/' + cid;
+  const marker = `${parent}/shopifyOrders/${o.id}`;
+  const paidNow = isPaid(o);
+  const wanted = wantOrder(o, st.importWhen);
+  if (!wanted && !paidNow) return null;               // nothing to do, and nothing to read
+
+  let seen = await getDoc(marker);
+  if (seen && seen.done) {
+    // brought in before it was paid ("as soon as placed"): note the payment, dated today
     if (paidNow && !seen.paid) {
-      const day = String(o.processed_at || nowIso()).slice(0, 10);
-      for (const id of seen.orderIds || []) await patchDoc(`companies/${cid}/orders/${id}`, { paidDate: day, updatedAt: nowIso(), updatedBy: 'Shopify' }).catch(() => {});
+      const day = nowIso().slice(0, 10);
+      for (const id of seen.orderIds || []) {
+        await patchDoc(`${parent}/orders/${id}`, { paidDate: day, updatedAt: nowIso(), updatedBy: 'Shopify' }).catch(() => {});
+      }
       await patchDoc(marker, { paid: true, paidAt: nowIso() });
       return { order: o.name, paidLater: true };
     }
     return null;
   }
-  if (!wantOrder(o, st.importWhen)) return null;
+  if (!wanted) return null;
+  if (seen && Date.now() - Date.parse(seen.claimedAt || 0) < CLAIM_STALE_MS) {
+    // another run is bringing it in right now; if this one knows it is paid, try again shortly
+    if (paidNow && !seen.paid) throw new Busy('order ' + (o.name || o.id) + ' is being brought in');
+    return null;
+  }
+  const claim = { name: o.name || '', claimedAt: nowIso(), paid: paidNow, done: false };
+  if (seen) await patchDoc(marker, claim);                 // take over a stale claim
+  else if (!await createDoc(marker, claim)) return null;   // someone else claimed it first
 
   const { settings, vatRate } = ctx.vat || await vatOf(cid);
-  const parent = 'companies/' + cid;
 
-  // the customer: the same email or cell number, or a new one
+  // the customer: the same email or cell number, however it was typed, or a new one
   const c = customerOf(o);
-  let customer = null;
-  if (c.email) customer = (await query(parent, 'customers', { email: c.email }, 1))[0] || null;
-  if (!customer && c.phone) customer = (await query(parent, 'customers', { phone: c.phone }, 1))[0] || null;
+  const customer = findCustomer(ctx.customers || await query(parent, 'customers', {}, 5000), c);
   let customerId = customer ? customer.id : '';
   if (!customerId) {
     customerId = 'shopify-c-' + (o.customer && o.customer.id ? o.customer.id : o.id);
     await createDoc(`${parent}/customers/${customerId}`, { ...c, notes: 'Added from online order ' + (o.name || ''), source: 'shopify',
       createdAt: nowIso(), createdBy: 'Shopify', updatedAt: nowIso(), updatedBy: 'Shopify' });
+    if (ctx.customers) ctx.customers.push({ id: customerId, ...c });
   }
   const customerName = customer ? customer.name : c.name;
 
@@ -104,14 +122,12 @@ export async function importOrder(cid, o, ctx) {
     const doc = mapLine(o, li, { customerId, customerName, product, fromStock, leadDays: settings.leadDays, vatRate });
     const n = await nextNumber(cid, 'orderNo', settings.firstOrderNo || 1001);
     doc.orderNo = (settings.orderPrefix || 'CP-') + n;
-    if (await createDoc(`${parent}/orders/${id}`, doc)) {
-      made.push({ id, orderNo: doc.orderNo });
-      // Shopify already took it off its own count; take it off ours too
-      if (fromStock) await commitWrites([{ path: `${parent}/products/${product.id}`, inc: { stock: -qty } }]);
-    } else made.push({ id });
+    // the order and, from the shelf, the stock it takes: together or not at all
+    // (Shopify already took it off its own count)
+    if (await createWith(`${parent}/orders/${id}`, doc, fromStock ? [{ path: `${parent}/products/${product.id}`, inc: { stock: -qty } }] : [])) made.push({ id, orderNo: doc.orderNo });
+    else made.push({ id });
   }
-  if (!made.length) return null;
-  await createDoc(marker, { name: o.name || '', at: nowIso(), paid: paidNow, orderIds: made.map(m => m.id), customerId });
+  await patchDoc(marker, { done: true, at: nowIso(), orderIds: made.map(m => m.id), customerId, paid: paidNow });
   const fresh = made.filter(m => m.orderNo);
   if (fresh.length) {
     await commitWrites([{ path: statusPath(cid), data: { lastOrderAt: nowIso(), lastOrderName: o.name || '' } }, { path: statusPath(cid), inc: { ordersIn: 1 } }]);
@@ -121,6 +137,11 @@ export async function importOrder(cid, o, ctx) {
 
 // Look for orders the webhooks may have missed (or that came while the app
 // was locked). Runs every 15 minutes, and from the "Check now" button.
+// It always moves forward: when time runs out it saves exactly where it got
+// to, and the next run carries on from there (with no look-back, so a big
+// burst of edited orders is worked through, not re-read for ever). After a
+// run that finished, the next one looks back 10 minutes, for orders Shopify
+// was slow to list.
 export async function syncCompany(cid, { budgetMs = 8000 } = {}) {
   const started = Date.now();
   const st = await getDoc(statusPath(cid));
@@ -130,22 +151,28 @@ export async function syncCompany(cid, { budgetMs = 8000 } = {}) {
   const cfg = await secretsOf(cid);
   if (!cfg || !cfg.clientSecret) return { cid, skipped: 'no keys' };
 
-  const since = new Date(Date.parse(st.lastCheckedAt || st.connectedAt || nowIso()) - 10 * 60000).toISOString();
+  const from = Date.parse(st.lastCheckedAt || st.connectedAt || nowIso());
+  const since = new Date(from - (st.resumeFrom ? 0 : 10 * 60000)).toISOString();
   const connectedAt = Date.parse(st.connectedAt || 0) || 0;
-  const ctx = { status: st, vat: await vatOf(cid) };
-  let orders;
-  try { orders = await shopify.listOrders(cfg, since); }
+  const ctx = { status: st, vat: await vatOf(cid), customers: await query('companies/' + cid, 'customers', {}, 5000) };
+  let list;
+  try { list = await shopify.listOrders(cfg, since, started + budgetMs / 2); }
   catch (e) { await patchDoc(statusPath(cid), { lastError: e.message, lastErrorAt: nowIso() }); throw e; }
+  const { orders } = list;
   const done = [];
-  let upTo = new Date(started).toISOString();
-  for (const o of orders) {
-    if (Date.now() - started > budgetMs) { upTo = o.updated_at || upTo; break; }    // carry on next time from here
-    if (Date.parse(o.created_at) < connectedAt) continue;                            // from before the shop was connected
-    const r = await importOrder(cid, o, ctx);
-    if (r) done.push(r);
+  let cut = !list.complete, upTo = null;
+  for (let i = 0; i < orders.length; i++) {
+    const o = orders[i];
+    if (Date.now() - started > budgetMs && i > 0) { cut = true; upTo = orders[i].updated_at; break; }
+    upTo = o.updated_at;
+    if (Date.parse(o.created_at) < connectedAt) continue;                     // from before the shop was connected
+    try { const r = await importOrder(cid, o, ctx); if (r) done.push(r); }
+    catch (e) { if (!(e instanceof Busy)) throw e; cut = true; upTo = o.updated_at; break; }   // being brought in now: come back to it
   }
-  await patchDoc(statusPath(cid), { lastCheckedAt: upTo, lastError: '' });
-  return { cid, looked: orders.length, brought: done };
+  await patchDoc(statusPath(cid), cut && upTo
+    ? { lastCheckedAt: upTo, resumeFrom: true, lastError: '' }
+    : { lastCheckedAt: new Date(started).toISOString(), resumeFrom: false, lastError: '' });
+  return { cid, looked: orders.length, brought: done, more: cut };
 }
 
 // ------------------------------------------------------------- actions ----
@@ -156,7 +183,7 @@ async function connect(event, who, body) {
   if (!domain) throw new Error('That does not look like a Shopify store. Use the address that ends in .myshopify.com');
   const cfg = { domain, clientId: String(body.clientId || '').trim(), clientSecret: String(body.clientSecret || '').trim() };
   if (!cfg.clientId || !cfg.clientSecret) throw new Error('Paste both the Client ID and the Client secret');
-  const s = await shopify.shop(cfg);                     // proves the keys work
+  const s = await shopify.shop(cfg, true);               // proves these keys to Shopify, never a cached token
   cfg.locationId = s.primaryLocationId || await shopify.locationId(cfg).catch(() => '');
   let hooks = 'on';
   try { await shopify.addWebhooks(cfg, hookUrl(event, who.cid)); }
@@ -272,6 +299,11 @@ export const handler = async (event) => {
   let body; try { body = JSON.parse(raw.toString('utf8') || '{}'); } catch { return json(400, { error: 'Invalid JSON' }); }
   let who;
   try { who = await whoIs(event); } catch (e) { return json(403, { error: e.message }); }
+  // a locked company (trial over, payment stopped) is read only here too;
+  // disconnecting and the till's stock (which skips itself) are still allowed
+  if (['connect', 'settings', 'products', 'sync'].includes(body.action) && !companyActive(who.company)) {
+    return json(403, { error: 'Your subscription is not active, so the app is read only. Subscribe under Billing to use the online shop again.' });
+  }
   try {
     switch (body.action) {
       case 'connect': return json(200, await connect(event, who, body));

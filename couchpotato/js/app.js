@@ -123,7 +123,9 @@ async function boot() {
         store.watch('members', rows => { team.members = rows; if (view === 'settings') paint(); });
         store.watch('invites', rows => { team.invites = rows; if (view === 'settings') paint(); });
         store.watch('payments', rows => { billing.payments = rows; if (view === 'settings') paint(); });
-        store.watch('integrations', rows => { shop = rows.find(r => r.id === 'shopify') || null; if (view === 'settings') paint(); });
+        // only the Online shop card is redrawn: the 15-minute check writes here,
+        // and a full repaint would wipe settings the owner is still typing
+        store.watch('integrations', rows => { shop = rows.find(r => r.id === 'shopify') || null; if (view === 'settings') redrawShopCard(); });
         store.getPlan().then(r => { billing.plan = r.plan; billing.configured = !!r.configured; if (view === 'settings') paint(); });
       }
       // a payment, a cancellation or an extended trial takes effect live
@@ -132,6 +134,7 @@ async function boot() {
       if (BILLING_RETURN === 'done') toast('Thank you — your subscription starts as soon as PayFast confirms the payment, usually within a minute.');
       if (BILLING_RETURN === 'cancelled') toast('Payment cancelled — nothing was charged.', 'warn');
       store.seedDemoIfEmpty();
+      store.shopifyRetryPending();      // till sales whose stock could not reach the online shop yet
       settings = await store.loadSettings(FACTORY_DEFAULTS);
       setOrderSettings(settings);
       setFloorSettings(settings);
@@ -546,15 +549,22 @@ function billingCard() {
 
 const ago = (iso) => { if (!iso) return ''; const m = Math.round((Date.now() - Date.parse(iso)) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : longDate(iso); };
 
+function redrawShopCard() {
+  const el = document.getElementById('shop-card');
+  if (!el) return;
+  if (document.activeElement && document.activeElement.id === 'shop-when') return;   // mid-choice: leave it be
+  el.outerHTML = shopCard();
+}
+
 function shopCard() {
   const s = shop || {};
-  if (!s.connected) return `<div class="card">
+  if (!s.connected) return `<div class="card" id="shop-card">
     <h2>Online shop</h2>
     <p>Connect your Shopify store and every online order comes in as a factory order by itself, with the customer, the fabric and the delivery address. Your shop’s products come into your price list, and pieces sold from stock at the till come off the shop’s count too.</p>
     <div class="card-actions"><button class="btn primary" data-act="shop-connect">Connect Shopify</button></div>
   </div>`;
   const when = s.importWhen === 'placed' ? 'placed' : 'paid';
-  return `<div class="card">
+  return `<div class="card" id="shop-card">
     <h2>Online shop</h2>
     <p><strong>Connected to ${esc(s.shopName || s.domain)}</strong> <span class="muted">(${esc(s.domain || '')})</span>. Online orders come in by themselves${s.webhooks === 'on' ? ' within a minute' : ', every 15 minutes'}.</p>
     <p class="muted">Orders brought in: ${esc(String(s.ordersIn || 0))}${s.lastOrderName ? ' · last ' + esc(s.lastOrderName) + ' ' + esc(ago(s.lastOrderAt)) : ''} · last checked ${esc(ago(s.lastCheckedAt) || 'not yet')}${s.productsAt ? ' · products brought in ' + esc(ago(s.productsAt)) : ''}</p>
@@ -618,7 +628,9 @@ async function shopDisconnect() {
   if (await shopRun('disconnect')) toast('Shop disconnected');
 }
 async function shopWhen(value) {
-  if (await shopRun('settings', '', null, { importWhen: value })) toast(value === 'placed' ? 'Online orders come in as soon as they are placed' : 'Online orders come in once they are paid');
+  if (await shopRun('settings', '', null, { importWhen: value })) { toast(value === 'placed' ? 'Online orders come in as soon as they are placed' : 'Online orders come in once they are paid'); return; }
+  const sel = document.getElementById('shop-when');     // not saved: show what is really set
+  if (sel) sel.value = (shop && shop.importWhen) === 'placed' ? 'placed' : 'paid';
 }
 
 // ------------------------------------------------------------ the seller ----

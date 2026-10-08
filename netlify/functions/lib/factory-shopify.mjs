@@ -22,11 +22,14 @@ export function normaliseDomain(input) {
   return /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(s) ? s : '';
 }
 
+// Tokens are cached per store, app AND secret, so a token is only ever handed
+// to a caller who holds the right secret. `fresh` skips the cache altogether:
+// connecting must prove the secret to Shopify itself.
 const tokens = {};
-async function token(cfg) {
-  const key = cfg.domain + '|' + cfg.clientId;
+async function token(cfg, fresh) {
+  const key = cfg.domain + '|' + cfg.clientId + '|' + crypto.createHash('sha256').update(String(cfg.clientSecret || '')).digest('hex');
   const c = tokens[key];
-  if (c && Date.now() < c.exp - 60000) return c.token;
+  if (!fresh && c && Date.now() < c.exp - 60000) return c.token;
   const res = await fetch(`https://${cfg.domain}/admin/oauth/access_token`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({ client_id: cfg.clientId, client_secret: cfg.clientSecret, grant_type: 'client_credentials' })
@@ -43,11 +46,11 @@ async function token(cfg) {
 }
 
 // One call. Returns { json, next } where next is the following page's URL.
-async function api(cfg, pathOrUrl, { method = 'GET', body } = {}) {
+async function api(cfg, pathOrUrl, { method = 'GET', body, fresh } = {}) {
   const url = pathOrUrl.startsWith('https://') ? pathOrUrl : `https://${cfg.domain}/admin/api/${API_VERSION}${pathOrUrl}`;
   const res = await fetch(url, {
     method, body: body ? JSON.stringify(body) : undefined,
-    headers: { 'X-Shopify-Access-Token': await token(cfg), 'Content-Type': 'application/json', Accept: 'application/json' }
+    headers: { 'X-Shopify-Access-Token': await token(cfg, fresh), 'Content-Type': 'application/json', Accept: 'application/json' }
   });
   const text = await res.text();
   if (!res.ok) {
@@ -61,8 +64,9 @@ async function api(cfg, pathOrUrl, { method = 'GET', body } = {}) {
   return { json: text ? JSON.parse(text) : null, next: m ? m[1] : null };
 }
 
-export async function shop(cfg) {
-  const { json } = await api(cfg, '/shop.json');
+// The shop's details. With `fresh`, the keys are proven to Shopify first.
+export async function shop(cfg, fresh) {
+  const { json } = await api(cfg, '/shop.json', { fresh });
   const s = json.shop || {};
   return { name: s.name || '', currency: s.currency || '', taxesIncluded: !!s.taxes_included, email: s.email || '', primaryLocationId: s.primary_location_id ? String(s.primary_location_id) : '' };
 }
@@ -97,16 +101,19 @@ export async function listProducts(cfg) {
   return out;
 }
 
-// Orders changed since a moment (new, paid, edited), oldest first.
-export async function listOrders(cfg, sinceIso) {
-  const out = [];
+// Orders changed since a moment (new, paid, edited), oldest first. Stops
+// fetching more pages at `deadline` (ms timestamp); `complete` says whether
+// every page was read.
+export async function listOrders(cfg, sinceIso, deadline = Infinity) {
+  const orders = [];
   let url = '/orders.json?status=any&limit=250&order=updated_at+asc&updated_at_min=' + encodeURIComponent(sinceIso);
   while (url) {
     const { json, next } = await api(cfg, url);
-    out.push(...(json.orders || []));
+    orders.push(...(json.orders || []));
     url = next;
+    if (url && Date.now() > deadline) return { orders, complete: false };
   }
-  return out;
+  return { orders, complete: true };
 }
 
 // Take (or add) stock on Shopify by a number of pieces, never by setting a

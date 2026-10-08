@@ -10,6 +10,10 @@ export function addDays(ymd, n) {
   return d.toISOString().slice(0, 10);
 }
 
+// Paid in full, a deposit, or paid and then partly refunded.
+export const PAID = ['paid', 'partially_paid', 'partially_refunded'];
+export const isPaid = (o) => PAID.includes(String((o && o.financial_status) || ''));
+
 // Should this order come in? `when` is the company's choice:
 //   'paid'   (default) once it is paid, in full or a deposit
 //   'placed' as soon as the customer places it, paid or not
@@ -19,7 +23,7 @@ export function wantOrder(o, when) {
   if (o.fulfillment_status === 'fulfilled') return false;     // already sent out by the shop itself
   const fs = String(o.financial_status || '');
   if (['voided', 'refunded'].includes(fs)) return false;
-  if (when !== 'placed' && !['paid', 'partially_paid'].includes(fs)) return false;
+  if (when !== 'placed' && !PAID.includes(fs)) return false;
   return orderLines(o).length > 0;
 }
 
@@ -35,10 +39,10 @@ export function unitPriceExVat(o, li, vatRate) {
   const qty = Number(li.quantity) || 1;
   const disc = (li.discount_allocations || []).reduce((s, d) => s + (Number(d.amount) || 0), 0) || Number(li.total_discount) || 0;
   const each = (Number(li.price) || 0) - disc / qty;
-  // not VAT registered: the shop's price is the whole price
-  if (!o.taxes_included || !(Number(vatRate) > 0)) return r2(each);
-  const rate = (li.tax_lines || []).reduce((s, t) => s + (Number(t.rate) || 0), 0) || Number(vatRate);
-  return r2(each / (1 + rate));
+  // not VAT registered, or no VAT on this item: the shop's price is the whole price
+  if (!o.taxes_included || !(Number(vatRate) > 0) || li.taxable === false) return r2(each);
+  const rate = Array.isArray(li.tax_lines) ? li.tax_lines.reduce((s, t) => s + (Number(t.rate) || 0), 0) : Number(vatRate);
+  return rate > 0 ? r2(each / (1 + rate)) : r2(each);
 }
 
 // Fabric or colour, if the shop asks for it: a line property first (custom
@@ -68,6 +72,19 @@ export function customerOf(o) {
   };
 }
 
+// The same person, however the email or number was typed:
+// "Sarah@Example.com " = "sarah@example.com"; "+27 82 777 1234" = "082 777 1234".
+export const emailKey = (e) => String(e || '').trim().toLowerCase();
+export function phoneKey(p) {
+  let d = String(p || '').replace(/\D/g, '');
+  if (d.startsWith('0')) d = '27' + d.slice(1);
+  return d.length >= 9 ? d : '';
+}
+export function findCustomer(list, c) {
+  const e = emailKey(c.email), ph = phoneKey(c.phone);
+  return (e && list.find(x => emailKey(x.email) === e)) || (ph && list.find(x => phoneKey(x.phone) === ph)) || null;
+}
+
 export const orderDocId = (o, li) => 'shopify-' + o.id + '-' + li.id;
 
 // One factory order per line. `product` is the matching Factory Manager
@@ -78,11 +95,11 @@ export function mapLine(o, li, { customerId, customerName, product, fromStock, l
   const now = new Date().toISOString();
   const ship = o.shipping_address || {};
   const paidDay = dayOf(o.processed_at || o.created_at) || now.slice(0, 10);
-  const paid = ['paid', 'partially_paid'].includes(String(o.financial_status || ''));
+  const paid = isPaid(o);
   const fabric = fabricOf(li);
   const qty = Number(li.current_quantity ?? li.quantity) || 1;
   const notes = [
-    'Online order ' + (o.name || '#' + o.order_number) + ' on Shopify' + (paid ? (o.financial_status === 'partially_paid' ? ', deposit paid' : ', paid') : ', not paid yet'),
+    'Online order ' + (o.name || '#' + o.order_number) + ' on Shopify' + (paid ? (o.financial_status === 'partially_paid' ? ', deposit paid' : o.financial_status === 'partially_refunded' ? ', paid, partly refunded' : ', paid') : ', not paid yet'),
     fromStock ? 'Sent from stock, not built.' : '',
     li.sku ? 'SKU ' + li.sku : '',
     (li.properties || []).filter(p => String(p.name || '')[0] !== '_' && String(p.value || '').trim()).map(p => p.name + ': ' + p.value).join('\n'),

@@ -200,7 +200,8 @@ export function editProduct(id) {
 }
 export async function duplicateProduct(id) {
   const p = products.find(x => x.id === id); if (!p) return;
-  const { id: _id, createdAt, createdBy, updatedAt, updatedBy, events, ...rest } = p;
+  // the copy is a product of its own: not linked to the online shop's item
+  const { id: _id, createdAt, createdBy, updatedAt, updatedBy, events, shopifyProductId, shopifyVariantId, shopifyInventoryItemId, source, ...rest } = p;
   await store.create('products', { ...rest, name: p.name + ' (copy)' });
   toast('Copied — now edit the copy');
 }

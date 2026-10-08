@@ -23,7 +23,7 @@
 //           demonstrated before any database is created
 import { FIREBASE_CONFIG, isCloudConfigured, TRIAL_DAYS } from './config.js';
 import { DEFAULT_ROLES, WRITE_AREAS, OWNER_PERMS, canSee, canEdit } from './permissions.js';
-import { wantOrder, orderLines, orderDocId, customerOf, mapLine, mapProduct } from './shopify-map.js';
+import { wantOrder, orderLines, orderDocId, customerOf, findCustomer, mapLine, mapProduct } from './shopify-map.js';
 
 const FB_VERSION = '10.13.0';
 const FB = (m) => `https://www.gstatic.com/firebasejs/${FB_VERSION}/firebase-${m}.js`;
@@ -206,10 +206,28 @@ export async function shopifyCall(action, payload) {
 }
 
 // A till sale took pieces off the shelf: Shopify takes the same off its
-// count. Quietly, in the background; a failure shows in Settings.
+// count. Quietly, in the background. If it cannot get through (offline, a
+// hiccup), the sale waits on this device and is sent again with the next sale
+// or the next time the app opens; the server sends each sale once only.
+// Shopify refusing a line shows in Settings.
+const PUSH_KEY = 'cp-shopify-pending';
+const pendingPushes = () => { try { return JSON.parse(localStorage.getItem(PUSH_KEY) || '[]'); } catch (e) { return []; } };
+const savePending = (a) => { try { localStorage.setItem(PUSH_KEY, JSON.stringify(a.slice(-200))); } catch (e) { /* storage off */ } };
+async function pushOne(saleId) {
+  try { await shopifyCall('pushSale', { saleId }); savePending(pendingPushes().filter(x => x !== saleId)); }
+  catch (e) {
+    console.warn('Shopify stock not sent yet:', e.message);
+    if (!/not found|Which sale/i.test(e.message)) { const p = pendingPushes(); if (!p.includes(saleId)) savePending(p.concat(saleId)); }
+    else savePending(pendingPushes().filter(x => x !== saleId));
+  }
+}
 export function shopifyPushSale(saleId, lines) {
-  if (!(lines || []).some(l => l.kind === 'stock' && l.productId)) return;
-  shopifyCall('pushSale', { saleId }).catch(e => console.warn('Shopify stock not sent:', e.message));
+  shopifyRetryPending();
+  if ((lines || []).some(l => l.kind === 'stock' && l.productId)) pushOne(saleId);
+}
+export function shopifyRetryPending() {
+  if (mode === 'demo') return;
+  pendingPushes().forEach(id => pushOne(id));
 }
 
 // In demo mode there is no real shop: a made-up one shows the whole flow,
@@ -231,7 +249,7 @@ function demoShopify(action, p) {
     const full = /\.myshopify\.com$/.test(domain) ? domain : domain + '.myshopify.com';
     if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(full)) throw new Error('That does not look like a Shopify store. Use the address that ends in .myshopify.com');
     if (!String(p.clientId || '').trim() || !String(p.clientSecret || '').trim()) throw new Error('Paste both the Client ID and the Client secret');
-    const name = full.replace('.myshopify.com', '').split('-').map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
+    const name = full.replace('.myshopify.com', '').split('-').filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
     save({ connected: true, domain: full, shopName: name, currency: 'ZAR', taxesIncluded: true, connectedAt: nowIso(), connectedBy: (currentUser || {}).name || '',
       lastCheckedAt: nowIso(), importWhen: p.importWhen === 'placed' ? 'placed' : 'paid', webhooks: 'on', lastError: '', ordersIn: Number(st.ordersIn) || 0, demo: true });
     return { ok: true, shopName: name, webhooks: 'on' };
@@ -279,7 +297,8 @@ function demoShopify(action, p) {
     const { settings, vatRate } = vat();
     const c = customerOf(o);
     const custs = demoRead('customers');
-    let customerId = Object.keys(custs).find(k => c.email && String(custs[k].email || '').toLowerCase() === c.email);
+    const hit = findCustomer(Object.keys(custs).map(k => ({ id: k, ...custs[k] })), c);
+    let customerId = hit ? hit.id : '';
     if (!customerId) { customerId = 'shopify-c-' + o.customer.id; custs[customerId] = { ...c, notes: 'Added from online order ' + o.name, source: 'shopify', createdAt: nowIso(), createdBy: 'Shopify', updatedAt: nowIso(), updatedBy: 'Shopify' }; demoWrite('customers', custs); }
     const customerName = custs[customerId].name;
     const products = demoRead('products');
