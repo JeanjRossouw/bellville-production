@@ -774,3 +774,25 @@ h2 { font-family: var(--font-ui); font-weight: 600; font-size: 12px; letter-spac
 .readonly-bar { background: #7f1d1d; color: #fff; text-align: center; font-size: 13px; padding: .55rem 1rem; display: flex; gap: .8rem; justify-content: center; align-items: center; flex-wrap: wrap; }
 .readonly-bar .btn { background: #fff; color: #7f1d1d; border-color: #fff; }
 .client-row { grid-template-columns: minmax(0, 1.6fr) auto auto; }
+
+/* ------------------------------------------------------------------ stock */
+.nowrap { white-space: nowrap; }
+.stock-tbl tr.short td:first-child { box-shadow: inset 3px 0 0 #b91c1c; }
+.stock-order { border-left: 4px solid #b91c1c; }
+.stock-sup { border-top: 1px solid var(--line); padding: .7rem 0 .4rem; }
+.stock-sup-head { display: flex; justify-content: space-between; align-items: center; gap: .6rem; flex-wrap: wrap; margin-bottom: .35rem; }
+.stock-line { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; gap: .6rem; font-size: 13px; padding: .2rem 0; }
+.po-head, .po-row { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(70px, .8fr) minmax(80px, .9fr) 34px; gap: .45rem; align-items: center; }
+.po-head { font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .25rem; }
+.po-row { margin-bottom: .4rem; }
+.po-row select, .po-row input { width: 100%; }
+.po-total { margin-top: .6rem; font-weight: 600; text-align: right; }
+.po-msg { white-space: pre-wrap; background: var(--paper, #f4f3f0); border: 1px solid var(--line); padding: .7rem .8rem; font: 13px/1.5 var(--font-ui, inherit); border-radius: 4px; }
+.po-recv { display: grid; grid-template-columns: minmax(0, 1fr) 110px auto; gap: .6rem; align-items: center; padding: .5rem 0; border-top: 1px solid var(--line); }
+.check { display: flex; gap: .5rem; align-items: center; margin-top: .9rem; font-size: 13px; }
+@media (max-width: 640px) {
+  .stock-line { grid-template-columns: 1fr; gap: 0; padding: .35rem 0; }
+  .po-head { display: none; }
+  .po-row { grid-template-columns: 1fr 1fr 34px; }
+  .po-row .po-mat { grid-column: 1 / -1; }
+}

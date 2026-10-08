@@ -518,6 +518,7 @@ export async function update(coll, id, patch, event) {
   if (mode === 'demo') {
     const map = demoRead(coll);
     if (!map[id]) return;
+    Object.keys(body).forEach(k => { const v = body[k]; if (v && typeof v === 'object' && '__inc' in v) body[k] = Math.round(((Number(map[id][k]) || 0) + v.__inc) * 1000) / 1000; });
     map[id] = { ...map[id], ...body };
     if (event) map[id].events = [...(map[id].events || []), { at: nowIso(), by: who, what: event }];
     demoWrite(coll, map);
@@ -525,6 +526,14 @@ export async function update(coll, id, patch, event) {
   }
   if (event) body.events = cloud.fns.arrayUnion({ at: nowIso(), by: who, what: event });
   await cloud.fns.updateDoc(docRef(coll, id), body);
+}
+
+// Add to (or take from) a number without reading it first, so two people
+// receiving and using stock at the same moment never lose each other's change:
+//   update('materials', id, { onHand: inc(-3) })
+export function inc(n) {
+  const v = Number(n) || 0;
+  return mode === 'demo' ? { __inc: v } : cloud.fns.increment(v);
 }
 
 export async function remove(coll, id) {
@@ -672,7 +681,26 @@ function seedDemoBase() {
 // Twenty more orders, generated from a fixed seed so every demo browser gets
 // the same believable mix: several customers, every catalogue product, orders
 // at each stage, some late, some waiting on fabric, a few already out the door.
+// Shelf counts, reorder levels and one delivery on its way, so the Stock
+// screen has something true to say in the demo.
+function seedDemoStock() {
+  const mats = demoRead('materials');
+  if (!mats['m-foam'] || mats['m-foam'].onHand != null) return;
+  // most materials comfortable; foam, fabric and staples running low
+  const lv = { 'm-pine': [640, 150, 300], 'm-ply': [26, 6, 10], 'm-foam': [22, 30, 40], 'm-foam100': [6, 12, 20], 'm-web': [620, 200, 300],
+    'm-dac': [210, 60, 100], 'm-fab': [70, 80, 100], 'm-feet': [150, 40, 100], 'm-glue': [16, 5, 10], 'm-stap': [2, 4, 10] };
+  Object.keys(lv).forEach(k => { if (mats[k]) Object.assign(mats[k], { onHand: lv[k][0], reorderLevel: lv[k][1], reorderQty: lv[k][2], countedAt: nowIso() }); });
+  demoWrite('materials', mats);
+  const pos = demoRead('purchaseOrders');
+  pos['po1'] = { poNo: 'PO-0001', supplier: 'Foam Factory', supplierPhone: '021 555 0101', supplierEmail: 'orders@foamfactory.example', expectedDate: new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10),
+    status: 'sent', sentAt: nowIso(), notes: '', lines: [{ materialId: 'm-foam100', name: 'Foam 100mm seat', unit: 'm²', qty: 20, cost: 340, received: 0 }],
+    events: [], createdAt: new Date(Date.now() - 2 * 86400000).toISOString(), createdBy: 'demo', updatedAt: nowIso(), updatedBy: 'demo' };
+  demoWrite('purchaseOrders', pos);
+  const c = demoRead('counters'); c.poNo = { value: 2 }; demoWrite('counters', c);
+}
+
 function seedDemoExtras() {
+  seedDemoStock();
   const orders = demoRead('orders');
   if (orders['r1']) return;
   let seed = 20261006;

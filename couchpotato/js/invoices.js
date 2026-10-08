@@ -7,7 +7,7 @@
 import * as store from './store.js';
 import { allOrders, orderById } from './orders.js';
 import { allCustomers, customerById } from './customers.js';
-import { esc, money, field, row, val, openModal, toast, empty, niceDate, today, addDays } from './ui.js';
+import { esc, money, field, row, val, openModal, toast, empty, niceDate, today, addDays, openPrint, docHeader } from './ui.js';
 
 let invoices = [];
 let unwatch = null;
@@ -267,32 +267,7 @@ function statementsHtml(cur) {
 
 // --------------------------------------------------------------- printing ---
 
-const PRINT_CSS = `
-  body { font: 12px/1.45 Arial, Helvetica, sans-serif; color: #000; margin: 0; padding: 18px; }
-  .no-print { margin-bottom: 12px; } @media print { .no-print { display: none; } }
-  .hd { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #000; padding-bottom: 10px; margin-bottom: 14px; }
-  .co { font-size: 22px; font-weight: 900; letter-spacing: .1em; } .co small { display: block; font-size: 10px; font-weight: 400; letter-spacing: .04em; color: #333; white-space: pre-line; margin-top: 4px; }
-  .t { text-align: right; } .t b { display: block; font-size: 22px; letter-spacing: .08em; } .t .n { font-size: 16px; font-weight: 800; } .t span { display: block; font-size: 10.5px; color: #333; }
-  .two { display: flex; justify-content: space-between; gap: 20px; margin-bottom: 14px; } .box { flex: 1; } .box h4 { margin: 0 0 3px; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: #333; }
-  table { width: 100%; border-collapse: collapse; } th, td { border: 1px solid #000; padding: 6px 8px; text-align: left; vertical-align: top; } th { background: #eee; font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; }
-  .r { text-align: right; } .tot td { font-weight: 800; } .big td { font-size: 14px; }
-  .bank { margin-top: 16px; border: 1px solid #000; padding: 8px; white-space: pre-line; font-size: 11.5px; } .bank b { display: block; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 3px; }
-  .ft { margin-top: 14px; font-size: 10px; color: #333; } .paid { position: absolute; right: 40px; top: 120px; border: 4px solid #15803d; color: #15803d; font-size: 28px; font-weight: 900; padding: 4px 16px; transform: rotate(-12deg); letter-spacing: .1em; }
-`;
-function openPrint(title, body) {
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${PRINT_CSS}</style></head><body>
-    <div class="no-print"><button onclick="window.print()" style="padding:8px 16px;font-weight:800;background:#000;color:#fff;border:0;cursor:pointer">PRINT</button>
-    <button onclick="window.close()" style="padding:8px 16px;margin-left:8px;cursor:pointer">CLOSE</button></div>${body}</body></html>`;
-  const win = window.open('', '_blank');
-  if (!win) { toast('Pop-up blocked — allow pop-ups for this site, then try again', 'warn'); return; }
-  win.document.write(html); win.document.close();
-}
-function coHeader(kind, no, lines) {
-  const details = [settings.legalName && settings.legalName !== settings.name ? settings.legalName : '', settings.address, settings.phone, settings.email,
-    settings.regNo ? 'Reg. no. ' + settings.regNo : '', settings.vatRegistered && settings.vatNo ? 'VAT no. ' + settings.vatNo : ''].filter(Boolean).join('\n');
-  return `<div class="hd"><div class="co">${esc((settings.name || 'COUCH POTATO').toUpperCase())}<small>${esc(details)}</small></div>
-    <div class="t"><b>${esc(kind)}</b><span class="n">${esc(no)}</span>${(lines || []).map(l => `<span>${esc(l)}</span>`).join('')}</div></div>`;
-}
+const coHeader = (kind, no, lines) => docHeader(settings, kind, no, lines);
 
 export function printInvoice(id) {
   const inv = invoiceById(id);
