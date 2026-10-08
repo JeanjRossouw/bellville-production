@@ -28,6 +28,7 @@ couchpotato/
   js/invoices.js    invoice queue, invoices, payments, statements, export
   js/pos.js         point of sale: the showroom till
   js/stock.js       materials on hand, purchase orders, stock movements
+  js/storeroom.js   the stock room: receive, client fabric, stock take, give out, tools
   js/quotes.js      quotations that turn into orders
   js/profit.js      profit per month, product and piece
   js/deliveries.js  booking deliveries, drivers, runs, signed notes
@@ -139,5 +140,14 @@ day, slot and driver; send the run on WhatsApp; the driver works from a
 private link with no login, the client signs on delivery, and the order
 moves to Dispatched. The menu groups screens into drop-downs (Sales,
 Production, Buying, Money).
+
+Also built: the stock room (js/storeroom.js) for a stock room manager who
+receives, counts and gives out but cannot change anything else: deliveries
+against purchase orders or without one, a client's fabric booked to its
+order (the order shows the fabric received), a one-page stock take, stock
+given to people (recorded, not taken off the shelf, since production
+already does that), tools and assets lent out and returned, the people they
+go to, and an "issued vs used" comparison. The rules hold a stock-room-only
+role to the count, the received quantities and the fabric fields.
 
 Next: terms of service and a privacy policy for the website.

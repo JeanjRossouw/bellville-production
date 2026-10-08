@@ -64,10 +64,15 @@ export function needsFor(o) {
     .map(l => ({ materialId: l.materialId, qty: r3(Number(l.qty) * q) }));
 }
 
-async function logMove(materialId, qty, kind, ref, note) {
+// Every change to the shelf, and every hand-out to a person, is one line
+// here. `extra` carries who stock was given to (personId, person).
+export async function logMove(materialId, qty, kind, ref, note, extra) {
   const m = materialById(materialId) || {};
-  await store.create('stockMoves', { materialId, name: m.name || '', unit: m.unit || '', qty: r3(qty), kind, ref: ref || '', note: note || '' });
+  await store.create('stockMoves', { materialId: materialId || '', name: (extra && extra.name) || m.name || '', unit: (extra && extra.unit) || m.unit || '', qty: r3(qty), kind, ref: ref || '', note: note || '', ...(extra || {}) });
 }
+export const allMoves = () => moves;
+// Moves that record who has stock, without changing the count on the shelf.
+export const ALLOCATION = ['issued', 'issue-return', 'client-fabric'];
 
 // A piece goes into production: its materials come off the shelf, once.
 export async function consumeForOrder(o) {
@@ -205,7 +210,8 @@ function renderPOs() {
   </table></div>`;
 }
 
-const MOVE_KIND = { used: 'Used on', returned: 'Back from', received: 'Received on', count: 'Stock count', opening: 'First count' };
+const MOVE_KIND = { used: 'Used on', returned: 'Back from', received: 'Received on', 'received-direct': 'Received', count: 'Stock count', opening: 'First count',
+  issued: 'Given to', 'issue-return': 'Brought back by', 'client-fabric': 'Client fabric for' };
 function renderMoves() {
   if (!moves.length) return empty('', 'Nothing has moved yet', 'Every count, delivery and order that uses materials is listed here.');
   return `<div class="card" style="padding:0; overflow:auto"><table class="tbl">
@@ -213,8 +219,10 @@ function renderMoves() {
     <tbody>${moves.slice(0, 200).map(m => `<tr>
       <td class="nowrap">${esc(String(m.createdAt || '').slice(0, 16).replace('T', ' '))}</td>
       <td>${esc(m.name)}</td>
-      <td class="r"><strong style="color:${m.qty < 0 ? '#b91c1c' : '#1f7a3a'}">${m.qty > 0 ? '+' : ''}${esc(qtyTxt(m.qty))}</strong> <span class="muted">${esc(m.unit || '')}</span></td>
-      <td>${esc(MOVE_KIND[m.kind] || m.kind)} ${esc(m.ref || '')}${m.note ? '<div class="muted">' + esc(m.note) + '</div>' : ''}</td>
+      <td class="r">${ALLOCATION.includes(m.kind)
+        ? `<strong>${esc(qtyTxt(Math.abs(m.qty)))}</strong> <span class="muted">${esc(m.unit || '')}</span><div class="muted">not off stock</div>`
+        : `<strong style="color:${m.qty < 0 ? '#b91c1c' : '#1f7a3a'}">${m.qty > 0 ? '+' : ''}${esc(qtyTxt(m.qty))}</strong> <span class="muted">${esc(m.unit || '')}</span>`}</td>
+      <td>${esc(MOVE_KIND[m.kind] || m.kind)} ${esc(m.person || '')} ${esc(m.ref || '')}${m.note ? '<div class="muted">' + esc(m.note) + '</div>' : ''}</td>
       <td>${esc(m.createdBy || '')}</td></tr>`).join('')}</tbody>
   </table></div>`;
 }
@@ -400,13 +408,14 @@ export function receivePurchaseOrder(id) {
     <p class="muted">Enter what actually arrived. Anything short stays on order.</p>
     ${lines.map(l => `<div class="po-recv"><span><strong>${esc(l.name)}</strong><div class="muted">ordered ${esc(qtyTxt(l.qty))} ${esc(l.unit)}${l.received ? ', already received ' + esc(qtyTxt(l.received)) : ''}</div></span>
       <input type="number" min="0" step="0.01" data-line="${l.i}" value="${l.out > 0 ? esc(qtyTxt(l.out)) : 0}" ${l.out > 0 ? '' : 'disabled'}><span class="muted">${esc(l.unit)}</span></div>`).join('')}
-    <label class="check"><input type="checkbox" id="pr-price" checked> Update material prices to this order's prices</label>`, {
+    ${store.can('costing', 'edit') ? `<label class="check"><input type="checkbox" id="pr-price" checked> Update material prices to this order's prices</label>` : ''}`, {
     okLabel: 'Book it in',
     onOk: async (w) => {
       const got = {};
       w.querySelectorAll('[data-line]').forEach(inp => { const q = r3(parseFloat(inp.value)); if (q > 0) got[inp.dataset.line] = q; });
       if (!Object.keys(got).length) { toast('Enter what arrived', 'warn'); return false; }
-      const prices = w.querySelector('#pr-price').checked;
+      const pc = w.querySelector('#pr-price');
+      const prices = !!(pc && pc.checked);       // only roles that may change prices see the box
       const newLines = (p.lines || []).map((l, i) => got[i] ? { ...l, received: r3((Number(l.received) || 0) + got[i]) } : l);
       for (const [i, q] of Object.entries(got)) {
         const l = p.lines[i];

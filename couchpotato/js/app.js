@@ -21,6 +21,10 @@ import {
   sendRun, printRun, markDelivered, undoDelivered, viewNote, clientSigns, newDriver, editDriver, sendDriverLink, copyDriverLink, relinkDriver, removeDriver
 } from './deliveries.js';
 import {
+  startStoreroom, renderStoreroom, setStoreroomSettings, setStoreroomView, receivePo, receiveDirect, fabricArrived, issueStock,
+  liveCount, saveCount, newAsset, giveAsset, assetBack, assetRepair, assetGone, assetHistory, newPerson, editPerson, togglePerson
+} from './storeroom.js';
+import {
   startStock, renderStock, setStockSettings, setStockView, countMaterial, newPurchaseOrder, draftForSupplier,
   editPurchaseOrder, sendPurchaseOrder, printPurchaseOrder, receivePurchaseOrder, cancelPurchaseOrder
 } from './stock.js';
@@ -60,6 +64,7 @@ const NAV = [
   { key: 'deliveries', label: 'Deliveries', group: 'production' },
   { key: 'costing', label: 'Costing', group: 'buying' },
   { key: 'stock', label: 'Stock', group: 'buying' },
+  { key: 'storeroom', label: 'Stock room', group: 'buying' },
   { key: 'invoices', label: 'Invoices', group: 'money' },
   { key: 'profit', label: 'Profit', group: 'money' },
   { key: 'settings', label: 'Settings' },
@@ -78,6 +83,7 @@ const viewOnly = (k) => store.getUser() && store.getUser().role !== 'owner' && k
 const LOOK_ONLY = new Set(['filter-status', 'floor-view', 'cost-view', 'stock-view', 'quote-filter', 'profit-month', 'inv-view',
   'print-job', 'print-week-jobs', 'print-planner', 'print-pricesheet', 'print-costsheet', 'inv-print', 'stmt-print', 'inv-export',
   'po-print', 'quote-print', 'scan-start', 'scan-stop', 'scan-find', 'notify',
+  'sr-view', 'sr-asset-history',
   'dl-view', 'dl-day', 'dl-day-pick', 'dl-print-run', 'dl-note', 'dl-confirm', 'dl-send-run', 'dl-driver-copy']);
 let rolesStarted = false;
 let lastAllowed = '';
@@ -135,10 +141,12 @@ async function boot() {
       setQuoteSettings(settings);
       setProfitSettings(settings);
       setDeliverySettings(settings);
+      setStoreroomSettings(settings);
       // only what this person's role may see is loaded at all
       if (store.can('quotes')) startQuotes(() => { if (view === 'quotes') paint(); }, settings);
       if (store.can('deliveries')) startDeliveries(() => { if (view === 'deliveries') paint(); }, settings, store.can('deliveries', 'edit'));
-      if (store.can('stock')) startStock(() => { if (view === 'stock') paint(); }, settings);
+      if (store.can('storeroom')) startStoreroom(() => { if (view === 'storeroom') paint(); }, settings);
+      if (store.can('stock') || store.can('storeroom')) startStock(() => { if (view === 'stock' || view === 'storeroom') paint(); }, settings);
       if (store.can('pos') || store.can('profit')) startPos(() => { if (view === 'pos' || view === 'profit') paint(); }, settings);
       if (store.can('invoices') || store.can('pos') || store.can('profit')) startInvoices(() => { if (view === 'invoices' || view === 'orders') paint(); }, settings);
       startCosting(() => { if (view === 'costing' || view === 'orders' || view === 'pos' || view === 'stock') paint(); }, settings);
@@ -434,6 +442,7 @@ function paintScreen() {
   if (view === 'quotes') return renderQuotes(screen);
   if (view === 'profit') return renderProfit(screen, allOrders(), allSales());
   if (view === 'deliveries') return renderDeliveries(screen, allOrders());
+  if (view === 'storeroom') return renderStoreroom(screen, allOrders());
   if (view === 'scan') return renderScan(screen);
   if (view === 'invoices') return renderInvoices(screen);
   if (view === 'pos') return renderPos(screen);
@@ -727,6 +736,7 @@ async function saveSettings() {
   setQuoteSettings(settings);
   setProfitSettings(settings);
   setDeliverySettings(settings);
+  setStoreroomSettings(settings);
   const bn = document.querySelector('.brand-name');
   if (bn) bn.textContent = settings.name;
   toast('Settings saved');
@@ -751,6 +761,22 @@ async function onAction(e) {
     case 'save-settings': return saveSettings();
     case 'subscribe': return startCheckout();
     case 'stock-view': setStockView(b.dataset.to); return paint();
+    case 'sr-view': setStoreroomView(b.dataset.to); return paint();
+    case 'sr-receive-po': return receivePo(id);
+    case 'sr-receive-direct': return receiveDirect();
+    case 'sr-fabric': return fabricArrived(id, allOrders());
+    case 'sr-issue': return issueStock(false, allOrders());
+    case 'sr-issue-back': return issueStock(true, allOrders());
+    case 'sr-count-save': return saveCount(document.getElementById('screen'));
+    case 'sr-asset-new': return newAsset();
+    case 'sr-asset-give': return giveAsset(id);
+    case 'sr-asset-back': return assetBack(id);
+    case 'sr-asset-repair': return assetRepair(id);
+    case 'sr-asset-gone': return assetGone(id);
+    case 'sr-asset-history': return assetHistory(id);
+    case 'sr-person-new': return newPerson();
+    case 'sr-person-edit': return editPerson(id);
+    case 'sr-person-toggle': return togglePerson(id);
     case 'dl-view': setDeliveryView(b.dataset.to); return paint();
     case 'dl-day': setDeliveryDay(b.dataset.to); return paint();
     case 'dl-schedule': return scheduleDelivery(id, allOrders());
@@ -878,6 +904,7 @@ function onInput(e) {
     return posInput(e.target);
   }
   if (e.target.closest && e.target.closest('.oh-row, #oh-units')) return liveOverheads(document.getElementById('screen'));
+  if (e.target.classList && e.target.classList.contains('sr-in')) return liveCount(document.getElementById('screen'));
   if (e.target.id !== 'o-search') return;
   clearTimeout(searchTimer);
   const v = e.target.value;

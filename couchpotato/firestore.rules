@@ -37,6 +37,10 @@ service cloud.firestore {
     function ed(cid, area) { return level(cid, area) == 'edit'; }
     function sees(cid, area) { return level(cid, area) in ['view', 'edit']; }
     function validRole(cid, r) { return r == 'owner' || exists(/databases/$(database)/documents/companies/$(cid)/roles/$(r)); }
+    // an update that touches only these fields
+    function onlyChanged(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
+    function orderEditor(cid) { return ed(cid, 'orders') || ed(cid, 'factory') || ed(cid, 'scan') || ed(cid, 'pos') || ed(cid, 'quotes') || ed(cid, 'invoices') || ed(cid, 'deliveries'); }
+    function materialEditor(cid) { return ed(cid, 'costing') || ed(cid, 'stock') || ed(cid, 'orders') || ed(cid, 'factory') || ed(cid, 'scan'); }
     function founding(cid) {
       return signedIn() && !exists(/databases/$(database)/documents/companies/$(cid))
         && getAfter(/databases/$(database)/documents/companies/$(cid)).data.ownerUid == request.auth.uid;
@@ -128,7 +132,10 @@ service cloud.firestore {
       // one of the listed screens, and a running trial or paid subscription.
       match /orders/{id} {
         allow read: if isMember(cid);
-        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'orders') || ed(cid, 'factory') || ed(cid, 'scan') || ed(cid, 'pos') || ed(cid, 'quotes') || ed(cid, 'invoices') || ed(cid, 'deliveries'));
+        allow create, delete: if isMember(cid) && companyActive(cid) && orderEditor(cid);
+        // the stock room may only book a client's fabric in
+        allow update: if isMember(cid) && companyActive(cid) && (orderEditor(cid)
+                      || (ed(cid, 'storeroom') && onlyChanged(['fabricStatus', 'fabricReceivedAt', 'fabricNote', 'updatedAt', 'updatedBy', 'events'])));
       }
       // Drivers carry the secret code in their private link (it works like a
       // key): only roles that may edit deliveries read them. The driver page itself goes through the
@@ -151,15 +158,33 @@ service cloud.firestore {
       }
       match /materials/{id} {
         allow read: if isMember(cid);
-        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'costing') || ed(cid, 'stock') || ed(cid, 'orders') || ed(cid, 'factory') || ed(cid, 'scan'));
+        allow create, delete: if isMember(cid) && companyActive(cid) && materialEditor(cid);
+        // the stock room may only change the count on the shelf, never a price
+        allow update: if isMember(cid) && companyActive(cid) && (materialEditor(cid)
+                      || (ed(cid, 'storeroom') && onlyChanged(['onHand', 'countedAt', 'updatedAt', 'updatedBy'])));
       }
+      // The movement trail: added to by anyone who moves stock, changed or
+      // removed by nobody but the owner.
       match /stockMoves/{id} {
-        allow read: if isMember(cid) && sees(cid, 'stock');
-        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'stock') || ed(cid, 'orders') || ed(cid, 'factory') || ed(cid, 'scan'));
+        allow read: if isMember(cid) && (sees(cid, 'stock') || sees(cid, 'storeroom'));
+        allow create: if isMember(cid) && companyActive(cid) && (materialEditor(cid) || ed(cid, 'storeroom'));
+        allow update, delete: if isOwner(cid);
       }
       match /purchaseOrders/{id} {
-        allow read: if isMember(cid) && sees(cid, 'stock');
-        allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'stock');
+        allow read: if isMember(cid) && (sees(cid, 'stock') || sees(cid, 'storeroom'));
+        allow create, delete: if isMember(cid) && companyActive(cid) && ed(cid, 'stock');
+        // the stock room may only book a delivery in against it
+        allow update: if isMember(cid) && companyActive(cid) && (ed(cid, 'stock')
+                      || (ed(cid, 'storeroom') && onlyChanged(['lines', 'status', 'receivedAt', 'updatedAt', 'updatedBy', 'events'])
+                          && request.resource.data.status in ['part', 'received'] && request.resource.data.lines.size() == resource.data.lines.size()));
+      }
+      match /storeStaff/{id} {
+        allow read: if isMember(cid) && sees(cid, 'storeroom');
+        allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'storeroom');
+      }
+      match /assets/{id} {
+        allow read: if isMember(cid) && (sees(cid, 'storeroom') || sees(cid, 'stock'));
+        allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'storeroom');
       }
       match /invoices/{id} {
         allow read: if isMember(cid) && (sees(cid, 'invoices') || sees(cid, 'pos') || sees(cid, 'profit'));
@@ -179,9 +204,9 @@ service cloud.firestore {
       }
       // Anything else a future version keeps: the settings screen decides.
       match /{coll}/{id} {
-        allow read: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes']);
+        allow read: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets']);
         allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'settings')
-                     && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes']);
+                     && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets']);
       }
     }
   }

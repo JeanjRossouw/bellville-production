@@ -863,8 +863,37 @@ function seedDemoDeliveries() {
   demoWrite('orders', orders);
 }
 
+// The stock room: people, a few tools, and some stock already given out.
+function seedDemoStoreroom() {
+  const st = demoRead('storeStaff');
+  if (st['sp1']) return;
+  const now = nowIso();
+  Object.assign(st, {
+    sp1: { name: 'Sipho Dlamini', job: 'Upholsterer', phone: '082 111 2222', createdAt: now, createdBy: 'demo' },
+    sp2: { name: 'Thandi Mokoena', job: 'Sewing', phone: '083 222 3333', createdAt: now, createdBy: 'demo' },
+    sp3: { name: 'Pieter Swart', job: 'Frames', phone: '084 333 4444', createdAt: now, createdBy: 'demo' }
+  });
+  demoWrite('storeStaff', st);
+  const as = demoRead('assets');
+  const ev = (what) => [{ at: now, by: 'demo', what }];
+  Object.assign(as, {
+    as1: { name: 'Pneumatic staple gun', tag: 'T-001', category: 'Tool', status: 'issued', holderId: 'sp1', holderName: 'Sipho Dlamini', issuedAt: now, events: ev('Given to Sipho Dlamini'), createdAt: now, createdBy: 'demo' },
+    as2: { name: 'Pneumatic staple gun', tag: 'T-002', category: 'Tool', status: 'store', events: ev('Received into the stock room'), createdAt: now, createdBy: 'demo' },
+    as3: { name: 'Industrial sewing machine', tag: 'M-001', category: 'Machine', serial: 'JK-58420', status: 'issued', holderId: 'sp2', holderName: 'Thandi Mokoena', issuedAt: now, events: ev('Given to Thandi Mokoena'), createdAt: now, createdBy: 'demo' },
+    as4: { name: 'Compressor 50L', tag: 'M-002', category: 'Machine', status: 'repair', events: ev('Sent for repair: pressure switch'), createdAt: now, createdBy: 'demo' }
+  });
+  demoWrite('assets', as);
+  const mv = demoRead('stockMoves');
+  const give = (k, mat, name, unit, qty, person, pid, ref) => { mv[k] = { materialId: mat, name, unit, qty, kind: 'issued', ref, note: '', person, personId: pid, createdAt: now, createdBy: 'demo' }; };
+  give('mvi1', 'm-foam', 'Foam 50mm HD', 'm²', 5, 'Sipho Dlamini', 'sp1', 'CP-1003');
+  give('mvi2', 'm-web', 'Elastic webbing', 'm', 40, 'Pieter Swart', 'sp3', 'CP-1008');
+  give('mvi3', 'm-fab', 'Fabric (standard range)', 'm', 14, 'Thandi Mokoena', 'sp2', 'CP-1003');
+  demoWrite('stockMoves', mv);
+}
+
 function seedDemoExtras() {
   seedDemoStock();
+  seedDemoStoreroom();
   seedDemoQuotes();
   const orders = demoRead('orders');
   if (orders['r1']) return;

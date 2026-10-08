@@ -73,6 +73,7 @@ be changed freely:
 | Office | Every screen at Edit |
 | Sales / till | Point of sale, quotes, orders and customers |
 | Factory floor | Factory floor, stock and scan out; orders to view |
+| Stock room | The stock room (receive, count, give out, tools); stock and orders to view |
 
 Changes apply at once: anyone whose menus change gets a fresh start with the
 right screens. The database rules enforce the same grid, so a View or Hidden
