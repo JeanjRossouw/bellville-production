@@ -4,6 +4,7 @@
 // (signed JWT → access token); no firebase-admin dependency.
 //
 // Env: COUCHPOTATO_SERVICE_ACCOUNT = the service-account JSON (one string).
+//      COUCHPOTATO_COMPANY_ID      = Couch Potato's company id in the app.
 import { SignJWT, importPKCS8 } from 'jose';
 
 const FS_BASE = 'https://firestore.googleapis.com/v1';
@@ -35,7 +36,14 @@ async function accessToken() {
   return j.access_token;
 }
 
-const root = () => `${FS_BASE}/projects/${serviceAccount().project_id}/databases/(default)/documents`;
+// The app is shared by many companies; every record lives under its
+// company. The feed works inside one company: Couch Potato's.
+function companyId() {
+  const cid = String(process.env.COUCHPOTATO_COMPANY_ID || '').trim();
+  if (!cid) throw new Error('COUCHPOTATO_COMPANY_ID is not set (the company id from the app, Settings → Team)');
+  return cid;
+}
+const root = () => `${FS_BASE}/projects/${serviceAccount().project_id}/databases/(default)/documents/companies/${encodeURIComponent(companyId())}`;
 
 // ---- JS <-> Firestore value encoding ----
 export function toFs(v) {

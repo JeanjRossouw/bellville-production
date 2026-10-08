@@ -1,0 +1,87 @@
+rules_version = '2';
+
+// Database rules for the shared app. Paste into Firebase → Firestore →
+// Rules and Publish. These rules ARE the wall between companies: the app
+// asks for a company's records, and these decide whether the person asking
+// may have them.
+//
+//   users/<uid>                    a login's pointer to its company (own doc only)
+//   companies/<cid>                the company: name, owner, plan
+//   companies/<cid>/members/<uid>  who is in the company, with their role
+//   companies/<cid>/invites/<mail> + invites/<mail>   pending invitations
+//   companies/<cid>/<coll>/<id>    the company's records
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function myEmail() { return request.auth.token.email.lower(); }
+    function memberPath(cid) { return /databases/$(database)/documents/companies/$(cid)/members/$(request.auth.uid); }
+    function isMember(cid) { return signedIn() && exists(memberPath(cid)); }
+    function role(cid) { return get(memberPath(cid)).data.role; }
+    function isOwner(cid) { return isMember(cid) && role(cid) == 'owner'; }
+    function canEditSettings(cid) { return isMember(cid) && role(cid) in ['owner', 'office']; }
+    function validRole(r) { return r in ['owner', 'office', 'sales', 'factory']; }
+
+    // A login's own pointer. It grants nothing: access comes from members.
+    match /users/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // Pending invitations, looked up by the invited person's email.
+    match /invites/{email} {
+      allow read: if signedIn() && (myEmail() == email || isOwner(resource.data.companyId));
+      allow create, update: if isOwner(request.resource.data.companyId) && validRole(request.resource.data.role)
+                            && request.resource.data.email == email;
+      allow delete: if signedIn() && (myEmail() == email || isOwner(resource.data.companyId));
+    }
+
+    match /companies/{cid} {
+      allow read: if isMember(cid);
+      // Starting a company: you become its owner, on a trial, created now.
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid
+                    && request.resource.data.plan == 'trial' && request.resource.data.status == 'trial'
+                    && request.resource.data.createdAt == request.time;
+      // The owner may rename it. Plan, status, owner and start date are set by billing, not the app.
+      allow update: if isOwner(cid)
+                    && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['plan', 'status', 'ownerUid', 'createdAt', 'paidUntil']);
+      allow delete: if false;
+
+      match /members/{uid} {
+        allow read: if isMember(cid);
+        // Joining happens two ways only: founding the company (in the same
+        // write as creating it), or accepting an invitation for your email.
+        allow create: if signedIn() && request.auth.uid == uid && validRole(request.resource.data.role) && (
+                        ( request.resource.data.role == 'owner'
+                          && !exists(/databases/$(database)/documents/companies/$(cid))
+                          && getAfter(/databases/$(database)/documents/companies/$(cid)).data.ownerUid == request.auth.uid )
+                        || ( exists(/databases/$(database)/documents/invites/$(myEmail()))
+                          && get(/databases/$(database)/documents/invites/$(myEmail())).data.companyId == cid
+                          && get(/databases/$(database)/documents/invites/$(myEmail())).data.role == request.resource.data.role ) );
+        // Only an owner changes roles, and never their own (so a company is never left without one).
+        allow update: if isOwner(cid) && uid != request.auth.uid && validRole(request.resource.data.role);
+        // An owner removes people; anyone may leave.
+        allow delete: if isOwner(cid) && uid != request.auth.uid || (signedIn() && request.auth.uid == uid && role(cid) != 'owner');
+      }
+
+      match /invites/{email} {
+        allow read: if isMember(cid);
+        allow create, update: if isOwner(cid) && validRole(request.resource.data.role);
+        allow delete: if isOwner(cid) || (signedIn() && myEmail() == email);
+      }
+
+      // Settings: the founder writes them when the company is created; after that owner and office.
+      match /settings/{id} {
+        allow read: if isMember(cid);
+        allow write: if canEditSettings(cid)
+                     || (signedIn() && getAfter(/databases/$(database)/documents/companies/$(cid)).data.ownerUid == request.auth.uid
+                         && !exists(/databases/$(database)/documents/companies/$(cid)));
+      }
+
+      // Everything else the company keeps: orders, customers, products,
+      // materials, invoices, sales, counters…
+      match /{coll}/{id} {
+        allow read, write: if isMember(cid) && !(coll in ['members', 'invites', 'settings']);
+      }
+    }
+  }
+}

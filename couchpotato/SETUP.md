@@ -1,129 +1,85 @@
-# Couch Potato factory system — setup
+# Setting up the shared app
 
-This is a **separate system** from Bellville Furniture. It gets its own database,
-its own website address and its own logins. Nothing is shared. Bellville Furniture
-is simply customer number one inside it.
+This is **one app sold to many furniture makers**. Every business that signs up
+gets its own company inside the same app and the same database. The database
+rules keep each company's records invisible to every other company.
 
-Right now the app runs in **demo mode**: everything you do stays in your own
-browser. That is deliberate, so the whole system can be walked through and
-changed before anyone sets up accounts. The three steps below make it real.
+You set the database up **once**, from an account that belongs to you as the
+seller. After that, each new client signs up on their own: they open the app,
+tap **Start free trial**, and are working in a minute.
+
+Until step 1 is done the app runs in **demo mode**: everything stays in the
+browser that opened it. Signing in with any email opens the demo factory, and
+**Start free trial** creates an empty demo company, so the whole sign-up flow
+can be tried before the database exists.
 
 ---
 
-## 1. Create Couch Potato's own database (Firebase)
-
-Do this from an account that belongs to **Couch Potato**, not Bellville. That is
-what makes the system theirs.
+## 1. Create the database (Firebase), once
 
 1. Go to <https://console.firebase.google.com> and click **Add project**.
-   Name it something like `couch-potato-factory`. Google Analytics is not needed.
-2. In the new project, open **Build → Authentication → Get started** and enable
-   **Email/Password**.
-3. Open **Build → Firestore Database → Create database**. Choose
-   **Production mode** and a region close to South Africa (`europe-west1` is fine).
-4. Open **Project settings** (the gear) → scroll to **Your apps** → click the
-   web icon `</>`. Register the app, then copy the `firebaseConfig` block it shows.
-5. Paste those values into `couchpotato/js/config.js`, replacing the empty strings:
+   Name it after the product, for example `factory-manager`. Analytics is not needed.
+2. **Build → Authentication → Get started**, and enable **Email/Password**.
+3. **Build → Firestore Database → Create database**. Choose **Production mode**
+   and a region close to South Africa (`europe-west1` is fine).
+4. **Project settings** (the gear) → **Your apps** → the web icon `</>`.
+   Register the app and copy the `firebaseConfig` block it shows.
+5. Paste those values into `couchpotato/js/config.js`, replacing the empty
+   strings in `FIREBASE_CONFIG`. These values are not secrets; the rules below
+   are what protect the data.
+6. **Firestore → Rules**: replace everything with the contents of
+   [`firestore.rules`](firestore.rules) and click **Publish**.
+   These rules are the wall between companies. They have been tested against
+   Google's Firestore emulator, including attempts to read another company's
+   orders, join a company uninvited, raise your own role and change the plan.
+7. **Authentication → Settings → Authorized domains**: add the web address the
+   app runs on (step 2), so sign-in works there.
 
-   ```js
-   export const FIREBASE_CONFIG = {
-     apiKey: 'AIza…',
-     authDomain: 'couch-potato-factory.firebaseapp.com',
-     projectId: 'couch-potato-factory',
-     storageBucket: 'couch-potato-factory.firebasestorage.app',
-     messagingSenderId: '…',
-     appId: '1:…:web:…'
-   };
-   ```
+## 2. Put it on its own web address
 
-   These values are not secrets. They identify the project; the security rules
-   below are what actually protect the data.
-
-6. Still in Firestore, open the **Rules** tab and paste this, then **Publish**:
-
-   ```
-   rules_version = '2';
-   service cloud.firestore {
-     match /databases/{database}/documents {
-       // Only signed-in people can read or write anything in this factory.
-       match /{document=**} {
-         allow read, write: if request.auth != null;
-       }
-     }
-   }
-   ```
-
-   That is the right starting point for a small factory where everyone signed in
-   is staff. Tighten it per collection later if outside parties ever get logins.
-
----
-
-## 2. Create the logins
-
-In **Authentication → Users → Add user**, create one account per person, for
-example:
-
-| Person | Email | Role they should get |
-|---|---|---|
-| Owner | `owner@couchpotato.co.za` | owner |
-| Factory floor | `floor@couchpotato.co.za` | factory |
-| Bookkeeper | `accounts@couchpotato.co.za` | accounts |
-
-**The first person to sign in automatically becomes the owner.** So sign in as
-the owner account first, before anyone else. Everyone who signs in after that
-starts with no access until the owner grants them a role.
-
----
-
-## 3. Put it on its own web address
-
-The app is plain static files, so any host works. On Netlify:
+The app is plain static files. On Netlify:
 
 1. **Add new site → Import an existing project**, and pick this repository.
-2. Under **Build settings**, set **Base directory** to `couchpotato` and leave
-   the build command empty. Set the publish directory to `couchpotato`.
-3. Deploy, then rename the site under **Site configuration → Change site name**,
-   for example `couchpotato-factory`, giving
-   `https://couchpotato-factory.netlify.app`.
-4. When they are ready, point their own domain at it under **Domain management**.
+2. Set **Base directory** and **Publish directory** to `couchpotato`, with no
+   build command.
+3. Rename the site, and later point the product's own domain at it.
 
-This keeps Couch Potato's site completely separate from the Bellville site, even
-while the code lives in the same repository. Moving the `couchpotato` folder into
-its own repository later is a copy and paste, and nothing inside the app needs to
-change when that happens.
+## 3. The first company
 
----
+Open the app and tap **Start free trial**. Enter the company name, your name,
+email and a password. You become that company's **owner**.
 
-## Checking it worked
+For Couch Potato: have their owner do this themselves, so the company and its
+owner login are theirs from day one.
 
-Open the site. If the yellow **Demo mode** notice is gone from the sign-in screen
-and your real email and password work, it is live. Under **Settings** the storage
-line will say it is connected to Couch Potato's own database.
+## How people get in
 
-## Filling in their details
-
-Everything that appears on job cards, quotes and invoices lives under
-**Settings**: trading name, registered name, company registration number, VAT
-number, address, bank details, and the order and invoice numbering. Set these
-first, since later phases print from them.
-
-## What is built so far
-
-| | Status |
+| Who | How |
 |---|---|
-| Customers | Built |
-| Orders, with their own numbering and full change history | Built |
-| Factory floor: week planner, fabric watch-list, job cards | Built |
-| Costing: materials, bills of material, overheads, price list | Built |
-| Scan out by QR code, with customer notification | Built |
-| Invoicing, statements and the accountant's export | Built |
-| Point of sale (showroom till), linked to orders and invoices | Built |
-| Order feed from Bellville | Built, needs the feed variables (FEED-SETUP.md) |
+| A new business | **Start free trial** on the sign-in page. They become the owner of a new company with a 14-day trial. |
+| Their staff | The owner opens **Settings → Team**, enters the person's email and role, and taps **WhatsApp** to send them the sign-up link. The person creates a login with that email and lands in the company with that role. |
+| Someone who forgot their password | **Forgot your password?** on the sign-in page emails a reset link. |
 
-## How Bellville's orders will arrive
+Roles:
 
-Agreed approach: a one-way automatic feed. Orders placed in the Bellville system
-appear here by themselves, and the dispatched status flows back to Bellville.
-Only orders cross between the two systems, so the data stays entirely separate
-and nobody captures anything twice. That is built once this foundation is signed
-off, so that it is built against the final shape of an order.
+| Role | Sees |
+|---|---|
+| Owner | Everything, plus the team |
+| Office | Everything except the team |
+| Sales / till | Point of sale, orders, customers |
+| Factory floor | Factory floor, scan out, orders |
+
+The owner can change a role or remove someone at any time; a removed person's
+login stops opening anything immediately.
+
+## Things to know
+
+- **The trial is not enforced yet.** The header shows the days left, but nothing
+  locks when it reaches zero. Billing (PayFast or Paystack) and what happens at
+  the end of a trial come in the next step.
+- **Roles limit what people see, not yet what they can change.** The database
+  rules enforce company separation, team management, settings and the plan.
+  Within a company, a factory login could still change an invoice through the
+  database directly. Tightening that per record type is a later step.
+- **One login, one company.** Someone who works for two companies needs two
+  email addresses for now.

@@ -1,11 +1,13 @@
-# Couch Potato — factory management system
+# Factory Manager — one app for many furniture makers
 
-A standalone system for Couch Potato: their customers, their orders, their
-factory floor, their costing, their dispatch and their invoicing. It is not part
-of the Bellville Furniture system. Bellville is one of their customers.
+Orders, the factory floor, costing, dispatch, invoicing and a showroom till,
+sold as a subscription. Each business signs up and gets its own company inside
+the same app and database; the database rules keep companies apart. Couch
+Potato is the first company. "Factory Manager" is a working name, set in
+`js/config.js`.
 
-See **[SETUP.md](SETUP.md)** to connect their own database and put it on its own
-web address. Until then the app runs in demo mode in whatever browser opens it.
+See **[SETUP.md](SETUP.md)** to create the database and put the app on its own
+web address. Until then it runs in demo mode in whatever browser opens it.
 
 ## Layout
 
@@ -13,7 +15,8 @@ web address. Until then the app runs in demo mode in whatever browser opens it.
 couchpotato/
   index.html        sign-in screen and the app shell
   css/app.css       one stylesheet, no framework
-  js/config.js      their Firebase project and factory defaults
+  js/config.js      product name, trial length, the Firebase project, defaults
+  firestore.rules   the database rules that keep companies apart
   js/store.js       the data layer  ← read this one first
   js/ui.js          shared rendering helpers
   js/customers.js   customer screen
@@ -24,16 +27,21 @@ couchpotato/
   js/invoices.js    invoice queue, invoices, payments, statements, export
   js/pos.js         point of sale: the showroom till
   js/qr.js          QR codes for job cards (vendor/qrcode.js, MIT)
-  js/app.js         boot, navigation, settings
+  js/app.js         sign-in and sign-up, navigation by role, settings, the team
 ```
 
 No build step. The only third-party code is the vendored QR generator. The files are served exactly as they are, so
 a change is live the moment it deploys.
 
-## The one rule
+## The two rules
 
 **Every record is its own document, and a save sends only the fields that
 changed.**
+
+**Every record belongs to one company.** Records live under
+`companies/<id>/…`, and only that company's members can read or write them.
+`store.js` always works inside the signed-in user's company, so no screen can
+reach another company's data by accident.
 
 The older Bellville system kept every order for every business inside a single
 database record, so each save rewrote the whole lot. A device holding a stale
@@ -75,3 +83,11 @@ same catalogue against the same customers; each line is made to order (an order
 is created on the spot and goes to the factory) or from stock (the showroom
 count drops). Every sale raises an invoice with the payment on it, so orders
 born at the till are already billed. The till link is `?pos=1`.
+
+Also built: accounts. Sign up with **Start free trial** (a new company on a
+14-day trial), invite staff by email with a role (owner, office, sales,
+factory), join from the invitation link, change roles, remove people, reset a
+forgotten password. Menus follow the role.
+
+Next: billing (PayFast or Paystack), what happens when a trial ends, a public
+website with pricing, and a console for the seller to see every company.

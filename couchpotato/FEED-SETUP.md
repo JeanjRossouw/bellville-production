@@ -25,24 +25,29 @@ pushing orders to its supplier. It runs every 15 minutes.
 
 ## Setup (once, about ten minutes)
 
-1. **Couch Potato's database must exist first** — see `SETUP.md`.
-2. In Couch Potato's Firebase project: **Project settings → Service accounts →
+1. **The shared app's database must exist, and Couch Potato must have signed
+   up** — see `SETUP.md`.
+2. In the app's Firebase project: **Project settings → Service accounts →
    Generate new private key**. A JSON file downloads. This is a secret.
-3. In Couch Potato's app, open **Customers** and make sure Bellville Furniture
-   exists. Each customer card shows a small **feed id** — copy Bellville's.
+3. Signed in as Couch Potato's owner, open **Settings → Team** and copy the
+   **company id** at the bottom. Then open **Customers**, make sure Bellville
+   Furniture exists, and copy its **feed id**.
 4. On **Bellville's** Netlify site → Site configuration → Environment variables,
    add:
 
    | Variable | Value |
    |---|---|
    | `COUCHPOTATO_SERVICE_ACCOUNT` | the whole JSON from step 2, as one line |
-   | `COUCHPOTATO_CUSTOMER_ID` | the customer document id from step 3 |
+   | `COUCHPOTATO_COMPANY_ID` | Couch Potato's company id from step 3 |
+   | `COUCHPOTATO_CUSTOMER_ID` | Bellville's customer feed id from step 3 |
    | `COUCHPOTATO_CUSTOMER_NAME` | `Bellville Furniture` (optional) |
    | `COUCHPOTATO_BUILDER_NAME` | the supplier's name exactly as it appears in Bellville's system (default `Couch Patato`) |
    | `FEED_KEY` | any long random string, for running the feed by hand |
 
    `FIREBASE_SERVICE_ACCOUNT` (Bellville's own) is already set for the Shopify
-   sync and is reused.
+   sync and is reused. The service account can reach every company in the
+   app, so it stays on Bellville's server only; the feed itself only ever
+   touches the company named in `COUCHPOTATO_COMPANY_ID`.
 5. Redeploy Bellville's site. The schedule starts on its own.
 
 ## Checking it

@@ -1,34 +1,56 @@
-// Data layer for the Couch Potato factory system.
+// Data layer — one app, many companies.
 //
-// THE ONE RULE THIS FILE EXISTS TO ENFORCE: every record is its own document.
-// Orders, customers, products and invoices each live in their own Firestore
-// document, and a save sends ONLY the fields that changed.
+// RULE ONE: every record is its own document, and a save sends ONLY the
+// fields that changed. The older Bellville system kept every order inside a
+// single document, so each save rewrote the whole lot and a stale device could
+// erase someone else's orders. Per-document writes make that impossible.
 //
-// Why that matters: the older Bellville system kept every order for every
-// business inside a single document, so each save rewrote the whole lot. A
-// device with a stale copy in memory could silently erase orders someone else
-// had added — which is exactly what happened in practice. Per-document writes
-// make that class of data loss impossible: two people editing two orders, or
-// even two fields of one order, never overwrite each other. It also removes the
-// 1MB-per-document ceiling and lets the factory floor query only what it needs.
+// RULE TWO: every record belongs to exactly one company. Records live at
+// companies/<companyId>/<collection>/<id>, and the database rules
+// (firestore.rules) only let members of that company read or write them. No
+// other module touches the database directly — they all come through here,
+// and this file always works inside the signed-in user's company.
+//
+//   users/<uid>                  → which company this login belongs to
+//   companies/<id>               → name, owner, plan, created
+//   companies/<id>/members/<uid> → role in that company (what the rules check)
+//   companies/<id>/invites/<email> + invites/<email> → a pending invitation
+//   companies/<id>/<anything>    → orders, customers, products, invoices…
 //
 // One interface, two backends:
 //   cloud — Firebase/Firestore, used as soon as config.js has a project id
 //   demo  — this browser's localStorage, so the system can be reviewed and
 //           demonstrated before any database is created
-import { FIREBASE_CONFIG, isCloudConfigured } from './config.js';
+import { FIREBASE_CONFIG, isCloudConfigured, TRIAL_DAYS } from './config.js';
 
 const FB_VERSION = '10.13.0';
 const FB = (m) => `https://www.gstatic.com/firebasejs/${FB_VERSION}/firebase-${m}.js`;
 
 let mode = 'demo';
 let cloud = null;          // { auth, db, fns }
-let currentUser = null;    // { uid, email, name, role }
+let currentUser = null;    // { uid, email, name, role, companyId }
+let company = null;        // { id, name, ownerUid, plan, createdAt }
+let pendingSignup = null;  // { companyName, name } between creating the login and the company
 const userWatchers = [];
 
 export const storeMode = () => mode;
 export const getUser = () => currentUser;
+export const getCompany = () => company;
 export const nowIso = () => new Date().toISOString();
+export const ROLES = [
+  { key: 'owner', label: 'Owner', hint: 'Everything, plus the team and the subscription' },
+  { key: 'office', label: 'Office', hint: 'Orders, customers, costing, invoices, settings' },
+  { key: 'sales', label: 'Sales / till', hint: 'Point of sale, orders and customers' },
+  { key: 'factory', label: 'Factory floor', hint: 'The floor planner, job cards and scan out' }
+];
+const lower = (e) => String(e || '').trim().toLowerCase();
+
+// Days left on the free trial (null once the company is on a paid plan).
+export function trialDaysLeft() {
+  if (!company || company.plan !== 'trial') return null;
+  const start = Date.parse(company.createdAt || '') || Date.now();
+  return Math.max(0, Math.ceil((start + TRIAL_DAYS * 86400000 - Date.now()) / 86400000));
+}
 
 // ---------------------------------------------------------------- boot ------
 
@@ -37,6 +59,12 @@ export async function initStore() {
     mode = 'demo';
     const saved = localStorage.getItem('cp-demo-user');
     currentUser = saved ? JSON.parse(saved) : null;
+    if (currentUser && currentUser.companyId === undefined) currentUser.companyId = 'demo';     // signed in before companies existed
+    if (currentUser && currentUser.companyId === 'demo') {
+      ensureDemoCompany();
+      if (!jget(demoPrefix('demo') + 'members')[currentUser.uid]) demoMemberSet('demo', currentUser.uid, { email: currentUser.email, name: currentUser.name, role: currentUser.role || 'owner' });
+    }
+    company = currentUser && currentUser.companyId ? demoCompanies()[currentUser.companyId] || null : null;
     setTimeout(() => emitUser(), 0);
     return mode;
   }
@@ -51,26 +79,86 @@ export async function initStore() {
   mode = 'cloud';
 
   cloud.fns.onAuthStateChanged(auth, async (u) => {
-    currentUser = u ? await resolveUser(u) : null;
+    try { currentUser = u ? await resolveUser(u) : null; }
+    catch (e) { console.error('Could not load the account:', e); currentUser = u ? { uid: u.uid, email: u.email, name: u.email, role: 'none', companyId: null, error: e.message } : null; }
+    if (!currentUser) company = null;
     emitUser();
   });
   return mode;
 }
 
-// A brand-new system has no users yet, so the first person to sign in becomes
-// the owner. After that, roles are explicit and a stranger gets nothing.
+// Who is this login, and which company do they work in? In order:
+//   1. they already belong to a company        → load it
+//   2. someone invited their email address     → join that company
+//   3. they have just filled in the sign-up form → create their company
+//   4. none of these                            → role 'none' (the app offers to create one)
 async function resolveUser(u) {
-  const { doc, getDoc, setDoc, collection, getDocs, limit, query } = cloud.fns;
-  const ref = doc(cloud.db, 'users', u.uid);
-  const snap = await getDoc(ref);
-  if (snap.exists()) {
-    const d = snap.data();
-    return { uid: u.uid, email: u.email, name: d.name || u.email, role: d.role || 'none' };
+  const { doc, getDoc } = cloud.fns;
+  const email = lower(u.email);
+  const me = await getDoc(doc(cloud.db, 'users', u.uid));
+  if (me.exists() && me.data().companyId) {
+    const cid = me.data().companyId;
+    const [mem, comp] = await Promise.all([
+      getDoc(doc(cloud.db, 'companies', cid, 'members', u.uid)),
+      getDoc(doc(cloud.db, 'companies', cid))
+    ]);
+    if (mem.exists() && comp.exists()) {
+      company = { id: cid, ...normCompany(comp.data()) };
+      return { uid: u.uid, email, name: mem.data().name || me.data().name || email, role: mem.data().role || 'none', companyId: cid };
+    }
   }
-  const anyUser = await getDocs(query(collection(cloud.db, 'users'), limit(1)));
-  const role = anyUser.empty ? 'owner' : 'none';
-  await setDoc(ref, { email: u.email, name: u.email, role, createdAt: nowIso() });
-  return { uid: u.uid, email: u.email, name: u.email, role };
+  const invite = await getDoc(doc(cloud.db, 'invites', email));
+  if (invite.exists()) return await joinCompany(u, invite.data(), (pendingSignup && pendingSignup.name) || '');
+  const p = pendingSignup; pendingSignup = null;
+  if (p && p.companyName) return await createCompanyFor(u, p.companyName, p.name);
+  company = null;
+  return { uid: u.uid, email, name: (p && p.name) || (me.exists() && me.data().name) || email, role: 'none', companyId: null };
+}
+
+function normCompany(d) {
+  const c = { ...d };
+  if (c.createdAt && typeof c.createdAt.toDate === 'function') c.createdAt = c.createdAt.toDate().toISOString();
+  return c;
+}
+
+// Order numbers start with the company's initials: "Couch Potato" → CP-.
+function prefixFor(name) {
+  const words = String(name || '').replace(/[^A-Za-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+  const p = words.length > 1 ? words.slice(0, 3).map(w => w[0]).join('') : (words[0] || 'ORD').slice(0, 3);
+  return p.toUpperCase() + '-';
+}
+
+async function createCompanyFor(u, companyName, name) {
+  const { doc, collection, writeBatch, serverTimestamp } = cloud.fns;
+  const email = lower(u.email);
+  const ref = doc(collection(cloud.db, 'companies'));
+  const cid = ref.id;
+  const who = name || email;
+  const b = writeBatch(cloud.db);
+  b.set(ref, { name: companyName, ownerUid: u.uid, ownerEmail: email, plan: 'trial', status: 'trial', createdAt: serverTimestamp() });
+  b.set(doc(cloud.db, 'companies', cid, 'members', u.uid), { email, name: who, role: 'owner', joinedAt: nowIso() });
+  b.set(doc(cloud.db, 'users', u.uid), { email, name: who, companyId: cid });
+  b.set(doc(cloud.db, 'companies', cid, 'settings', 'factory'), { name: companyName, legalName: companyName, orderPrefix: prefixFor(companyName), email, updatedAt: nowIso() });
+  await b.commit();
+  company = { id: cid, name: companyName, ownerUid: u.uid, plan: 'trial', status: 'trial', createdAt: nowIso() };
+  return { uid: u.uid, email, name: who, role: 'owner', companyId: cid };
+}
+
+async function joinCompany(u, inv, name) {
+  const { doc, getDoc, writeBatch } = cloud.fns;
+  const email = lower(u.email);
+  const cid = inv.companyId;
+  const who = name || inv.name || email;
+  const b = writeBatch(cloud.db);
+  b.set(doc(cloud.db, 'companies', cid, 'members', u.uid), { email, name: who, role: inv.role, joinedAt: nowIso(), invitedBy: inv.invitedBy || '' });
+  b.set(doc(cloud.db, 'users', u.uid), { email, name: who, companyId: cid });
+  b.delete(doc(cloud.db, 'invites', email));
+  b.delete(doc(cloud.db, 'companies', cid, 'invites', email));
+  await b.commit();
+  const comp = await getDoc(doc(cloud.db, 'companies', cid));
+  company = { id: cid, ...normCompany(comp.data() || {}) };
+  pendingSignup = null;
+  return { uid: u.uid, email, name: who, role: inv.role, companyId: cid };
 }
 
 function emitUser() { userWatchers.forEach(cb => { try { cb(currentUser); } catch (e) { console.error(e); } }); }
@@ -82,18 +170,65 @@ export function onUser(cb) { userWatchers.push(cb); if (mode === 'demo') cb(curr
 
 export async function signIn(email, password) {
   if (mode === 'demo') {
-    currentUser = { uid: 'demo', email: email || 'demo@couchpotato.local', name: (email || 'Demo user').split('@')[0], role: 'owner' };
-    localStorage.setItem('cp-demo-user', JSON.stringify(currentUser));
-    emitUser();
+    const accounts = demoAccounts();
+    const e = lower(email) || 'demo@example.com';
+    let acc = accounts[e];
+    if (!acc) {
+      const inv = demoInvites()[e];
+      // Anyone else who signs in to the demo lands in the shared demo factory.
+      acc = inv ? demoJoin(e, inv, '') : { uid: 'demo-' + e, name: e.split('@')[0], companyId: 'demo', role: 'owner' };
+      if (!inv) { accounts[e] = acc; saveDemoAccounts(accounts); ensureDemoCompany(); demoMemberSet('demo', acc.uid, { email: e, name: acc.name, role: 'owner' }); }
+    }
+    demoLogin(e, acc);
     return currentUser;
   }
   await cloud.fns.signInWithEmailAndPassword(cloud.auth, email, password);
   return currentUser;
 }
 
+// A new login. With a company name it starts a new company (14-day trial);
+// without one it is someone joining the team they were invited to.
+export async function signUp({ email, password, name, companyName }) {
+  const e = lower(email);
+  if (mode === 'demo') {
+    const accounts = demoAccounts();
+    if (accounts[e]) throw Object.assign(new Error('There is already an account for ' + e + ' — sign in instead.'), { code: 'auth/email-already-in-use' });
+    const inv = demoInvites()[e];
+    let acc;
+    if (inv) acc = demoJoin(e, inv, name);
+    else if (companyName) acc = demoCreateCompany(e, companyName, name);
+    else acc = { uid: 'demo-' + e, name: name || e, companyId: null, role: 'none' };
+    accounts[e] = { ...acc }; saveDemoAccounts(accounts);
+    demoLogin(e, acc);
+    return currentUser;
+  }
+  pendingSignup = { companyName: String(companyName || '').trim(), name: String(name || '').trim() };
+  await cloud.fns.createUserWithEmailAndPassword(cloud.auth, e, password);
+  return currentUser;
+}
+
+// Signed in, no company, nobody invited them: start one from inside the app.
+export async function createCompany(companyName, name) {
+  if (!currentUser) throw new Error('Sign in first');
+  if (mode === 'demo') {
+    const acc = demoCreateCompany(currentUser.email, companyName, name || currentUser.name);
+    const accounts = demoAccounts(); accounts[currentUser.email] = acc; saveDemoAccounts(accounts);
+    demoLogin(currentUser.email, acc);
+    return currentUser;
+  }
+  currentUser = await createCompanyFor(cloud.auth.currentUser, companyName, name || currentUser.name);
+  emitUser();
+  return currentUser;
+}
+
+export async function resetPassword(email) {
+  if (mode === 'demo') return;
+  await cloud.fns.sendPasswordResetEmail(cloud.auth, lower(email));
+}
+
 export async function signOutNow() {
   if (mode === 'demo') {
-    currentUser = null;
+    currentUser = null; company = null;
     localStorage.removeItem('cp-demo-user');
     emitUser();
     return;
@@ -101,14 +236,102 @@ export async function signOutNow() {
   await cloud.fns.signOut(cloud.auth);
 }
 
+// ------------------------------------------------------------------ team ----
+
+// The owner invites by email. There is no mail server: the app hands back a
+// sign-up link to send over WhatsApp or email, and the invitation waits until
+// that address creates its login.
+export async function invite(email, role, name) {
+  const e = lower(email);
+  if (!e || !/@/.test(e)) throw new Error('Enter their email address');
+  if (!ROLES.some(r => r.key === role)) throw new Error('Pick a role');
+  const rec = { email: e, role, name: String(name || '').trim(), companyId: company.id, companyName: company.name || '', invitedBy: currentUser.name || currentUser.email, at: nowIso() };
+  if (mode === 'demo') {
+    const all = demoInvites(); all[e] = rec; localStorage.setItem('cp-demo-invites', JSON.stringify(all));
+    const map = demoRead('invites'); map[e] = rec; demoWrite('invites', map);
+    return;
+  }
+  const { doc, writeBatch } = cloud.fns;
+  const b = writeBatch(cloud.db);
+  b.set(doc(cloud.db, 'invites', e), rec);
+  b.set(doc(cloud.db, 'companies', company.id, 'invites', e), rec);
+  await b.commit();
+}
+
+export async function cancelInvite(email) {
+  const e = lower(email);
+  if (mode === 'demo') {
+    const all = demoInvites(); delete all[e]; localStorage.setItem('cp-demo-invites', JSON.stringify(all));
+    const map = demoRead('invites'); delete map[e]; demoWrite('invites', map);
+    return;
+  }
+  const { doc, writeBatch } = cloud.fns;
+  const b = writeBatch(cloud.db);
+  b.delete(doc(cloud.db, 'invites', e));
+  b.delete(doc(cloud.db, 'companies', company.id, 'invites', e));
+  await b.commit();
+}
+
+export async function setMemberRole(uid, role) {
+  if (!ROLES.some(r => r.key === role)) throw new Error('Unknown role');
+  await update('members', uid, { role });
+}
+
+// Removing someone takes away their access to this company at once; their
+// login still exists, but it no longer opens anything.
+export async function removeMember(uid) {
+  await remove('members', uid);
+}
+
 // ------------------------------------------------------------ demo store ----
 
-const demoKey = (coll) => 'cp-demo-' + coll;
+// Demo companies keep their records in localStorage under their own prefix.
+// The shared demo factory ('demo') keeps the original keys, so a browser that
+// already has demo data keeps it.
+const demoPrefix = (cid) => (!cid || cid === 'demo') ? 'cp-demo-' : 'cp-demo-' + cid + '-';
+const demoKey = (coll) => demoPrefix(currentUser && currentUser.companyId) + coll;
 const demoSubs = {};   // coll -> [cb]
-
-function demoRead(coll) {
-  try { return JSON.parse(localStorage.getItem(demoKey(coll)) || '{}'); } catch (e) { return {}; }
+const jget = (k) => { try { return JSON.parse(localStorage.getItem(k) || '{}'); } catch (e) { return {}; } };
+const demoAccounts = () => jget('cp-demo-accounts');
+const saveDemoAccounts = (m) => localStorage.setItem('cp-demo-accounts', JSON.stringify(m));
+const demoCompanies = () => {
+  const m = jget('cp-demo-companies');
+  if (!m.demo) m.demo = { name: 'Couch Potato', ownerUid: 'demo', plan: 'trial', status: 'trial', createdAt: nowIso(), demo: true };
+  return m;
+};
+const demoInvites = () => jget('cp-demo-invites');
+function ensureDemoCompany() { const m = demoCompanies(); localStorage.setItem('cp-demo-companies', JSON.stringify(m)); }
+function demoMemberSet(cid, uid, rec) {
+  const k = demoPrefix(cid) + 'members';
+  const map = jget(k); map[uid] = { ...(map[uid] || {}), ...rec, joinedAt: (map[uid] && map[uid].joinedAt) || nowIso() };
+  localStorage.setItem(k, JSON.stringify(map));
 }
+function demoCreateCompany(email, companyName, name) {
+  const cid = 'c' + Date.now().toString(36);
+  const m = demoCompanies(); m[cid] = { name: companyName, ownerUid: 'demo-' + email, ownerEmail: email, plan: 'trial', status: 'trial', createdAt: nowIso() };
+  localStorage.setItem('cp-demo-companies', JSON.stringify(m));
+  demoMemberSet(cid, 'demo-' + email, { email, name: name || email, role: 'owner' });
+  localStorage.setItem(demoPrefix(cid) + 'settings', JSON.stringify({ factory: { name: companyName, legalName: companyName, orderPrefix: prefixFor(companyName), email, updatedAt: nowIso() } }));
+  return { uid: 'demo-' + email, name: name || email, companyId: cid, role: 'owner' };
+}
+function demoJoin(email, inv, name) {
+  const all = demoInvites(); delete all[email]; localStorage.setItem('cp-demo-invites', JSON.stringify(all));
+  const k = demoPrefix(inv.companyId) + 'invites'; const map = jget(k); delete map[email]; localStorage.setItem(k, JSON.stringify(map));
+  const acc = { uid: 'demo-' + email, name: name || inv.name || email, companyId: inv.companyId, role: inv.role };
+  demoMemberSet(inv.companyId, acc.uid, { email, name: acc.name, role: inv.role, invitedBy: inv.invitedBy || '' });
+  const accounts = demoAccounts(); accounts[email] = acc; saveDemoAccounts(accounts);
+  return acc;
+}
+function demoLogin(email, acc) {
+  // the role always comes from the company's member list, like the cloud rules
+  const mem = acc.companyId ? jget(demoPrefix(acc.companyId) + 'members')[acc.uid] : null;
+  currentUser = { uid: acc.uid, email, name: acc.name, role: acc.companyId ? (mem ? mem.role : 'none') : 'none', companyId: acc.companyId || null };
+  company = acc.companyId ? { id: acc.companyId, ...demoCompanies()[acc.companyId] } : null;
+  localStorage.setItem('cp-demo-user', JSON.stringify(currentUser));
+  emitUser();
+}
+
+function demoRead(coll) { return jget(demoKey(coll)); }
 function demoWrite(coll, map) {
   localStorage.setItem(demoKey(coll), JSON.stringify(map));
   (demoSubs[coll] || []).forEach(cb => cb(demoList(coll)));
@@ -120,6 +343,14 @@ function demoList(coll) {
 
 // ----------------------------------------------------------------- CRUD -----
 
+// Every path below is inside the signed-in user's company.
+function cpath() {
+  if (!currentUser || !currentUser.companyId) throw new Error('Not signed in to a company');
+  return ['companies', currentUser.companyId];
+}
+const collRef = (coll) => cloud.fns.collection(cloud.db, ...cpath(), coll);
+const docRef = (coll, id) => cloud.fns.doc(cloud.db, ...cpath(), coll, id);
+
 // Live list of a collection. Returns an unsubscribe function.
 export function watch(coll, cb) {
   if (mode === 'demo') {
@@ -127,8 +358,7 @@ export function watch(coll, cb) {
     cb(demoList(coll));
     return () => { const a = demoSubs[coll]; const i = a.indexOf(cb); if (i >= 0) a.splice(i, 1); };
   }
-  const { collection, onSnapshot } = cloud.fns;
-  return onSnapshot(collection(cloud.db, coll), (snap) => {
+  return cloud.fns.onSnapshot(collRef(coll), (snap) => {
     const rows = [];
     snap.forEach(d => rows.push({ id: d.id, ...d.data() }));
     cb(rows);
@@ -140,7 +370,7 @@ export async function getOne(coll, id) {
     const map = demoRead(coll);
     return map[id] ? { id, ...map[id] } : null;
   }
-  const snap = await cloud.fns.getDoc(cloud.fns.doc(cloud.db, coll, id));
+  const snap = await cloud.fns.getDoc(docRef(coll, id));
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
@@ -154,7 +384,7 @@ export async function create(coll, data) {
     demoWrite(coll, map);
     return id;
   }
-  const ref = await cloud.fns.addDoc(cloud.fns.collection(cloud.db, coll), record);
+  const ref = await cloud.fns.addDoc(collRef(coll), record);
   return ref.id;
 }
 
@@ -173,7 +403,7 @@ export async function update(coll, id, patch, event) {
     return;
   }
   if (event) body.events = cloud.fns.arrayUnion({ at: nowIso(), by: who, what: event });
-  await cloud.fns.updateDoc(cloud.fns.doc(cloud.db, coll, id), body);
+  await cloud.fns.updateDoc(docRef(coll, id), body);
 }
 
 export async function remove(coll, id) {
@@ -183,14 +413,14 @@ export async function remove(coll, id) {
     demoWrite(coll, map);
     return;
   }
-  await cloud.fns.deleteDoc(cloud.fns.doc(cloud.db, coll, id));
+  await cloud.fns.deleteDoc(docRef(coll, id));
 }
 
 // ------------------------------------------------------------- numbering ----
 
-// Their own order and invoice sequences, independent of any customer's numbers.
-// In the cloud this runs as a transaction so two people capturing orders at the
-// same moment can never be handed the same number.
+// The company's own order and invoice sequences. In the cloud this runs as a
+// transaction so two people capturing orders at the same moment can never be
+// handed the same number.
 export async function nextNumber(key, first) {
   if (mode === 'demo') {
     const map = demoRead('counters');
@@ -199,9 +429,8 @@ export async function nextNumber(key, first) {
     demoWrite('counters', map);
     return next;
   }
-  const { doc, runTransaction } = cloud.fns;
-  const ref = doc(cloud.db, 'counters', key);
-  return await runTransaction(cloud.db, async (tx) => {
+  const ref = docRef('counters', key);
+  return await cloud.fns.runTransaction(cloud.db, async (tx) => {
     const snap = await tx.get(ref);
     const next = snap.exists() ? (snap.data().value || first || 1) : (first || 1);
     tx.set(ref, { value: next + 1 }, { merge: true });
@@ -213,7 +442,10 @@ export async function nextNumber(key, first) {
 
 export async function loadSettings(defaults) {
   const got = await getOne('settings', 'factory');
-  return { ...defaults, ...(got || {}) };
+  const s = { ...defaults, ...(got || {}) };
+  if (!s.name && company) s.name = company.name || '';
+  if (!s.legalName) s.legalName = s.name;
+  return s;
 }
 
 export async function saveSettings(patch) {
@@ -223,14 +455,18 @@ export async function saveSettings(patch) {
     demoWrite('settings', map);
     return;
   }
-  await cloud.fns.setDoc(cloud.fns.doc(cloud.db, 'settings', 'factory'),
-    { ...patch, updatedAt: nowIso() }, { merge: true });
+  await cloud.fns.setDoc(docRef('settings', 'factory'), { ...patch, updatedAt: nowIso() }, { merge: true });
+  // the trading name is also the company's name everywhere else
+  if (patch.name && company && currentUser.role === 'owner' && patch.name !== company.name) {
+    await cloud.fns.updateDoc(cloud.fns.doc(cloud.db, 'companies', company.id), { name: patch.name });
+    company.name = patch.name;
+  }
 }
 
 // Seed a brand-new demo browser with one customer and a few orders, so the
 // system can be walked through without typing anything first.
 export function seedDemoIfEmpty() {
-  if (mode !== 'demo') return false;
+  if (mode !== 'demo' || !currentUser || currentUser.companyId !== 'demo') return false;
   const had = Object.keys(demoRead('orders')).length > 0;
   if (!had) seedDemoBase();
   seedDemoExtras();
