@@ -4035,11 +4035,16 @@
   }
 
   let suppliersCache = [], grvsCache = [], grvLines = [], grvSupplierId = null, grvInFlight = false, grvCurTab = 'new', receivingPoId = null, posCache = [];
+  // One receipt key per draft: if Receive fails half-way (Shopify took the
+  // stock, the record didn't save) a retry reuses it, and the server answers
+  // from memory instead of adding the stock a second time.
+  let grvIdemKey = null;
+  const loadPendingGrv = () => { try { return JSON.parse(localStorage.getItem('reptipos-grv-pending') || 'null'); } catch (e) { return null; } };
   // The GRV in progress autosaves on every change, so a half-counted delivery
   // survives a closed tab, a crash or lunch — reopening 📥 Receive restores it.
   function saveGrvDraft() {
     try {
-      if (grvLines.length) localStorage.setItem('reptipos-grv-draft', JSON.stringify({ grvLines, grvSupplierId, receivingPoId, at: new Date().toISOString() }));
+      if (grvLines.length) localStorage.setItem('reptipos-grv-draft', JSON.stringify({ grvLines, grvSupplierId, receivingPoId, idemKey: grvIdemKey, at: new Date().toISOString() }));
       else localStorage.removeItem('reptipos-grv-draft');
     } catch (e) {}
   }
@@ -4047,16 +4052,16 @@
   function discardGrvDraft() {
     if (grvLines.length && !confirm('Throw away this unfinished GRV?')) return;
     localStorage.removeItem('reptipos-grv-draft');
-    grvLines = []; grvSupplierId = null; receivingPoId = null;
+    grvLines = []; grvSupplierId = null; receivingPoId = null; grvIdemKey = null;
     renderGrvNew();
   }
   async function openGrv() {
     if (!canReceiveStock()) { toast('Receiving stock needs the 📥 receive permission — a manager grants it under 🧾 Register → staff'); return; }
     const draft = loadGrvDraft();
     if (draft && Array.isArray(draft.grvLines) && draft.grvLines.length) {
-      grvLines = draft.grvLines; grvSupplierId = draft.grvSupplierId || null; receivingPoId = draft.receivingPoId || null;
+      grvLines = draft.grvLines; grvSupplierId = draft.grvSupplierId || null; receivingPoId = draft.receivingPoId || null; grvIdemKey = draft.idemKey || null;
       toast('Unfinished GRV restored — 🗑 Discard to start fresh');
-    } else { receivingPoId = null; grvLines = []; grvSupplierId = null; }
+    } else { receivingPoId = null; grvLines = []; grvSupplierId = null; grvIdemKey = null; }
     grvInFlight = false;
     document.getElementById('grv-modal').classList.add('show');
     grvTab('new');
@@ -4116,6 +4121,7 @@
         <div style="display:flex;justify-content:space-between;font-weight:800;font-size:1.05rem"><span>Profit if sold</span><span class="accent" id="grv-profit">R0.00</span></div>
       </div>
       <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.85rem;cursor:pointer;margin-top:0.4rem"><input type="checkbox" id="grv-updcost" checked style="width:auto"> Update product cost prices in Shopify</label>
+      <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.8rem;cursor:pointer;margin-top:0.3rem;color:var(--muted)" title="Use this only if an earlier attempt already put the stock into Shopify but the GRV did not save"><input type="checkbox" id="grv-recordonly" style="width:auto"> Stock is already in Shopify — only record the GRV</label>
       <button class="btn btn-pay" style="margin-top:0.6rem" id="grv-confirm" onclick="confirmGrv()">📥 Receive into stock</button>`;
     renderGrvLines();
   }
@@ -4305,6 +4311,18 @@
     console.log('[GRV] confirm tapped', { grvInFlight, receivingPoId, lines: grvLines.length, grvSupplierId });
     if (grvInFlight) { toast('Already receiving — please wait a moment'); return; }
     if (!fbReady()) { toast('Need a connection to record the GRV'); return; }
+    const pending = loadPendingGrv();
+    if (pending && pending.idemKey && pending.idemKey === grvIdemKey) {
+      grvInFlight = true;
+      try {
+        const id = await fbAdd('grvs', pending); pending.id = id; grvsCache.unshift(pending);
+        localStorage.removeItem('reptipos-grv-pending'); localStorage.removeItem('reptipos-grv-draft');
+        grvLines = []; grvSupplierId = null; receivingPoId = null; grvIdemKey = null;
+        printGrv(pending); toast('GRV record saved · ' + pending.grvNumber + ' (stock was already in Shopify)'); grvTab('list');
+      } catch (e) { toast('Still could not save the GRV record: ' + (e.message || e)); }
+      finally { grvInFlight = false; }
+      return;
+    }
     const linkedPo = receivingPoId ? posCache.find(p => p.id === receivingPoId) : null;
     const supSel = document.getElementById('grv-sup'); const supId = grvSupplierId || (supSel ? supSel.value : '');
     if (!supId && !linkedPo) { toast('Select a supplier'); return; }
@@ -4320,9 +4338,12 @@
     let total = lines.reduce((t, l) => t + l.costCents * l.qty, 0);
     grvInFlight = true;
     const btn = document.getElementById('grv-confirm'); if (btn) { btn.disabled = true; btn.textContent = 'Receiving…'; }
-    const idemKey = uuid();
+    if (!grvIdemKey) { grvIdemKey = uuid(); saveGrvDraft(); }
+    const idemKey = grvIdemKey;
+    const roEl = document.getElementById('grv-recordonly'); const recordOnly = !!(roEl && roEl.checked);
     try {
-      const resp = await callFn({ action: 'receiveStock', idemKey, updateCost, lineItems: lines.map(l => ({ inventoryItemId: l.inventoryItemId, variantId: l.variantId, qty: l.qty, costCents: l.costCents })) });
+      const resp = recordOnly ? { received: lines.length, failed: [] }
+        : await callFn({ action: 'receiveStock', idemKey, updateCost, lineItems: lines.map(l => ({ inventoryItemId: l.inventoryItemId, variantId: l.variantId, qty: l.qty, costCents: l.costCents })) });
       if (resp && resp.error) throw new Error(resp.error);
       // Shopify may refuse the odd line (tracking off, a bundle). Those stay
       // in the draft to try again; everything it accepted is received now.
@@ -4330,7 +4351,7 @@
       const refused = lines.filter(l => failedIds.has(String(l.inventoryItemId)));
       lines = lines.filter(l => !failedIds.has(String(l.inventoryItemId)));
       if (!lines.length) throw new Error((resp.failed && resp.failed[0] && resp.failed[0].error) || 'Shopify refused the stock lines');
-      lines.forEach(l => { const p = findProduct(l.variantId); if (p) p.qty = (Number(p.qty) || 0) + l.qty; }); cacheCatalogue(); renderGrid();
+      if (!recordOnly && !resp.idempotent) { lines.forEach(l => { const p = findProduct(l.variantId); if (p) p.qty = (Number(p.qty) || 0) + l.qty; }); cacheCatalogue(); renderGrid(); }
       const seq = (parseInt(localStorage.getItem('reptipos-grv-seq') || '0', 10) || 0) + 1; localStorage.setItem('reptipos-grv-seq', String(seq));
       const sup = suppliersCache.find(s => s.id === supId);
       const supplierName = sup ? sup.name : (linkedPo ? linkedPo.supplierName : '');
@@ -4340,7 +4361,15 @@
         poNumber: linkedPo ? linkedPo.poNumber : '',
         lineItems: lines.map(l => ({ variantId: l.variantId, inventoryItemId: l.inventoryItemId, name: l.name, sku: l.sku, qty: l.qty, costCents: l.costCents })),
         totalCents: total, amountPaidCents: 0, status: 'open', payments: [], createdAt: new Date().toISOString(), staff: currentStaff ? currentStaff.name : null };
-      const id = await fbAdd('grvs', grv); grv.id = id; grvsCache.unshift(grv);
+      let id;
+      try { id = await fbAdd('grvs', grv); }
+      catch (e) {
+        // Shopify has the stock; the record is what failed. Keep it so the next
+        // Receive press saves the record without touching Shopify again.
+        try { localStorage.setItem('reptipos-grv-pending', JSON.stringify(grv)); } catch (x) {}
+        throw new Error('Stock went into Shopify but the GRV record did not save (' + (e.message || e).slice(0, 80) + '). Reload the page and press Receive again — it will only save the record.');
+      }
+      grv.id = id; grvsCache.unshift(grv);
       // If this was received against a PO, update its received quantities + status.
       if (linkedPo) {
         lines.forEach(l => { const it = (linkedPo.items || []).find(x => x.variantId === l.variantId); if (it) it.receivedQty = (it.receivedQty || 0) + l.qty; });
@@ -4356,8 +4385,8 @@
         grvLines = grvLines.filter(l => failedIds.has(String(l.inventoryItemId))); saveGrvDraft(); renderGrvLines(); updateGrvTotalsUI();
       } else {
         toast('Received into stock · ' + grvNumber + (linkedPo ? ' (' + linkedPo.poNumber + ' ' + linkedPo.status + ')' : ''));
-        grvLines = []; grvSupplierId = null; receivingPoId = null;
-        localStorage.removeItem('reptipos-grv-draft');
+        grvLines = []; grvSupplierId = null; receivingPoId = null; grvIdemKey = null;
+        localStorage.removeItem('reptipos-grv-draft'); localStorage.removeItem('reptipos-grv-pending');
         grvTab('list');
       }
     } catch (e) { toast('Receive failed: ' + (e.message || e)); }
