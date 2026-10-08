@@ -11,6 +11,7 @@
 import * as store from './store.js';
 import { customerById } from './customers.js';
 import { esc, field, row, val, openModal, toast, empty, today, addDays, niceDate, waDigits, openPrint, docHeader } from './ui.js';
+import { openSignScreen } from './sign.js';
 
 export const SLOTS = ['08:00 - 10:00', '10:00 - 12:00', '12:00 - 14:00', '14:00 - 16:00', '16:00 - 18:00', '18:00 - 20:00'];
 const STATUS = {
@@ -89,6 +90,7 @@ function card(o, opts) {
     <div class="dl-acts">
       <button class="btn ${o.deliveryDate ? 'ghost' : 'primary'} sm" data-act="dl-schedule" data-id="${esc(o.id)}">${o.deliveryDate ? 'Change' : 'Schedule'}</button>
       ${o.deliveryDate && phoneOf(o) ? `<button class="btn ghost sm" data-act="dl-confirm" data-id="${esc(o.id)}">WhatsApp client</button>` : ''}
+      <button class="btn ghost sm" data-act="dl-sign" data-id="${esc(o.id)}" title="The client signs the delivery note here, on this screen">Client signs</button>
       ${o.deliveryDate ? `<button class="btn ghost sm" data-act="dl-delivered" data-id="${esc(o.id)}">Delivered</button>` : ''}
     </div>
   </div>`;
@@ -145,7 +147,7 @@ function renderDone(orders) {
       <td>${esc(o.deliveryContact || o.customerName || '')}<div class="muted">${esc(addressOf(o))}</div></td>
       <td>${esc(o.deliveredBy || '')}</td>
       <td>${o.hasDeliveryNote ? esc(o.signedBy || 'signed') : '<span class="muted">no signature</span>'}</td>
-      <td class="r nowrap">${o.hasDeliveryNote ? `<button class="btn ghost sm" data-act="dl-note" data-id="${esc(o.id)}">Signed note</button>` : ''}
+      <td class="r nowrap">${o.hasDeliveryNote ? `<button class="btn ghost sm" data-act="dl-note" data-id="${esc(o.id)}">Signed note</button>` : `<button class="btn ghost sm" data-act="dl-sign" data-id="${esc(o.id)}">Client signs</button>`}
         <button class="btn ghost sm" data-act="dl-undo" data-id="${esc(o.id)}">Not delivered</button></td></tr>`).join('')}</tbody>
   </table></div>`;
 }
@@ -219,6 +221,25 @@ export async function markDelivered(id, orders) {
   if (['new', 'in-production', 'ready'].includes(o.status)) Object.assign(patch, { status: 'dispatched', dispatchedAt: o.dispatchedAt || now, dispatchedBy: who });
   await store.update('orders', id, patch, 'Delivered (marked by the office)');
   toast((o.orderNo || 'Order') + ' delivered');
+}
+
+// The client signs here, in the office or on the office tablet: a
+// collection at the factory, or a note signed after the fact.
+export function clientSigns(id, orders) {
+  const o = orders.find(x => x.id === id); if (!o) return;
+  const me = (store.getUser() || {}).name || 'office';
+  openSignScreen({ company: settings.name || '', orderNo: o.orderNo, product: o.product, qty: o.qty, fabric: o.fabric,
+    customer: o.deliveryContact || o.customerName || '', address: addressOf(o), by: me, byLabel: 'HANDED OVER BY' },
+  async (signedBy, dataUrl) => {
+    const now = store.nowIso();
+    try {
+      if (dataUrl) await store.saveDeliveryNote(id, { orderId: id, orderNo: o.orderNo || '', dataUrl, signedBy, at: now, driver: me });
+      const patch = { driverStatus: 'delivered', driverStatusAt: now, deliveredAt: o.deliveredAt || now, deliveredBy: o.deliveredBy || me, signedBy: signedBy || o.signedBy || '', hasDeliveryNote: !!dataUrl || !!o.hasDeliveryNote };
+      if (['new', 'in-production', 'ready'].includes(o.status)) Object.assign(patch, { status: 'dispatched', dispatchedAt: o.dispatchedAt || now, dispatchedBy: me });
+      await store.update('orders', id, patch, dataUrl ? 'Delivery note signed by ' + signedBy : 'Handed over without a signature');
+      toast((o.orderNo || 'Order') + (dataUrl ? ' signed for by ' + signedBy : ' marked delivered'));
+    } catch (e) { toast('Could not save: ' + e.message, 'warn'); }
+  });
 }
 
 export async function undoDelivered(id, orders) {

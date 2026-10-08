@@ -18,7 +18,7 @@ import { startQuotes, renderQuotes, setQuoteSettings, setQuoteFilter, newQuote, 
 import { renderProfit, setProfitSettings, setProfitMonth } from './profit.js';
 import {
   startDeliveries, renderDeliveries, setDeliverySettings, setDeliveryView, setDeliveryDay, scheduleDelivery, confirmToClient,
-  sendRun, printRun, markDelivered, undoDelivered, viewNote, newDriver, editDriver, sendDriverLink, copyDriverLink, relinkDriver, removeDriver
+  sendRun, printRun, markDelivered, undoDelivered, viewNote, clientSigns, newDriver, editDriver, sendDriverLink, copyDriverLink, relinkDriver, removeDriver
 } from './deliveries.js';
 import {
   startStock, renderStock, setStockSettings, setStockView, countMaterial, newPurchaseOrder, draftForSupplier,
@@ -756,6 +756,7 @@ async function onAction(e) {
     case 'dl-schedule': return scheduleDelivery(id, allOrders());
     case 'dl-confirm': return confirmToClient(id, allOrders());
     case 'dl-delivered': return markDelivered(id, allOrders());
+    case 'dl-sign': return clientSigns(id, allOrders());
     case 'dl-undo': return undoDelivered(id, allOrders());
     case 'dl-note': return viewNote(id);
     case 'dl-send-run': return sendRun(id, allOrders());

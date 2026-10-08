@@ -74,6 +74,9 @@ export function watchRoles(cb) {
 async function seedRoles() {
   for (const [key, r] of Object.entries(DEFAULT_ROLES)) await setWithId('roles', key, { name: r.name, perms: r.perms });
 }
+// A signed delivery note (a picture) for an order, saved under the order's id.
+export async function saveDeliveryNote(orderId, note) { await setWithId('deliveryNotes', orderId, note); }
+
 export async function saveRole(key, patch) { await update('roles', key, patch); }
 export async function createRole(name) {
   const key = 'r' + Date.now().toString(36);
