@@ -212,6 +212,7 @@ function orderCard(o) {
         <div>
           <div class="order-no">${esc(o.orderNo || '—')}
             ${o.source === 'feed' ? '<span class="chip feed" title="Came through automatically from the customer’s system">auto</span>' : ''}
+            ${o.source === 'shopify' ? `<span class="chip feed" title="Online order ${esc(o.shopifyOrderName || '')} from your Shopify store">online ${esc(o.shopifyOrderName || '')}</span>` : ''}
           </div>
           <h2>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' <span class="qty">× ' + esc(o.qty) + '</span>' : ''}</h2>
           <div class="meta">

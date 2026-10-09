@@ -23,6 +23,7 @@
 //           demonstrated before any database is created
 import { FIREBASE_CONFIG, isCloudConfigured, TRIAL_DAYS } from './config.js';
 import { DEFAULT_ROLES, WRITE_AREAS, OWNER_PERMS, canSee, canEdit } from './permissions.js';
+import { wantOrder, orderLines, orderDocId, customerOf, findCustomer, mapLine, mapProduct } from './shopify-map.js';
 
 const FB_VERSION = '10.13.0';
 const FB = (m) => `https://www.gstatic.com/firebasejs/${FB_VERSION}/firebase-${m}.js`;
@@ -74,6 +75,9 @@ export function watchRoles(cb) {
 async function seedRoles() {
   for (const [key, r] of Object.entries(DEFAULT_ROLES)) await setWithId('roles', key, { name: r.name, perms: r.perms });
 }
+// A signed delivery note (a picture) for an order, saved under the order's id.
+export async function saveDeliveryNote(orderId, note) { await setWithId('deliveryNotes', orderId, note); }
+
 export async function saveRole(key, patch) { await update('roles', key, patch); }
 export async function createRole(name) {
   const key = 'r' + Date.now().toString(36);
@@ -183,6 +187,141 @@ function demoBilling(action) {
   company = { id: company.id, ...c };
   emitCompany();
   return { demo: true, ok: true };
+}
+
+// ---- the online shop (Shopify) ----
+// The keys never come to the browser: connecting, bringing products and
+// orders in, and sending stock out all happen on the server
+// (netlify/functions/factory-shopify.mjs). The status shows in Settings.
+
+const SHOPIFY_URL = '/.netlify/functions/factory-shopify';
+
+export async function shopifyCall(action, payload) {
+  if (mode === 'demo') return demoShopify(action, payload || {});
+  const token = await cloud.auth.currentUser.getIdToken();
+  const r = await fetch(SHOPIFY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ action, ...(payload || {}) }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+
+// A till sale took pieces off the shelf: Shopify takes the same off its
+// count. Quietly, in the background. If it cannot get through (offline, a
+// hiccup), the sale waits on this device and is sent again with the next sale
+// or the next time the app opens; the server sends each sale once only.
+// Shopify refusing a line shows in Settings.
+const PUSH_KEY = 'cp-shopify-pending';
+const pendingPushes = () => { try { return JSON.parse(localStorage.getItem(PUSH_KEY) || '[]'); } catch (e) { return []; } };
+const savePending = (a) => { try { localStorage.setItem(PUSH_KEY, JSON.stringify(a.slice(-200))); } catch (e) { /* storage off */ } };
+async function pushOne(saleId) {
+  try { await shopifyCall('pushSale', { saleId }); savePending(pendingPushes().filter(x => x !== saleId)); }
+  catch (e) {
+    console.warn('Shopify stock not sent yet:', e.message);
+    if (!/not found|Which sale/i.test(e.message)) { const p = pendingPushes(); if (!p.includes(saleId)) savePending(p.concat(saleId)); }
+    else savePending(pendingPushes().filter(x => x !== saleId));
+  }
+}
+export function shopifyPushSale(saleId, lines) {
+  shopifyRetryPending();
+  if ((lines || []).some(l => l.kind === 'stock' && l.productId)) pushOne(saleId);
+}
+export function shopifyRetryPending() {
+  if (mode === 'demo') return;
+  pendingPushes().forEach(id => pushOne(id));
+}
+
+// In demo mode there is no real shop: a made-up one shows the whole flow,
+// using the same rules as the server for what an online order becomes.
+const DEMO_SHOP = [
+  { title: '3 Seater Chesterfield', price: 18999, tracked: false, qoh: 0, category: 'Couches' },
+  { title: 'Wingback Chair', price: 7499, tracked: false, qoh: 0, category: 'Chairs' },
+  { title: 'Linen Scatter Cushion 50cm', price: 449, tracked: true, qoh: 24, category: 'Accessories' },
+  { title: 'Oak Side Table', price: 2899, tracked: true, qoh: 6, category: 'Tables' }
+].map((p, i) => ({ ...p, shopifyProductId: String(8100 + i), shopifyVariantId: String(4400 + i), shopifyInventoryItemId: String(5500 + i), sku: 'OS-' + (100 + i) }));
+
+function demoShopify(action, p) {
+  const ints = demoRead('integrations');
+  const st = ints.shopify || {};
+  const save = (patch) => { ints.shopify = { ...st, ...patch }; demoWrite('integrations', ints); return ints.shopify; };
+  const vat = () => { const s = (demoRead('settings').factory) || {}; return { settings: s, vatRate: s.vatRegistered ? (s.vatRate == null ? 0.15 : Number(s.vatRate) || 0) : 0 }; };
+  if (action === 'connect') {
+    const domain = String(p.domain || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    const full = /\.myshopify\.com$/.test(domain) ? domain : domain + '.myshopify.com';
+    if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(full)) throw new Error('That does not look like a Shopify store. Use the address that ends in .myshopify.com');
+    if (!String(p.clientId || '').trim() || !String(p.clientSecret || '').trim()) throw new Error('Paste both the Client ID and the Client secret');
+    const name = full.replace('.myshopify.com', '').split('-').filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
+    save({ connected: true, domain: full, shopName: name, currency: 'ZAR', taxesIncluded: true, connectedAt: nowIso(), connectedBy: (currentUser || {}).name || '',
+      lastCheckedAt: nowIso(), importWhen: p.importWhen === 'placed' ? 'placed' : 'paid', webhooks: 'on', lastError: '', ordersIn: Number(st.ordersIn) || 0, demo: true });
+    return { ok: true, shopName: name, webhooks: 'on' };
+  }
+  if (!st.connected) throw new Error('Connect the shop first');
+  if (action === 'disconnect') { save({ connected: false, disconnectedAt: nowIso(), webhooks: '' }); return { ok: true }; }
+  if (action === 'settings') { save({ importWhen: p.importWhen === 'placed' ? 'placed' : 'paid' }); return { ok: true }; }
+  if (action === 'pushSale') return { ok: true, adjusted: 0 };
+  if (action === 'products') {
+    const { vatRate } = vat();
+    const map = demoRead('products');
+    let created = 0, updated = 0, linked = 0;
+    for (const v of DEMO_SHOP) {
+      const d = mapProduct(v, { taxesIncluded: true, vatRate });
+      const id = Object.keys(map).find(k => map[k].shopifyVariantId === v.shopifyVariantId)
+        || Object.keys(map).find(k => !map[k].shopifyVariantId && String(map[k].name || '').trim().toLowerCase() === v.title.toLowerCase());
+      if (id) {
+        if (map[id].shopifyVariantId) updated++; else linked++;
+        const { name, category, ...keep } = d;
+        map[id] = { ...map[id], ...keep, ...(map[id].category ? {} : { category }), updatedAt: nowIso(), updatedBy: 'Shopify' };
+      } else {
+        created++;
+        map['shopify-' + v.shopifyVariantId] = { labourHours: 0, materials: [], notes: 'From the online shop (SKU ' + v.sku + ')', stock: 0, ...d, source: 'shopify', createdAt: nowIso(), createdBy: 'Shopify', updatedAt: nowIso(), updatedBy: 'Shopify' };
+      }
+    }
+    demoWrite('products', map);
+    save({ productsAt: nowIso(), productsCount: DEMO_SHOP.length });
+    return { ok: true, total: DEMO_SHOP.length, created, updated, linked };
+  }
+  if (action === 'sync') {
+    // a customer buys a couch (built to order) and two cushions (on the shelf)
+    const n = 1001 + (Number(st.ordersIn) || 0);
+    const couch = DEMO_SHOP[0], cushion = DEMO_SHOP[2];
+    const o = {
+      id: 7000000 + n, name: '#' + n, order_number: n, created_at: nowIso(), processed_at: nowIso(), financial_status: 'paid', taxes_included: true,
+      email: 'naledi.k@example.com', note: 'Please phone before delivery',
+      customer: { id: 990001, first_name: 'Naledi', last_name: 'Khumalo', phone: '082 555 0142' },
+      shipping_address: { name: 'Naledi Khumalo', address1: '14 Kloof Street', city: 'Gardens, Cape Town', zip: '8001', phone: '082 555 0142' },
+      line_items: [
+        { id: n * 10 + 1, product_id: Number(couch.shopifyProductId), variant_id: Number(couch.shopifyVariantId), title: couch.title, variant_title: 'Charcoal Velvet', quantity: 1, price: String(couch.price), sku: couch.sku, tax_lines: [{ rate: 0.15 }] },
+        { id: n * 10 + 2, product_id: Number(cushion.shopifyProductId), variant_id: Number(cushion.shopifyVariantId), title: cushion.title, variant_title: '', quantity: 2, price: String(cushion.price), sku: cushion.sku, tax_lines: [{ rate: 0.15 }] }
+      ]
+    };
+    if (!wantOrder(o, st.importWhen)) return { ok: true, looked: 1, brought: [] };
+    const { settings, vatRate } = vat();
+    const c = customerOf(o);
+    const custs = demoRead('customers');
+    const hit = findCustomer(Object.keys(custs).map(k => ({ id: k, ...custs[k] })), c);
+    let customerId = hit ? hit.id : '';
+    if (!customerId) { customerId = 'shopify-c-' + o.customer.id; custs[customerId] = { ...c, notes: 'Added from online order ' + o.name, source: 'shopify', createdAt: nowIso(), createdBy: 'Shopify', updatedAt: nowIso(), updatedBy: 'Shopify' }; demoWrite('customers', custs); }
+    const customerName = custs[customerId].name;
+    const products = demoRead('products');
+    const orders = demoRead('orders');
+    const made = [];
+    for (const li of orderLines(o)) {
+      const pid = Object.keys(products).find(k => products[k].shopifyVariantId === String(li.variant_id));
+      const product = pid ? { id: pid, ...products[pid] } : null;
+      const fromStock = !!(product && Number(product.stock) >= li.quantity);
+      const doc = mapLine(o, li, { customerId, customerName, product, fromStock, leadDays: settings.leadDays, vatRate });
+      const counters = demoRead('counters');
+      const next = (counters.orderNo && counters.orderNo.value) || settings.firstOrderNo || 1001;
+      counters.orderNo = { value: next + 1 }; demoWrite('counters', counters);
+      doc.orderNo = (settings.orderPrefix || 'CP-') + next;
+      orders[orderDocId(o, li)] = doc; made.push(doc.orderNo);
+      if (fromStock) { products[pid].stock = Number(products[pid].stock) - li.quantity; }
+    }
+    demoWrite('products', products);
+    demoWrite('orders', orders);
+    save({ ordersIn: (Number(st.ordersIn) || 0) + 1, lastOrderAt: nowIso(), lastOrderName: o.name, lastCheckedAt: nowIso() });
+    return { ok: true, looked: 1, brought: [{ order: o.name, orders: made }] };
+  }
+  throw new Error('Unknown action');
 }
 
 // ---- the seller's own view of every company ----
@@ -451,6 +590,70 @@ export async function removeMember(uid) {
   await remove('members', uid);
 }
 
+// ---------------------------------------------------------- driver page ----
+//
+// Drivers do not log in: their private link carries <companyId>.<code>. In
+// the cloud the factory-driver function checks the code and returns only
+// that driver's stops; in demo mode the same is worked out from this browser.
+const DRIVER_URL = '/.netlify/functions/factory-driver';
+export const localDate = (d) => (d || new Date()).toLocaleDateString('en-CA');   // YYYY-MM-DD, phone's own day
+
+function demoStop(o) {
+  return { id: o.id, orderNo: o.orderNo || '', product: o.product || '', qty: o.qty || 1, fabric: o.fabric || '',
+    customer: o.deliveryContact || o.customerName || '', phone: o.deliveryPhone || '', address: o.deliveryAddress || '',
+    slot: o.deliverySlot || '', instructions: o.deliveryInstructions || '', driverStatus: o.driverStatus || '',
+    driverNote: o.driverNote || '', deliveredAt: o.deliveredAt || '', signedBy: o.signedBy || '' };
+}
+function demoDriver(d) {
+  const m = /^([A-Za-z0-9_-]{1,64})\.([a-f0-9]{24})$/.exec(String(d || ''));
+  if (!m) throw new Error('This link is not complete. Ask the office for your link again.');
+  const pre = demoPrefix(m[1]);
+  const drivers = jget(pre + 'drivers');
+  const id = Object.keys(drivers).find(k => drivers[k].token === m[2] && !drivers[k].disabled);
+  if (!id) throw new Error('This link does not work any more. Ask the office for a new one.');
+  return { pre, cid: m[1], id, driver: drivers[id] };
+}
+
+export async function driverLoad(d, date) {
+  const day = date || localDate();
+  if (!isCloudConfigured()) {
+    const x = demoDriver(d);
+    const orders = jget(x.pre + 'orders');
+    const st = (jget(x.pre + 'settings').factory) || {};
+    const stops = Object.keys(orders).map(id => ({ id, ...orders[id] }))
+      .filter(o => o.driverId === x.id && o.deliveryDate === day).map(demoStop)
+      .sort((a, b) => String(a.slot).localeCompare(String(b.slot)) || String(a.orderNo).localeCompare(String(b.orderNo)));
+    return { driver: { name: x.driver.name || '' }, date: day, company: { name: st.name || (demoCompanies()[x.cid] || {}).name || '', phone: st.deliveryPhone || st.phone || '' }, stops };
+  }
+  const r = await fetch(DRIVER_URL + '?d=' + encodeURIComponent(d) + '&date=' + day);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'Could not load the list (' + r.status + ')');
+  return j;
+}
+
+export async function driverAct(d, payload) {
+  if (!isCloudConfigured()) {
+    const x = demoDriver(d);
+    const orders = jget(x.pre + 'orders');
+    const o = orders[payload.orderId];
+    if (!o || o.driverId !== x.id) throw new Error('That stop is not on your list.');
+    const now = nowIso(); const by = x.driver.name || 'Driver';
+    if (payload.action === 'status') Object.assign(o, { driverStatus: payload.status, driverStatusAt: now, driverNote: payload.note || '' });
+    if (payload.action === 'delivered') {
+      if (payload.dataUrl) { const notes = jget(x.pre + 'deliveryNotes'); notes[payload.orderId] = { orderId: payload.orderId, orderNo: o.orderNo, dataUrl: payload.dataUrl, signedBy: payload.signedBy || '', at: now, driver: by }; localStorage.setItem(x.pre + 'deliveryNotes', JSON.stringify(notes)); }
+      Object.assign(o, { driverStatus: 'delivered', driverStatusAt: now, deliveredAt: now, deliveredBy: by, signedBy: payload.signedBy || '', hasDeliveryNote: !!payload.dataUrl });
+      if (['new', 'in-production', 'ready'].includes(o.status)) Object.assign(o, { status: 'dispatched', dispatchedAt: o.dispatchedAt || now, dispatchedBy: by });
+    }
+    o.updatedAt = now; o.updatedBy = by;
+    localStorage.setItem(x.pre + 'orders', JSON.stringify(orders));
+    return { ok: true };
+  }
+  const r = await fetch(DRIVER_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ d, ...payload }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'Could not save (' + r.status + ')');
+  return j;
+}
+
 // ------------------------------------------------------------ demo store ----
 
 // Demo companies keep their records in localStorage under their own prefix.
@@ -661,6 +864,7 @@ export function seedDemoIfEmpty() {
   const had = Object.keys(demoRead('orders')).length > 0;
   if (!had) seedDemoBase();
   seedDemoExtras();
+  seedDemoDeliveries();
   return !had;
 }
 
@@ -774,8 +978,58 @@ function seedDemoQuotes() {
   const c = demoRead('counters'); c.quoteNo = { value: 4 }; demoWrite('counters', c);
 }
 
+// Two drivers and some deliveries booked for today and tomorrow.
+function seedDemoDeliveries() {
+  const drv = demoRead('drivers');
+  if (drv['drv1']) return;
+  drv['drv1'] = { name: 'Sipho', phone: '082 111 2222', token: 'a1b2c3d4e5f6a7b8c9d0e1f2', createdAt: nowIso(), createdBy: 'demo' };
+  drv['drv2'] = { name: 'Johan', phone: '083 333 4444', token: 'f0e1d2c3b4a5f6e7d8c9b0a1', createdAt: nowIso(), createdBy: 'demo' };
+  demoWrite('drivers', drv);
+  const orders = demoRead('orders');
+  const today = localDate(), tomorrow = localDate(new Date(Date.now() + 86400000));
+  const book = [['d3', today, '08:00 - 10:00', 'drv1', 'Gate code 4455, ring twice'], ['r3', today, '10:00 - 12:00', 'drv1', ''], ['r8', today, '14:00 - 16:00', 'drv2', 'Second floor, no lift'], ['r12', tomorrow, '10:00 - 12:00', 'drv1', '']];
+  const custs = demoRead('customers');
+  book.forEach(([id, date, slot, d, note]) => {
+    const o = orders[id]; if (!o) return;
+    const c = custs[o.customerId] || {};
+    Object.assign(o, { deliveryDate: date, deliverySlot: slot, driverId: d, driverName: drv[d].name, deliveryContact: c.contact || o.customerName, deliveryPhone: c.phone || '',
+      deliveryAddress: c.address || c.area || '', deliveryInstructions: note, driverStatus: 'scheduled' });
+    if (o.status === 'new' || o.status === 'in-production' || o.status === 'dispatched') o.status = 'ready';
+  });
+  demoWrite('orders', orders);
+}
+
+// The stock room: people, a few tools, and some stock already given out.
+function seedDemoStoreroom() {
+  const st = demoRead('storeStaff');
+  if (st['sp1']) return;
+  const now = nowIso();
+  Object.assign(st, {
+    sp1: { name: 'Sipho Dlamini', job: 'Upholsterer', phone: '082 111 2222', createdAt: now, createdBy: 'demo' },
+    sp2: { name: 'Thandi Mokoena', job: 'Sewing', phone: '083 222 3333', createdAt: now, createdBy: 'demo' },
+    sp3: { name: 'Pieter Swart', job: 'Frames', phone: '084 333 4444', createdAt: now, createdBy: 'demo' }
+  });
+  demoWrite('storeStaff', st);
+  const as = demoRead('assets');
+  const ev = (what) => [{ at: now, by: 'demo', what }];
+  Object.assign(as, {
+    as1: { name: 'Pneumatic staple gun', tag: 'T-001', category: 'Tool', status: 'issued', holderId: 'sp1', holderName: 'Sipho Dlamini', issuedAt: now, events: ev('Given to Sipho Dlamini'), createdAt: now, createdBy: 'demo' },
+    as2: { name: 'Pneumatic staple gun', tag: 'T-002', category: 'Tool', status: 'store', events: ev('Received into the stock room'), createdAt: now, createdBy: 'demo' },
+    as3: { name: 'Industrial sewing machine', tag: 'M-001', category: 'Machine', serial: 'JK-58420', status: 'issued', holderId: 'sp2', holderName: 'Thandi Mokoena', issuedAt: now, events: ev('Given to Thandi Mokoena'), createdAt: now, createdBy: 'demo' },
+    as4: { name: 'Compressor 50L', tag: 'M-002', category: 'Machine', status: 'repair', events: ev('Sent for repair: pressure switch'), createdAt: now, createdBy: 'demo' }
+  });
+  demoWrite('assets', as);
+  const mv = demoRead('stockMoves');
+  const give = (k, mat, name, unit, qty, person, pid, ref) => { mv[k] = { materialId: mat, name, unit, qty, kind: 'issued', ref, note: '', person, personId: pid, createdAt: now, createdBy: 'demo' }; };
+  give('mvi1', 'm-foam', 'Foam 50mm HD', 'm²', 5, 'Sipho Dlamini', 'sp1', 'CP-1003');
+  give('mvi2', 'm-web', 'Elastic webbing', 'm', 40, 'Pieter Swart', 'sp3', 'CP-1008');
+  give('mvi3', 'm-fab', 'Fabric (standard range)', 'm', 14, 'Thandi Mokoena', 'sp2', 'CP-1003');
+  demoWrite('stockMoves', mv);
+}
+
 function seedDemoExtras() {
   seedDemoStock();
+  seedDemoStoreroom();
   seedDemoQuotes();
   const orders = demoRead('orders');
   if (orders['r1']) return;

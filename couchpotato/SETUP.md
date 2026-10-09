@@ -73,6 +73,7 @@ be changed freely:
 | Office | Every screen at Edit |
 | Sales / till | Point of sale, quotes, orders and customers |
 | Factory floor | Factory floor, stock and scan out; orders to view |
+| Stock room | The stock room (receive, count, give out, tools); stock and orders to view |
 
 Changes apply at once: anyone whose menus change gets a fresh start with the
 right screens. The database rules enforce the same grid, so a View or Hidden
@@ -120,6 +121,32 @@ with PayFast directly, checks the amount against the price, and only then marks
 the company paid up for another month. Each later monthly payment extends it
 again. The browser can never mark a company as paid: the database rules refuse
 it.
+
+## Deliveries and the driver's link
+
+The **Deliveries** screen (under Production) books finished pieces for a day,
+a time slot (08:00 to 20:00) and a driver, and sends each driver their run on
+WhatsApp. Drivers do not log in: each gets a private link with big buttons
+(navigate, on my way, running late, problem, call) and, on Delivered, the
+client signs on the phone or tablet. The signed note is saved with the order,
+and the order moves to Dispatched, so it waits for invoicing.
+
+The driver's page runs through `netlify/functions/factory-driver.mjs`, which
+checks the link's code on the server and shows only that driver's stops for
+the day, without prices. It uses the same `FACTORY_SERVICE_ACCOUNT` as billing
+(step 4). If a phone is lost, open Deliveries → Drivers → **New link**: the old
+link stops working at once. Only roles with **Edit** on Deliveries can see or
+send driver links.
+
+## The online shop (Shopify)
+
+Each company connects its own Shopify store under **Settings → Online shop**
+(the owner only). Online orders then come in as factory orders within a
+minute, the shop's products come into the price list, and stock sold at the
+till comes off the shop's count. The keys are kept on the server only. It uses
+the same `FACTORY_SERVICE_ACCOUNT` as billing, with no other settings; the
+15-minute check (`factory-shopify-poll`) runs on its own once deployed. What
+the company does in Shopify, and the details, are in `SHOPIFY-SETUP.md`.
 
 ## 5. Make yourself the seller, once
 

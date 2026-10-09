@@ -832,3 +832,95 @@ h2 { font-family: var(--font-ui); font-weight: 600; font-size: 12px; letter-spac
 .lvl-none { color: #8a8884; }
 .lvl-view { color: #92400e; background: #fffbeb; }
 .lvl-edit { color: #14532d; background: #f0fdf4; }
+
+/* ------------------------------------------------------- drop-down menus */
+.tab-group { display: inline-flex; align-items: center; gap: .4rem; }
+.tab-group .tg-now:not(:empty)::before { content: "· "; opacity: .6; }
+.tab-group .tg-now { text-transform: none; letter-spacing: .04em; font-weight: 400; opacity: .85; }
+.tab-group .caret { width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid currentColor; opacity: .7; }
+.tab-group[aria-expanded="true"] .caret { transform: rotate(180deg); }
+.tab-menu { position: fixed; z-index: 60; min-width: 210px; background: #111; border: 1px solid #333; border-radius: 6px; box-shadow: 0 14px 34px rgba(0,0,0,.35); padding: .35rem; display: flex; flex-direction: column; }
+.tab-menu[hidden] { display: none; }
+.tab-item { background: none; border: 0; color: #d4d4d4; text-align: left; font: inherit; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; padding: .75rem .9rem; border-radius: 4px; cursor: pointer; }
+.tab-item:hover { background: #262626; color: #fff; }
+.tab-item.on { color: #fff; background: #262626; box-shadow: inset 3px 0 0 #fff; }
+
+/* -------------------------------------------------------------- deliveries */
+.dl-days { display: flex; gap: .4rem; flex-wrap: wrap; align-items: stretch; }
+.dl-day { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: .45rem .7rem; display: flex; flex-direction: column; align-items: center; min-width: 74px; cursor: pointer; font: inherit; }
+.dl-day span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.dl-day strong { font-size: 18px; }
+.dl-day.on { background: #111; color: #fff; border-color: #111; }
+.dl-day.on span { color: #ccc; }
+.dl-pick { border: 1px solid var(--line); border-radius: 6px; padding: 0 .5rem; }
+.dl-run-head { display: flex; justify-content: space-between; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.dl-run-head h2 { margin: 0; }
+.dl-card { display: flex; justify-content: space-between; gap: .8rem; padding: .8rem 0; border-top: 1px solid var(--line); }
+.dl-card:first-child, .dl-run-head + .dl-card { border-top: 0; }
+.dl-card.issue { box-shadow: inset 3px 0 0 #b91c1c; padding-left: .7rem; }
+.dl-main { min-width: 0; font-size: 13px; }
+.dl-top { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin-bottom: .2rem; }
+.dl-prod { font-weight: 600; font-size: 14px; }
+.dl-when { margin-top: .2rem; font-weight: 600; color: #1d4ed8; }
+.dl-acts { display: flex; flex-direction: column; gap: .3rem; align-items: stretch; min-width: 128px; }
+.dl-link { font-size: 11px; overflow-wrap: anywhere; }
+@media (max-width: 640px) { .dl-card { flex-direction: column; } .dl-acts { flex-direction: row; flex-wrap: wrap; } }
+
+/* ------------------------------------------------------------ driver page */
+#app.drv { background: #f2f0ec; min-height: 100vh; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; color: #1c1917; }
+.drv-head { background: #000; color: #fff; text-align: center; padding: 1rem 1rem 1.4rem; }
+.drv-co { font-size: 12px; letter-spacing: .3em; text-transform: uppercase; opacity: .85; }
+.drv-hi { font-size: 26px; font-weight: 900; margin-top: .3rem; }
+.drv-date { font-size: 14px; opacity: .8; }
+.drv-days { display: inline-flex; margin-top: .7rem; border: 1px solid #444; border-radius: 999px; overflow: hidden; }
+.drv-days button { background: none; border: 0; color: #bbb; font: inherit; font-size: 14px; font-weight: 700; padding: .45rem 1.1rem; }
+.drv-days button.on { background: #fff; color: #000; }
+.drv-body { max-width: 620px; margin: -.8rem auto 0; padding: 0 .8rem 4rem; }
+.drv-tiles { display: flex; gap: 8px; margin-bottom: 12px; }
+.drv-tiles > div { flex: 1; background: #fff; border-radius: 14px; padding: 10px; text-align: center; font-size: 12px; font-weight: 700; color: #78716c; }
+.drv-tiles strong { display: block; font-size: 26px; color: #111; }
+.drv-shop { flex: 1; display: flex; align-items: center; justify-content: center; text-align: center; background: #111; color: #fff; border-radius: 14px; font-weight: 900; font-size: 15px; text-decoration: none; }
+.drv-card { background: #fff; border-radius: 16px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.08); border-left: 6px solid #111; }
+.drv-card.done { border-left-color: #16a34a; }
+.drv-stop { font-size: 12px; font-weight: 900; letter-spacing: .08em; color: #78716c; display: flex; justify-content: space-between; gap: 8px; }
+.drv-st { background: #fef3c7; color: #92400e; border-radius: 999px; padding: 1px 8px; letter-spacing: 0; }
+.drv-prod { font-size: 22px; font-weight: 900; margin-top: 4px; }
+.drv-who { font-size: 18px; font-weight: 700; }
+.drv-addr { font-size: 17px; color: #44403c; }
+.drv-warn { color: #991b1b; }
+.drv-note { font-size: 14px; background: #f5f5f4; border-radius: 10px; padding: 8px 10px; margin-top: 8px; }
+.drv-ok { font-size: 16px; font-weight: 800; color: #166534; margin-top: 8px; }
+.drv-grid { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.drv-btn { flex: 1 1 44%; min-height: 58px; padding: 10px 8px; border-radius: 14px; border: 2px solid #111; background: #fff; color: #111; font: inherit; font-weight: 900; font-size: 17px; cursor: pointer; text-align: center; text-decoration: none; display: flex; align-items: center; justify-content: center; width: 100%; }
+.drv-btn.blue { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+.drv-btn.amber { background: #fef3c7; border-color: #f59e0b; color: #92400e; }
+.drv-btn.green { background: #16a34a; border-color: #16a34a; color: #fff; }
+.drv-btn.red { background: #fee2e2; border-color: #ef4444; color: #991b1b; }
+.drv-btn.dark { background: #111; color: #fff; }
+.drv-btn.wide { flex-basis: 100%; }
+.drv-menu { margin-top: 8px; }
+.drv-q { font-size: 13px; font-weight: 800; margin-top: 4px; }
+.drv-hint { margin-top: 8px; font-size: 12px; color: #a8a29e; }
+.drv-sec { font-size: 12px; font-weight: 900; letter-spacing: .1em; color: #78716c; margin: 14px 0 6px; }
+.drv-empty { background: #fff; border-radius: 16px; padding: 2rem; text-align: center; color: #78716c; font-size: 18px; margin-bottom: 12px; }
+.drv-flash { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: #111; color: #fff; padding: 12px 18px; border-radius: 12px; font-weight: 800; z-index: 99; }
+.drv-sign { position: fixed; inset: 0; background: #fff; z-index: 95; overflow: auto; padding: 16px; }
+.drv-sign-in { max-width: 720px; margin: 0 auto; font-size: 15px; }
+.drv-note-head { display: flex; justify-content: space-between; border-bottom: 3px solid #000; padding-bottom: 8px; }
+.drv-note-head .r { text-align: right; }
+.drv-note-tbl { width: 100%; border-collapse: collapse; margin-top: 12px; }
+.drv-note-tbl th, .drv-note-tbl td { border: 1px solid #000; padding: 6px 8px; text-align: left; vertical-align: top; }
+.drv-note-tbl th { width: 30%; font-size: 11px; letter-spacing: .08em; background: #eee; }
+.drv-lbl { display: block; font-size: 11px; letter-spacing: .08em; color: #555; margin-top: 10px; }
+#sg-name { width: 100%; font: inherit; font-size: 18px; padding: 10px; border: 1px solid #000; border-radius: 6px; }
+#sg-pad { width: 100%; height: 220px; border: 2px dashed #000; border-radius: 8px; background: #fff; touch-action: none; display: block; }
+
+/* ------------------------------------------------------------- stock room */
+.sr-row { display: flex; justify-content: space-between; align-items: center; gap: .8rem; padding: .65rem 0; border-top: 1px solid var(--line); font-size: 13px; }
+.sr-row:first-of-type { border-top: 0; }
+.sr-count .sr-in { width: 110px; text-align: right; }
+
+/* Connect Shopify: the setup steps */
+ol.steps { margin: 0 0 1rem 1.1rem; padding: 0; font-size: 13px; line-height: 1.55; color: var(--ink-2); }
+ol.steps li { margin-bottom: .35rem; }
+ol.steps code { font-size: 11.5px; background: var(--paper); border: 1px solid var(--line); border-radius: 3px; padding: 0 3px; white-space: nowrap; }

@@ -2,7 +2,7 @@
 import * as store from './store.js';
 import { FACTORY_DEFAULTS, isCloudConfigured, PRODUCT, TRIAL_DAYS } from './config.js';
 import { AREAS, LEVELS, levelOf } from './permissions.js';
-import { esc, field, row, toast, money, daysUntil } from './ui.js';
+import { esc, field, row, toast, money, daysUntil, openModal } from './ui.js';
 import { startCustomers, renderCustomers, newCustomer, editCustomer, deleteCustomer } from './customers.js';
 import {
   startOrders, renderOrders, newOrder, editOrder, deleteOrder, setStatus, setFabric,
@@ -16,6 +16,14 @@ import { renderScan, setScanSettings, startCamera, stopCamera, manualFind, confi
 import { startPos, renderPos, setPosSettings, posAction, posInput, allSales } from './pos.js';
 import { startQuotes, renderQuotes, setQuoteSettings, setQuoteFilter, newQuote, editQuote, copyQuote, sendQuote, printQuote, acceptQuote, declineQuote } from './quotes.js';
 import { renderProfit, setProfitSettings, setProfitMonth } from './profit.js';
+import {
+  startDeliveries, renderDeliveries, setDeliverySettings, setDeliveryView, setDeliveryDay, scheduleDelivery, confirmToClient,
+  sendRun, printRun, markDelivered, undoDelivered, viewNote, clientSigns, newDriver, editDriver, sendDriverLink, copyDriverLink, relinkDriver, removeDriver
+} from './deliveries.js';
+import {
+  startStoreroom, renderStoreroom, setStoreroomSettings, setStoreroomView, receivePo, receiveDirect, fabricArrived, issueStock,
+  liveCount, saveCount, newAsset, giveAsset, assetBack, assetRepair, assetGone, assetHistory, newPerson, editPerson, togglePerson
+} from './storeroom.js';
 import {
   startStock, renderStock, setStockSettings, setStockView, countMaterial, newPurchaseOrder, draftForSupplier,
   editPurchaseOrder, sendPurchaseOrder, printPurchaseOrder, receivePurchaseOrder, cancelPurchaseOrder
@@ -44,20 +52,25 @@ let booted = false;
 let pendingScan = new URLSearchParams(location.search).get('scan') || '';
 if (pendingScan) history.replaceState(null, '', location.pathname);
 
+// The menu: screens grouped into drop-downs, so the bar stays short. A
+// group with only one screen this person may see shows as a plain tab.
 const NAV = [
-  { key: 'pos', icon: '', label: 'Point of sale' },
-  { key: 'orders', icon: '', label: 'Orders' },
-  { key: 'quotes', icon: '', label: 'Quotes' },
-  { key: 'customers', icon: '', label: 'Customers' },
-  { key: 'factory', icon: '', label: 'Factory floor' },
-  { key: 'costing', icon: '', label: 'Costing' },
-  { key: 'stock', icon: '', label: 'Stock' },
-  { key: 'scan', icon: '', label: 'Scan out' },
-  { key: 'invoices', icon: '', label: 'Invoices' },
-  { key: 'profit', icon: '', label: 'Profit' },
-  { key: 'settings', icon: '', label: 'Settings' },
-  { key: 'clients', icon: '', label: 'Clients' }
+  { key: 'pos', label: 'Point of sale', group: 'sales' },
+  { key: 'quotes', label: 'Quotes', group: 'sales' },
+  { key: 'customers', label: 'Customers', group: 'sales' },
+  { key: 'orders', label: 'Orders', group: 'production' },
+  { key: 'factory', label: 'Factory floor', group: 'production' },
+  { key: 'scan', label: 'Scan out', group: 'production' },
+  { key: 'deliveries', label: 'Deliveries', group: 'production' },
+  { key: 'costing', label: 'Costing', group: 'buying' },
+  { key: 'stock', label: 'Stock', group: 'buying' },
+  { key: 'storeroom', label: 'Stock room', group: 'buying' },
+  { key: 'invoices', label: 'Invoices', group: 'money' },
+  { key: 'profit', label: 'Profit', group: 'money' },
+  { key: 'settings', label: 'Settings' },
+  { key: 'clients', label: 'Clients' }
 ];
+const GROUPS = [['sales', 'Sales'], ['production', 'Production'], ['buying', 'Buying'], ['money', 'Money']];
 
 // What each person sees comes from their role, which the owner designs under
 // Settings → Roles. The owner sees everything, plus the team and billing.
@@ -69,11 +82,14 @@ const viewOnly = (k) => store.getUser() && store.getUser().role !== 'owner' && k
 // Actions that only look, print or switch what is shown — allowed on a view-only screen.
 const LOOK_ONLY = new Set(['filter-status', 'floor-view', 'cost-view', 'stock-view', 'quote-filter', 'profit-month', 'inv-view',
   'print-job', 'print-week-jobs', 'print-planner', 'print-pricesheet', 'print-costsheet', 'inv-print', 'stmt-print', 'inv-export',
-  'po-print', 'quote-print', 'scan-start', 'scan-stop', 'scan-find', 'notify']);
+  'po-print', 'quote-print', 'scan-start', 'scan-stop', 'scan-find', 'notify',
+  'sr-view', 'sr-asset-history',
+  'dl-view', 'dl-day', 'dl-day-pick', 'dl-print-run', 'dl-note', 'dl-confirm', 'dl-send-run', 'dl-driver-copy']);
 let rolesStarted = false;
 let lastAllowed = '';
 let team = { members: [], invites: [] };
 let billing = { plan: null, configured: false, payments: [] };
+let shop = null;          // the online shop's connection status (integrations/shopify)
 let clients = [];
 let readOnlyOk = false;      // chose "look around (read only)" on the lock screen
 let lastAccess = 'ok';
@@ -107,6 +123,9 @@ async function boot() {
         store.watch('members', rows => { team.members = rows; if (view === 'settings') paint(); });
         store.watch('invites', rows => { team.invites = rows; if (view === 'settings') paint(); });
         store.watch('payments', rows => { billing.payments = rows; if (view === 'settings') paint(); });
+        // only the Online shop card is redrawn: the 15-minute check writes here,
+        // and a full repaint would wipe settings the owner is still typing
+        store.watch('integrations', rows => { shop = rows.find(r => r.id === 'shopify') || null; if (view === 'settings') redrawShopCard(); });
         store.getPlan().then(r => { billing.plan = r.plan; billing.configured = !!r.configured; if (view === 'settings') paint(); });
       }
       // a payment, a cancellation or an extended trial takes effect live
@@ -115,6 +134,7 @@ async function boot() {
       if (BILLING_RETURN === 'done') toast('Thank you — your subscription starts as soon as PayFast confirms the payment, usually within a minute.');
       if (BILLING_RETURN === 'cancelled') toast('Payment cancelled — nothing was charged.', 'warn');
       store.seedDemoIfEmpty();
+      store.shopifyRetryPending();      // till sales whose stock could not reach the online shop yet
       settings = await store.loadSettings(FACTORY_DEFAULTS);
       setOrderSettings(settings);
       setFloorSettings(settings);
@@ -125,9 +145,13 @@ async function boot() {
       setStockSettings(settings);
       setQuoteSettings(settings);
       setProfitSettings(settings);
+      setDeliverySettings(settings);
+      setStoreroomSettings(settings);
       // only what this person's role may see is loaded at all
       if (store.can('quotes')) startQuotes(() => { if (view === 'quotes') paint(); }, settings);
-      if (store.can('stock')) startStock(() => { if (view === 'stock') paint(); }, settings);
+      if (store.can('deliveries')) startDeliveries(() => { if (view === 'deliveries') paint(); }, settings, store.can('deliveries', 'edit'));
+      if (store.can('storeroom')) startStoreroom(() => { if (view === 'storeroom') paint(); }, settings);
+      if (store.can('stock') || store.can('storeroom')) startStock(() => { if (view === 'stock' || view === 'storeroom') paint(); }, settings);
       if (store.can('pos') || store.can('profit')) startPos(() => { if (view === 'pos' || view === 'profit') paint(); }, settings);
       if (store.can('invoices') || store.can('pos') || store.can('profit')) startInvoices(() => { if (view === 'invoices' || view === 'orders') paint(); }, settings);
       startCosting(() => { if (view === 'costing' || view === 'orders' || view === 'pos' || view === 'stock') paint(); }, settings);
@@ -326,17 +350,17 @@ function showApp(user) {
         <button class="btn ghost sm" id="sign-out">Sign out</button>
       </div>
     </header>
-    <nav class="tabs" id="tabs">
-      ${NAV.filter(n => allowedViews(user).includes(n.key)).map(n => `<button class="tab" data-view="${n.key}"><span>${esc(n.label)}</span></button>`).join('')}
-    </nav>
+    <nav class="tabs" id="tabs">${navHtml(user)}</nav>
     ${store.accessState() !== 'ok' ? `<div class="readonly-bar">Read only — ${esc((LOCK_TEXT[store.accessState()] || [''])[0].toLowerCase())}. ${store.getUser().role === 'owner' ? '<button class="btn sm" id="ro-pay">Subscribe</button>' : 'Ask the owner to subscribe.'}</div>` : ''}
     <main class="shell" id="screen"></main>`;
   const roPay = document.getElementById('ro-pay'); if (roPay) roPay.addEventListener('click', startCheckout);
 
   document.getElementById('sign-out').addEventListener('click', signOutAndReset);
   document.getElementById('tabs').addEventListener('click', (e) => {
+    const g = e.target.closest('[data-group]');
+    if (g) { toggleMenu(g); return; }
     const b = e.target.closest('[data-view]');
-    if (b && allowedViews(store.getUser()).includes(b.dataset.view)) { view = b.dataset.view; paint(); }
+    if (b && allowedViews(store.getUser()).includes(b.dataset.view)) { closeMenus(); view = b.dataset.view; paint(); }
   });
   document.getElementById('screen').addEventListener('click', onAction);
   document.getElementById('screen').addEventListener('change', onChangeEvent);
@@ -356,7 +380,54 @@ function statusChip() {
 
 // --------------------------------------------------------------- painting ---
 
+// ------------------------------------------------------------------ menu ----
+
+function navHtml(user) {
+  const ok = allowedViews(user);
+  const parts = [];
+  GROUPS.forEach(([g, label]) => {
+    const items = NAV.filter(n => n.group === g && ok.includes(n.key));
+    if (!items.length) return;
+    if (items.length === 1) { parts.push(`<button class="tab" data-view="${items[0].key}"><span>${esc(items[0].label)}</span></button>`); return; }
+    parts.push(`<button class="tab tab-group" data-group="${g}" aria-haspopup="true"><span class="tg-label">${esc(label)}</span><span class="tg-now"></span><i class="caret"></i></button>
+      <div class="tab-menu" data-menu="${g}" hidden role="menu">${items.map(n => `<button class="tab-item" data-view="${n.key}" role="menuitem">${esc(n.label)}</button>`).join('')}</div>`);
+  });
+  NAV.filter(n => !n.group && ok.includes(n.key)).forEach(n => parts.push(`<button class="tab" data-view="${n.key}"><span>${esc(n.label)}</span></button>`));
+  return parts.join('');
+}
+
+function closeMenus() {
+  document.querySelectorAll('.tab-menu').forEach(m => { m.hidden = true; });
+  document.querySelectorAll('.tab-group').forEach(b => b.setAttribute('aria-expanded', 'false'));
+}
+// The bar scrolls sideways on a phone, so the menu floats (position: fixed)
+// under its button instead of being clipped by the bar.
+function toggleMenu(btn) {
+  const m = document.querySelector(`.tab-menu[data-menu="${btn.dataset.group}"]`);
+  const opening = m.hidden;
+  closeMenus();
+  if (!opening) return;
+  const r = btn.getBoundingClientRect();
+  m.style.top = Math.round(r.bottom) + 'px';
+  m.style.left = Math.round(Math.max(8, Math.min(r.left, window.innerWidth - 230))) + 'px';
+  m.hidden = false;
+  btn.setAttribute('aria-expanded', 'true');
+}
+document.addEventListener('click', (e) => { if (!e.target.closest('.tab-group, .tab-menu')) closeMenus(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenus(); });
+window.addEventListener('resize', closeMenus);
+
+function markActive() {
+  document.querySelectorAll('#tabs [data-view]').forEach(t => t.classList.toggle('on', t.dataset.view === view));
+  document.querySelectorAll('#tabs .tab-group').forEach(b => {
+    const cur = NAV.find(n => n.key === view && n.group === b.dataset.group);
+    b.classList.toggle('on', !!cur);
+    b.querySelector('.tg-now').textContent = cur ? cur.label : '';
+  });
+}
+
 function paint() {
+  markActive();
   paintScreen();
   const screen = document.getElementById('screen');
   if (screen && viewOnly(view)) screen.insertAdjacentHTML('afterbegin', '<div class="viewonly-note">View only: your role can look at this screen but not change anything on it.</div>');
@@ -365,7 +436,6 @@ function paint() {
 function paintScreen() {
   const screen = document.getElementById('screen');
   if (!screen) return;
-  document.querySelectorAll('#tabs .tab').forEach(t => t.classList.toggle('on', t.dataset.view === view));
   if (view !== 'scan') stopCamera(screen);
   if (view === 'orders') return renderOrders(screen);
   if (view === 'customers') return renderCustomers(screen, allOrders());
@@ -376,6 +446,8 @@ function paintScreen() {
   if (view === 'stock') return renderStock(screen, allOrders());
   if (view === 'quotes') return renderQuotes(screen);
   if (view === 'profit') return renderProfit(screen, allOrders(), allSales());
+  if (view === 'deliveries') return renderDeliveries(screen, allOrders());
+  if (view === 'storeroom') return renderStoreroom(screen, allOrders());
   if (view === 'scan') return renderScan(screen);
   if (view === 'invoices') return renderInvoices(screen);
   if (view === 'pos') return renderPos(screen);
@@ -428,7 +500,7 @@ function renderSettings(host) {
       )}
       <div class="card-actions"><button class="btn primary" data-act="save-settings">Save settings</button></div>
     </div>
-    ${store.getUser().role === 'owner' ? billingCard() + rolesCard() + teamCard() : ''}
+    ${store.getUser().role === 'owner' ? billingCard() + shopCard() + rolesCard() + teamCard() : ''}
     <div class="card">
       <h2>How this system is wired</h2>
       <ul class="plain">
@@ -469,6 +541,96 @@ function billingCard() {
     </div>
     ${pays.length ? `<h2>Payments</h2>` + pays.map(x => `<div class="team-row"><div><div class="who-n">${esc(longDate(x.at))}</div><div class="who-e">${esc(x.reference ? 'PayFast ' + x.reference : '')}</div></div><div>${esc(money(x.amount, 'R'))}</div><div class="team-acts muted">${esc(String(x.status || '').toLowerCase())}</div></div>`).join('') : ''}
   </div>`;
+}
+
+// ---------------------------------------------------------- online shop ----
+// Shopify: online orders come in as factory orders, the shop's products
+// come into the price list, and till sales take stock off the shop too.
+
+const ago = (iso) => { if (!iso) return ''; const m = Math.round((Date.now() - Date.parse(iso)) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : longDate(iso); };
+
+function redrawShopCard() {
+  const el = document.getElementById('shop-card');
+  if (!el) return;
+  if (document.activeElement && document.activeElement.id === 'shop-when') return;   // mid-choice: leave it be
+  el.outerHTML = shopCard();
+}
+
+function shopCard() {
+  const s = shop || {};
+  if (!s.connected) return `<div class="card" id="shop-card">
+    <h2>Online shop</h2>
+    <p>Connect your Shopify store and every online order comes in as a factory order by itself, with the customer, the fabric and the delivery address. Your shop’s products come into your price list, and pieces sold from stock at the till come off the shop’s count too.</p>
+    <div class="card-actions"><button class="btn primary" data-act="shop-connect">Connect Shopify</button></div>
+  </div>`;
+  const when = s.importWhen === 'placed' ? 'placed' : 'paid';
+  return `<div class="card" id="shop-card">
+    <h2>Online shop</h2>
+    <p><strong>Connected to ${esc(s.shopName || s.domain)}</strong> <span class="muted">(${esc(s.domain || '')})</span>. Online orders come in by themselves${s.webhooks === 'on' ? ' within a minute' : ', every 15 minutes'}.</p>
+    <p class="muted">Orders brought in: ${esc(String(s.ordersIn || 0))}${s.lastOrderName ? ' · last ' + esc(s.lastOrderName) + ' ' + esc(ago(s.lastOrderAt)) : ''} · last checked ${esc(ago(s.lastCheckedAt) || 'not yet')}${s.productsAt ? ' · products brought in ' + esc(ago(s.productsAt)) : ''}</p>
+    ${s.webhooks && s.webhooks !== 'on' ? `<p class="notice-inline">Shopify could not be asked to send orders straight away (${esc(s.webhooks)}). They still come in every 15 minutes.</p>` : ''}
+    ${s.lastError ? `<p class="notice-inline">${esc(s.lastError)}</p>` : ''}
+    ${field('Bring online orders in', 'shop-when', { type: 'select', value: when, options: [{ value: 'paid', label: 'Once they are paid (recommended)' }, { value: 'placed', label: 'As soon as they are placed, paid or not' }] })}
+    <div class="card-actions">
+      <button class="btn primary" data-act="shop-sync">Check for orders now</button>
+      <button class="btn ghost" data-act="shop-products">Bring in products</button>
+      <button class="btn ghost" data-act="shop-disconnect">Disconnect</button>
+    </div>
+  </div>`;
+}
+
+function shopConnect() {
+  const demo = store.storeMode() === 'demo';
+  openModal('Connect Shopify', `
+    <ol class="steps">
+      <li>In your Shopify admin open <strong>Settings → Apps and sales channels → Develop apps</strong>, then <strong>Build apps in Dev Dashboard</strong>.</li>
+      <li>Create an app called <em>${esc(PRODUCT.name)}</em>. Under access give it: <code>read_products</code>, <code>read_orders</code>, <code>read_customers</code>, <code>read_inventory</code>, <code>write_inventory</code>, <code>read_locations</code>.</li>
+      <li>Under <strong>Protected customer data</strong>, allow name, email, phone and address, so orders arrive with who and where. Then release the app and install it on your store.</li>
+      <li>Copy the app’s <strong>Client ID</strong> and <strong>Client secret</strong> into the boxes below.</li>
+    </ol>
+    ${field('Your store', 'sh-domain', { placeholder: 'your-store.myshopify.com' })}
+    ${row(field('Client ID', 'sh-id'), field('Client secret', 'sh-secret', { type: 'password' }))}
+    ${field('Bring online orders in', 'sh-when', { type: 'select', value: 'paid', options: [{ value: 'paid', label: 'Once they are paid (recommended)' }, { value: 'placed', label: 'As soon as they are placed, paid or not' }] })}
+    <p class="muted">The secret is kept on the server only. Nobody on your team can see it again, and only orders from now on come in.${demo ? ' <strong>Demo mode:</strong> any store name and keys work, and a made-up shop is used.' : ''}</p>`, {
+    okLabel: 'Connect',
+    onOk: async (w) => {
+      const g = (id) => (w.querySelector('#' + id) || {}).value || '';
+      const ok = w.querySelector('#modal-ok'); ok.disabled = true; ok.textContent = 'Connecting…';
+      try {
+        const r = await store.shopifyCall('connect', { domain: g('sh-domain'), clientId: g('sh-id'), clientSecret: g('sh-secret'), importWhen: g('sh-when') });
+        toast('Connected to ' + (r.shopName || 'your shop') + '. Now bring your products in.');
+      } catch (e) { toast(e.message, 'warn'); ok.disabled = false; ok.textContent = 'Connect'; return false; }
+    }
+  });
+}
+
+async function shopRun(action, label, btn, payload) {
+  const was = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = label; }
+  try { return await store.shopifyCall(action, payload); }
+  catch (e) { toast(e.message, 'warn'); return null; }
+  finally { if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = was; } }
+}
+
+async function shopProducts(btn) {
+  const r = await shopRun('products', 'Bringing products in…', btn);
+  if (r) toast(r.total + ' products in your shop: ' + r.created + ' new, ' + r.linked + ' matched to yours by name, ' + r.updated + ' updated. Prices come from the shop; recipes and costs are yours.');
+}
+async function shopSync(btn) {
+  const r = await shopRun('sync', 'Checking…', btn);
+  if (!r) return;
+  if (r.skipped) { toast('Not checked: ' + r.skipped, 'warn'); return; }
+  const n = (r.brought || []).filter(x => x.orders && x.orders.length);
+  toast(n.length ? n.map(x => x.order + ' → ' + x.orders.join(', ')).join(' · ') : 'No new online orders');
+}
+async function shopDisconnect() {
+  if (!confirm('Disconnect ' + ((shop && shop.shopName) || 'the shop') + '? Online orders stop coming in. Orders already here stay.')) return;
+  if (await shopRun('disconnect')) toast('Shop disconnected');
+}
+async function shopWhen(value) {
+  if (await shopRun('settings', '', null, { importWhen: value })) { toast(value === 'placed' ? 'Online orders come in as soon as they are placed' : 'Online orders come in once they are paid'); return; }
+  const sel = document.getElementById('shop-when');     // not saved: show what is really set
+  if (sel) sel.value = (shop && shop.importWhen) === 'placed' ? 'placed' : 'paid';
 }
 
 // ------------------------------------------------------------ the seller ----
@@ -668,6 +830,8 @@ async function saveSettings() {
   setStockSettings(settings);
   setQuoteSettings(settings);
   setProfitSettings(settings);
+  setDeliverySettings(settings);
+  setStoreroomSettings(settings);
   const bn = document.querySelector('.brand-name');
   if (bn) bn.textContent = settings.name;
   toast('Settings saved');
@@ -692,6 +856,38 @@ async function onAction(e) {
     case 'save-settings': return saveSettings();
     case 'subscribe': return startCheckout();
     case 'stock-view': setStockView(b.dataset.to); return paint();
+    case 'sr-view': setStoreroomView(b.dataset.to); return paint();
+    case 'sr-receive-po': return receivePo(id);
+    case 'sr-receive-direct': return receiveDirect();
+    case 'sr-fabric': return fabricArrived(id, allOrders());
+    case 'sr-issue': return issueStock(false, allOrders());
+    case 'sr-issue-back': return issueStock(true, allOrders());
+    case 'sr-count-save': return saveCount(document.getElementById('screen'));
+    case 'sr-asset-new': return newAsset();
+    case 'sr-asset-give': return giveAsset(id);
+    case 'sr-asset-back': return assetBack(id);
+    case 'sr-asset-repair': return assetRepair(id);
+    case 'sr-asset-gone': return assetGone(id);
+    case 'sr-asset-history': return assetHistory(id);
+    case 'sr-person-new': return newPerson();
+    case 'sr-person-edit': return editPerson(id);
+    case 'sr-person-toggle': return togglePerson(id);
+    case 'dl-view': setDeliveryView(b.dataset.to); return paint();
+    case 'dl-day': setDeliveryDay(b.dataset.to); return paint();
+    case 'dl-schedule': return scheduleDelivery(id, allOrders());
+    case 'dl-confirm': return confirmToClient(id, allOrders());
+    case 'dl-delivered': return markDelivered(id, allOrders());
+    case 'dl-sign': return clientSigns(id, allOrders());
+    case 'dl-undo': return undoDelivered(id, allOrders());
+    case 'dl-note': return viewNote(id);
+    case 'dl-send-run': return sendRun(id, allOrders());
+    case 'dl-print-run': return printRun(id, allOrders());
+    case 'dl-driver-new': return newDriver();
+    case 'dl-driver-edit': return editDriver(id);
+    case 'dl-driver-send': return sendDriverLink(id);
+    case 'dl-driver-copy': return copyDriverLink(id);
+    case 'dl-driver-relink': return relinkDriver(id);
+    case 'dl-driver-del': return removeDriver(id, allOrders());
     case 'quote-filter': setQuoteFilter(b.dataset.to); return paint();
     case 'quote-new': return newQuote();
     case 'quote-edit': return editQuote(id);
@@ -710,6 +906,10 @@ async function onAction(e) {
     case 'po-receive': return receivePurchaseOrder(id);
     case 'po-cancel': return cancelPurchaseOrder(id);
     case 'cancel-sub': return cancelSubscription();
+    case 'shop-connect': return shopConnect();
+    case 'shop-products': return shopProducts(b);
+    case 'shop-sync': return shopSync(b);
+    case 'shop-disconnect': return shopDisconnect();
     case 'client-extend': return clientExtend(id);
     case 'client-free': return clientFree(id);
     case 'invite': return sendInvite();
@@ -789,10 +989,12 @@ function onChangeEvent(e) {
   if (act === 'member-role') return memberRole(t.dataset.id, t.value);
   if (act === 'role-perm') return rolePerm(t.dataset.id, t.dataset.area, t.value);
   if (t.id === 'pf-month') { setProfitMonth(t.value); return paint(); }
+  if (act === 'dl-day-pick' && t.value) { setDeliveryDay(t.value); return paint(); }
   if (act === 'fabric') return setFabric(t.dataset.id, t.value);
   if (act === 'due') return setDue(t.dataset.id, t.value);
   if (t.id === 'inv-filter') { setInvFilter(t.value); return paint(); }
   if (t.id === 'stmt-cust') { setStmtCustomer(t.value); return paint(); }
+  if (t.id === 'shop-when') return shopWhen(t.value);
 }
 
 let searchTimer = null;
@@ -802,6 +1004,7 @@ function onInput(e) {
     return posInput(e.target);
   }
   if (e.target.closest && e.target.closest('.oh-row, #oh-units')) return liveOverheads(document.getElementById('screen'));
+  if (e.target.classList && e.target.classList.contains('sr-in')) return liveCount(document.getElementById('screen'));
   if (e.target.id !== 'o-search') return;
   clearTimeout(searchTimer);
   const v = e.target.value;
@@ -816,7 +1019,11 @@ function onInput(e) {
 
 // ----------------------------------------------------------------- login ----
 
+// ?driver=<company>.<code>: the driver's page, no login.
+const DRIVER_CODE = new URLSearchParams(location.search).get('driver') || '';
+
 document.addEventListener('DOMContentLoaded', () => {
+  if (DRIVER_CODE) { import('./driver.js').then(m => m.startDriverPage(DRIVER_CODE)); return; }
   document.getElementById('login-switch').addEventListener('click', (e) => {
     const b = e.target.closest('[data-mode]'); if (b) setLoginMode(b.dataset.mode);
   });
