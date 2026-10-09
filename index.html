@@ -9883,6 +9883,8 @@ ${_PRODUCTION_PRINT_STYLES}
       if (digits) actions += '<button onclick="deliverySendBookingLink(\'' + r.biz + '\', \'' + _escape(o.id) + '\')" title="Let the client pick a slot" style="padding:7px 12px; border-radius:999px; border:1.5px solid #25d366; background:#f0fdf4; color:#166534; font-weight:700; font-size:12px; cursor:pointer">💬 Client picks slot</button>';
       actions += '<button onclick="deliveryMarkDelivered(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #16a34a; background:#16a34a; color:#fff; font-weight:800; font-size:12px; cursor:pointer">✅ Delivered</button>';
     }
+    // a client collecting at the shop, or signing on the office tablet
+    if (!o.deliveryNoteId) actions += '<button onclick="deliverySignOpen(\'' + _escape(o.id) + '\')" title="The client signs the delivery note here, on this screen" style="padding:7px 12px; border-radius:999px; border:1.5px solid #111; background:#111; color:#fff; font-weight:800; font-size:12px; cursor:pointer">✍️ Client signs</button>';
     if (o.status === 'delivered') actions += '<button onclick="deliveryUndo(\'' + _escape(o.id) + '\')" title="Put it back on the delivery list and remove the note" style="padding:7px 12px; border-radius:999px; border:1.5px solid #f59e0b; background:#fffbeb; color:#92400e; font-weight:700; font-size:12px; cursor:pointer">↩️ Not delivered</button>';
     actions += '<label style="padding:7px 12px; border-radius:999px; border:1.5px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:700; font-size:12px; cursor:pointer; margin:0">📎 ' + (o.deliveryNoteId ? 'Replace note' : 'Delivery note') + '<input type="file" accept="image/*,application/pdf" capture="environment" style="display:none" onchange="deliveryNoteUpload(\'' + _escape(o.id) + '\', this)"></label>';
     if (o.deliveryNoteId) actions += '<button onclick="deliveryNoteView(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12px; cursor:pointer">👁 View note' + (o.deliverySignedBy ? ' ✍️' : '') + '</button>';
@@ -9998,7 +10000,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const areaBlocks = (arr) => { const ga = g.byArea(arr); return Object.keys(ga).sort().map(a => '<div style="font-size:12px; font-weight:800; color:#57534e; margin:10px 0 6px">📍 ' + _escape(a) + ' (' + ga[a].length + ')</div>' + ga[a].map(r => _deliveryCard(r, '')).join('')).join(''); };
     const tab = (key, label, n, color) => '<button onclick="setDeliveryTab(\'' + key + '\')" style="padding:8px 14px; border-radius:999px; border:1.5px solid ' + color + '; background:' + (_deliveryTab === key ? color : '#fff') + '; color:' + (_deliveryTab === key ? '#fff' : color) + '; font-weight:800; font-size:12px; cursor:pointer">' + label + (n != null ? ' (' + n + ')' : '') + '</button>';
     let html = '<div style="color:#1c1917">';
-    html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px">' + tab('schedule', '🕒 To schedule', g.toSchedule.length, '#b45309') + tab('planner', '📅 Delivery planner', null, '#4f46e5') + tab('scheduled', '📋 Scheduled', g.scheduled.length, '#1d4ed8') + tab('delivered', '✅ Delivered', g.delivered.length, '#166534') + tab('drivers', '🚐 Drivers', _drivers().length, '#7c3aed') + '</div>';
+    html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px">' + tab('schedule', '🕒 To schedule', g.toSchedule.length, '#b45309') + tab('planner', '📅 Delivery planner', null, '#4f46e5') + tab('scheduled', '📋 Scheduled', g.scheduled.length, '#1d4ed8') + tab('delivered', '✅ Delivered', g.delivered.length, '#166534') + tab('tasks', '📝 Driver tasks', _driverTasks().filter(x => !x.done && x.date >= _todayIso()).length, '#9333ea') + tab('drivers', '🚐 Drivers', _drivers().length, '#7c3aed') + '</div>';
     if (_deliveryTab === 'schedule') {
       html += '<div style="font-size:12px; color:#57534e; margin-bottom:8px">The moment the supplier marks an order DONE it moves here from your Orders list. Schedule it here, or drag it into a day on the 📅 Delivery planner.</div>';
       html += g.toSchedule.length ? areaBlocks(g.toSchedule) : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">Nothing waiting — items appear here when the supplier marks them DONE.</div>';
@@ -10011,21 +10013,26 @@ ${_PRODUCTION_PRINT_STYLES}
       days.forEach((d, i) => {
         const items = (g.byDay[d] || []).slice().sort((a, b) => String(a.o.area || '').localeCompare(String(b.o.area || '')) || String(a.o.deliveryTimeFrom || '').localeCompare(String(b.o.deliveryTimeFrom || '')));
         const reps = _repairGroups().byDay[d] || [];
+        const tasks = _driverTasksOn(d);
         const dt = new Date(d + 'T00:00:00');
         html += '<div class="plan-col ' + (i === 0 ? 'current' : '') + '" ondragover="deliveryDragOver(event)" ondragleave="deliveryDragLeave(event)" ondrop="deliveryDrop(event, \'' + d + '\')">'
-          + '<div class="plan-col-header">' + _escape(dt.toLocaleDateString('en-ZA', { weekday: 'long' })) + '<span class="col-sub">' + _escape(dt.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })) + '</span><span class="col-sub">' + items.length + ' deliver' + (items.length === 1 ? 'y' : 'ies') + (reps.length ? ' · ' + reps.length + ' repair stop' + (reps.length === 1 ? '' : 's') : '') + '</span>'
-          + ((items.length || reps.length) ? '<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px; margin-top:2px" onclick="printRunSheet(\'' + d + '\')">🖨️ Run sheet</button>' : '') + '</div>'
-          + '<div class="plan-col-body">' + ((items.map(_deliveryPlanCard).join('') + reps.map(_repairPlanCard).join('')) || '<div class="empty" style="padding:0.75rem 0; font-size:11px">—</div>') + '</div></div>';
+          + '<div class="plan-col-header">' + _escape(dt.toLocaleDateString('en-ZA', { weekday: 'long' })) + '<span class="col-sub">' + _escape(dt.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })) + '</span><span class="col-sub">' + items.length + ' deliver' + (items.length === 1 ? 'y' : 'ies') + (reps.length ? ' · ' + reps.length + ' repair stop' + (reps.length === 1 ? '' : 's') : '') + (tasks.length ? ' · ' + tasks.length + ' task' + (tasks.length === 1 ? '' : 's') : '') + '</span>'
+          + '<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px; margin-top:2px" onclick="driverTaskOpen(\'\', \'' + d + '\')">＋ Task</button>'
+          + ((items.length || reps.length || tasks.length) ? '<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px; margin-top:2px" onclick="printRunSheet(\'' + d + '\')">🖨️ Run sheet</button>' : '') + '</div>'
+          + '<div class="plan-col-body">' + ((items.map(_deliveryPlanCard).join('') + reps.map(_repairPlanCard).join('') + tasks.map(_taskPlanCard).join('')) || '<div class="empty" style="padding:0.75rem 0; font-size:11px">—</div>') + '</div></div>';
       });
       html += '</div>';
       if (later.length) html += '<div class="card" style="margin-top:10px"><div class="card-title">📆 LATER (' + later.length + ')</div><div class="plan-pool">' + later.map(_deliveryPlanCard).join('') + '</div></div>';
       html += '<div class="card" style="margin-top:10px"><div class="card-title">🕒 TO SCHEDULE (' + g.toSchedule.length + ')</div><div class="plan-pool" ondragover="deliveryDragOver(event)" ondragleave="deliveryDragLeave(event)" ondrop="deliveryDrop(event, \'\')">' + (g.toSchedule.map(_deliveryPlanCard).join('') || '<div class="empty" style="padding:0.75rem 0">Nothing waiting</div>') + '</div></div></div>';
     } else if (_deliveryTab === 'drivers') {
       html += _driversTabHtml();
+    } else if (_deliveryTab === 'tasks') {
+      html += _driverTasksTabHtml();
     } else if (_deliveryTab === 'scheduled') {
-      const days = Object.keys(g.byDay).sort();
       const rg = _repairGroups().byDay;
-      html += days.length ? days.map(d => '<div style="display:flex; justify-content:space-between; align-items:center; margin:12px 0 4px"><div style="font-size:13px; font-weight:800">' + _escape(new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' })) + ' <span style="color:#78716c; font-weight:600">(' + g.byDay[d].length + (rg[d] ? ' + ' + rg[d].length + ' repair' : '') + ')</span></div><span style="display:flex; gap:6px; flex-wrap:wrap"><button onclick="printRunSheet(\'' + d + '\')" style="padding:5px 10px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; font-weight:700; font-size:11px; cursor:pointer">🖨️ Run sheet</button>' + _drivers().map(dr => '<button onclick="driverSendRun(\'' + _escape(dr.id) + '\', \'' + d + '\')" title="WhatsApp the day\'s stops and the driver link" style="padding:5px 10px; border-radius:999px; border:1.5px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:700; font-size:11px; cursor:pointer">📲 ' + _escape(dr.name) + '</button>').join('') + '</span></div>' + areaBlocks(g.byDay[d]) + (rg[d] ? '<div style="font-size:12px; font-weight:800; color:#9a3412; margin:8px 0 4px">🔧 Repair stops</div><div class="portal-planner"><div class="plan-pool">' + rg[d].map(_repairPlanCard).join('') + '</div></div>' : '')).join('') : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">No deliveries scheduled.</div>';
+      const tdays = _driverTasks().filter(x => !x.done && x.date >= _todayIso()).map(x => x.date);
+      const days = [...new Set(Object.keys(g.byDay).concat(tdays))].sort();
+      html += days.length ? days.map(d => '<div style="display:flex; justify-content:space-between; align-items:center; margin:12px 0 4px"><div style="font-size:13px; font-weight:800">' + _escape(new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' })) + ' <span style="color:#78716c; font-weight:600">(' + (g.byDay[d] || []).length + (rg[d] ? ' + ' + rg[d].length + ' repair' : '') + (_driverTasksOn(d).length ? ' + ' + _driverTasksOn(d).length + ' task' : '') + ')</span></div><span style="display:flex; gap:6px; flex-wrap:wrap"><button onclick="printRunSheet(\'' + d + '\')" style="padding:5px 10px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; font-weight:700; font-size:11px; cursor:pointer">🖨️ Run sheet</button>' + _drivers().map(dr => '<button onclick="driverSendRun(\'' + _escape(dr.id) + '\', \'' + d + '\')" title="WhatsApp the day\'s stops and the driver link" style="padding:5px 10px; border-radius:999px; border:1.5px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:700; font-size:11px; cursor:pointer">📲 ' + _escape(dr.name) + '</button>').join('') + '</span></div>' + areaBlocks(g.byDay[d] || []) + (_driverTasksOn(d).length ? '<div style="font-size:12px; font-weight:800; color:#6b21a8; margin:8px 0 4px">📝 Tasks</div>' + _driverTasksOn(d).map(_taskOfficeCard).join('') : '') + (rg[d] ? '<div style="font-size:12px; font-weight:800; color:#9a3412; margin:8px 0 4px">🔧 Repair stops</div><div class="portal-planner"><div class="plan-pool">' + rg[d].map(_repairPlanCard).join('') + '</div></div>' : '')).join('') : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">No deliveries scheduled.</div>';
     } else {
       html += '<div style="font-size:12px; color:#57534e; margin-bottom:8px">Delivered in the last 45 days.</div>';
       html += g.delivered.length ? g.delivered.map(r => _deliveryCard(r, '')).join('') : '<div style="font-size:12px; color:#a8a29e; padding:8px 0">Nothing delivered yet.</div>';
@@ -10244,6 +10251,13 @@ ${_PRODUCTION_PRINT_STYLES}
   // ---- the client signs on the tablet: a delivery note drawn from the order,
   // a finger-signature box, saved as the order's delivery note (an image). ----
   let _sigPad = null;
+  // Who hands the piece over: the driver on their page; in the office, the
+  // signed-in staff member (a client collecting, or signing on the tablet).
+  function _handOver(o) {
+    const inDriver = typeof IS_DRIVER_MODE !== 'undefined' && IS_DRIVER_MODE;
+    if (inDriver) return { label: 'DRIVER', name: (typeof _driverName === 'function' && _driverName()) || o.deliveryBy || 'Driver' };
+    return { label: 'HANDED OVER BY', name: _staffDisplayName('staff') };
+  }
   function deliverySignOpen(orderId) {
     const o = _findOrderAnyBiz(orderId); if (!o) return;
     let v = document.getElementById('sign-view');
@@ -10256,7 +10270,7 @@ ${_PRODUCTION_PRINT_STYLES}
       + '<table style="width:100%; border-collapse:collapse; margin-top:12px; font-size:15px">'
       + '<tr><td style="padding:6px 8px; border:1px solid #000; width:30%; font-size:11px; letter-spacing:0.08em; background:#eee">ITEM</td><td style="padding:6px 8px; border:1px solid #000; font-weight:800">' + _escape(o.product || '') + (o.qty > 1 ? ' × ' + _escape(o.qty) : '') + (o.fabric ? '<br><span style="font-weight:400">' + _escape(o.fabric) + '</span>' : '') + '</td></tr>'
       + '<tr><td style="padding:6px 8px; border:1px solid #000; font-size:11px; letter-spacing:0.08em; background:#eee">DELIVERED TO</td><td style="padding:6px 8px; border:1px solid #000">' + _escape(o.customer || '') + '<br>' + _escape([o.address, o.area].filter(Boolean).join(', ')) + '</td></tr>'
-      + '<tr><td style="padding:6px 8px; border:1px solid #000; font-size:11px; letter-spacing:0.08em; background:#eee">DRIVER</td><td style="padding:6px 8px; border:1px solid #000">' + _escape((typeof _driverName === 'function' && _driverName()) || o.deliveryBy || '') + '</td></tr>'
+      + '<tr><td style="padding:6px 8px; border:1px solid #000; font-size:11px; letter-spacing:0.08em; background:#eee">' + _handOver(o).label + '</td><td style="padding:6px 8px; border:1px solid #000">' + _escape(_handOver(o).name) + '</td></tr>'
       + '</table>'
       + '<div style="margin-top:14px; font-size:15px">I confirm that I have received the item(s) above <strong>in good order</strong>.</div>'
       + '<div style="margin-top:10px; font-size:11px; letter-spacing:0.08em; color:#555">NAME</div><input id="sign-name" value="' + _escape(o.customer || '') + '" style="width:100%; font:inherit; font-size:18px; padding:10px; border:1px solid #000; border-radius:6px">'
@@ -10296,7 +10310,8 @@ ${_PRODUCTION_PRINT_STYLES}
     const row = (k, v) => { x.font = '700 20px Arial'; x.fillStyle = '#555'; x.fillText(k, 60, y); x.fillStyle = '#111'; x.font = '400 28px Arial'; String(v).split('\n').forEach(l => { x.fillText(l, 300, y); y += 38; }); y += 14; };
     row('ITEM', (o.product || '') + (o.qty > 1 ? ' × ' + o.qty : '') + (o.fabric ? '\n' + o.fabric : ''));
     row('DELIVERED TO', (o.customer || '') + '\n' + [o.address, o.area].filter(Boolean).join(', '));
-    row('DRIVER', (typeof _driverName === 'function' && _driverName()) || o.deliveryBy || '');
+    const hand = _handOver(o);
+    row(hand.label, hand.name);
     y += 10; x.font = '400 26px Arial'; x.fillText('I confirm that I have received the item(s) above in good order.', 60, y); y += 60;
     x.font = '700 20px Arial'; x.fillStyle = '#555'; x.fillText('NAME', 60, y); x.fillStyle = '#111'; x.font = '400 30px Arial'; x.fillText(name, 300, y); y += 50;
     x.font = '700 20px Arial'; x.fillStyle = '#555'; x.fillText('SIGNATURE', 60, y); x.fillStyle = '#111';
@@ -10306,13 +10321,13 @@ ${_PRODUCTION_PRINT_STYLES}
     x.font = '400 18px Arial'; x.fillStyle = '#555'; x.fillText('Signed on the tablet at ' + now.toISOString().replace('T', ' ').slice(0, 16), 60, y);
     const dataUrl = out.toDataURL('image/jpeg', 0.8);
     const ref = window.firebaseFns.doc(window.firebaseDb, 'shared-data', _deliveryDocId(orderId, 'dn'));
-    window.firebaseFns.setDoc(ref, { orderId: orderId, kind: 'dn', dataUrl: dataUrl, type: 'image/jpeg', at: now.toISOString(), by: (typeof _driverName === 'function' && _driverName()) || _staffDisplayName('staff'), signedBy: name })
+    window.firebaseFns.setDoc(ref, { orderId: orderId, kind: 'dn', dataUrl: dataUrl, type: 'image/jpeg', at: now.toISOString(), by: hand.name, signedBy: name })
       .then(() => {
         snapshotState();
         o.deliveryNoteId = _deliveryDocId(orderId, 'dn'); o.deliveryNoteAt = now.toISOString(); o.deliverySignedBy = name; o.deliverySignedAt = now.toISOString();
-        if (o.status !== 'delivered') { o.status = 'delivered'; o.deliveredDate = now.toISOString().slice(0, 10); o.deliveredBy = (typeof _driverName === 'function' && _driverName()) || o.deliveryBy || 'Driver'; if (o.builder && !o.builderReceivedAt) o.builderReceivedAt = o.deliveredDate; o.driverStatus = 'delivered'; o.driverStatusAt = now.toISOString(); }
+        if (o.status !== 'delivered') { o.status = 'delivered'; o.deliveredDate = now.toISOString().slice(0, 10); o.deliveredBy = hand.name; if (o.builder && !o.builderReceivedAt) o.builderReceivedAt = o.deliveredDate; o.driverStatus = 'delivered'; o.driverStatusAt = now.toISOString(); }
         if (!Array.isArray(o.deliveryComments)) o.deliveryComments = [];
-        o.deliveryComments.push({ by: (typeof _driverName === 'function' && _driverName()) || 'Driver', at: now.toISOString(), text: '✍️ Delivery note signed by ' + name });
+        o.deliveryComments.push({ by: hand.name, at: now.toISOString(), text: '✍️ Delivery note signed by ' + name + (hand.label === 'DRIVER' ? '' : ' (handed over by ' + hand.name + ')') });
         saveData();
         if (typeof IS_DRIVER_MODE !== 'undefined' && IS_DRIVER_MODE && typeof renderDriverPage === 'function') renderDriverPage(); else if (typeof render === 'function') render();
         // Links for the note and the invoice, then the send screen: one tap
@@ -10380,7 +10395,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const items = g.byDay[dateIso] || [];
     const ga = g.byArea(items);
     const esc = _escape;
-    let body = '<div style="font:900 20px Arial">DELIVERY RUN SHEET — ' + esc(new Date(dateIso + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })) + '</div><div style="font:11px Arial; color:#555; margin-bottom:10px">' + items.length + ' delivery(ies)</div>';
+    let body = '<div style="font:900 20px Arial">DELIVERY RUN SHEET — ' + esc(new Date(dateIso + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })) + '</div><div style="font:11px Arial; color:#555; margin-bottom:10px">' + items.length + ' delivery(ies)' + (_driverTasksOn(dateIso).length ? ' · ' + _driverTasksOn(dateIso).length + ' task(s)' : '') + '</div>';
     Object.keys(ga).sort().forEach(a => {
       body += '<h2 style="font:800 14px Arial; margin:14px 0 4px; border-bottom:2px solid #000">📍 ' + esc(a) + '</h2><table style="width:100%; border-collapse:collapse; font:12px Arial"><tr style="background:#eee"><th style="border:1px solid #000; padding:4px">Slot</th><th style="border:1px solid #000; padding:4px; text-align:left">Order</th><th style="border:1px solid #000; padding:4px; text-align:left">Client</th><th style="border:1px solid #000; padding:4px; text-align:left">Address</th><th style="border:1px solid #000; padding:4px">Driver</th><th style="border:1px solid #000; padding:4px; width:120px">Signature</th></tr>'
         + ga[a].sort((x, y) => String(x.o.deliveryTimeFrom || '').localeCompare(String(y.o.deliveryTimeFrom || ''))).map(r => { const o = r.o; return '<tr><td style="border:1px solid #000; padding:4px; text-align:center">' + esc(o.deliveryTimeFrom || 'any') + '</td><td style="border:1px solid #000; padding:4px"><b>#' + esc(o.invoice || o.id) + '</b> ' + esc(o.product || '') + (o.qty > 1 ? ' × ' + esc(o.qty) : '') + '</td><td style="border:1px solid #000; padding:4px">' + esc(o.customer || '') + '<br>' + esc(o.phone || '') + '</td><td style="border:1px solid #000; padding:4px">' + esc(o.address || '') + '</td><td style="border:1px solid #000; padding:4px; text-align:center">' + esc(o.deliveryBy || '') + '</td><td style="border:1px solid #000; padding:4px"></td></tr>'; }).join('') + '</table>';
@@ -10389,6 +10404,11 @@ ${_PRODUCTION_PRINT_STYLES}
     if (reps.length) {
       body += '<h2 style="font:800 14px Arial; margin:18px 0 4px; border-bottom:2px solid #000">🔧 REPAIRS — pickups &amp; drop-offs (' + reps.length + ')</h2><table style="width:100%; border-collapse:collapse; font:12px Arial"><tr style="background:#eee"><th style="border:1px solid #000; padding:4px">Slot</th><th style="border:1px solid #000; padding:4px">Stop</th><th style="border:1px solid #000; padding:4px; text-align:left">Item / reason</th><th style="border:1px solid #000; padding:4px; text-align:left">Client</th><th style="border:1px solid #000; padding:4px; text-align:left">Address</th><th style="border:1px solid #000; padding:4px">Driver</th><th style="border:1px solid #000; padding:4px; width:120px">Signature</th></tr>'
         + reps.slice().sort((x, y) => String(x.slot || '').localeCompare(String(y.slot || ''))).map(ev => { const r = ev.r; return '<tr><td style="border:1px solid #000; padding:4px; text-align:center">' + esc((ev.slot || 'any').split('-')[0].trim()) + '</td><td style="border:1px solid #000; padding:4px; text-align:center; font-weight:700">' + (ev.kind === 'pickup' ? '⬆ PICKUP' : '⬇ DROP-OFF') + '</td><td style="border:1px solid #000; padding:4px">' + (r.orderNo ? '<b>#' + esc(r.orderNo) + '</b> ' : '') + esc(r.product || '') + '<br><i>' + esc(r.reason || '') + '</i></td><td style="border:1px solid #000; padding:4px">' + esc(r.customer || '') + '<br>' + esc(r.phone || '') + '</td><td style="border:1px solid #000; padding:4px">' + esc([r.address, r.area].filter(Boolean).join(', ')) + '</td><td style="border:1px solid #000; padding:4px; text-align:center">' + esc(r.driver || '') + '</td><td style="border:1px solid #000; padding:4px"></td></tr>'; }).join('') + '</table>';
+    }
+    const tasks = _driverTasksOn(dateIso).slice().sort((a, b) => String(a.slot || '99').localeCompare(String(b.slot || '99')));
+    if (tasks.length) {
+      body += '<h2 style="font:800 14px Arial; margin:18px 0 4px; border-bottom:2px solid #000">📝 TASKS (' + tasks.length + ')</h2><table style="width:100%; border-collapse:collapse; font:12px Arial"><tr style="background:#eee"><th style="border:1px solid #000; padding:4px">Slot</th><th style="border:1px solid #000; padding:4px; text-align:left">Task</th><th style="border:1px solid #000; padding:4px; text-align:left">Who / where</th><th style="border:1px solid #000; padding:4px">Driver</th><th style="border:1px solid #000; padding:4px; width:120px">Done ✓</th></tr>'
+        + tasks.map(x => '<tr><td style="border:1px solid #000; padding:4px; text-align:center">' + esc(_taskSlotFrom(x) || 'any') + '</td><td style="border:1px solid #000; padding:4px"><b>' + esc(x.title) + '</b>' + (x.note ? '<br><i>' + esc(x.note) + '</i>' : '') + '</td><td style="border:1px solid #000; padding:4px">' + esc([x.contact, x.phone].filter(Boolean).join(' · ')) + (x.address ? '<br>' + esc(x.address) : '') + '</td><td style="border:1px solid #000; padding:4px; text-align:center">' + esc(x.driverName || '') + '</td><td style="border:1px solid #000; padding:4px">' + (x.done ? '✓' : '') + '</td></tr>').join('') + '</table>';
     }
     _openJobCardWindow('Run sheet ' + dateIso, body, 'PRINT RUN SHEET');
   }
@@ -10754,6 +10774,7 @@ ${_PRODUCTION_PRINT_STYLES}
         else if (r.status !== 'logged' && r.returnDate === dateIso) stops.push({ kind: 'dropoff', biz, r, slot: r.returnSlot || '', done: false });
       });
     });
+    _driverTasksFor(driverId, dateIso).forEach(x => stops.push({ kind: 'task', t: x, slot: x.slot || '', done: !!x.done }));
     stops.sort((a, b) => String(a.slot || '99').localeCompare(String(b.slot || '99')));
     return stops;
   }
@@ -10761,9 +10782,9 @@ ${_PRODUCTION_PRINT_STYLES}
     const d = _driverById(driverId); if (!d) return;
     const stops = _driverStopsFor(driverId, dateIso);
     const nice = new Date(dateIso + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' });
-    const lines = stops.map((s, i) => (i + 1) + '. ' + (s.kind === 'delivery' ? (s.o.product || '') + ' — ' + (s.o.customer || '') + ', ' + ([s.o.address, s.o.area].filter(Boolean).join(', ') || 'no address')
+    const lines = stops.map((s, i) => (i + 1) + '. ' + (s.kind === 'task' ? 'TASK — ' + s.t.title + (s.t.address ? ', ' + s.t.address : '') + (s.t.contact ? ' (see ' + s.t.contact + ')' : '') : s.kind === 'delivery' ? (s.o.product || '') + ' — ' + (s.o.customer || '') + ', ' + ([s.o.address, s.o.area].filter(Boolean).join(', ') || 'no address')
       : (s.kind === 'pickup' ? 'PICK UP repair — ' : 'DROP OFF repair — ') + (s.r.customer || '') + ', ' + ([s.r.address, s.r.area].filter(Boolean).join(', ') || 'no address')) + (s.slot ? ' (' + s.slot + ')' : ''));
-    const msg = 'Hi ' + d.name + ', your deliveries for ' + nice + ' (' + stops.length + '):\n' + (lines.join('\n') || 'Nothing scheduled.') + '\n\nOpen your list here and tick each one off: ' + _driverLink(d);
+    const msg = 'Hi ' + d.name + ', your stops for ' + nice + ' (' + stops.length + '):\n' + (lines.join('\n') || 'Nothing scheduled.') + '\n\nOpen your list here and tick each one off: ' + _driverLink(d);
     const digits = _waDigits(d.phone);
     if (digits) window.open('https://wa.me/' + digits + '?text=' + encodeURIComponent(msg), '_blank');
     else { alert('Add ' + d.name + '\'s cell number first (Drivers tab → ✏️).'); }
@@ -10828,6 +10849,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const open = stops.filter(s => !s.done), done = stops.filter(s => s.done);
     const office = _waDigits(_driverOfficePhone());
     const card = (s, i) => {
+      if (s.kind === 'task') return _driverTaskCard(s, i);
       const o = s.o || s.r;
       const isDel = s.kind === 'delivery';
       const addr = [o.address, o.area].filter(Boolean).join(', ');
@@ -10945,6 +10967,175 @@ ${_PRODUCTION_PRINT_STYLES}
   }
   window.driverSetStatus = driverSetStatus; window.driverLateMenu = driverLateMenu; window.driverProblemMenu = driverProblemMenu;
   window.driverDelivered = driverDelivered; window.driverRepairDone = driverRepairDone;
+
+  // ===== 📝 DRIVER TASKS — anything else the driver must do on a day =====
+  // Collect fabric at the supplier, drop a cheque at the bank, fetch a chair
+  // from the upholsterer… The office adds them for a day and a driver; they
+  // show on the planner, the run sheet, the WhatsApp run and the driver's page,
+  // where the driver ticks them off (or says why they could not).
+  // data.driverTasks = [{ id, date, driverId, driverName, slot, title, address,
+  //   contact, phone, note, done, doneAt, doneBy, doneNote, problem, problemAt,
+  //   createdAt, createdBy }], shared by every business like the drivers, and
+  // merged by id when saving (see cloudSave), so a driver's phone that is
+  // behind never wipes a task the office has just added.
+  function _driverTasks() { return Array.isArray(data.driverTasks) ? data.driverTasks : []; }
+  function _driverTaskById(id) { return _driverTasks().find(x => x && x.id === id) || null; }
+  function _driverTasksFor(driverId, dateIso) {
+    const only = _drivers().length === 1;
+    return _driverTasks().filter(x => x && x.date === dateIso && (x.driverId === driverId || (!x.driverId && only)));
+  }
+  function _driverTasksOn(dateIso) { return _driverTasks().filter(x => x && x.date === dateIso); }
+  function _taskSlotFrom(x) { return String(x.slot || '').split('-')[0].trim(); }
+  function _taskWhen(x) { return (x.slot ? x.slot + ' · ' : '') + (x.driverName || 'any driver'); }
+  function _todayIso() { return new Date().toISOString().split('T')[0]; }
+  function _taskStatusHtml(x) {
+    if (x.done) return '<span style="background:#dcfce7; color:#166534; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:800">✅ Done ' + _escape(String(x.doneAt || '').slice(11, 16)) + (x.doneBy ? ' by ' + _escape(x.doneBy) : '') + '</span>' + (x.doneNote ? ' <span style="font-size:12px; color:#44403c">“' + _escape(x.doneNote) + '”</span>' : '');
+    if (x.problem) return '<span style="background:#fee2e2; color:#991b1b; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:800">⚠️ Could not do it: ' + _escape(x.problem) + '</span>';
+    if (x.date && x.date < _todayIso()) return '<span style="background:#fef3c7; color:#92400e; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:800">⏳ Not done</span>';
+    return '';
+  }
+
+  // ---- the office: add, change, tick off ----
+  function driverTaskOpen(id, dateIso) {
+    const x = id ? _driverTaskById(id) : null;
+    if (id && !x) return;
+    let m = document.getElementById('task-modal');
+    if (!m) { m = document.createElement('div'); m.id = 'task-modal'; document.body.appendChild(m); }
+    m.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:9400; display:flex; align-items:flex-start; justify-content:center; overflow:auto; padding:30px 12px';
+    const v = x || { date: dateIso || _todayIso() };
+    const inp = 'width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid #d6d3d1; border-radius:8px; font:inherit; font-size:14px';
+    const lbl = (s) => '<div style="font-size:11px; font-weight:800; letter-spacing:0.06em; color:#57534e; margin:10px 0 4px">' + s + '</div>';
+    const slotOpts = '<option value="">Any time</option>' + DELIVERY_SLOTS.map(sl => '<option value="' + sl + '"' + (v.slot === sl ? ' selected' : '') + '>' + sl + '</option>').join('');
+    m.innerHTML = '<div style="background:#fff; color:#1c1917; border-radius:14px; width:100%; max-width:520px; padding:18px 18px 14px; box-shadow:0 20px 50px rgba(0,0,0,0.3)">'
+      + '<div style="display:flex; justify-content:space-between; align-items:center"><div style="font-size:17px; font-weight:900">📝 ' + (x ? 'Change the task' : 'A task for the driver') + '</div><button onclick="driverTaskClose()" style="border:none; background:none; font-size:20px; cursor:pointer">✕</button></div>'
+      + lbl('WHAT MUST THE DRIVER DO?') + '<textarea id="tk-title" rows="2" placeholder="e.g. Collect 12 m of Moldova Oatmeal at the fabric supplier" style="' + inp + '">' + _escape(v.title || '') + '</textarea>'
+      + '<div style="display:flex; gap:8px"><div style="flex:1">' + lbl('DAY') + '<input id="tk-date" type="date" value="' + _escape(v.date || '') + '" style="' + inp + '"></div>'
+      + '<div style="flex:1">' + lbl('TIME') + '<select id="tk-slot" style="' + inp + '">' + slotOpts + '</select></div></div>'
+      + lbl('DRIVER') + _driverPickHtml(v.driverId, v.driverName, 'id="tk-driver"', 'style="' + inp + '"')
+      + lbl('WHERE (optional, for Navigate)') + '<input id="tk-address" value="' + _escape(v.address || '') + '" placeholder="Street, area" style="' + inp + '">'
+      + '<div style="display:flex; gap:8px"><div style="flex:1">' + lbl('WHO TO SEE (optional)') + '<input id="tk-contact" value="' + _escape(v.contact || '') + '" style="' + inp + '"></div>'
+      + '<div style="flex:1">' + lbl('THEIR NUMBER (optional)') + '<input id="tk-phone" value="' + _escape(v.phone || '') + '" inputmode="tel" style="' + inp + '"></div></div>'
+      + lbl('NOTE FOR THE DRIVER (optional)') + '<input id="tk-note" value="' + _escape(v.note || '') + '" placeholder="e.g. Paid already — just sign for it" style="' + inp + '">'
+      + '<div style="display:flex; gap:8px; margin-top:16px; flex-wrap:wrap">'
+      + (x ? '<button onclick="driverTaskRemove(\'' + _escape(x.id) + '\')" style="padding:9px 14px; border-radius:999px; border:1.5px solid #fca5a5; background:#fef2f2; color:#991b1b; font-weight:800; cursor:pointer">🗑 Delete</button>' : '')
+      + '<span style="flex:1"></span><button onclick="driverTaskClose()" style="padding:9px 14px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:800; cursor:pointer">Cancel</button>'
+      + '<button onclick="driverTaskSave(' + (x ? '\'' + _escape(x.id) + '\'' : '\'\'') + ')" style="padding:9px 18px; border-radius:999px; border:none; background:#111; color:#fff; font-weight:900; cursor:pointer">💾 Save task</button></div></div>';
+    m.onclick = (e) => { if (e.target === m) driverTaskClose(); };
+    setTimeout(() => { const el = document.getElementById('tk-title'); if (el) el.focus(); }, 30);
+  }
+  function driverTaskClose() { const m = document.getElementById('task-modal'); if (m) m.remove(); }
+  function driverTaskSave(id) {
+    const g = (k) => String((document.getElementById(k) || {}).value || '').trim();
+    const title = g('tk-title');
+    if (!title) { alert('Say what the driver must do.'); return; }
+    const date = g('tk-date');
+    if (!date) { alert('Pick the day.'); return; }
+    const drv = _driverFromPick(g('tk-driver'));
+    const fields = { title, date, slot: g('tk-slot'), driverId: drv.id, driverName: drv.name, address: g('tk-address'), contact: g('tk-contact'), phone: g('tk-phone'), note: g('tk-note') };
+    snapshotState();
+    if (!Array.isArray(data.driverTasks)) data.driverTasks = [];
+    const x = id ? _driverTaskById(id) : null;
+    if (x) Object.assign(x, fields, { updatedAt: new Date().toISOString(), updatedBy: _staffDisplayName('staff') });
+    else data.driverTasks.push(Object.assign({ id: 'tsk-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), done: false, createdAt: new Date().toISOString(), createdBy: _staffDisplayName('staff') }, fields));
+    saveData(); driverTaskClose(); renderDeliveryPortal();
+    if (typeof toast === 'function') toast('📝 Task saved' + (drv.name ? ' for ' + drv.name : ''), 'success', 2200);
+  }
+  function driverTaskRemove(id) {
+    const x = _driverTaskById(id); if (!x) return;
+    if (!confirm('Delete this task?\n\n' + x.title)) return;
+    snapshotState(); data.driverTasks = _driverTasks().filter(y => y.id !== id);
+    saveData(); driverTaskClose(); renderDeliveryPortal();
+  }
+  // Ticked off from the office (the driver phoned it in), or undone.
+  function driverTaskToggle(id) {
+    const x = _driverTaskById(id); if (!x) return;
+    snapshotState();
+    if (x.done) Object.assign(x, { done: false, doneAt: '', doneBy: '', doneNote: '' });
+    else Object.assign(x, { done: true, doneAt: new Date().toISOString(), doneBy: _staffDisplayName('staff'), problem: '' });
+    saveData(); renderDeliveryPortal();
+  }
+  function _taskOfficeCard(x) {
+    const digits = _waDigits(x.phone);
+    const btn = (label, js, style) => '<button onclick="' + js + '" style="padding:7px 12px; border-radius:999px; font-weight:700; font-size:12px; cursor:pointer; ' + style + '">' + label + '</button>';
+    return '<div style="background:#fff; border-radius:12px; padding:12px 14px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,0.07); border-left:4px solid ' + (x.done ? '#16a34a' : x.problem ? '#ef4444' : '#7c3aed') + '">'
+      + '<div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:flex-start"><div style="min-width:220px; flex:1">'
+      + '<div style="font-size:15px; font-weight:800">📝 ' + _escape(x.title) + '</div>'
+      + '<div style="font-size:13px; font-weight:800; color:#5b21b6; margin-top:3px">📅 ' + _escape(new Date(x.date + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' })) + ' · ' + _escape(_taskWhen(x)) + '</div>'
+      + (x.address ? '<div style="font-size:12px; color:#44403c">📍 ' + _escape(x.address) + '</div>' : '')
+      + (x.contact || x.phone ? '<div style="font-size:12px; color:#44403c">👤 ' + _escape(x.contact || '') + (x.phone ? ' · <a href="https://wa.me/' + digits + '" target="_blank" rel="noopener" style="color:#166534; font-weight:700">📱 ' + _escape(x.phone) + '</a>' : '') + '</div>' : '')
+      + (x.note ? '<div style="font-size:12px; color:#57534e">💬 ' + _escape(x.note) + '</div>' : '')
+      + '<div style="margin-top:4px">' + _taskStatusHtml(x) + '</div>'
+      + '</div><div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center">'
+      + btn(x.done ? '↩️ Not done' : '✅ Done', 'driverTaskToggle(\'' + _escape(x.id) + '\')', x.done ? 'border:1.5px solid #f59e0b; background:#fffbeb; color:#92400e' : 'border:1.5px solid #16a34a; background:#16a34a; color:#fff')
+      + btn('✏️ Change', 'driverTaskOpen(\'' + _escape(x.id) + '\')', 'border:1.5px solid #111; background:#fafaf9; color:#111')
+      + '</div></div></div>';
+  }
+  function _taskPlanCard(x) {
+    return '<div class="plan-card" onclick="driverTaskOpen(\'' + _escape(x.id) + '\')" style="cursor:pointer; border-left:4px solid ' + (x.done ? '#16a34a' : x.problem ? '#ef4444' : '#7c3aed') + '; background:#faf5ff">'
+      + '<div class="pc-body"><div class="pc-inv">📝 TASK' + (x.slot ? ' · ' + _escape(_taskSlotFrom(x)) : '') + '</div>'
+      + '<div class="pc-prod">' + _escape(x.title) + '</div>'
+      + '<div class="pc-cust">🚐 ' + _escape(x.driverName || 'any driver') + '</div>'
+      + (x.address ? '<div class="pc-due">📍 ' + _escape(x.address) + '</div>' : '')
+      + (x.done || x.problem ? '<div class="pc-due">' + _taskStatusHtml(x) + '</div>' : '')
+      + '</div></div>';
+  }
+  function _driverTasksTabHtml() {
+    const today = _todayIso();
+    const cutoff = new Date(Date.now() - 14 * 86400000).toISOString().split('T')[0];
+    const all = _driverTasks().slice().sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.slot || '99').localeCompare(String(b.slot || '99')));
+    const late = all.filter(x => !x.done && x.date < today);
+    const coming = all.filter(x => !x.done && x.date >= today);
+    const done = all.filter(x => x.done && x.date >= cutoff).reverse();
+    let html = '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px"><div style="font-size:12px; color:#57534e; max-width:640px">Anything else a driver must do on a day: collect fabric, drop off a cheque, fetch a chair from the upholsterer. It shows on the planner, the run sheet, the WhatsApp run and the driver\'s phone, where they tick it off.</div>'
+      + '<button onclick="driverTaskOpen()" style="padding:9px 16px; border-radius:999px; border:none; background:#7c3aed; color:#fff; font-weight:800; font-size:13px; cursor:pointer">＋ Add a task</button></div>';
+    if (late.length) html += '<div style="font-size:13px; font-weight:800; color:#92400e; margin:12px 0 6px">⏳ Not done yet (' + late.length + ')</div>' + late.map(_taskOfficeCard).join('');
+    html += '<div style="font-size:13px; font-weight:800; margin:12px 0 6px">📅 Today and coming (' + coming.length + ')</div>' + (coming.length ? coming.map(_taskOfficeCard).join('') : '<div style="font-size:12px; color:#a8a29e; padding:4px 0 8px">No tasks planned.</div>');
+    if (done.length) html += '<div style="font-size:13px; font-weight:800; color:#166534; margin:12px 0 6px">✅ Done in the last 2 weeks (' + done.length + ')</div>' + done.map(_taskOfficeCard).join('');
+    return html;
+  }
+
+  // ---- the driver's page ----
+  function _driverTaskCard(s, i) {
+    const x = s.t;
+    const maps = x.address ? 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(x.address) : '';
+    const phone = _waDigits(x.phone);
+    return '<div style="background:#fff; border-radius:16px; padding:14px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,0.08); border-left:6px solid ' + (x.done ? '#16a34a' : '#7c3aed') + '">'
+      + '<div style="font-size:12px; font-weight:900; letter-spacing:0.08em; color:#78716c">STOP ' + (i + 1) + (x.slot ? ' · ' + _escape(x.slot) : '') + ' · 📝 TASK</div>'
+      + '<div style="font-size:22px; font-weight:900; margin-top:4px">' + _escape(x.title) + '</div>'
+      + (x.contact || x.phone ? '<div style="font-size:18px; font-weight:700; margin-top:2px">👤 ' + _escape(x.contact || x.phone) + '</div>' : '')
+      + (x.address ? '<div style="font-size:17px; color:#44403c; margin-top:2px">📍 ' + _escape(x.address) + '</div>' : '')
+      + (x.note ? '<div style="font-size:14px; color:#57534e; background:#f5f5f4; border-radius:10px; padding:8px 10px; margin-top:8px">📝 ' + _escape(x.note) + '</div>' : '')
+      + (x.done
+        ? '<div style="font-size:16px; font-weight:800; color:#166534; margin-top:8px">✅ Done ' + _escape(String(x.doneAt || '').slice(11, 16)) + (x.doneNote ? ' · ' + _escape(x.doneNote) : '') + '</div>'
+        : (x.problem ? '<div style="font-size:15px; font-weight:800; color:#991b1b; margin-top:8px">⚠️ ' + _escape(x.problem) + ' (the shop was told)</div>' : '')
+          + '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px">'
+          + (maps ? _driverBtn('🗺️ Navigate', 'window.open(\'' + maps + '\', \'_blank\')', '#fff', '#111', '#111') : '')
+          + (phone ? _driverBtn('📞 Call', 'location.href=\'tel:' + phone + '\'', '#fff', '#111', '#d6d3d1') : '')
+          + _driverBtn('✅ Done', 'driverTaskDone(\'' + _escape(x.id) + '\')', '#16a34a', '#fff')
+          + _driverBtn('⚠️ Can\'t do it', 'driverTaskProblem(\'' + _escape(x.id) + '\')', '#fee2e2', '#991b1b', '#ef4444')
+          + '</div>')
+      + '</div>';
+  }
+  function driverTaskDone(id) {
+    const x = _driverTaskById(id); if (!x) return;
+    const note = prompt('Done: ' + x.title + '\n\nAnything to tell the shop? (optional)', '');
+    if (note === null) return;
+    snapshotState();
+    Object.assign(x, { done: true, doneAt: new Date().toISOString(), doneBy: _driverName() || 'Driver', doneNote: String(note || '').trim(), problem: '' });
+    saveData(); renderDriverPage();
+  }
+  function driverTaskProblem(id) {
+    const x = _driverTaskById(id); if (!x) return;
+    const why = prompt('Why could you not do it? (the shop gets told)', '');
+    if (!why || !why.trim()) return;
+    snapshotState();
+    Object.assign(x, { problem: why.trim(), problemAt: new Date().toISOString() });
+    saveData(); renderDriverPage();
+    const office = _waDigits(_driverOfficePhone());
+    if (office) window.open('https://wa.me/' + office + '?text=' + encodeURIComponent('Could not do the task "' + x.title + '": ' + why.trim() + '. — ' + (_driverName() || 'driver')), '_blank');
+  }
+  window.driverTaskOpen = driverTaskOpen; window.driverTaskClose = driverTaskClose; window.driverTaskSave = driverTaskSave; window.driverTaskRemove = driverTaskRemove;
+  window.driverTaskToggle = driverTaskToggle; window.driverTaskDone = driverTaskDone; window.driverTaskProblem = driverTaskProblem;
 
   // ---- 🔍 Portal search: filters the orders list and the planner ----
   function _portalQuery() { const el = document.getElementById('portal-search'); return el ? String(el.value || '').trim().toLowerCase() : ''; }
@@ -15166,6 +15357,10 @@ ${totalsSection}
                   data[biz][key] = merged;
                 });
               });
+              // driver tasks: added in the office, ticked off on the drivers' phones
+              const mergedTasks = _mergeById(remoteData.driverTasks || [], baseData.driverTasks || [], data.driverTasks || []);
+              if (JSON.stringify(mergedTasks) !== JSON.stringify(data.driverTasks || [])) mergedAnything = true;
+              if (mergedTasks.length || data.driverTasks) data.driverTasks = mergedTasks;
               if (mergedAnything) {
                 localStorage.setItem('production-data', JSON.stringify(data));
                 if (typeof render === 'function') render();
