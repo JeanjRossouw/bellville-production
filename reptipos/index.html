@@ -4198,7 +4198,8 @@
         <div style="display:flex;justify-content:space-between;font-size:0.9rem;color:var(--muted)"><span>Retail value</span><span id="grv-retail">R0.00</span></div>
         <div style="display:flex;justify-content:space-between;font-weight:800;font-size:1.05rem"><span>Profit if sold</span><span class="accent" id="grv-profit">R0.00</span></div>
       </div>
-      <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.85rem;cursor:pointer;margin-top:0.4rem"><input type="checkbox" id="grv-updcost" checked style="width:auto"> Update product cost prices in Shopify</label>
+      <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.85rem;cursor:pointer;margin-top:0.4rem"><input type="checkbox" id="grv-updcost" checked style="width:auto"> Also update existing cost prices to these costs</label>
+      <div style="font-size:0.72rem;color:var(--muted);margin-top:0.15rem">Products with no cost price yet always get the cost from this GRV.</div>
       <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.8rem;cursor:pointer;margin-top:0.3rem;color:var(--muted)" title="Use this only if an earlier attempt already put the stock into Shopify but the GRV did not save"><input type="checkbox" id="grv-recordonly" style="width:auto"> Stock is already in Shopify — only record the GRV</label>
       <button class="btn btn-pay" style="margin-top:0.6rem" id="grv-confirm" onclick="confirmGrv()">📥 Receive into stock</button>`;
     renderGrvLines();
@@ -4421,7 +4422,7 @@
     const roEl = document.getElementById('grv-recordonly'); const recordOnly = !!(roEl && roEl.checked);
     try {
       const resp = recordOnly ? { received: lines.length, failed: [] }
-        : await callFn({ action: 'receiveStock', idemKey, updateCost, lineItems: lines.map(l => ({ inventoryItemId: l.inventoryItemId, variantId: l.variantId, qty: l.qty, costCents: l.costCents })) });
+        : await callFn({ action: 'receiveStock', idemKey, updateCost, fillMissingCosts: true, lineItems: lines.map(l => ({ inventoryItemId: l.inventoryItemId, variantId: l.variantId, qty: l.qty, costCents: l.costCents })) });
       if (resp && resp.error) throw new Error(resp.error);
       // Shopify may refuse the odd line (tracking off, a bundle). Those stay
       // in the draft to try again; everything it accepted is received now.
@@ -4429,7 +4430,12 @@
       const refused = lines.filter(l => failedIds.has(String(l.inventoryItemId)));
       lines = lines.filter(l => !failedIds.has(String(l.inventoryItemId)));
       if (!lines.length) throw new Error((resp.failed && resp.failed[0] && resp.failed[0].error) || 'Shopify refused the stock lines');
-      if (!recordOnly && !resp.idempotent) { lines.forEach(l => { const p = findProduct(l.variantId); if (p) p.qty = (Number(p.qty) || 0) + l.qty; }); cacheCatalogue(); renderGrid(); }
+      if (!recordOnly && !resp.idempotent) {
+        lines.forEach(l => { const p = findProduct(l.variantId); if (p) p.qty = (Number(p.qty) || 0) + l.qty; });
+        // Costs the server just saved, so Catalogue and margins agree without a reload (managers only — a till never holds costs).
+        if (isManager()) Object.entries(resp.costsSet || {}).forEach(([vid, c]) => { const p = findProduct(vid); if (p) p.costCents = c; });
+        cacheCatalogue(); renderGrid();
+      }
       const seq = (parseInt(localStorage.getItem('reptipos-grv-seq') || '0', 10) || 0) + 1; localStorage.setItem('reptipos-grv-seq', String(seq));
       const sup = suppliersCache.find(s => s.id === supId);
       const supplierName = sup ? sup.name : (linkedPo ? linkedPo.supplierName : '');

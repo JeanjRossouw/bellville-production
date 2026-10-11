@@ -407,9 +407,10 @@ async function syncWebOrders() {
 
 // Receive goods into stock: increment Shopify inventory at the primary location
 // for each line (GRV). idemKey makes a retry a no-op instead of double-adding.
-// lineItems: [{ inventoryItemId, qty, costCents? }]. Optionally update the
-// variant's cost so margins stay current.
-async function receiveStock({ lineItems, idemKey, updateCost }) {
+// lineItems: [{ inventoryItemId, qty, costCents? }]. Cost prices: updateCost
+// overwrites every received line's cost; fillMissingCosts sets it only where
+// the product has none yet. A line costed at 0 means "unknown" — never written.
+async function receiveStock({ lineItems, idemKey, updateCost, fillMissingCosts }) {
   const lines = (lineItems || []).filter(l => l.inventoryItemId && (Number(l.qty) || 0) !== 0);
   if (lines.length === 0) { const e = new Error('No stock lines'); e.status = 400; throw e; }
 
@@ -421,6 +422,12 @@ async function receiveStock({ lineItems, idemKey, updateCost }) {
 
   const locationId = await primaryLocationId(); // needs read_locations; receiving needs a location
   if (!locationId) { const e = new Error('No Shopify location to receive into'); e.status = 400; throw e; }
+
+  // Decided here rather than on the till: a cashier's till never loads costs,
+  // so only the server knows which products are still missing one.
+  let existingCosts = null;
+  if (fillMissingCosts && !updateCost) { try { existingCosts = (await getCosts()).costs; } catch (e) { existingCosts = null; } }
+  const costPatch = {};
 
   // One item Shopify refuses (422: tracking switched off, not stocked here,
   // a bundle) must not sink the other thirteen on the delivery note. Each line
@@ -444,17 +451,18 @@ async function receiveStock({ lineItems, idemKey, updateCost }) {
           await adjust(invItem, qty);
         }
       }
-      if (updateCost && li.costCents != null && li.variantId) {
-        // Into the POS's own cost store, never into Shopify.
-        try { await saveCosts({ costs: { [String(li.variantId)]: li.costCents } }); } catch (e) { /* cost is non-critical */ }
-      }
+      const cents = Math.round(Number(li.costCents) || 0), vid = li.variantId ? String(li.variantId) : '';
+      if (cents > 0 && vid && (updateCost || (existingCosts && !(Number(existingCosts[vid]) > 0)))) costPatch[vid] = cents;
       received.push({ inventoryItemId: String(invItem), variantId: li.variantId ? String(li.variantId) : '', qty });
     } catch (e) {
       failed.push({ inventoryItemId: String(invItem), variantId: li.variantId ? String(li.variantId) : '', qty, error: String(e.message || e).replace(/^Shopify \w+ \S+ /, '').slice(0, 200) });
     }
   }
   if (!received.length) { const e = new Error('Shopify refused every line: ' + (failed[0] ? failed[0].error : 'unknown')); e.status = 502; throw e; }
-  const result = { received: received.length, lineItems: received, failed, locationId: String(locationId) };
+  // Into the POS's own cost store, never into Shopify — one write for the whole GRV.
+  let costsSet = {};
+  if (Object.keys(costPatch).length) { try { await saveCosts({ costs: costPatch }); costsSet = costPatch; } catch (e) { /* cost is non-critical */ } }
+  const result = { received: received.length, lineItems: received, failed, locationId: String(locationId), costsSet };
   if (store && idemKey) { try { await store.setJSON(idemKey, result); } catch (e) {} }
   return result;
 }
