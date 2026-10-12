@@ -645,7 +645,7 @@ async function shopWhen(value) {
 
 function renderClients(host) {
   const now = Date.now();
-  const p = billing.plan || { amount: 799 };
+  const p = billing.plan || { amount: 2999 };
   const rows = clients.slice().sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
   const stateOf = (c) => {
     if (c.status === 'free') return ['Free', ''];

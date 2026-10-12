@@ -2,9 +2,9 @@
 // the payment notice from PayFast is checked against it, so a changed form in
 // the browser can never buy the plan for less.
 //
-// Env FACTORY_PRICE overrides the monthly amount (rands, e.g. 799).
+// Env FACTORY_PRICE overrides the monthly amount (rands, e.g. 2999).
 export function plan() {
-  const amount = Number(process.env.FACTORY_PRICE || 799);
+  const amount = Number(process.env.FACTORY_PRICE || 2999);
   return {
     id: 'standard',
     name: process.env.FACTORY_PLAN_NAME || 'Standard',

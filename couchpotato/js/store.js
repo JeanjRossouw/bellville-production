@@ -149,7 +149,7 @@ export function watchCompany(cb) {
 function emitCompany() { companyWatchers.forEach(w => { try { w(company); } catch (e) { console.error(e); } }); }
 
 const BILLING_URL = '/.netlify/functions/factory-billing';
-const DEMO_PLAN = { id: 'standard', name: 'Standard', amount: 799, currency: 'ZAR', interval: 'month', includes: 'Every feature, unlimited users and orders' };
+const DEMO_PLAN = { id: 'standard', name: 'Standard', amount: 2999, currency: 'ZAR', interval: 'month', includes: 'Every feature, unlimited users and orders' };
 
 export async function getPlan() {
   if (mode === 'demo') return { plan: DEMO_PLAN, configured: true, demo: true };
