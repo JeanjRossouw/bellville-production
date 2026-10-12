@@ -104,7 +104,8 @@ export function openModal(title, html, opts) {
     if (res !== false) close();
   });
   const first = wrap.querySelector('input, select, textarea');
-  if (first) setTimeout(() => first.focus(), 50);
+  // focus the first field, unless the person has already gone to another one
+  if (first) setTimeout(() => { if (!wrap.contains(document.activeElement)) first.focus(); }, 50);
   return { close, wrap };
 }
 

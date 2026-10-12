@@ -5,6 +5,7 @@
 //   sales      its price excl. VAT (after any quote or till discount)
 //   materials  its bill of materials at today's material prices
 //   labour     its labour hours × the labour rate
+// A return counts against the month it came back in.
 // A month's net profit is sales − materials − labour − that month's
 // overheads (Costing → Overheads). Labour and materials are the costing's
 // estimates, not timesheets or invoices; the report says so.
@@ -36,6 +37,19 @@ export function pieces(orders, sales) {
     });
   });
   (sales || []).forEach(s => {
+    // returns: what came back takes its sale off the month it came back in;
+    // what went back on the shelf takes its cost off too (it will sell again)
+    (s.returns || []).forEach(r => (r.lines || []).filter(x => x.counted).forEach(x => {
+      const qty = Number(x.qty) || 0;
+      const p = productByName(x.name);
+      const c = p && x.restock ? costOf(p) : null;
+      out.push({
+        month: String(r.date || '').slice(0, 7), ref: r.returnNo, who: s.customerName || 'Walk-in', product: '↩ ' + (x.name || ''), qty: -qty,
+        sales: -r2(x.ex != null ? Number(x.ex) : (Number(x.unitEx) || 0) * qty),
+        materials: c ? -r2(c.material * qty) : 0, labour: c ? -r2(c.labour * qty) : 0,
+        overheadShare: c ? -r2(c.overhead * qty) : 0, costed: true, kind: 'return'
+      });
+    }));
     const raw = (s.lines || []).reduce((t, l) => t + (Number(l.qty) || 0) * (Number(l.unitPrice) || 0), 0);
     const factor = raw > 0 ? (Number(s.subtotal) || raw) / raw : 1;     // the till discount, spread over the lines
     (s.lines || []).filter(l => l.kind === 'stock').forEach(l => {

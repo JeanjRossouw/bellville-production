@@ -213,17 +213,27 @@ export async function shopifyCall(action, payload) {
 const PUSH_KEY = 'cp-shopify-pending';
 const pendingPushes = () => { try { return JSON.parse(localStorage.getItem(PUSH_KEY) || '[]'); } catch (e) { return []; } };
 const savePending = (a) => { try { localStorage.setItem(PUSH_KEY, JSON.stringify(a.slice(-200))); } catch (e) { /* storage off */ } };
-async function pushOne(saleId) {
-  try { await shopifyCall('pushSale', { saleId }); savePending(pendingPushes().filter(x => x !== saleId)); }
-  catch (e) {
+// key: a sale id, or 'ret|<sale id>|<return no>' for pieces brought back
+async function pushOne(key) {
+  const ret = String(key).split('|');
+  try {
+    if (ret[0] === 'ret') await shopifyCall('pushReturn', { saleId: ret[1], returnNo: ret[2] });
+    else await shopifyCall('pushSale', { saleId: key });
+    savePending(pendingPushes().filter(x => x !== key));
+  } catch (e) {
     console.warn('Shopify stock not sent yet:', e.message);
-    if (!/not found|Which sale/i.test(e.message)) { const p = pendingPushes(); if (!p.includes(saleId)) savePending(p.concat(saleId)); }
-    else savePending(pendingPushes().filter(x => x !== saleId));
+    if (!/not found|Which sale|Which return/i.test(e.message)) { const p = pendingPushes(); if (!p.includes(key)) savePending(p.concat(key)); }
+    else savePending(pendingPushes().filter(x => x !== key));
   }
 }
 export function shopifyPushSale(saleId, lines) {
   shopifyRetryPending();
   if ((lines || []).some(l => l.kind === 'stock' && l.productId)) pushOne(saleId);
+}
+// Pieces brought back to the shelf at the till: Shopify adds them back.
+export function shopifyPushReturn(saleId, returnNo) {
+  shopifyRetryPending();
+  pushOne('ret|' + saleId + '|' + returnNo);
 }
 export function shopifyRetryPending() {
   if (mode === 'demo') return;
@@ -257,7 +267,7 @@ function demoShopify(action, p) {
   if (!st.connected) throw new Error('Connect the shop first');
   if (action === 'disconnect') { save({ connected: false, disconnectedAt: nowIso(), webhooks: '' }); return { ok: true }; }
   if (action === 'settings') { save({ importWhen: p.importWhen === 'placed' ? 'placed' : 'paid' }); return { ok: true }; }
-  if (action === 'pushSale') return { ok: true, adjusted: 0 };
+  if (action === 'pushSale' || action === 'pushReturn') return { ok: true, adjusted: 0 };
   if (action === 'products') {
     const { vatRate } = vat();
     const map = demoRead('products');
@@ -378,6 +388,12 @@ export async function initStore() {
   const app = appMod.initializeApp(FIREBASE_CONFIG);
   const auth = authMod.getAuth(app);
   const db = fsMod.getFirestore(app);
+  // Testing only: on this computer, ?emulator=1 uses Google's local copy of
+  // Firebase (sign-in on 9099, database on 8085) instead of the real project.
+  if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname) && new URLSearchParams(location.search).get('emulator') === '1') {
+    authMod.connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+    fsMod.connectFirestoreEmulator(db, '127.0.0.1', 8085);
+  }
   try { await fsMod.enableIndexedDbPersistence(db); } catch (e) { /* multi-tab or unsupported */ }
   cloud = { auth, db, fns: { ...authMod, ...fsMod } };
   mode = 'cloud';
@@ -386,6 +402,7 @@ export async function initStore() {
     try { currentUser = u ? await resolveUser(u) : null; }
     catch (e) { console.error('Could not load the account:', e); currentUser = u ? { uid: u.uid, email: u.email, name: u.email, role: 'none', companyId: null, error: e.message } : null; }
     if (!currentUser) company = null;
+    userKnown = true;
     emitUser();
   });
   return mode;
@@ -469,7 +486,11 @@ async function joinCompany(u, inv, name) {
 }
 
 function emitUser() { userWatchers.forEach(cb => { try { cb(currentUser); } catch (e) { console.error(e); } }); }
-export function onUser(cb) { userWatchers.push(cb); if (mode === 'demo') cb(currentUser); return () => {
+// A watcher that starts listening after the sign-in state is already known
+// (Firebase can answer "nobody signed in" before the screen starts listening)
+// is told at once, so the sign-in page always appears.
+let userKnown = false;
+export function onUser(cb) { userWatchers.push(cb); if (mode === 'demo' || userKnown) cb(currentUser); return () => {
   const i = userWatchers.indexOf(cb); if (i >= 0) userWatchers.splice(i, 1);
 }; }
 
@@ -788,6 +809,46 @@ export async function update(coll, id, patch, event) {
   }
   if (event) body.events = cloud.fns.arrayUnion({ at: nowIso(), by: who, what: event });
   await cloud.fns.updateDoc(docRef(coll, id), body);
+}
+
+// An id for a record before it is written, so other writes in the same
+// batch can point at it.
+export function newId(coll) {
+  if (mode === 'demo') return 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  return cloud.fns.doc(collRef(coll)).id;
+}
+
+// Several writes that must all happen or none (a return at the till: the
+// order, the stock, the credit note, the invoice and the sale together).
+//   { op: 'create', coll, id?, data }        id from newId(), or one is made
+//   { op: 'update', coll, id, patch, event }  patch values may be inc(n)
+//   { op: 'remove', coll, id }
+// The demo applies them one after another (this browser's storage cannot
+// fail half-way); the cloud commits them as one batch.
+export async function batchWrite(ops) {
+  ops.forEach(o => guardWrite(o.coll));
+  const who = currentUser ? currentUser.name : 'system';
+  if (mode === 'demo') {
+    for (const o of ops) {
+      if (o.op === 'create') {
+        const map = demoRead(o.coll);
+        map[o.id || newId(o.coll)] = { ...o.data, createdAt: nowIso(), createdBy: who, updatedAt: nowIso(), updatedBy: who };
+        demoWrite(o.coll, map);
+      } else if (o.op === 'update') await update(o.coll, o.id, o.patch || {}, o.event);
+      else if (o.op === 'remove') await remove(o.coll, o.id);
+    }
+    return;
+  }
+  const b = cloud.fns.writeBatch(cloud.db);
+  for (const o of ops) {
+    if (o.op === 'create') b.set(o.id ? docRef(o.coll, o.id) : cloud.fns.doc(collRef(o.coll)), { ...o.data, createdAt: nowIso(), createdBy: who, updatedAt: nowIso(), updatedBy: who });
+    else if (o.op === 'update') {
+      const body = { ...(o.patch || {}), updatedAt: nowIso(), updatedBy: who };
+      if (o.event) body.events = cloud.fns.arrayUnion({ at: nowIso(), by: who, what: o.event });
+      b.update(docRef(o.coll, o.id), body);
+    } else if (o.op === 'remove') b.delete(docRef(o.coll, o.id));
+  }
+  await b.commit();
 }
 
 // Add to (or take from) a number without reading it first, so two people

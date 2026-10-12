@@ -4,6 +4,13 @@
   publish = "."
   functions = "netlify/functions"
 
+# Firebase web API keys are public by design (they identify the project; the
+# database rules protect the data), but Netlify's secret scan flags anything
+# shaped like a Google key. These are the two apps' web keys: Bellville's
+# (index.html) and Factory Manager's (couchpotato/js/config.js).
+[build.environment]
+  SECRETS_SCAN_SMART_DETECTION_OMIT_VALUES = "AIzaSyB5QfSiuwjDGwZOZMHzN3BhziK_AKVeBNg,AIzaSyDchC2SgGdNn9VieudKSVOfZrHdi_GqPcg"
+
 [functions]
   # esbuild bundles each function with its node_modules (e.g. jose, @netlify/blobs)
   node_bundler = "esbuild"

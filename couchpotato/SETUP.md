@@ -13,6 +13,12 @@ browser that opened it. Signing in with any email opens the demo factory, and
 **Start free trial** creates an empty demo company, so the whole sign-up flow
 can be tried before the database exists.
 
+Once it is done, the demo is still there: add **`?demo=1`** to the address
+(e.g. `/couchpotato/?demo=1`, the website's **Try the demo** button) and that
+browser tab runs the demo with made-up data, never touching the database.
+`?demo=0` goes back to the real app. The app is connected to the Firebase
+project **factory-manager-ece82**.
+
 ---
 
 ## 1. Create the database (Firebase), once

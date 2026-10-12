@@ -165,6 +165,7 @@
     <p class="lead">Orders, the factory floor, costing, dispatch, invoicing and your showroom till, in one app that works on any phone, tablet or computer.</p>
     <div class="ctas">
       <a class="btn solid" href="/couchpotato/?signup=1" data-trial>Start your 14-day free trial</a>
+      <a class="btn ghost" href="/couchpotato/?demo=1" data-demo>Try the demo</a>
       <a class="btn ghost" href="#features">See what it does</a>
     </div>
     <p class="small">No card needed. Set up in a minute.</p>
@@ -355,6 +356,7 @@
   document.querySelectorAll('[data-name]').forEach(function (el) { el.textContent = SITE.name; });
   document.querySelectorAll('[data-app]').forEach(function (el) { el.href = SITE.app; });
   document.querySelectorAll('[data-trial]').forEach(function (el) { el.href = SITE.app + '?signup=1'; });
+  document.querySelectorAll('[data-demo]').forEach(function (el) { el.href = SITE.app + '?demo=1'; });
   document.querySelectorAll('[data-year]').forEach(function (el) { el.textContent = new Date().getFullYear(); });
   // The live price, from the same place PayFast checks payments against.
   fetch('/.netlify/functions/factory-billing?plan=1').then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {

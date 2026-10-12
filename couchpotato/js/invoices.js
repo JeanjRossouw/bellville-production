@@ -222,6 +222,7 @@ export function pickedIds(host, cid) {
 }
 
 function statusChipInv(inv) {
+  if (inv.kind === 'credit') return '<span class="chip calm">Credit note</span>';
   if (inv.status === 'void') return '<span class="chip warn-soft">void</span>';
   if (inv.status === 'paid') return '<span class="chip st-disp">✓ Paid</span>';
   if (isOverdue(inv)) return '<span class="chip late">Overdue</span>';
@@ -272,6 +273,7 @@ const coHeader = (kind, no, lines) => docHeader(settings, kind, no, lines);
 export function printInvoice(id) {
   const inv = invoiceById(id);
   if (!inv) return;
+  if (inv.kind === 'credit') return printCreditNote(inv);
   const cur = settings.currency || 'R';
   const c = customerById(inv.customerId) || {};
   const body = `${inv.status === 'paid' ? '<div class="paid">PAID</div>' : ''}
@@ -290,6 +292,27 @@ export function printInvoice(id) {
     ${inv.note ? `<p>${esc(inv.note)}</p>` : ''}
     ${settings.bankDetails ? `<div class="bank"><b>Payment details</b>${esc(settings.bankDetails)}\nReference: ${esc(inv.invoiceNo)}</div>` : ''}
     <div class="ft">${inv.dueDate ? 'Payment due by ' + esc(niceDate(inv.dueDate)) + '. ' : ''}Thank you for your business.</div>`;
+  openPrint(inv.invoiceNo, body);
+}
+
+// A return at the till: what came back, refunded and set off.
+function printCreditNote(inv) {
+  const cur = settings.currency || 'R';
+  const c = customerById(inv.customerId) || {};
+  const body = `${coHeader(settings.vatRegistered ? 'TAX CREDIT NOTE' : 'CREDIT NOTE', inv.invoiceNo, ['Date ' + niceDate(inv.date), inv.returnNo ? 'Return ' + inv.returnNo : ''])}
+    <div class="two">
+      <div class="box"><h4>Credit to</h4><strong>${esc(inv.customerName)}</strong><br>${esc([c.contact, c.address, c.area].filter(Boolean).join('\n')).replace(/\n/g, '<br>')}${c.phone ? '<br>' + esc(c.phone) : ''}</div>
+      <div class="box"><h4>Against</h4>Invoice ${esc(inv.againstInvoiceNo || '')}${inv.saleNo ? '<br>Sale ' + esc(inv.saleNo) : ''}</div>
+    </div>
+    <table><tr><th>Description</th><th class="r">Qty</th><th class="r">Each</th><th class="r">Amount</th></tr>
+      ${(inv.lines || []).map(l => `<tr><td>${esc(l.description)}${l.orderNo ? '<br><small>Order ' + esc(l.orderNo) + '</small>' : ''}</td><td class="r">${esc(l.qty)}</td><td class="r">${esc(money(Math.abs(l.unitPrice), cur))}</td><td class="r">${esc(money(Math.abs(l.qty * l.unitPrice), cur))}</td></tr>`).join('')}
+      <tr class="tot"><td colspan="3" class="r">Subtotal</td><td class="r">${esc(money(Math.abs(inv.subtotal), cur))}</td></tr>
+      ${inv.vat ? `<tr class="tot"><td colspan="3" class="r">VAT ${Math.round((inv.vatRate || 0) * 100)}%</td><td class="r">${esc(money(Math.abs(inv.vat), cur))}</td></tr>` : ''}
+      <tr class="tot big"><td colspan="3" class="r">TOTAL CREDIT</td><td class="r">${esc(money(Math.abs(inv.total), cur))}</td></tr>
+      ${(inv.payments || []).map(p => `<tr><td colspan="3" class="r">${/^Off /.test(p.method || '') ? 'Taken off ' + esc(String(p.method).slice(4)) : 'Refunded (' + esc(p.method || '') + ')'}</td><td class="r">${esc(money(Math.abs(p.amount), cur))}</td></tr>`).join('')}
+    </table>
+    ${inv.note ? `<p>${esc(inv.note)}</p>` : ''}
+    <div class="ft">Received by: ______________________ &nbsp; Signature: ______________________</div>`;
   openPrint(inv.invoiceNo, body);
 }
 

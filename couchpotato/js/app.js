@@ -1,8 +1,9 @@
 // The app shell — sign-in and sign-up, boot, navigation by role, Settings and the team.
 import * as store from './store.js';
-import { FACTORY_DEFAULTS, isCloudConfigured, PRODUCT, TRIAL_DAYS } from './config.js';
+import { FACTORY_DEFAULTS, isCloudConfigured, isDemoForced, PRODUCT, TRIAL_DAYS } from './config.js';
 import { AREAS, LEVELS, levelOf } from './permissions.js';
 import { esc, field, row, toast, money, daysUntil, openModal } from './ui.js';
+import { openImport } from './importer.js';
 import { startCustomers, renderCustomers, newCustomer, editCustomer, deleteCustomer } from './customers.js';
 import {
   startOrders, renderOrders, newOrder, editOrder, deleteOrder, setStatus, setFabric,
@@ -34,7 +35,7 @@ import {
 } from './invoices.js';
 import {
   startCosting, renderCosting, setCostingSettings, setCostView, newMaterial, editMaterial, deleteMaterial,
-  newProduct, editProduct, duplicateProduct, deleteProduct, saveOverheads, addOverheadRow, liveOverheads,
+  newProduct, editProduct, duplicateProduct, deleteProduct, printLabels, saveOverheads, addOverheadRow, liveOverheads,
   printPriceSheet, printCostSheet
 } from './costing.js';
 
@@ -277,10 +278,15 @@ function showLogin() {
   document.getElementById('product-tag').textContent = PRODUCT.tagline;
   document.getElementById('login-mode').innerHTML = isCloudConfigured()
     ? ''
-    : `<div class="notice">
-         <strong>Demo mode.</strong> No database is connected yet, so everything stays in this browser.
-         Sign in with any email to look around the demo factory, or start a trial to set up an empty company of your own.
-       </div>`;
+    : isDemoForced()
+      ? `<div class="notice">
+           <strong>Demo.</strong> Made-up data in this browser only; nothing is saved to anyone's records.
+           Sign in with any email to look around the demo factory. <a href="?demo=0">Go to the real app</a>
+         </div>`
+      : `<div class="notice">
+           <strong>Demo mode.</strong> No database is connected yet, so everything stays in this browser.
+           Sign in with any email to look around the demo factory, or start a trial to set up an empty company of your own.
+         </div>`;
   if (JOIN_EMAIL) { document.getElementById('login-email').value = JOIN_EMAIL; setLoginMode('join'); }
   else if (SIGNUP) { SIGNUP = false; setLoginMode('up'); }      // "Start free trial" on the website
   else setLoginMode(document.getElementById('login-form').dataset.mode || 'in');
@@ -942,6 +948,9 @@ async function onAction(e) {
     case 'new-product': return newProduct();
     case 'edit-product': return editProduct(id);
     case 'dup-product': return duplicateProduct(id);
+    case 'import': return openImport(b.dataset.kind, settings);
+    case 'label-product': return printLabels(id);
+    case 'print-labels': return printLabels();
     case 'del-product': return deleteProduct(id);
     case 'oh-add': addOverheadRow(document.getElementById('screen')); return;
     case 'oh-del': b.closest('.oh-row').remove(); return liveOverheads(document.getElementById('screen'));

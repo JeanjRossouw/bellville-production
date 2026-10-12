@@ -26,7 +26,9 @@ couchpotato/
   js/costing.js     materials, bills of material, overheads, price sheet
   js/scan.js        scan out at the door, dispatch, tell the customer
   js/invoices.js    invoice queue, invoices, payments, statements, export
-  js/pos.js         point of sale: the showroom till
+  js/pos.js         point of sale: the showroom till, barcode scanning, returns and credit notes
+  js/barcode.js     barcode labels (Code 128) and reading barcodes with the camera
+  js/importer.js    import materials, products, bills of materials and customers from Excel or CSV
   js/stock.js       materials on hand, purchase orders, stock movements
   js/storeroom.js   the stock room: receive, client fabric, stock take, give out, tools
   js/quotes.js      quotations that turn into orders
