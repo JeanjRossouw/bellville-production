@@ -20,7 +20,9 @@
 # ---- factorymanager.co.za: Factory Manager's own address ----
 # The website at the root, the app under /app/. Same site, same functions and
 # settings as the /couchpotato/ path, which keeps working. www goes to the
-# address without it.
+# address without it. There is no /app -> /app/ rule: Netlify ignores the
+# trailing slash when matching, so it would forward /app/ to itself forever.
+# The app page adds the slash itself (couchpotato/index.html).
 [[redirects]]
   from = "https://www.factorymanager.co.za/*"
   to = "https://factorymanager.co.za/:splat"
@@ -30,11 +32,6 @@
   from = "https://factorymanager.co.za/"
   to = "/couchpotato/www/index.html"
   status = 200
-  force = true
-[[redirects]]
-  from = "https://factorymanager.co.za/app"
-  to = "/app/"
-  status = 301
   force = true
 [[redirects]]
   from = "https://factorymanager.co.za/app/*"
