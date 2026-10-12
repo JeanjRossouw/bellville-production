@@ -396,6 +396,7 @@ export async function initStore() {
     try { currentUser = u ? await resolveUser(u) : null; }
     catch (e) { console.error('Could not load the account:', e); currentUser = u ? { uid: u.uid, email: u.email, name: u.email, role: 'none', companyId: null, error: e.message } : null; }
     if (!currentUser) company = null;
+    userKnown = true;
     emitUser();
   });
   return mode;
@@ -479,7 +480,11 @@ async function joinCompany(u, inv, name) {
 }
 
 function emitUser() { userWatchers.forEach(cb => { try { cb(currentUser); } catch (e) { console.error(e); } }); }
-export function onUser(cb) { userWatchers.push(cb); if (mode === 'demo') cb(currentUser); return () => {
+// A watcher that starts listening after the sign-in state is already known
+// (Firebase can answer "nobody signed in" before the screen starts listening)
+// is told at once, so the sign-in page always appears.
+let userKnown = false;
+export function onUser(cb) { userWatchers.push(cb); if (mode === 'demo' || userKnown) cb(currentUser); return () => {
   const i = userWatchers.indexOf(cb); if (i >= 0) userWatchers.splice(i, 1);
 }; }
 
