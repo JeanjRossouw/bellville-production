@@ -251,6 +251,7 @@ export function renderCosting(host) {
     <div class="page-head">
       <div><h1>Costing</h1><p class="sub">Materials + labour + a share of overheads = what a piece really costs</p></div>
       <div class="btn-row">
+        ${store.can('costing', 'edit') ? `<button class="btn ghost" data-act="import" data-kind="${costView === 'materials' ? 'materials' : 'products'}" title="Bring products, materials or bills of materials in from Excel or CSV">Import</button>` : ''}
         <button class="btn ghost" data-act="print-pricesheet">Price sheet</button>
         <button class="btn ghost" data-act="print-costsheet">Cost sheet</button>
       </div>

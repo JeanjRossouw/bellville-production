@@ -100,7 +100,10 @@ export function renderCustomers(host, orders) {
         <h1>Customers</h1>
         <p class="sub">${customers.length} customer${customers.length === 1 ? '' : 's'} on the books</p>
       </div>
-      <button class="btn primary" data-act="new-customer">＋ New customer</button>
+      <div class="btn-row">
+        ${store.can('customers', 'edit') ? '<button class="btn ghost" data-act="import" data-kind="customers" title="Bring customers in from Excel or CSV">Import</button>' : ''}
+        <button class="btn primary" data-act="new-customer">＋ New customer</button>
+      </div>
     </div>
     ${customers.length ? `<div class="grid cards">${customers.map(c => `
       <div class="card cust">

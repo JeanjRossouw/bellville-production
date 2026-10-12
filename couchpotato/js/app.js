@@ -3,6 +3,7 @@ import * as store from './store.js';
 import { FACTORY_DEFAULTS, isCloudConfigured, PRODUCT, TRIAL_DAYS } from './config.js';
 import { AREAS, LEVELS, levelOf } from './permissions.js';
 import { esc, field, row, toast, money, daysUntil, openModal } from './ui.js';
+import { openImport } from './importer.js';
 import { startCustomers, renderCustomers, newCustomer, editCustomer, deleteCustomer } from './customers.js';
 import {
   startOrders, renderOrders, newOrder, editOrder, deleteOrder, setStatus, setFabric,
@@ -942,6 +943,7 @@ async function onAction(e) {
     case 'new-product': return newProduct();
     case 'edit-product': return editProduct(id);
     case 'dup-product': return duplicateProduct(id);
+    case 'import': return openImport(b.dataset.kind, settings);
     case 'label-product': return printLabels(id);
     case 'print-labels': return printLabels();
     case 'del-product': return deleteProduct(id);
