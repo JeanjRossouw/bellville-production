@@ -352,7 +352,8 @@
 <script>
   // The product name and where the app lives, in one place. When the app
   // moves to its own site, change APP (and the image paths above).
-  var SITE = { name: 'Factory Manager', app: '/couchpotato/' };
+  // on its own address the app is at /app/; on the old one, /couchpotato/
+  var SITE = { name: 'Factory Manager', app: /(^|\.)factorymanager\.co\.za$/i.test(location.hostname) ? '/app/' : '/couchpotato/' };
   document.querySelectorAll('[data-name]').forEach(function (el) { el.textContent = SITE.name; });
   document.querySelectorAll('[data-app]').forEach(function (el) { el.href = SITE.app; });
   document.querySelectorAll('[data-trial]').forEach(function (el) { el.href = SITE.app + '?signup=1'; });

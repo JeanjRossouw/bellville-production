@@ -17,6 +17,31 @@
 
 # Friendly path for the dedicated till on the main site: /pos boots POS-only mode.
 # (A separate POS site can instead use a pos.* subdomain, which auto-detects.)
+# ---- factorymanager.co.za: Factory Manager's own address ----
+# The website at the root, the app under /app/. Same site, same functions and
+# settings as the /couchpotato/ path, which keeps working. www goes to the
+# address without it.
+[[redirects]]
+  from = "https://www.factorymanager.co.za/*"
+  to = "https://factorymanager.co.za/:splat"
+  status = 301
+  force = true
+[[redirects]]
+  from = "https://factorymanager.co.za/"
+  to = "/couchpotato/www/index.html"
+  status = 200
+  force = true
+[[redirects]]
+  from = "https://factorymanager.co.za/app"
+  to = "/app/"
+  status = 301
+  force = true
+[[redirects]]
+  from = "https://factorymanager.co.za/app/*"
+  to = "/couchpotato/:splat"
+  status = 200
+  force = true
+
 [[redirects]]
   from = "/pos"
   to = "/index.html?pos=1"
