@@ -18,7 +18,7 @@ const json = (status, obj) => ({ statusCode: status, headers: { 'Content-Type': 
 function siteUrl(event) {
   const h = event.headers || {};
   const host = String(h['x-forwarded-host'] || h.host || '').split(',')[0].trim();
-  if (host && /(^|\.)netlify\.app$|^localhost(:\d+)?$/i.test(host)) return (/^localhost/.test(host) ? 'http://' : 'https://') + host;
+  if (host && /(^|\.)netlify\.app$|^localhost(:\d+)?$|^(www\.)?factorymanager\.co\.za$/i.test(host)) return (/^localhost/.test(host) ? 'http://' : 'https://') + host.replace(/^www\./i, '');
   return (process.env.URL || process.env.DEPLOY_PRIME_URL || '').replace(/\/$/, '');
 }
 
@@ -99,7 +99,8 @@ export const handler = async (event) => {
       if (!payfast.configured()) return json(503, { error: 'Payments are not switched on yet. Ask the seller to set up PayFast.' });
       const base = siteUrl(event);
       // where the app lives on this site: /couchpotato/ today, / once it has its own site
-      const app = base + ('/' + String(process.env.FACTORY_APP_PATH || 'couchpotato/').replace(/^\/+/, '')).replace(/\/?$/, '/');
+      const app = /factorymanager\.co\.za$/i.test(base) ? base + '/app/'
+        : base + ('/' + String(process.env.FACTORY_APP_PATH || 'couchpotato/').replace(/^\/+/, '')).replace(/\/?$/, '/');
       const fields = payfast.checkoutFields({
         amount: price.amount, itemName: 'Factory Manager — ' + price.name + ' (monthly)',
         companyId: who.companyId, companyName: who.company.name, email: who.user.email, name: who.member.name,
