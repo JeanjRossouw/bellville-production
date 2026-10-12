@@ -19,15 +19,15 @@ export const PRODUCT = {
 // Every new company starts on a free trial of this many days.
 export const TRIAL_DAYS = 14;
 
-// The Firebase project "factory-manager-c59c9". These values are meant to sit
+// The Firebase project "factory-manager-ece82". These values are meant to sit
 // in the web page; the database rules (firestore.rules) protect the data.
 export const FIREBASE_CONFIG = {
-  apiKey: 'AIzaSyBfz9pX1qiLxYXNzcMD0nbxcPUoCMMzIVQ',
-  authDomain: 'factory-manager-c59c9.firebaseapp.com',
-  projectId: 'factory-manager-c59c9',
-  storageBucket: 'factory-manager-c59c9.firebasestorage.app',
-  messagingSenderId: '339518404296',
-  appId: '1:339518404296:web:32feabe5173a0a91d817fd'
+  apiKey: 'AIzaSyDchC2SgGdNn9VieudKSVOfZrHdi_GqPcg',
+  authDomain: 'factory-manager-ece82.firebaseapp.com',
+  projectId: 'factory-manager-ece82',
+  storageBucket: 'factory-manager-ece82.firebasestorage.app',
+  messagingSenderId: '20073181071',
+  appId: '1:20073181071:web:ec19a966fd1f5f571565fa'
 };
 
 // A company's starting details. These appear on job cards, quotes and

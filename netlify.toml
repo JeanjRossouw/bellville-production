@@ -9,7 +9,7 @@
 # shaped like a Google key. These are the two apps' web keys: Bellville's
 # (index.html) and Factory Manager's (couchpotato/js/config.js).
 [build.environment]
-  SECRETS_SCAN_SMART_DETECTION_OMIT_VALUES = "AIzaSyB5QfSiuwjDGwZOZMHzN3BhziK_AKVeBNg,AIzaSyBfz9pX1qiLxYXNzcMD0nbxcPUoCMMzIVQ"
+  SECRETS_SCAN_SMART_DETECTION_OMIT_VALUES = "AIzaSyB5QfSiuwjDGwZOZMHzN3BhziK_AKVeBNg,AIzaSyDchC2SgGdNn9VieudKSVOfZrHdi_GqPcg"
 
 [functions]
   # esbuild bundles each function with its node_modules (e.g. jose, @netlify/blobs)
