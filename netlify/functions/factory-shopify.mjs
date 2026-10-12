@@ -268,6 +268,33 @@ async function pushSale(who, body) {
   return { ok: true, adjusted: done.length, failed };
 }
 
+// A return at the till put pieces back on the shelf: add them back on
+// Shopify, once.
+async function pushReturn(who, body) {
+  const saleId = String(body.saleId || ''), returnNo = String(body.returnNo || '');
+  if (!CID.test(saleId)) throw new Error('Which sale?');
+  if (!/^R-\d{1,9}$/.test(returnNo)) throw new Error('Which return?');
+  const st = await getDoc(statusPath(who.cid));
+  if (!st || !st.connected) return { ok: true, skipped: 'not connected' };
+  if (!companyActive(who.company)) return { ok: true, skipped: 'subscription not active' };
+  const sale = await getDoc(`companies/${who.cid}/sales/${saleId}`);
+  if (!sale) throw new Error('Sale not found');
+  const ret = (sale.returns || []).find(r => r && r.returnNo === returnNo);
+  if (!ret) throw new Error('Which return? ' + returnNo + ' is not on this sale');
+  if (!await createDoc(`companies/${who.cid}/shopifyPushes/${saleId}--${returnNo}`, { at: nowIso(), by: who.member.name || '' })) return { ok: true, already: true };
+  const cfg = await secretsOf(who.cid);
+  const done = [], failed = [];
+  for (const l of ret.lines || []) {
+    if (!l.restock || !l.productId || !CID.test(String(l.productId)) || !(Number(l.qty) > 0)) continue;
+    const p = await getDoc(`companies/${who.cid}/products/${l.productId}`);
+    if (!p || !p.shopifyInventoryItemId) continue;
+    try { await shopify.adjustStock(cfg, p.shopifyInventoryItemId, Number(l.qty)); done.push(p.name); }
+    catch (e) { failed.push(p.name + ': ' + e.message); }
+  }
+  if (failed.length) await patchDoc(statusPath(who.cid), { lastError: 'Stock for return ' + returnNo + ' not sent: ' + failed.join('; '), lastErrorAt: nowIso() });
+  return { ok: true, adjusted: done.length, failed };
+}
+
 // --------------------------------------------------------------- entry ----
 
 export const handler = async (event) => {
@@ -317,6 +344,7 @@ export const handler = async (event) => {
         if (!who.owner) return json(403, { error: 'Only the owner can do this' });
         return json(200, await syncCompany(who.cid));
       case 'pushSale': return json(200, await pushSale(who, body));
+      case 'pushReturn': return json(200, await pushReturn(who, body));
       default: return json(400, { error: 'Unknown action' });
     }
   } catch (e) {
@@ -326,4 +354,4 @@ export const handler = async (event) => {
 };
 
 // for the tests
-export { connect, disconnect, products, pushSale };
+export { connect, disconnect, products, pushSale, pushReturn };

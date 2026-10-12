@@ -34,7 +34,7 @@ import {
 } from './invoices.js';
 import {
   startCosting, renderCosting, setCostingSettings, setCostView, newMaterial, editMaterial, deleteMaterial,
-  newProduct, editProduct, duplicateProduct, deleteProduct, saveOverheads, addOverheadRow, liveOverheads,
+  newProduct, editProduct, duplicateProduct, deleteProduct, printLabels, saveOverheads, addOverheadRow, liveOverheads,
   printPriceSheet, printCostSheet
 } from './costing.js';
 
@@ -942,6 +942,8 @@ async function onAction(e) {
     case 'new-product': return newProduct();
     case 'edit-product': return editProduct(id);
     case 'dup-product': return duplicateProduct(id);
+    case 'label-product': return printLabels(id);
+    case 'print-labels': return printLabels();
     case 'del-product': return deleteProduct(id);
     case 'oh-add': addOverheadRow(document.getElementById('screen')); return;
     case 'oh-del': b.closest('.oh-row').remove(); return liveOverheads(document.getElementById('screen'));

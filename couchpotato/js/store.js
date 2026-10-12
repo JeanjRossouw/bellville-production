@@ -213,17 +213,27 @@ export async function shopifyCall(action, payload) {
 const PUSH_KEY = 'cp-shopify-pending';
 const pendingPushes = () => { try { return JSON.parse(localStorage.getItem(PUSH_KEY) || '[]'); } catch (e) { return []; } };
 const savePending = (a) => { try { localStorage.setItem(PUSH_KEY, JSON.stringify(a.slice(-200))); } catch (e) { /* storage off */ } };
-async function pushOne(saleId) {
-  try { await shopifyCall('pushSale', { saleId }); savePending(pendingPushes().filter(x => x !== saleId)); }
-  catch (e) {
+// key: a sale id, or 'ret|<sale id>|<return no>' for pieces brought back
+async function pushOne(key) {
+  const ret = String(key).split('|');
+  try {
+    if (ret[0] === 'ret') await shopifyCall('pushReturn', { saleId: ret[1], returnNo: ret[2] });
+    else await shopifyCall('pushSale', { saleId: key });
+    savePending(pendingPushes().filter(x => x !== key));
+  } catch (e) {
     console.warn('Shopify stock not sent yet:', e.message);
-    if (!/not found|Which sale/i.test(e.message)) { const p = pendingPushes(); if (!p.includes(saleId)) savePending(p.concat(saleId)); }
-    else savePending(pendingPushes().filter(x => x !== saleId));
+    if (!/not found|Which sale|Which return/i.test(e.message)) { const p = pendingPushes(); if (!p.includes(key)) savePending(p.concat(key)); }
+    else savePending(pendingPushes().filter(x => x !== key));
   }
 }
 export function shopifyPushSale(saleId, lines) {
   shopifyRetryPending();
   if ((lines || []).some(l => l.kind === 'stock' && l.productId)) pushOne(saleId);
+}
+// Pieces brought back to the shelf at the till: Shopify adds them back.
+export function shopifyPushReturn(saleId, returnNo) {
+  shopifyRetryPending();
+  pushOne('ret|' + saleId + '|' + returnNo);
 }
 export function shopifyRetryPending() {
   if (mode === 'demo') return;
@@ -257,7 +267,7 @@ function demoShopify(action, p) {
   if (!st.connected) throw new Error('Connect the shop first');
   if (action === 'disconnect') { save({ connected: false, disconnectedAt: nowIso(), webhooks: '' }); return { ok: true }; }
   if (action === 'settings') { save({ importWhen: p.importWhen === 'placed' ? 'placed' : 'paid' }); return { ok: true }; }
-  if (action === 'pushSale') return { ok: true, adjusted: 0 };
+  if (action === 'pushSale' || action === 'pushReturn') return { ok: true, adjusted: 0 };
   if (action === 'products') {
     const { vatRate } = vat();
     const map = demoRead('products');

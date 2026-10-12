@@ -9,6 +9,7 @@
 // price) and the overheads + labour rate, which live in settings.
 import * as store from './store.js';
 import { esc, money, field, row, val, openModal, toast, empty, niceDate, today } from './ui.js';
+import { nextShopCode, labelSheetHtml } from './barcode.js';
 
 export const UNITS = ['m', 'm²', 'sheet', 'each', 'kg', 'L', 'roll', 'pack'];
 
@@ -121,7 +122,7 @@ function productForm(p) {
     field('Selling price each (excl. VAT)', 'p-price', { value: p.sellingPrice == null ? '' : p.sellingPrice, type: 'number', min: 0, step: '0.01' })
   ) + row(
     field('In stock on the showroom floor', 'p-stock', { value: p.stock == null ? '' : p.stock, type: 'number', min: 0, placeholder: '0 = made to order only' }),
-    '<div class="fld"></div>'
+    field('Barcode', 'p-barcode', { value: p.barcode, placeholder: 'Scan it, or leave blank for a shop code' })
   ) + `<div class="fld"><span>Bill of materials</span>
       <div id="bom">${(p.materials && p.materials.length ? p.materials : [{}]).map(bomRow).join('')}</div>
       <button type="button" class="btn ghost sm" id="bom-add" style="margin-top:.4rem">＋ Add a material</button>
@@ -143,6 +144,7 @@ function readProduct(w) {
     labourHours: parseFloat(val(w, 'p-hours')) || 0,
     sellingPrice: parseFloat(val(w, 'p-price')) || 0,
     stock: parseInt(val(w, 'p-stock'), 10) || 0,
+    barcode: val(w, 'p-barcode').trim(),
     materials: lines, notes: val(w, 'p-notes')
   };
 }
@@ -183,10 +185,14 @@ function wireProductForm(wrap) {
   live();
 }
 
+// A barcode belongs to one product only, or the till cannot tell them apart.
+const codeTaken = (code, id) => !!code && products.some(x => x.id !== id && String(x.barcode || '').toLowerCase() === code.toLowerCase());
+export const productByCode = (code) => { const c = String(code || '').trim().toLowerCase(); return c ? products.find(p => String(p.barcode || '').toLowerCase() === c) || null : null; };
+
 export function newProduct() {
   const m = openModal('New product', productForm(null), {
     okLabel: 'Save product',
-    onOk: async (w) => { const d = readProduct(w); if (!d.name) { toast('Give the product a name', 'warn'); return false; } await store.create('products', d); toast('Product added'); }
+    onOk: async (w) => { const d = readProduct(w); if (!d.name) { toast('Give the product a name', 'warn'); return false; } if (codeTaken(d.barcode)) { toast('Another product already has barcode ' + d.barcode, 'warn'); return false; } await store.create('products', d); toast('Product added'); }
   });
   wireProductForm(m.wrap);
 }
@@ -194,14 +200,14 @@ export function editProduct(id) {
   const p = products.find(x => x.id === id); if (!p) return;
   const m = openModal('Edit ' + p.name, productForm(p), {
     okLabel: 'Save changes',
-    onOk: async (w) => { const d = readProduct(w); if (!d.name) { toast('Give the product a name', 'warn'); return false; } await store.update('products', id, d, 'Costing updated'); toast('Product updated'); }
+    onOk: async (w) => { const d = readProduct(w); if (!d.name) { toast('Give the product a name', 'warn'); return false; } if (codeTaken(d.barcode, id)) { toast('Another product already has barcode ' + d.barcode, 'warn'); return false; } await store.update('products', id, d, 'Costing updated'); toast('Product updated'); }
   });
   wireProductForm(m.wrap);
 }
 export async function duplicateProduct(id) {
   const p = products.find(x => x.id === id); if (!p) return;
   // the copy is a product of its own: not linked to the online shop's item
-  const { id: _id, createdAt, createdBy, updatedAt, updatedBy, events, shopifyProductId, shopifyVariantId, shopifyInventoryItemId, source, ...rest } = p;
+  const { id: _id, createdAt, createdBy, updatedAt, updatedBy, events, shopifyProductId, shopifyVariantId, shopifyInventoryItemId, source, barcode, ...rest } = p;
   await store.create('products', { ...rest, name: p.name + ' (copy)' });
   toast('Copied — now edit the copy');
 }
@@ -257,7 +263,7 @@ function productsHtml(cur) {
   const warn = !oh || !labourRate()
     ? `<div class="notice-inline">${!labourRate() ? 'No labour rate set' : ''}${!labourRate() && !oh ? ' and ' : ''}${!oh ? 'no overheads or pieces-per-month set' : ''} — costs below are incomplete. Fill in the Overheads & labour tab.</div>` : '';
   const head = `<div class="page-head" style="margin:0 0 .6rem"><p class="sub">${products.length} product${products.length === 1 ? '' : 's'} · overhead share ${esc(money(oh, cur))} per piece · labour ${esc(money(labourRate(), cur))}/h</p>
-    <button class="btn primary" data-act="new-product">＋ New product</button></div>`;
+    <div class="btn-row"><button class="btn ghost" data-act="print-labels" title="Barcode labels for every product">Print labels</button><button class="btn primary" data-act="new-product">＋ New product</button></div></div>`;
   if (!products.length) return head + warn + empty('', 'No products costed yet', 'Add a product and its bill of materials to see what it costs to build.');
   const cats = {};
   products.forEach(p => { (cats[p.category || 'Uncategorised'] = cats[p.category || 'Uncategorised'] || []).push(p); });
@@ -267,7 +273,7 @@ function productsHtml(cur) {
       <table class="tbl cost">
         <thead><tr><th>Product</th><th class="r">Materials</th><th class="r">Labour</th><th class="r">Overhead</th><th class="r">Cost</th><th class="r">Price</th><th class="r">Margin</th><th></th></tr></thead>
         <tbody>${cats[cat].map(p => { const c = costOf(p); const missing = c.lines.some(l => l.missing); return `<tr>
-          <td><strong>${esc(p.name)}</strong>${missing ? ' <span class="chip late">material missing</span>' : ''}<div class="muted">${c.lines.length} material${c.lines.length === 1 ? '' : 's'} · ${p.labourHours || 0}h${Number(p.stock) > 0 ? ' · ' + Number(p.stock) + ' in stock' : ''}</div></td>
+          <td><strong>${esc(p.name)}</strong>${missing ? ' <span class="chip late">material missing</span>' : ''}<div class="muted">${c.lines.length} material${c.lines.length === 1 ? '' : 's'} · ${p.labourHours || 0}h${Number(p.stock) > 0 ? ' · ' + Number(p.stock) + ' in stock' : ''}${p.barcode ? ' · ▮▯▮ ' + esc(p.barcode) : ''}</div></td>
           <td class="r">${esc(money(c.material, cur))}</td>
           <td class="r">${esc(money(c.labour, cur))}</td>
           <td class="r">${esc(money(c.overhead, cur))}</td>
@@ -277,6 +283,7 @@ function productsHtml(cur) {
           <td class="r nowrap">
             <button class="btn ghost sm" data-act="edit-product" data-id="${esc(p.id)}">Edit</button>
             <button class="btn ghost sm" data-act="dup-product" data-id="${esc(p.id)}" title="Copy">Copy</button>
+            <button class="btn ghost sm" data-act="label-product" data-id="${esc(p.id)}" title="Print barcode labels">Labels</button>
             <button class="btn danger sm" data-act="del-product" data-id="${esc(p.id)}">Delete</button>
           </td></tr>`; }).join('')}</tbody>
       </table>
@@ -386,4 +393,31 @@ export function printCostSheet() {
     ${cats[cat].map(p => { const c = costOf(p); return `<tr><td>${esc(p.name)}</td><td class="r">${esc(money(c.material, cur))}</td><td class="r">${esc(money(c.labour, cur))}</td><td class="r">${esc(money(c.overhead, cur))}</td><td class="r"><b>${esc(money(c.total, cur))}</b></td><td class="r">${esc(money(c.price, cur))}</td><td class="r">${esc(money(c.margin, cur))}${c.marginPct != null ? ' (' + Math.round(c.marginPct * 100) + '%)' : ''}</td></tr>`; }).join('')}
   </table>`).join('');
   openPrint('Cost sheet', body);
+}
+
+// ------------------------------------------------------- barcode labels -----
+
+// Products without a barcode get a shop code first (2 + 7 digits), so every
+// label scans at the till. One product: ask how many; all: one each.
+async function giveCodes(list) {
+  const fresh = list.filter(p => !p.barcode);
+  for (const p of fresh) {
+    const code = nextShopCode(products);
+    p.barcode = code;                                   // so the next one counts it
+    await store.update('products', p.id, { barcode: code }, 'Shop barcode ' + code + ' given');
+  }
+  return fresh.length;
+}
+export async function printLabels(id) {
+  const list = id ? products.filter(p => p.id === id) : products.slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  if (!list.length) { toast('No products yet', 'warn'); return; }
+  let copies = 1;
+  if (id) {
+    const n = prompt('How many labels for ' + list[0].name + '?', String(Math.max(1, Number(list[0].stock) || 1)));
+    if (n === null) return;
+    copies = Math.max(1, Math.min(300, parseInt(n, 10) || 1));
+  }
+  const given = await giveCodes(list);
+  if (given) toast(given + ' product' + (given === 1 ? '' : 's') + ' given a shop barcode');
+  openPrint('Barcode labels', labelSheetHtml(list.map(p => ({ p, copies })), settings));
 }
