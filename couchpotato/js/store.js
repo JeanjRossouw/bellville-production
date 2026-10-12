@@ -388,6 +388,12 @@ export async function initStore() {
   const app = appMod.initializeApp(FIREBASE_CONFIG);
   const auth = authMod.getAuth(app);
   const db = fsMod.getFirestore(app);
+  // Testing only: on this computer, ?emulator=1 uses Google's local copy of
+  // Firebase (sign-in on 9099, database on 8085) instead of the real project.
+  if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname) && new URLSearchParams(location.search).get('emulator') === '1') {
+    authMod.connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+    fsMod.connectFirestoreEmulator(db, '127.0.0.1', 8085);
+  }
   try { await fsMod.enableIndexedDbPersistence(db); } catch (e) { /* multi-tab or unsupported */ }
   cloud = { auth, db, fns: { ...authMod, ...fsMod } };
   mode = 'cloud';
