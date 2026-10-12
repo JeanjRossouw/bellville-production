@@ -17,6 +17,7 @@
 // A return (Sales → Return) takes back some or all of a sale's lines:
 //   from stock      back on the shelf (or not, if damaged)
 //   made to order   not started yet: the factory order is cancelled;
+//                   finished, not delivered: the order is closed;
 //                   delivered: the piece comes back (on the shelf or not);
 //                   being built: not returnable until it is finished
 // It raises a credit note (CN-0001) against the sale's invoice: what is still
@@ -82,22 +83,32 @@ function addByCode(code) {
   toast('＋ ' + p.name);
   return true;
 }
-// A scanner types fast and ends with Enter. When nothing is being typed in
-// (the till is just open), catch that burst anywhere on the page.
-const wedge = { buf: '', last: 0 };
+// A scanner types fast and ends with Enter. On the till's sale screen, catch
+// that burst wherever it lands: on the page, or in a box of the sale (a price
+// or a note someone was just editing), which then gets its old text back.
+// The search box handles its own Enter; other screens and open windows are
+// left alone.
+const wedge = { buf: '', last: 0, el: null, before: '' };
+const SCAN_GAP = 60;      // ms between keys: scanners type far faster than people
 function onScannerKey(e) {
-  if (!host || !host.isConnected || posTab !== 'sale') return;
-  if (document.querySelector('#modal.open')) return;
+  if (!host || !host.querySelector('#pos-search') || document.querySelector('#modal.open')) return;
   const el = e.target;
-  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
+  const typing = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+  if (typing && (el.id === 'pos-search' || !el.classList.contains('pos-in') || el.tagName === 'SELECT')) return;
   const now = Date.now();
   if (e.key === 'Enter') {
-    if (wedge.buf.length >= 3 && now - wedge.last < 120) { e.preventDefault(); addByCode(wedge.buf); }
-    wedge.buf = '';
+    const code = wedge.buf, inBox = wedge.el && wedge.el.isConnected;
+    // in a box, only a code we know counts (a quick typist's price stays as typed)
+    if (code.length >= 5 && now - wedge.last < SCAN_GAP && (!inBox || productByCode(code))) {
+      e.preventDefault();
+      if (inBox) { wedge.el.value = wedge.before; posInput(wedge.el); wedge.el.blur(); }
+      addByCode(code);
+    }
+    wedge.buf = ''; wedge.el = null;
     return;
   }
   if (!e.key || e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return;
-  if (now - wedge.last > 120) wedge.buf = '';
+  if (now - wedge.last > SCAN_GAP || wedge.el !== (typing ? el : null)) { wedge.buf = ''; wedge.el = typing ? el : null; wedge.before = typing ? el.value : ''; }
   wedge.buf += e.key; wedge.last = now;
 }
 // Enter in the search box: a barcode, or the one product the search shows.
@@ -382,15 +393,53 @@ const saleFactor = (s) => { const raw = (s.lines || []).reduce((t, l) => t + (Nu
 const saleVat = (s) => Number(s.subtotal) ? (Number(s.vat) || 0) / Number(s.subtotal) : 0;
 const refundsOn = (day) => r2(sales.reduce((t, s) => t + (s.returns || []).filter(r => r.date === day).reduce((a, r) => a + (Number(r.refund) || 0), 0), 0));
 const refundedSoFar = (s) => r2((s.returns || []).reduce((t, r) => t + (Number(r.refund) || 0), 0));
+// money really paid on an invoice: not what earlier returns took off it
+const realPaid = (inv) => r2((inv.payments || []).filter(p => !/^Credit note /.test(String(p.method || ''))).reduce((t, p) => t + (Number(p.amount) || 0), 0));
+const productExists = (id) => !!id && allProducts().some(p => p.id === id);
+// what earlier returns already credited, excl. VAT, per line and in total
+const lineExOf = (x) => x.ex != null ? Number(x.ex) : r2((Number(x.qty) || 0) * (Number(x.unitEx) || 0));
+const prevLineEx = (s, i) => r2((s.returns || []).reduce((t, r) => t + (r.lines || []).filter(x => x.i === i).reduce((a, x) => a + lineExOf(x), 0), 0));
+const prevEx = (s) => r2((s.returns || []).reduce((t, r) => t + (r.ex != null ? Number(r.ex) : (r.lines || []).reduce((a, x) => a + lineExOf(x), 0)), 0));
+const prevVat = (s) => r2((s.returns || []).reduce((t, r) => t + (r.vat != null ? Number(r.vat) : r2((Number(r.credit) || 0) - (r.lines || []).reduce((a, x) => a + lineExOf(x), 0))), 0));
 
 // What may happen to a line that comes back.
+//   back   from stock, or a delivered piece: it comes back (on the shelf or not)
+//   cancel made to order, not started: the factory order is cancelled
+//   built  made to order, finished but not delivered: the order is closed
+//          and the piece can go on the shelf
+//   gone   the factory order is no longer on the system: refund only
 function lineState(l) {
   if (l.kind !== 'order') return { ok: true, mode: 'back', counted: true };
   const o = allOrders().find(x => x.id === l.orderId);
   if (!o) return { ok: true, mode: 'gone', note: 'The factory order is no longer on the system' };
   if (o.status === 'new') return { ok: true, mode: 'cancel', o, note: 'Not started: factory order ' + o.orderNo + ' is cancelled' };
+  if (o.status === 'ready') return { ok: true, mode: 'built', o, note: 'Finished, not delivered: order ' + o.orderNo + ' is closed' };
   if (o.status === 'dispatched' || o.status === 'invoiced') return { ok: true, mode: 'back', o, counted: true, note: 'Delivered: the piece comes back' };
   return { ok: false, o, note: 'Being built (' + statusMeta(o.status).label + '). Finish it first, or change the order.' };
+}
+const canShelve = (l, st) => st.ok && (st.mode === 'back' || st.mode === 'built') && productExists(l.productId);
+
+// The value of what comes back. The last pieces of a line, and the last
+// lines of the sale, take exactly what is left, so returning everything
+// never credits a cent more than was charged.
+function returnAmounts(s, picks) {
+  const f = saleFactor(s), vr = saleVat(s);
+  const per = picks.map(p => {
+    const l = s.lines[p.i];
+    const unitEx = r2((Number(l.unitPrice) || 0) * f);
+    const last = returnedQty(s, p.i) + p.qty >= (Number(l.qty) || 0);
+    const ex = last ? r2(Math.max(0, r2((Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * f) - prevLineEx(s, p.i))) : r2(p.qty * unitEx);
+    return { ...p, unitEx, ex };
+  });
+  let ex = r2(per.reduce((t, x) => t + x.ex, 0)), vat = r2(ex * vr);
+  const all = (s.lines || []).every((l, i) => returnedQty(s, i) + per.filter(x => x.i === i).reduce((a, x) => a + x.qty, 0) >= (Number(l.qty) || 0));
+  if (all && per.length) {
+    const left = r2(Math.max(0, (Number(s.subtotal) || 0) - prevEx(s)));
+    per[per.length - 1].ex = r2(per[per.length - 1].ex + left - ex);   // the cents of rounding land on the last line
+    ex = left;
+    vat = r2(Math.max(0, (Number(s.vat) || 0) - prevVat(s)));
+  }
+  return { per, ex, vat, credit: r2(ex + vat) };
 }
 
 function openReturn(id) {
@@ -398,8 +447,9 @@ function openReturn(id) {
   const cur = settings.currency || 'R';
   const f = saleFactor(s), vr = saleVat(s);
   const inv = s.invoiceId ? invoiceById(s.invoiceId) : null;
+  if (inv && inv.status === 'void') { toast('The invoice for ' + s.saleNo + ' was voided, so there is nothing to return against.', 'warn'); return; }
   const owing = inv ? Math.max(0, balance(inv)) : 0;
-  const paidNet = inv ? Math.max(0, r2(paidAmount(inv) - refundedSoFar(s))) : Number(s.paidNow) || 0;
+  const paidNet = Math.max(0, r2((inv ? realPaid(inv) : Number(s.paidNow) || 0) - refundedSoFar(s)));
   const rows = (s.lines || []).map((l, i) => ({ l, i, left: (Number(l.qty) || 0) - returnedQty(s, i), st: lineState(l) })).filter(x => x.left > 0);
   const single = rows.length === 1;
   const m = openModal('Return from ' + s.saleNo, `
@@ -410,7 +460,7 @@ function openReturn(id) {
         <td><strong>${esc(x.l.name)}</strong>${x.l.fabric ? '<div class="muted">' + esc(x.l.fabric) + '</div>' : ''}<div class="muted">${esc(money(r2((Number(x.l.unitPrice) || 0) * f * (1 + vr)), cur))} each${x.st.note ? ' · ' + esc(x.st.note) : ''}</div></td>
         <td class="r">${esc(x.left)}${x.left < x.l.qty ? '<div class="muted">of ' + esc(x.l.qty) + '</div>' : ''}</td>
         <td class="r">${x.st.ok ? `<input class="rt-qty" data-i="${x.i}" type="number" min="0" max="${x.left}" step="1" value="${single ? x.left : 0}" style="width:70px">` : '<span class="chip late">not yet</span>'}</td>
-        <td>${x.st.ok && x.st.mode === 'back' && x.l.productId ? `<label class="check" style="white-space:nowrap"><input type="checkbox" class="rt-shelf" data-i="${x.i}" checked> Back on the shelf</label>` : ''}</td>
+        <td>${canShelve(x.l, x.st) ? `<label class="check" style="white-space:nowrap"><input type="checkbox" class="rt-shelf" data-i="${x.i}" checked> Back on the shelf</label>` : ''}</td>
       </tr>`).join('')}</tbody></table></div>
     ${row(field('Why is it coming back?', 'rt-why', { type: 'select', value: 'Changed their mind', options: ['Changed their mind', 'Damaged', 'Faulty', 'Wrong item', 'Not as described', 'Other'].map(x => ({ value: x, label: x })) }), field('Note', 'rt-note', { placeholder: 'Optional' }))}
     <div class="cost-live" id="rt-live"></div>
@@ -420,28 +470,28 @@ function openReturn(id) {
     onOk: async (w) => {
       const picks = pickReturn(w);
       if (!picks.length) { toast('Say how many of each item are coming back', 'warn'); return false; }
-      const { credit, minRefund, maxRefund } = sums(picks);
+      const { credit } = returnAmounts(s, picks);
+      const { minRefund, maxRefund } = bounds(credit);
       const refund = r2(parseFloat(val(w, 'rt-refund')) || 0);
       if (refund < minRefund - 0.005 || refund > maxRefund + 0.005) { toast('The refund must be between ' + money(minRefund, cur) + ' and ' + money(maxRefund, cur), 'warn'); return false; }
       const ok = w.querySelector('#modal-ok'); ok.disabled = true; ok.textContent = 'Saving…';
-      try { await completeReturn(s, picks, refund, val(w, 'rt-method'), [val(w, 'rt-why'), val(w, 'rt-note')].filter(Boolean).join(': '), credit); }
-      catch (e) { toast('Could not complete the return: ' + e.message, 'warn'); ok.disabled = false; ok.textContent = 'Complete return'; return false; }
+      try { await completeReturn(s.id, picks, refund, val(w, 'rt-method'), [val(w, 'rt-why'), val(w, 'rt-note')].filter(Boolean).join(': ')); }
+      catch (e) { toast('Nothing was changed: ' + e.message, 'warn'); ok.disabled = false; ok.textContent = 'Complete return'; return false; }
     }
   });
   const card = m.wrap.querySelector('.modal-card');
-  // what comes back is worth `credit`; anything still owing on the invoice is
-  // reduced first, so the refund is at least credit − owing and at most what was paid
-  function sums(picks) {
-    const ex = r2(picks.reduce((t, p) => t + p.qty * r2((Number(s.lines[p.i].unitPrice) || 0) * f), 0));
-    const credit = r2(ex + r2(ex * vr));
-    const minRefund = inv ? Math.max(0, r2(credit - owing)) : credit;
-    const maxRefund = inv ? Math.min(credit, paidNet) : credit;
-    return { credit, minRefund: Math.min(minRefund, maxRefund), maxRefund };
+  // anything still owing on the invoice is reduced first, so the refund is
+  // at least credit − owing and at most the money really paid
+  function bounds(credit) {
+    const maxRefund = Math.min(credit, paidNet);
+    const minRefund = inv ? Math.max(0, r2(credit - owing)) : maxRefund;
+    return { minRefund: Math.min(minRefund, maxRefund), maxRefund };
   }
   let lastCredit = -1;
   const live = () => {
     const picks = pickReturn(card);
-    const { credit, minRefund } = sums(picks);
+    const { credit } = returnAmounts(s, picks);
+    const { minRefund } = bounds(credit);
     card.querySelector('#rt-live').innerHTML = `<div class="tot"><span>Value coming back${vr ? ' (incl. VAT)' : ''}</span><strong>${esc(money(credit, cur))}</strong></div>`;
     const inp = card.querySelector('#rt-refund');
     // a new choice of items: take it off what is still owing first, refund the rest
@@ -462,68 +512,80 @@ function pickReturn(w) {
   }).filter(p => p.qty > 0);
 }
 
-async function completeReturn(s, picks, refund, method, reason, credit) {
+// Everything a return changes is written in one go: the factory orders, the
+// stock, the credit note, the invoice and the sale. If any of it fails,
+// none of it happens, so trying again never cancels or restocks twice.
+async function completeReturn(saleId, picks, refund, method, reason) {
+  const s = sales.find(x => x.id === saleId);
+  if (!s) throw new Error('the sale is no longer there');
   const who = (store.getUser() || {}).name || 'till';
   const now = store.nowIso();
-  const f = saleFactor(s), vr = saleVat(s);
-  const rn = await store.nextNumber('returnNo', 1);
-  const returnNo = 'R-' + String(rn).padStart(4, '0');
-  const lines = [];
+  const cur = settings.currency || 'R';
+  // check again: the factory may have started a piece while this was open
   for (const p of picks) {
     const l = s.lines[p.i];
     const st = lineState(l);
-    if (!st.ok) continue;
-    const rec = { i: p.i, qty: p.qty, name: l.name, kind: l.kind, productId: l.productId || '', orderNo: l.orderNo || '', unitEx: r2((Number(l.unitPrice) || 0) * f), restock: false, cancelled: false, counted: !!st.counted };
-    if (st.mode === 'cancel') {
-      // not started: nothing was built, so the order goes (or shrinks)
+    if (!st.ok) throw new Error(l.name + ': ' + st.note);
+    if (p.qty > (Number(l.qty) || 0) - returnedQty(s, p.i)) throw new Error(l.name + ' was returned in the meantime. Close this and open it again.');
+  }
+  const { per, ex, vat, credit } = returnAmounts(s, picks);
+  const inv = s.invoiceId ? invoiceById(s.invoiceId) : null;
+  if (inv && inv.status === 'void') throw new Error('the invoice was voided');
+  const owing = inv ? Math.max(0, balance(inv)) : 0;
+  refund = Math.min(r2(refund), credit);
+  let setOff = r2(credit - refund);
+  if (setOff > owing + 0.004) { refund = r2(refund + setOff - owing); setOff = owing; }    // never more off the invoice than it owes
+
+  const returnNo = 'R-' + String(await store.nextNumber('returnNo', 1)).padStart(4, '0');
+  const creditNo = 'CN-' + String(await store.nextNumber('creditNo', 1)).padStart(4, '0');
+  const creditId = store.newId('invoices');
+  const ops = [], lines = [];
+  for (const p of per) {
+    const l = s.lines[p.i];
+    const st = lineState(l);
+    const rec = { i: p.i, qty: p.qty, name: l.name, kind: l.kind, productId: l.productId || '', orderNo: l.orderNo || '', unitEx: p.unitEx, ex: p.ex, restock: false, cancelled: false, counted: !!st.counted };
+    if (st.mode === 'cancel' || st.mode === 'built') {
+      // not delivered: the order goes (or gets smaller), so it leaves the floor and the delivery list
       const left = (Number(st.o.qty) || 1) - p.qty;
-      if (left <= 0) await store.remove('orders', st.o.id);
-      else await store.update('orders', st.o.id, { qty: left }, p.qty + ' returned at the till (' + returnNo + ')');
+      if (left <= 0) ops.push({ op: 'remove', coll: 'orders', id: st.o.id });
+      else ops.push({ op: 'update', coll: 'orders', id: st.o.id, patch: { qty: left }, event: p.qty + ' returned at the till (' + returnNo + ')' });
       rec.cancelled = true;
-    } else if (st.mode === 'back') {
-      if (p.restock && l.productId) { await store.update('products', l.productId, { stock: store.inc(p.qty) }); rec.restock = true; }
-      if (st.o) await store.update('orders', st.o.id, {}, p.qty + ' brought back at the till (' + returnNo + ')' + (rec.restock ? ', back on the shelf' : ''));
+    } else if (st.mode === 'back' && st.o) {
+      ops.push({ op: 'update', coll: 'orders', id: st.o.id, patch: {}, event: p.qty + ' brought back at the till (' + returnNo + ')' + (p.restock && canShelve(l, st) ? ', back on the shelf' : '') });
     }
+    if (p.restock && canShelve(l, st)) { ops.push({ op: 'update', coll: 'products', id: l.productId, patch: { stock: store.inc(p.qty) } }); rec.restock = true; }
     lines.push(rec);
   }
-  const subtotal = r2(lines.reduce((t, x) => t + x.qty * x.unitEx, 0));
-  const vat = r2(subtotal * vr);
-  credit = r2(subtotal + vat);
-  refund = Math.min(r2(refund), credit);
-  const setOff = r2(credit - refund);
-
-  // the credit note: refunded, plus what came off the invoice
-  const cn = await store.nextNumber('creditNo', 1);
-  const creditNo = 'CN-' + String(cn).padStart(4, '0');
-  const inv = s.invoiceId ? invoiceById(s.invoiceId) : null;
   const payments = [];
   if (refund > 0) payments.push({ at: today(), amount: -refund, method, ref: returnNo, by: who });
   if (setOff > 0) payments.push({ at: today(), amount: -setOff, method: 'Off ' + (s.invoiceNo || 'the invoice'), ref: returnNo, by: who });
-  const creditId = await store.create('invoices', {
+  ops.push({ op: 'create', coll: 'invoices', id: creditId, data: {
     kind: 'credit', invoiceNo: creditNo, customerId: s.customerId || '', customerName: s.customerName || 'Walk-in customer', date: today(), dueDate: '',
-    lines: lines.map(x => ({ orderId: '', orderNo: x.orderNo, externalRef: '', qty: x.qty, unitPrice: -x.unitEx,
-      description: 'Returned: ' + x.name + (x.cancelled ? ' (order cancelled)' : x.restock ? ' (back on the shelf)' : '') })),
-    subtotal: -subtotal, vat: -vat, vatRate: vr, total: -credit, status: 'paid', paidAt: today(), payments,
+    lines: lines.map(x => ({ orderId: '', orderNo: x.orderNo, externalRef: '', qty: x.qty, unitPrice: -r2(x.ex / x.qty),
+      description: 'Returned: ' + x.name + (x.cancelled ? ' (order closed)' : x.restock ? ' (back on the shelf)' : '') })),
+    subtotal: -ex, vat: -vat, vatRate: saleVat(s), total: -credit, status: 'paid', paidAt: today(), payments,
     note: 'Return ' + returnNo + ' against ' + (s.invoiceNo || s.saleNo) + (reason ? ' · ' + reason : ''),
     againstInvoiceId: s.invoiceId || '', againstInvoiceNo: s.invoiceNo || '', saleNo: s.saleNo, returnNo,
     events: [{ at: now, by: who, what: 'Credit note for return ' + returnNo }]
-  });
-  let owing = Number(s.balance) || 0;
+  } });
+  let newOwing = owing;
   if (inv && setOff > 0) {
     const pays = [...(inv.payments || []), { at: today(), amount: setOff, method: 'Credit note ' + creditNo, ref: returnNo, by: who }];
     const paid = r2(pays.reduce((t, x) => t + (Number(x.amount) || 0), 0));
     const patch = { payments: pays };
     if (paid >= (Number(inv.total) || 0) - 0.005) { patch.status = 'paid'; patch.paidAt = today(); }
-    await store.update('invoices', inv.id, patch, 'Credit note ' + creditNo + ' (' + money(setOff, settings.currency || 'R') + ') for return ' + returnNo);
-    owing = r2((Number(inv.total) || 0) - paid);
+    ops.push({ op: 'update', coll: 'invoices', id: inv.id, patch, event: 'Credit note ' + creditNo + ' (' + money(setOff, cur) + ') for return ' + returnNo });
+    newOwing = Math.max(0, r2((Number(inv.total) || 0) - paid));
   }
-  await store.update('sales', s.id, {
-    returns: [...(s.returns || []), { returnNo, date: today(), at: now, by: who, lines, credit, refund, setOff, method, reason, creditId, creditNo }],
-    balance: Math.max(0, owing)
-  });
+  ops.push({ op: 'update', coll: 'sales', id: s.id, patch: {
+    returns: [...(s.returns || []), { returnNo, date: today(), at: now, by: who, lines, ex, vat, credit, refund, setOff, method, reason, creditId, creditNo }],
+    balance: inv ? newOwing : Math.max(0, Number(s.balance) || 0)
+  } });
+  await store.batchWrite(ops);
+
   // pieces back on the shelf go back on the online shop's count too
   if (lines.some(x => x.restock)) store.shopifyPushReturn(s.id, returnNo);
-  toast(returnNo + ' done' + (refund ? ' · refund ' + money(refund, settings.currency || 'R') + ' (' + method + ')' : '') + (lines.some(x => x.cancelled) ? ' · factory order cancelled' : ''));
+  toast(returnNo + ' done' + (refund ? ' · refund ' + money(refund, cur) + ' (' + method + ')' : '') + (lines.some(x => x.cancelled) ? ' · factory order closed' : ''));
   setTimeout(() => printInvoice(creditId), 200);
   rerender();
 }
@@ -549,6 +611,7 @@ export function posAction(act, el) {
   }
 }
 export function posInput(el) {
+  if (!el.isConnected) return;          // a late keystroke from a box that was redrawn (e.g. after a scan)
   if (el.id === 'pos-search') { search = el.value; return rerender(); }
   const f = el.dataset.field;
   if (!f) return;

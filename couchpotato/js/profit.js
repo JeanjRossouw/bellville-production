@@ -45,7 +45,7 @@ export function pieces(orders, sales) {
       const c = p && x.restock ? costOf(p) : null;
       out.push({
         month: String(r.date || '').slice(0, 7), ref: r.returnNo, who: s.customerName || 'Walk-in', product: '↩ ' + (x.name || ''), qty: -qty,
-        sales: -r2((Number(x.unitEx) || 0) * qty),
+        sales: -r2(x.ex != null ? Number(x.ex) : (Number(x.unitEx) || 0) * qty),
         materials: c ? -r2(c.material * qty) : 0, labour: c ? -r2(c.labour * qty) : 0,
         overheadShare: c ? -r2(c.overhead * qty) : 0, costed: true, kind: 'return'
       });

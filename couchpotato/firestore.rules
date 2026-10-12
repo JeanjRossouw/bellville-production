@@ -200,7 +200,7 @@ service cloud.firestore {
       }
       match /counters/{id} {
         allow read: if isMember(cid);
-        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'orders') || ed(cid, 'pos') || ed(cid, 'quotes') || ed(cid, 'invoices') || ed(cid, 'stock') || ed(cid, 'factory') || ed(cid, 'scan'));
+        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'orders') || ed(cid, 'pos') || ed(cid, 'quotes') || ed(cid, 'invoices') || ed(cid, 'stock') || ed(cid, 'factory') || ed(cid, 'scan') || ed(cid, 'costing'));
       }
       // The online shop (Shopify). Its app keys are read and written only by the
       // server (netlify/functions/factory-shopify.mjs), never by the app; the

@@ -25,13 +25,16 @@ export function code128Widths(text) {
   const vals = [104];
   for (const ch of s) {
     const v = ch.charCodeAt(0) - 32;
-    if (v < 0 || v > 94) throw new Error('A barcode can only hold plain letters, numbers and signs');
+    if (v < 0 || v > 95) throw new Error('A barcode can only hold plain letters, numbers and signs');
     vals.push(v);
   }
   const check = vals.reduce((sum, v, i) => sum + v * (i || 1), 0) % 103;
   vals.push(check, 106);
   return vals.map(v => PATTERNS[v]).join('');
 }
+
+// Can this text be printed as a barcode? (plain letters, numbers and signs)
+export const encodable = (text) => /^[\x20-\x7f]{1,48}$/.test(String(text || ''));
 
 // An SVG of the code, `h` units high, with the quiet zone either side.
 export function barcodeSvg(text, h = 50) {
@@ -64,7 +67,7 @@ export function labelSheetHtml(items, settings) {
     for (let i = 0; i < (copies || 1); i++) {
       cells.push(`<div class="lbl"><div class="nm">${esc(p.name)}</div>
         <div class="pr">${esc(money((Number(p.sellingPrice) || 0) * (1 + vat), cur))}${vat ? ' <small>incl. VAT</small>' : ''}</div>
-        <div class="bc">${barcodeSvg(p.barcode)}</div><div class="cd">${esc(p.barcode)}</div></div>`);
+        <div class="bc">${encodable(p.barcode) ? barcodeSvg(p.barcode) : '<div style="font:9pt Arial;color:#900">This code has letters a barcode cannot hold. Change it on the product.</div>'}</div><div class="cd">${esc(p.barcode)}</div></div>`);
     }
   });
   return `<style>
@@ -94,7 +97,7 @@ export async function openBarcodeCamera(onCode) {
     msg.innerHTML = 'This phone’s browser cannot read barcodes with the camera. Use a barcode scanner on the till, or type the code in the search box and press Enter.';
     return;
   }
-  let stream = null, timer = null;
+  let stream = null, timer = null, busy = false, done = false;
   const stop = () => { if (timer) clearInterval(timer); timer = null; if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; };
   try {
     const supported = window.BarcodeDetector.getSupportedFormats ? await window.BarcodeDetector.getSupportedFormats() : FORMATS;
@@ -103,12 +106,15 @@ export async function openBarcodeCamera(onCode) {
     video.srcObject = stream; video.hidden = false; await video.play();
     msg.textContent = 'Hold the barcode in front of the camera.';
     timer = setInterval(async () => {
-      if (!card.isConnected) return stop();              // the window was closed
-      if (video.readyState < 2) return;
+      if (done || !card.isConnected) return stop();      // read already, or the window was closed
+      if (busy || video.readyState < 2) return;          // one look at a time
+      busy = true;
       try {
         const codes = await detector.detect(video);
-        if (codes && codes.length) { const text = codes[0].rawValue; stop(); m.close(); onCode(text); }
+        if (done || !card.isConnected) return stop();
+        if (codes && codes.length) { done = true; stop(); m.close(); onCode(codes[0].rawValue); }
       } catch (e) { /* a frame failed to decode; keep going */ }
+      finally { busy = false; }
     }, 300);
   } catch (e) {
     stop();

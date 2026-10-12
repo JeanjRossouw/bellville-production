@@ -9,7 +9,7 @@
 // price) and the overheads + labour rate, which live in settings.
 import * as store from './store.js';
 import { esc, money, field, row, val, openModal, toast, empty, niceDate, today } from './ui.js';
-import { nextShopCode, labelSheetHtml } from './barcode.js';
+import { nextShopCode, labelSheetHtml, encodable } from './barcode.js';
 
 export const UNITS = ['m', 'm²', 'sheet', 'each', 'kg', 'L', 'roll', 'pack'];
 
@@ -186,13 +186,14 @@ function wireProductForm(wrap) {
 }
 
 // A barcode belongs to one product only, or the till cannot tell them apart.
+const badCode = (code) => code && !encodable(code) ? 'Barcode ' + code + ' has letters a barcode cannot hold: use plain letters, numbers and signs' : '';
 const codeTaken = (code, id) => !!code && products.some(x => x.id !== id && String(x.barcode || '').toLowerCase() === code.toLowerCase());
 export const productByCode = (code) => { const c = String(code || '').trim().toLowerCase(); return c ? products.find(p => String(p.barcode || '').toLowerCase() === c) || null : null; };
 
 export function newProduct() {
   const m = openModal('New product', productForm(null), {
     okLabel: 'Save product',
-    onOk: async (w) => { const d = readProduct(w); if (!d.name) { toast('Give the product a name', 'warn'); return false; } if (codeTaken(d.barcode)) { toast('Another product already has barcode ' + d.barcode, 'warn'); return false; } await store.create('products', d); toast('Product added'); }
+    onOk: async (w) => { const d = readProduct(w); if (!d.name) { toast('Give the product a name', 'warn'); return false; } if (badCode(d.barcode)) { toast(badCode(d.barcode), 'warn'); return false; } if (codeTaken(d.barcode)) { toast('Another product already has barcode ' + d.barcode, 'warn'); return false; } await store.create('products', d); toast('Product added'); }
   });
   wireProductForm(m.wrap);
 }
@@ -200,7 +201,7 @@ export function editProduct(id) {
   const p = products.find(x => x.id === id); if (!p) return;
   const m = openModal('Edit ' + p.name, productForm(p), {
     okLabel: 'Save changes',
-    onOk: async (w) => { const d = readProduct(w); if (!d.name) { toast('Give the product a name', 'warn'); return false; } if (codeTaken(d.barcode, id)) { toast('Another product already has barcode ' + d.barcode, 'warn'); return false; } await store.update('products', id, d, 'Costing updated'); toast('Product updated'); }
+    onOk: async (w) => { const d = readProduct(w); if (!d.name) { toast('Give the product a name', 'warn'); return false; } if (badCode(d.barcode)) { toast(badCode(d.barcode), 'warn'); return false; } if (codeTaken(d.barcode, id)) { toast('Another product already has barcode ' + d.barcode, 'warn'); return false; } await store.update('products', id, d, 'Costing updated'); toast('Product updated'); }
   });
   wireProductForm(m.wrap);
 }
@@ -398,11 +399,16 @@ export function printCostSheet() {
 // ------------------------------------------------------- barcode labels -----
 
 // Products without a barcode get a shop code first (2 + 7 digits), so every
-// label scans at the till. One product: ask how many; all: one each.
+// label scans at the till. The numbers come from the company's own sequence
+// (a transaction), so two people printing labels at once never hand out the
+// same code; one somebody typed in by hand is skipped. One product: ask how
+// many labels; all: one each.
 async function giveCodes(list) {
   const fresh = list.filter(p => !p.barcode);
   for (const p of fresh) {
-    const code = nextShopCode(products);
+    let code;
+    do code = '2' + String(await store.nextNumber('shopCode', Number(nextShopCode(products).slice(1)))).padStart(7, '0');
+    while (codeTaken(code, p.id));
     p.barcode = code;                                   // so the next one counts it
     await store.update('products', p.id, { barcode: code }, 'Shop barcode ' + code + ' given');
   }

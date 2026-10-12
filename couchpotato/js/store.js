@@ -800,6 +800,46 @@ export async function update(coll, id, patch, event) {
   await cloud.fns.updateDoc(docRef(coll, id), body);
 }
 
+// An id for a record before it is written, so other writes in the same
+// batch can point at it.
+export function newId(coll) {
+  if (mode === 'demo') return 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  return cloud.fns.doc(collRef(coll)).id;
+}
+
+// Several writes that must all happen or none (a return at the till: the
+// order, the stock, the credit note, the invoice and the sale together).
+//   { op: 'create', coll, id?, data }        id from newId(), or one is made
+//   { op: 'update', coll, id, patch, event }  patch values may be inc(n)
+//   { op: 'remove', coll, id }
+// The demo applies them one after another (this browser's storage cannot
+// fail half-way); the cloud commits them as one batch.
+export async function batchWrite(ops) {
+  ops.forEach(o => guardWrite(o.coll));
+  const who = currentUser ? currentUser.name : 'system';
+  if (mode === 'demo') {
+    for (const o of ops) {
+      if (o.op === 'create') {
+        const map = demoRead(o.coll);
+        map[o.id || newId(o.coll)] = { ...o.data, createdAt: nowIso(), createdBy: who, updatedAt: nowIso(), updatedBy: who };
+        demoWrite(o.coll, map);
+      } else if (o.op === 'update') await update(o.coll, o.id, o.patch || {}, o.event);
+      else if (o.op === 'remove') await remove(o.coll, o.id);
+    }
+    return;
+  }
+  const b = cloud.fns.writeBatch(cloud.db);
+  for (const o of ops) {
+    if (o.op === 'create') b.set(o.id ? docRef(o.coll, o.id) : cloud.fns.doc(collRef(o.coll)), { ...o.data, createdAt: nowIso(), createdBy: who, updatedAt: nowIso(), updatedBy: who });
+    else if (o.op === 'update') {
+      const body = { ...(o.patch || {}), updatedAt: nowIso(), updatedBy: who };
+      if (o.event) body.events = cloud.fns.arrayUnion({ at: nowIso(), by: who, what: o.event });
+      b.update(docRef(o.coll, o.id), body);
+    } else if (o.op === 'remove') b.delete(docRef(o.coll, o.id));
+  }
+  await b.commit();
+}
+
 // Add to (or take from) a number without reading it first, so two people
 // receiving and using stock at the same moment never lose each other's change:
 //   update('materials', id, { onHand: inc(-3) })
