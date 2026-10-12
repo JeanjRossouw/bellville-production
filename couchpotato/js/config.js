@@ -4,9 +4,10 @@
 // the same database. The database rules (firestore.rules at the repo root)
 // keep each company's records invisible to every other company.
 //
-// Until FIREBASE_CONFIG below is filled in, the app runs in DEMO mode: data
-// lives in this browser only, so the whole system can be clicked through and
-// reviewed before the database exists. See SETUP.md for going live.
+// With FIREBASE_CONFIG below filled in, the app runs on the real database.
+// Without it (or with ?demo=1 on the address) it runs in DEMO mode: data
+// lives in this browser only, so the whole system can be clicked through
+// without touching anyone's records. See SETUP.md.
 
 // The product's own name, shown on the sign-in page before anyone belongs to
 // a company. A working name — change it here when the real one is chosen.
@@ -18,13 +19,15 @@ export const PRODUCT = {
 // Every new company starts on a free trial of this many days.
 export const TRIAL_DAYS = 14;
 
+// The Firebase project "factory-manager-c59c9". These values are meant to sit
+// in the web page; the database rules (firestore.rules) protect the data.
 export const FIREBASE_CONFIG = {
-  apiKey: '',
-  authDomain: '',
-  projectId: '',
-  storageBucket: '',
-  messagingSenderId: '',
-  appId: ''
+  apiKey: 'AIzaSyBfz9pX1qiLxYXNzcMD0nbxcPUoCMMzIVQ',
+  authDomain: 'factory-manager-c59c9.firebaseapp.com',
+  projectId: 'factory-manager-c59c9',
+  storageBucket: 'factory-manager-c59c9.firebasestorage.app',
+  messagingSenderId: '339518404296',
+  appId: '1:339518404296:web:32feabe5173a0a91d817fd'
 };
 
 // A company's starting details. These appear on job cards, quotes and
@@ -50,4 +53,17 @@ export const FACTORY_DEFAULTS = {
   bankDetails: ''
 };
 
-export const isCloudConfigured = () => !!FIREBASE_CONFIG.projectId;
+// The demo stays available after going live: ?demo=1 on the address keeps this
+// browser tab in demo mode (made-up data, nothing saved to the database), for
+// showing the system to a new factory or trying a change; ?demo=0 leaves it.
+const DEMO_KEY = 'fm-demo';
+const demoWanted = (() => {
+  try {
+    const q = new URLSearchParams(location.search).get('demo');
+    if (q === '1') sessionStorage.setItem(DEMO_KEY, '1');
+    if (q === '0') sessionStorage.removeItem(DEMO_KEY);
+    return sessionStorage.getItem(DEMO_KEY) === '1';
+  } catch (e) { return false; }
+})();
+export const isDemoForced = () => demoWanted;
+export const isCloudConfigured = () => !!FIREBASE_CONFIG.projectId && !demoWanted;
