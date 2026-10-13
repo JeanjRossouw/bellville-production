@@ -1,18 +1,19 @@
 // Import from a spreadsheet: materials, products, bills of materials,
-// customers and orders, from Excel (.xlsx) or a CSV file, so a new company can
-// bring its price list, customer list and open orders in one go instead of
-// typing them.
+// customers, orders and invoices, from Excel (.xlsx) or a CSV file, so a new
+// company can bring its price list, customer list, open orders and what each
+// customer owes in one go instead of typing them.
 //
 // The file is read here in the browser (Excel files are unzipped with the
 // browser's own decompressor; nothing is sent anywhere). The columns are
 // matched to our fields by their headings, which can be changed before
 // anything is saved; a preview shows what will be added, updated or skipped.
 // Records are matched to ones already there by name (products also by
-// barcode, orders by order number), and written in batches.
+// barcode, orders and invoices by their number), and written in batches.
 import * as store from './store.js';
 import { allProducts, allMaterials, UNITS } from './costing.js';
 import { allCustomers } from './customers.js';
 import { allOrders } from './orders.js';
+import { allInvoices } from './invoices.js';
 import { esc, money, openModal, toast, today, addDays } from './ui.js';
 
 // ------------------------------------------------------------ the kinds -----
@@ -92,6 +93,24 @@ const KINDS = {
     template: [['Order no', 'Customer', 'Product', 'Qty', 'Fabric', 'Fabric status', 'Price each', 'Their ref', 'Date paid', 'Due date', 'Status', 'Notes'],
       ['', 'Cape Living Interiors', '3 Seater Chesterfield', '2', 'Moldova : Oatmeal', 'Ordered', '8500', 'PO 4471', '2026-10-01', '2026-10-29', 'New', 'Studs on the arms'],
       ['', 'Cape Living Interiors', 'Ottoman 900mm', '1', 'Moldova : Oatmeal', 'Received', '2400', 'PO 4471', '01/10/2026', '29/10/2026', 'In production', '']]
+  },
+  invoices: {
+    label: 'Invoices', area: 'invoices', coll: 'invoices',
+    hint: 'What customers owe from before: one row per invoice with its total and what was paid on it. Each comes in with what is still owing, so statements and the money owed are right from day one.',
+    fields: [
+      { k: 'invoiceNo', label: 'Invoice no.', req: true, syn: ['invoice no', 'invoice number', 'invoice', 'inv no', 'invoice nr', 'document', 'doc no', 'reference'] },
+      { k: 'customer', label: 'Customer', req: true, syn: ['customer', 'client', 'customer name', 'account', 'company', 'debtor'] },
+      { k: 'date', label: 'Invoice date', date: true, syn: ['date', 'invoice date', 'doc date', 'issued'] },
+      { k: 'dueDate', label: 'Due date', date: true, syn: ['due date', 'due', 'payment due'] },
+      { k: 'total', label: 'Invoice total', req: true, money: true, syn: ['total', 'debit', 'debit total', 'amount', 'invoice total', 'total incl vat', 'value'] },
+      { k: 'paid', label: 'Paid so far', money: true, syn: ['paid', 'paid total', 'amount paid', 'payments', 'received', 'credit', 'paid to date'] },
+      { k: 'orderRef', label: 'Order no.', syn: ['order no', 'order number', 'order', 'their order', 'po', 'po number'] },
+      { k: 'units', label: 'Units', num: true, syn: ['units', 'total units', 'qty', 'quantity', 'pieces'] },
+      { k: 'note', label: 'Note', syn: ['note', 'notes', 'comment', 'description'] }
+    ],
+    template: [['Invoice no', 'Customer', 'Date', 'Due date', 'Total', 'Paid', 'Order no', 'Units', 'Note'],
+      ['0006', 'Cape Living Interiors', '2026-09-19', '2026-09-26', '38750', '0', '0006', '4', ''],
+      ['0005', 'Cape Living Interiors', '18/09/2026', '25/09/2026', '27426.53', '27426.53', '0005', '6', '']]
   }
 };
 
@@ -349,6 +368,7 @@ function plan(kind, rows, map, opts) {
     return out;
   }
   if (kind === 'orders') return planOrders(rows, get, vat, opts);
+  if (kind === 'invoices') return planInvoices(rows, get, opts);
   const existing = kind === 'materials' ? allMaterials() : kind === 'products' ? allProducts() : allCustomers();
   const seen = new Map();
   rows.forEach((r, n) => {
@@ -488,6 +508,86 @@ async function orderOps(p, settings) {
   return ops;
 }
 
+// Invoices from before (opening balances): matched by number, and one
+// already here is left as it is (its payments are recorded on it). Totals
+// are what the customer was billed, VAT included; what was paid comes in as
+// one payment, so what is owing is right from the start.
+function planInvoices(rows, get, opts) {
+  const out = { add: [], update: [], skip: [], newCustomers: [] };
+  const custs = allCustomers(), existing = allInvoices();
+  const fresh = new Map(), seen = new Set();
+  const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  rows.forEach((r, n) => {
+    const no = get(r, 'invoiceNo'), cname = get(r, 'customer'), rawTotal = get(r, 'total');
+    if (!no && !cname && !rawTotal) { if (r.some(c => String(c || '').trim())) out.skip.push({ n, why: 'no invoice number, customer or total' }); return; }
+    if (!no) return out.skip.push({ n, why: 'no invoice number' });
+    if (!cname) return out.skip.push({ n, why: 'no customer' });
+    const total = toNumber(rawTotal);
+    if (total == null) return out.skip.push({ n, why: 'no total' });
+    const paid = r2(toNumber(get(r, 'paid')) || 0);
+    if (paid > total + 0.005) return out.skip.push({ n, why: 'more paid (' + paid + ') than the total (' + total + ')' });
+    const key = norm(no);
+    if (seen.has(key)) return out.skip.push({ n, why: 'invoice ' + no + ' is in the file twice; the first row is used' });
+    seen.add(key);
+    if (existing.some(i => norm(i.invoiceNo) === key)) return out.skip.push({ n, why: 'invoice ' + no + ' is already here' });
+    const dates = {};
+    for (const k of ['date', 'dueDate']) {
+      const raw = get(r, k);
+      if (!raw) continue;
+      const iso = toDate(raw);
+      if (!iso) return out.skip.push({ n, why: 'date “' + raw + '” not understood (use 2026-10-13 or 13/10/2026)' });
+      dates[k] = iso;
+    }
+    let cust = custs.find(c => norm(c.name) === norm(cname)), custKey = '';
+    if (!cust) {
+      if (!opts.addCustomers) return out.skip.push({ n, why: 'no customer called “' + cname + '”' });
+      custKey = norm(cname);
+      if (!fresh.has(custKey)) fresh.set(custKey, { name: cname });
+    }
+    const date = dates.date || today();
+    const terms = cust && cust.termsDays != null ? Number(cust.termsDays) || 0 : 0;
+    const vatRate = opts.inclVat ? (Number(opts.vatRate) || 0) : 0;
+    const subtotal = r2(total / (1 + vatRate)), vat = r2(total - subtotal);
+    const units = toNumber(get(r, 'units')), orderRef = get(r, 'orderRef'), note = get(r, 'note');
+    out.add.push({ name: no, custKey, data: {
+      invoiceNo: no, customerName: cust ? cust.name : fresh.get(custKey).name, ...(cust ? { customerId: cust.id } : {}),
+      date, dueDate: dates.dueDate || addDays(date, terms),
+      lines: [{ orderId: '', orderNo: orderRef, externalRef: '', description: 'Brought over from before' + (orderRef ? ' · order ' + orderRef : '') + (units ? ' · ' + units + ' unit' + (units === 1 ? '' : 's') : ''), qty: 1, unitPrice: subtotal }],
+      subtotal, vat, vatRate, total: r2(total), note: note || 'Imported opening balance',
+      payments: paid > 0 ? [{ at: date, amount: paid, method: 'Brought over', ref: 'Paid before the system', by: '' }] : [],
+      status: total - paid <= 0.005 ? 'paid' : 'issued', ...(total - paid <= 0.005 ? { paidAt: date } : {}),
+      source: 'import'
+    } });
+  });
+  const needed = new Set(out.add.map(x => x.custKey).filter(Boolean));
+  out.newCustomers = [...fresh.entries()].filter(([k]) => needed.has(k)).map(([key, c]) => ({ key, name: c.name }));
+  return out;
+}
+
+// The writes for an invoices import: new customers first, then the
+// invoices. Numbers that came in in the company's own style move its
+// sequence past them, so the next invoice raised here follows on.
+async function invoiceOps(p, settings) {
+  const prefix = (settings && settings.invoicePrefix != null) ? settings.invoicePrefix : 'INV-';
+  const first = (settings && settings.firstInvoiceNo) || 1;
+  const custId = {};
+  const ops = p.newCustomers.map(c => {
+    custId[c.key] = store.newId('customers');
+    return { op: 'create', coll: 'customers', id: custId[c.key], data: { name: c.name, termsDays: 0 } };
+  });
+  const ours = (no) => { const s = String(no || ''); return s.startsWith(prefix) && /^\d+$/.test(s.slice(prefix.length)) ? Number(s.slice(prefix.length)) : 0; };
+  const highest = Math.max(0, ...p.add.map(x => ours(x.data.invoiceNo)));
+  if (highest) await store.reserveNumbers('invoiceNo', 0, first, highest + 1);
+  const by = (store.getUser() || {}).name || 'system';
+  p.add.forEach(x => {
+    const data = { ...x.data, events: [{ at: store.nowIso(), by, what: 'Imported from a spreadsheet' }] };
+    if (x.custKey) data.customerId = custId[x.custKey];
+    data.payments = data.payments.map(pm => ({ ...pm, by }));
+    ops.push({ op: 'create', coll: 'invoices', data });
+  });
+  return ops;
+}
+
 // ------------------------------------------------------------ the window ----
 
 export function openImport(kind, settings) {
@@ -507,7 +607,7 @@ export function openImport(kind, settings) {
       const ok = w.querySelector('#modal-ok'); ok.disabled = true; ok.textContent = 'Importing…';
       try {
         const coll = KINDS[K].coll;
-        const ops = K === 'orders' ? await orderOps(p, settings) : [
+        const ops = K === 'orders' ? await orderOps(p, settings) : K === 'invoices' ? await invoiceOps(p, settings) : [
           ...p.add.map(x => ({ op: 'create', coll, data: x.data })),
           ...p.update.map(x => ({ op: 'update', coll, id: x.id, patch: x.data, event: 'Updated from a spreadsheet' }))
         ];
@@ -546,9 +646,10 @@ export function openImport(kind, settings) {
         ${sheets ? `<label>Headings on row <input id="im-head" type="number" min="1" value="${headerRow + 1}" style="width:60px"></label>` : ''}
       </div>
       <div class="btn-row" style="margin:.6rem 0; gap:1rem; flex-wrap:wrap">
-        ${K !== 'bom' ? `<label class="check"><input type="checkbox" id="im-update" ${card.querySelector('#im-update') && !card.querySelector('#im-update').checked ? '' : 'checked'}> Update ones already here (same ${K === 'orders' ? 'order no.' : 'name'})</label>` : ''}
-        ${K === 'orders' && canAddCustomers ? `<label class="check"><input type="checkbox" id="im-addcust" ${card.querySelector('#im-addcust') && !card.querySelector('#im-addcust').checked ? '' : 'checked'}> Add customers that aren’t here yet</label>` : ''}
+        ${K !== 'bom' && K !== 'invoices' ? `<label class="check"><input type="checkbox" id="im-update" ${card.querySelector('#im-update') && !card.querySelector('#im-update').checked ? '' : 'checked'}> Update ones already here (same ${K === 'orders' ? 'order no.' : 'name'})</label>` : ''}
+        ${(K === 'orders' || K === 'invoices') && canAddCustomers ? `<label class="check"><input type="checkbox" id="im-addcust" ${card.querySelector('#im-addcust') && !card.querySelector('#im-addcust').checked ? '' : 'checked'}> Add customers that aren’t here yet</label>` : ''}
         ${vatReg && (K === 'materials' || K === 'products' || K === 'orders') ? `<label class="check"><input type="checkbox" id="im-vat" ${card.querySelector('#im-vat') && card.querySelector('#im-vat').checked ? 'checked' : ''}> Prices in the file include VAT (${Math.round(vatRate * 100)}%)</label>` : ''}
+        ${vatReg && K === 'invoices' ? `<label class="check"><input type="checkbox" id="im-vat" ${card.querySelector('#im-vat') && !card.querySelector('#im-vat').checked ? '' : 'checked'}> Totals include VAT (${Math.round(vatRate * 100)}%)</label>` : ''}
       </div>
       ${sheets ? `
         <h4 style="margin:.8rem 0 .3rem">Which column is which</h4>
@@ -562,6 +663,8 @@ export function openImport(kind, settings) {
         ${p.skip.length ? `<details style="margin-top:.4rem"><summary class="muted">Why ${p.skip.length} row${p.skip.length === 1 ? ' is' : 's are'} skipped</summary><ul class="plain" style="max-height:140px; overflow:auto">${p.skip.slice(0, 200).map(s => `<li>Row ${s.n + headerRow + 2}: ${esc(s.why)}</li>`).join('')}</ul></details>` : ''}
         ${K === 'bom' && p.update.length ? `<p class="muted">These products get exactly the materials in the file: ${esc(p.update.slice(0, 6).map(x => x.name + ' (' + x.detail + ')').join(', '))}${p.update.length > 6 ? '…' : ''}</p>` : ''}
         ${K === 'products' && p.add.length ? '<p class="muted">New products come in without materials. Import their bills of materials next, or add them under Costing.</p>' : ''}
+        ${K === 'invoices' && (p.add.length || p.newCustomers.length) ? (() => { const t = p.add.reduce((a, x) => [a[0] + x.data.total, a[1] + x.data.payments.reduce((s, pm) => s + pm.amount, 0)], [0, 0]);
+          return `<p class="muted">Billed ${esc(money(t[0], (settings && settings.currency) || 'R'))} · paid ${esc(money(t[1], (settings && settings.currency) || 'R'))} · <strong>owing ${esc(money(t[0] - t[1], (settings && settings.currency) || 'R'))}</strong>${p.newCustomers.length ? ' · new customer' + (p.newCustomers.length === 1 ? '' : 's') + ': ' + esc(p.newCustomers.map(c => c.name).join(', ')) : ''}. Invoices already here are left as they are.</p>`; })() : ''}
         ${K === 'orders' && p.newCustomers.length ? `<p class="muted">New customers to add: ${esc(p.newCustomers.slice(0, 8).map(c => c.name).join(', '))}${p.newCustomers.length > 8 ? '…' : ''}. Fill in their details under Customers after.</p>` : ''}
         ${K === 'orders' && p.add.some(x => x.data.status !== 'new') ? '<p class="muted">Orders that come in already past New do not take materials off the shelf: those were used before the system.</p>' : ''}
         ${K === 'orders' && p.update.length ? '<p class="muted">Orders already here get their details updated; their stage stays as it is (move them on the Orders page).</p>' : ''}
@@ -602,4 +705,4 @@ export function openImport(kind, settings) {
   draw();
 }
 
-export { KINDS, plan, guessColumns, orderOps };
+export { KINDS, plan, guessColumns, orderOps, invoiceOps };
