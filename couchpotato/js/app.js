@@ -970,6 +970,7 @@ async function onAction(e) {
     case 'notify': return notifyCustomer(id);
     case 'inv-view': setInvView(b.dataset.to); return paint();
     case 'inv-customer': return invoiceCustomerQueue(b.dataset.cust);
+    case 'inv-order': return newInvoiceFor([id]);
     case 'inv-selected': {
       const ids = pickedIds(document.getElementById('screen'), b.dataset.cust);
       if (!ids.length) { toast('Tick the orders to put on the invoice first', 'warn'); return; }

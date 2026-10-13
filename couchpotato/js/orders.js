@@ -148,6 +148,9 @@ export async function deleteOrder(id) {
 export async function setStatus(id, status) {
   const o = orderById(id);
   if (!o) return;
+  // only an invoice makes an order Invoiced (Money → Invoices), so nothing
+  // leaves the To invoice list without being billed
+  if (status === 'invoiced' && !o.invoiceId) { toast('Raise the invoice under Money → Invoices: that marks it Invoiced', 'warn'); return; }
   const meta = statusMeta(status);
   const patch = { status };
   if (status === 'dispatched' && !o.dispatchedAt) {
@@ -288,7 +291,9 @@ function orderCard(o) {
           </select></label>` : ''}
       </div>
       <div class="card-actions">
-        ${next ? `<button class="btn primary sm" data-act="status" data-id="${esc(o.id)}" data-to="${next.key}">${esc(next.label)}</button>` : ''}
+        ${next && next.key !== 'invoiced' ? `<button class="btn primary sm" data-act="status" data-id="${esc(o.id)}" data-to="${next.key}">${esc(next.label)}</button>` : ''}
+        ${o.status === 'dispatched' && !o.invoiceId && store.can('invoices', 'edit') ? `<button class="btn primary sm" data-act="inv-order" data-id="${esc(o.id)}" title="Raise the invoice for this order">Invoice it</button>` : ''}
+        ${o.status === 'invoiced' && !o.invoiceId ? `<button class="btn ghost sm" data-act="status" data-id="${esc(o.id)}" data-to="dispatched" title="Marked invoiced without an invoice: put it back in the To invoice list">Back to Dispatched</button>` : ''}
         <button class="btn ghost sm" data-act="edit-order" data-id="${esc(o.id)}">Edit</button>
         <button class="btn danger sm" data-act="del-order" data-id="${esc(o.id)}">Delete</button>
       </div>
