@@ -7,7 +7,7 @@ import { openImport } from './importer.js';
 import { startCustomers, renderCustomers, newCustomer, editCustomer, deleteCustomer } from './customers.js';
 import {
   startOrders, renderOrders, newOrder, editOrder, deleteOrder, setStatus, setFabric,
-  setDue, setFilter, getFilter, setOrderSettings, allOrders
+  setDue, setFilter, getFilter, setOrderSettings, allOrders, exportOrders
 } from './orders.js';
 import {
   renderFloor, setFloorView, setFloorSettings, startBuild, moveMenu,
@@ -853,6 +853,7 @@ async function onAction(e) {
   if (b.dataset.act.startsWith('pos-')) return posAction(b.dataset.act, b);
   switch (b.dataset.act) {
     case 'new-order': return newOrder();
+    case 'export-orders': return exportOrders();
     case 'edit-order': return editOrder(id);
     case 'del-order': return deleteOrder(id);
     case 'status': return setStatus(id, b.dataset.to);

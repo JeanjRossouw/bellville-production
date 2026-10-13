@@ -7,6 +7,7 @@ import * as store from './store.js';
 import { allCustomers, customerById } from './customers.js';
 import { allProducts, productByName } from './costing.js';
 import { consumeForOrder, returnForOrder } from './stock.js';
+import { toXlsx, toCsv, download } from './exporter.js';
 import {
   esc, money, field, row, val, openModal, toast, empty, today, addDays,
   niceDate, daysUntil, statusChip, statusMeta, STATUSES, fabricChip, FABRIC_STATES
@@ -176,6 +177,53 @@ export async function setDue(id, dueDate) {
   await store.update('orders', id, { dueDate }, 'Due date set to ' + (dueDate || 'none'));
 }
 
+// --------------------------------------------------------------- export -----
+
+// The headings match the import, so a file exported here can be changed in
+// Excel and imported again (orders are matched by their number).
+export function orderRows(list) {
+  const fab = (k) => (FABRIC_STATES.find(f => f.key === k) || FABRIC_STATES[0]).label;
+  const head = ['Order no', 'Customer', 'Product', 'Qty', 'Fabric', 'Price each (excl. VAT)', 'Total (excl. VAT)', 'Their ref',
+    'Date paid', 'Due date', 'Status', 'Fabric status', 'Planned week', 'Dispatched', 'Invoice no', 'Notes', 'Captured', 'Captured by'];
+  const rows = list.map(o => {
+    const qty = Number(o.qty) || 1, price = Number(o.priceEach) || 0;
+    return [o.orderNo || '', o.customerName || '', o.product || '', qty, o.fabric || '', price, Math.round(price * qty * 100) / 100, o.externalRef || '',
+      o.paidDate || '', o.dueDate || '', statusMeta(o.status).label, o.fabric ? fab(o.fabricStatus) : '', o.planWeek || '',
+      o.dispatchedAt ? String(o.dispatchedAt).slice(0, 10) : '', o.invoiceNo || '', o.notes || '',
+      o.createdAt ? String(o.createdAt).slice(0, 10) : '', o.createdBy || ''];
+  });
+  return [head, ...rows];
+}
+
+export function exportOrders() {
+  const shown = visibleOrders();
+  const everything = orders.slice();
+  if (!everything.length) { toast('There are no orders to export yet', 'warn'); return; }
+  const { wrap } = openModal('Export orders', `
+    <p class="muted" style="margin-top:0">A spreadsheet of your orders. Change it in Excel and bring it back with Import: orders are matched by their number.</p>
+    <div class="fld"><span>Which orders</span>
+      <label class="check"><input type="radio" name="ex-which" value="shown" checked> What is shown now (${shown.length})</label>
+      <label class="check"><input type="radio" name="ex-which" value="all"> Every order (${everything.length})</label>
+    </div>
+    <div class="fld"><span>File</span>
+      <label class="check"><input type="radio" name="ex-fmt" value="xlsx" checked> Excel (.xlsx)</label>
+      <label class="check"><input type="radio" name="ex-fmt" value="csv"> CSV</label>
+    </div>`, {
+    okLabel: 'Download',
+    onOk: (w) => {
+      const all = (w.querySelector('input[name="ex-which"]:checked') || {}).value === 'all';
+      const csv = (w.querySelector('input[name="ex-fmt"]:checked') || {}).value === 'csv';
+      const list = (all ? everything : shown).slice().sort((a, b) => String(a.orderNo || '').localeCompare(String(b.orderNo || ''), undefined, { numeric: true }));
+      if (!list.length) { toast('No orders in this view: choose Every order', 'warn'); return false; }
+      const rows = orderRows(list);
+      const name = 'orders-' + today();
+      download(csv ? toCsv(rows) : toXlsx(rows, 'Orders'), name + (csv ? '.csv' : '.xlsx'));
+      toast(list.length + ' order' + (list.length === 1 ? '' : 's') + ' exported');
+    }
+  });
+  return wrap;
+}
+
 // ---------------------------------------------------------------- render ----
 
 let filter = { status: 'open', customer: '', q: '' };
@@ -264,7 +312,11 @@ export function renderOrders(host) {
         <h1>Orders</h1>
         <p class="sub">${rows.length} shown · ${esc(money(openValue, cur))} on the floor${late ? ` · <span class="late-text">${late} late</span>` : ''}</p>
       </div>
-      <button class="btn primary" data-act="new-order">＋ New order</button>
+      <div class="btn-row">
+        ${store.can('orders', 'edit') ? '<button class="btn ghost" data-act="import" data-kind="orders" title="Bring orders in from Excel or CSV">Import</button>' : ''}
+        <button class="btn ghost" data-act="export-orders" title="Download the orders as an Excel or CSV file">Export</button>
+        ${store.can('orders', 'edit') ? '<button class="btn primary" data-act="new-order">＋ New order</button>' : ''}
+      </div>
     </div>
 
     <div class="stat-strip">
