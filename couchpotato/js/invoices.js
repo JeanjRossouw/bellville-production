@@ -181,7 +181,7 @@ export function renderInvoices(host) {
   host.innerHTML = `
     <div class="page-head">
       <div><h1>Invoices</h1><p class="sub">Everything dispatched gets billed; everything billed gets chased</p></div>
-      <div class="btn-row"><button class="btn ghost" data-act="inv-export">Export for the accountant</button></div>
+      <div class="btn-row">${store.can('invoices', 'edit') ? '<button class="btn ghost" data-act="import" data-kind="invoices" title="Bring in what customers owe from before (Excel or CSV)">Import</button>' : ''}<button class="btn ghost" data-act="inv-export">Export for the accountant</button></div>
     </div>
     <div class="tiles">
       ${tile(q.length, 'Waiting to be invoiced', q.length ? 'amber' : '')}
