@@ -4,7 +4,7 @@
 //
 // Env: FIREBASE_PROJECT_ID (default bellville-production-ffb19).
 //      POS_AUTH_DISABLED=true bypasses verification — ONLY for first-run testing.
-import { importX509, jwtVerify, decodeProtectedHeader } from 'jose';
+import { importX509, jwtVerify, decodeProtectedHeader, decodeJwt } from 'jose';
 
 const CERT_URL = 'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com';
 const PROJECT_ID = () => process.env.FIREBASE_PROJECT_ID || 'bellville-production-ffb19';
@@ -25,6 +25,14 @@ async function googleCerts() {
 export async function verifyFirebaseToken(token, project) {
   if (!token) throw new Error('Missing bearer token');
   const projectId = project || PROJECT_ID();
+  // Tests only: Google's local Auth emulator signs nothing, so its tokens are
+  // taken as they are (the same as the Admin SDK does), for this project.
+  if (process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+    const { alg } = decodeProtectedHeader(token);
+    const payload = decodeJwt(token);
+    if (alg !== 'none' || payload.aud !== projectId) throw new Error('Not an emulator token for ' + projectId);
+    return payload;
+  }
   const { kid } = decodeProtectedHeader(token);
   const certs = await googleCerts();
   const pem = certs[kid];

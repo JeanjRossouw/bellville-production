@@ -12,7 +12,7 @@ rules_version = '2';
 //   companies/<cid>/roles/<key>    the owner's roles: per screen none / view / edit
 //   companies/<cid>/payments/<id>  PayFast payments (written by the billing function only)
 //   companies/<cid>/<coll>/<id>    the company's records
-//   admins/<uid>                   the seller's own logins (created by hand in the console)
+//   admins/<uid>                   the seller's own logins (written by factory-admin.mjs, never the app)
 //
 // Paying: a company may add and change records while its trial runs, while
 // it is paid up, or when given free access. Otherwise it can still READ

@@ -2,6 +2,7 @@
 import * as store from './store.js';
 import { FACTORY_DEFAULTS, isCloudConfigured, isDemoForced, PRODUCT, TRIAL_DAYS } from './config.js';
 import { AREAS, LEVELS, levelOf } from './permissions.js';
+import { renderClients, clientExtend, clientFree, setClients, setClientPlan } from './clients.js';
 import { esc, field, row, toast, money, daysUntil, openModal } from './ui.js';
 import { openImport } from './importer.js';
 import { startCustomers, renderCustomers, newCustomer, editCustomer, deleteCustomer } from './customers.js';
@@ -91,7 +92,6 @@ let lastAllowed = '';
 let team = { members: [], invites: [] };
 let billing = { plan: null, configured: false, payments: [] };
 let shop = null;          // the online shop's connection status (integrations/shopify)
-let clients = [];
 let readOnlyOk = false;      // chose "look around (read only)" on the lock screen
 let lastAccess = 'ok';
 // Back from PayFast: ?billing=done or ?billing=cancelled
@@ -119,7 +119,7 @@ async function boot() {
     if (!booted) {
       booted = true;
       seller = await store.isSeller();
-      if (seller) store.watchAllCompanies(rows => { clients = rows; if (view === 'clients') paint(); });
+      if (seller) store.watchAllCompanies(rows => { setClients(rows); if (view === 'clients') paint(); });
       if (user.role === 'owner') {
         store.watch('members', rows => { team.members = rows; if (view === 'settings') paint(); });
         store.watch('invites', rows => { team.invites = rows; if (view === 'settings') paint(); });
@@ -127,7 +127,7 @@ async function boot() {
         // only the Online shop card is redrawn: the 15-minute check writes here,
         // and a full repaint would wipe settings the owner is still typing
         store.watch('integrations', rows => { shop = rows.find(r => r.id === 'shopify') || null; if (view === 'settings') redrawShopCard(); });
-        store.getPlan().then(r => { billing.plan = r.plan; billing.configured = !!r.configured; if (view === 'settings') paint(); });
+        store.getPlan().then(r => { billing.plan = r.plan; billing.configured = !!r.configured; setClientPlan(r.plan); if (view === 'settings') paint(); });
       }
       // a payment, a cancellation or an extended trial takes effect live
       store.watchCompany(() => onCompanyChange());
@@ -637,60 +637,6 @@ async function shopWhen(value) {
   if (await shopRun('settings', '', null, { importWhen: value })) { toast(value === 'placed' ? 'Online orders come in as soon as they are placed' : 'Online orders come in once they are paid'); return; }
   const sel = document.getElementById('shop-when');     // not saved: show what is really set
   if (sel) sel.value = (shop && shop.importWhen) === 'placed' ? 'placed' : 'paid';
-}
-
-// ------------------------------------------------------------ the seller ----
-// Every company on the app. Only logins listed in the database's admins
-// collection see this.
-
-function renderClients(host) {
-  const now = Date.now();
-  const p = billing.plan || { amount: 2999 };
-  const rows = clients.slice().sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
-  const stateOf = (c) => {
-    if (c.status === 'free') return ['Free', ''];
-    const trialEnd = c.trialEndsAt ? Date.parse(c.trialEndsAt) : (Date.parse(c.createdAt || '') || now) + TRIAL_DAYS * 86400000;
-    if (c.status === 'trial') return now < trialEnd ? ['Trial · ' + Math.ceil((trialEnd - now) / 86400000) + 'd left', ''] : ['Trial ended', 'red'];
-    if (c.paidUntil && now < Date.parse(c.paidUntil)) return [c.status === 'cancelled' ? 'Cancelled · until ' + longDate(c.paidUntil) : 'Paying', c.status === 'cancelled' ? 'amber' : 'green'];
-    return ['Unpaid', 'red'];
-  };
-  const paying = rows.filter(c => c.status === 'active' && c.paidUntil && now < Date.parse(c.paidUntil)).length;
-  const trials = rows.filter(c => stateOf(c)[0].startsWith('Trial ·')).length;
-  const tile = (n, label) => `<div class="tile"><div class="tile-n">${esc(String(n))}</div><div class="tile-l">${esc(label)}</div></div>`;
-  host.innerHTML = `
-    <div class="page-head"><div><h1>Clients</h1><p class="sub">Every company on ${esc(PRODUCT.name)}. Only you see this.</p></div></div>
-    <div class="tiles">${tile(rows.length, 'Companies')}${tile(paying, 'Paying')}${tile(trials, 'On trial')}<div class="tile wide"><div class="tile-n">${esc(money(paying * p.amount, 'R'))}</div><div class="tile-l">Monthly income</div></div></div>
-    <div class="card">
-      ${rows.map(c => { const [st, cls] = stateOf(c); return `<div class="team-row client-row">
-        <div><div class="who-n">${esc(c.name || '(no name)')}</div><div class="who-e">${esc([c.ownerEmail, c.createdAt ? 'since ' + longDate(c.createdAt) : '', c.lastPaymentAt ? 'last paid ' + longDate(c.lastPaymentAt) : ''].filter(Boolean).join(' · '))}</div></div>
-        <div><span class="chip ${cls === 'green' ? 'st-disp' : cls === 'red' ? 'late' : cls === 'amber' ? 'st-ready' : ''}">${esc(st)}</span></div>
-        <div class="team-acts">
-          ${c.status === 'trial' ? `<button class="btn ghost sm" data-act="client-extend" data-id="${esc(c.id)}">+14 days trial</button>` : ''}
-          <button class="btn ghost sm" data-act="client-free" data-id="${esc(c.id)}">${c.status === 'free' ? 'End free access' : 'Give free access'}</button>
-        </div>
-      </div>`; }).join('') || '<p class="muted">No companies yet.</p>'}
-    </div>`;
-}
-
-async function clientExtend(id) {
-  const c = clients.find(x => x.id === id); if (!c) return;
-  const now = Date.now();
-  const end = c.trialEndsAt ? Date.parse(c.trialEndsAt) : (Date.parse(c.createdAt || '') || now) + TRIAL_DAYS * 86400000;
-  const next = new Date(Math.max(end, now) + 14 * 86400000);
-  if (!confirm('Extend the trial for ' + (c.name || 'this company') + ' to ' + longDate(next.toISOString()) + '?')) return;
-  try { await store.sellerUpdateCompany(id, { trialEndsAt: next.toISOString() }); toast('Trial extended'); }
-  catch (e) { toast('Could not extend: ' + e.message, 'warn'); }
-}
-
-async function clientFree(id) {
-  const c = clients.find(x => x.id === id); if (!c) return;
-  const on = c.status !== 'free';
-  // ending free access: back to paying if paid up, otherwise a trial that has ended
-  const back = c.paidUntil && Date.parse(c.paidUntil) > Date.now() ? 'active' : 'trial';
-  if (!confirm(on ? 'Give ' + (c.name || 'this company') + ' free access with no payments?' : 'End free access for ' + (c.name || 'this company') + '?')) return;
-  const patch = on ? { status: 'free' } : { status: back, ...(back === 'trial' ? { trialEndsAt: new Date().toISOString() } : {}) };
-  try { await store.sellerUpdateCompany(id, patch); toast(on ? 'Free access given' : 'Free access ended'); }
-  catch (e) { toast('Could not change: ' + e.message, 'warn'); }
 }
 
 // ----------------------------------------------------------------- roles ----
