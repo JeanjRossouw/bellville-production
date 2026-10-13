@@ -1,17 +1,19 @@
-// Import from a spreadsheet: materials, products, bills of materials and
-// customers, from Excel (.xlsx) or a CSV file, so a new company can bring its
-// price list and customer list in one go instead of typing them.
+// Import from a spreadsheet: materials, products, bills of materials,
+// customers and orders, from Excel (.xlsx) or a CSV file, so a new company can
+// bring its price list, customer list and open orders in one go instead of
+// typing them.
 //
 // The file is read here in the browser (Excel files are unzipped with the
 // browser's own decompressor; nothing is sent anywhere). The columns are
 // matched to our fields by their headings, which can be changed before
 // anything is saved; a preview shows what will be added, updated or skipped.
 // Records are matched to ones already there by name (products also by
-// barcode), and written in batches.
+// barcode, orders by order number), and written in batches.
 import * as store from './store.js';
 import { allProducts, allMaterials, UNITS } from './costing.js';
 import { allCustomers } from './customers.js';
-import { esc, money, openModal, toast } from './ui.js';
+import { allOrders } from './orders.js';
+import { esc, money, openModal, toast, today, addDays } from './ui.js';
 
 // ------------------------------------------------------------ the kinds -----
 
@@ -69,6 +71,26 @@ const KINDS = {
       { k: 'notes', label: 'Notes', syn: ['notes', 'note', 'comment', 'comments'] }
     ],
     template: [['Customer', 'Contact', 'Cell', 'Email', 'Address', 'Area', 'Terms'], ['Cape Living Interiors', 'Lindiwe', '021 000 0000', 'orders@capeliving.co.za', '12 Main Road', 'Parow', '30']]
+  },
+  orders: {
+    label: 'Orders', area: 'orders', coll: 'orders',
+    hint: 'One row per order: customer, product, quantity, price, dates. Rows without an order number get the next ones; rows with one keep it.',
+    fields: [
+      { k: 'orderNo', label: 'Order no.', syn: ['order no', 'order number', 'order', 'order nr', 'order num', 'job no', 'job number', 'job'] },
+      { k: 'customer', label: 'Customer', req: true, syn: ['customer', 'client', 'customer name', 'company', 'account', 'store'] },
+      { k: 'product', label: 'Product', req: true, syn: ['product', 'item', 'description', 'model', 'product name', 'what'] },
+      { k: 'qty', label: 'Qty', num: true, syn: ['qty', 'quantity', 'units', 'pieces', 'pcs'] },
+      { k: 'fabric', label: 'Fabric / colour', syn: ['fabric', 'colour', 'color', 'fabric colour', 'cover', 'finish'] },
+      { k: 'priceEach', label: 'Price each', money: true, syn: ['price each', 'price', 'unit price', 'selling price', 'each', 'rate', 'amount'] },
+      { k: 'externalRef', label: 'Their order / invoice no.', syn: ['their ref', 'their order', 'reference', 'ref', 'customer ref', 'po', 'po number', 'their order no', 'customer order'] },
+      { k: 'paidDate', label: 'Date paid / placed', date: true, syn: ['date paid', 'paid', 'order date', 'date', 'placed', 'date placed', 'ordered', 'paid date'] },
+      { k: 'dueDate', label: 'Due date', date: true, syn: ['due date', 'due', 'delivery date', 'required', 'required date', 'promised', 'eta'] },
+      { k: 'status', label: 'Status (new orders only)', syn: ['status', 'stage', 'state', 'progress'] },
+      { k: 'notes', label: 'Notes', syn: ['notes', 'note', 'comment', 'comments', 'instructions', 'special instructions'] }
+    ],
+    template: [['Order no', 'Customer', 'Product', 'Qty', 'Fabric', 'Price each', 'Their ref', 'Date paid', 'Due date', 'Status', 'Notes'],
+      ['', 'Cape Living Interiors', '3 Seater Chesterfield', '2', 'Moldova : Oatmeal', '8500', 'PO 4471', '2026-10-01', '2026-10-29', 'New', 'Studs on the arms'],
+      ['', 'Cape Living Interiors', 'Ottoman 900mm', '1', 'Moldova : Oatmeal', '2400', 'PO 4471', '01/10/2026', '29/10/2026', 'In production', '']]
   }
 };
 
@@ -78,8 +100,10 @@ const KINDS = {
 // tabs, with "quoted, values" and "" for a quote.
 export function readCsv(text) {
   text = String(text || '').replace(/^﻿/, '');
-  const firstLine = text.split(/\r?\n/, 1)[0] || '';
-  const count = (ch) => firstLine.split('"').filter((_, i) => i % 2 === 0).join('').split(ch).length - 1;
+  // the separator most used on any of the first lines (a title line above
+  // the table has none)
+  const lines = text.split(/\r?\n/, 10);
+  const count = (ch) => Math.max(0, ...lines.map(l => l.split('"').filter((_, i) => i % 2 === 0).join('').split(ch).length - 1));
   const delim = [',', ';', '\t'].sort((a, b) => count(b) - count(a))[0];
   const rows = [];
   let row = [], cell = '', q = false;
@@ -191,6 +215,49 @@ export function toNumber(v) {
   const n = parseFloat(s);
   return Number.isFinite(n) ? n : null;
 }
+// A date as YYYY-MM-DD, or null. Day first for 13/10/2026 (South Africa);
+// Excel's own date numbers; "13 Oct 2026" and "Oct 13, 2026".
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+export function toDate(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (!s) return null;
+  const iso = (y, m, d) => {
+    y = Number(y); m = Number(m); d = Number(d);
+    if (y < 100) y += 2000;
+    const t = new Date(Date.UTC(y, m - 1, d));
+    if (t.getUTCFullYear() !== y || t.getUTCMonth() !== m - 1 || t.getUTCDate() !== d || y < 1990 || y > 2100) return null;
+    return t.toISOString().slice(0, 10);
+  };
+  let m;
+  if (/^\d{5}(\.\d+)?$/.test(s)) {                                  // Excel keeps dates as days since 1899-12-30
+    const n = Math.floor(Number(s));
+    return n > 30000 && n < 80000 ? new Date(Date.UTC(1899, 11, 30) + n * 86400000).toISOString().slice(0, 10) : null;
+  }
+  if ((m = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T].*)?$/.exec(s))) return iso(m[1], m[2], m[3]);
+  if ((m = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})(?: .*)?$/.exec(s))) return iso(m[3], m[2], m[1]);
+  const mon = (w) => MONTHS.indexOf(String(w).slice(0, 3).toLowerCase()) + 1;
+  if ((m = /^(\d{1,2})[ -]([A-Za-z]{3,9})\.?[ -,]*(\d{2}|\d{4})$/.exec(s)) && mon(m[2])) return iso(m[3], mon(m[2]), m[1]);
+  if ((m = /^([A-Za-z]{3,9})\.? (\d{1,2}),? (\d{4})$/.exec(s)) && mon(m[1])) return iso(m[3], mon(m[1]), m[2]);
+  return null;
+}
+
+// An order's stage from the words people use for it ('' when the cell is
+// empty, 'cancelled' for ones that never happened, null when not understood).
+const STATUS_WORDS = {
+  'new': ['new', 'open', 'pending', 'accepted', 'confirmed', 'not started', 'to do', 'todo', 'waiting', 'ordered', 'paid'],
+  'in-production': ['in production', 'production', 'building', 'being built', 'busy', 'wip', 'in progress', 'started', 'on the floor', 'making'],
+  'ready': ['ready', 'done', 'finished', 'complete', 'completed', 'built', 'ready for dispatch', 'ready to go'],
+  'dispatched': ['dispatched', 'delivered', 'shipped', 'sent', 'collected', 'out', 'gone'],
+  'invoiced': ['invoiced', 'billed', 'closed', 'paid in full'],
+  'cancelled': ['cancelled', 'canceled', 'void', 'deleted']
+};
+export function toStatus(v) {
+  const s = norm(v);
+  if (!s) return '';
+  for (const k of Object.keys(STATUS_WORDS)) if (STATUS_WORDS[k].includes(s)) return k;
+  return null;
+}
+
 const UNIT_WORDS = { m: ['m', 'metre', 'meter', 'metres', 'meters', 'lm', 'running metre'], 'm²': ['m2', 'm²', 'sqm', 'square metre', 'square meter', 'sq m'], sheet: ['sheet', 'sheets', 'board', 'boards'],
   each: ['each', 'ea', 'pc', 'pcs', 'piece', 'pieces', 'unit', 'units', 'no', 'item'], kg: ['kg', 'kilo', 'kilogram', 'kgs'], L: ['l', 'litre', 'liter', 'litres', 'liters', 'ltr'], roll: ['roll', 'rolls'], pack: ['pack', 'packs', 'box', 'boxes', 'pkt'] };
 function toUnit(v) {
@@ -266,6 +333,7 @@ function plan(kind, rows, map, opts) {
     byProd.forEach(b => out.update.push({ id: b.p.id, name: b.p.name, data: { materials: b.lines }, detail: b.lines.length + ' material' + (b.lines.length === 1 ? '' : 's') }));
     return out;
   }
+  if (kind === 'orders') return planOrders(rows, get, vat, opts);
   const existing = kind === 'materials' ? allMaterials() : kind === 'products' ? allProducts() : allCustomers();
   const seen = new Map();
   rows.forEach((r, n) => {
@@ -306,6 +374,102 @@ function plan(kind, rows, map, opts) {
   return out;
 }
 
+// Orders: matched by order number; the customer by name. A customer not
+// here yet is added along with its orders (when that is ticked). The stage
+// is only set for new orders: an order already here is moved on the Orders
+// page, where its stock comes off the shelf.
+function planOrders(rows, get, vat, opts) {
+  const out = { add: [], update: [], skip: [], newCustomers: [] };
+  const custs = allCustomers(), existing = allOrders();
+  const fresh = new Map(), seen = new Set();
+  rows.forEach((r, n) => {
+    const no = get(r, 'orderNo'), cname = get(r, 'customer'), product = get(r, 'product');
+    if (!no && !cname && !product) { if (r.some(c => String(c || '').trim())) out.skip.push({ n, why: 'no customer or product' }); return; }
+    if (!cname) return out.skip.push({ n, why: 'no customer' });
+    if (!product) return out.skip.push({ n, why: 'no product' });
+    const rawStatus = get(r, 'status'), status = toStatus(rawStatus);
+    if (status === 'cancelled') return out.skip.push({ n, why: 'cancelled' });
+    if (status == null) return out.skip.push({ n, why: 'status “' + rawStatus + '” is not one we know (New, In production, Done, Dispatched, Invoiced)' });
+    const d = { product };
+    const q = toNumber(get(r, 'qty'));
+    if (q != null) { if (!(q > 0)) return out.skip.push({ n, why: 'quantity ' + get(r, 'qty') }); d.qty = Math.max(1, Math.round(q)); }
+    const price = toNumber(get(r, 'priceEach'));
+    if (price != null) d.priceEach = Math.round((vat ? price / (1 + vat) : price) * 100) / 100;
+    ['fabric', 'externalRef', 'notes'].forEach(k => { const x = get(r, k); if (x) d[k] = x; });
+    for (const k of ['paidDate', 'dueDate']) {
+      const raw = get(r, k);
+      if (!raw) continue;
+      const iso = toDate(raw);
+      if (!iso) return out.skip.push({ n, why: 'date “' + raw + '” not understood (use 2026-10-13 or 13/10/2026)' });
+      d[k] = iso;
+    }
+    if (no) {
+      const key = norm(no);
+      if (seen.has(key)) return out.skip.push({ n, why: 'order ' + no + ' is in the file twice; the first row is used' });
+      seen.add(key);
+    }
+    let cust = custs.find(c => norm(c.name) === norm(cname)), custKey = '';
+    if (!cust) {
+      if (!opts.addCustomers) return out.skip.push({ n, why: 'no customer called “' + cname + '”' });
+      custKey = norm(cname);
+      if (!fresh.has(custKey)) fresh.set(custKey, { name: cname });
+    }
+    const who = cust ? { customerId: cust.id, customerName: cust.name } : { customerName: fresh.get(custKey).name };
+    const hit = no ? existing.find(o => norm(o.orderNo) === norm(no)) : null;
+    if (hit) {
+      if (!opts.update) return out.skip.push({ n, why: 'order ' + no + ' is already there' });
+      const patch = { ...who, ...d };
+      Object.keys(patch).forEach(k => { if (k !== 'customerId' && String(patch[k]) === String(hit[k] == null ? '' : hit[k])) delete patch[k]; });
+      if (!custKey && patch.customerId === hit.customerId) delete patch.customerId;
+      if (!Object.keys(patch).length) return out.skip.push({ n, why: 'nothing changed on ' + hit.orderNo });
+      out.update.push({ id: hit.id, name: hit.orderNo, custKey, data: patch });
+    } else {
+      const paid = d.paidDate || today();
+      out.add.push({ name: no || product, custKey, data: {
+        ...who, qty: 1, priceEach: 0, fabric: '', externalRef: '', notes: '', ...d,
+        orderNo: no, paidDate: paid, dueDate: d.dueDate || addDays(paid, 28),
+        status: status || 'new', fabricStatus: 'none', source: 'import'
+      } });
+    }
+  });
+  // only customers that an order still needs
+  const needed = new Set([...out.add, ...out.update].map(x => x.custKey).filter(Boolean));
+  out.newCustomers = [...fresh.entries()].filter(([k]) => needed.has(k)).map(([key, c]) => ({ key, name: c.name }));
+  return out;
+}
+
+// The writes for an orders import: new customers first (with ids chosen
+// here so their orders can point at them), then the orders, the ones without
+// a number numbered from the company's sequence. Numbers that came in with
+// the file move the sequence past them, so they are never handed out again.
+async function orderOps(p, settings) {
+  const prefix = (settings && settings.orderPrefix) || 'CP-';
+  const first = (settings && settings.firstOrderNo) || 1001;
+  const custId = {};
+  const ops = p.newCustomers.map(c => {
+    custId[c.key] = store.newId('customers');
+    return { op: 'create', coll: 'customers', id: custId[c.key], data: { name: c.name, termsDays: 0 } };
+  });
+  const ours = (no) => { const s = String(no || ''); return s.startsWith(prefix) && /^\d+$/.test(s.slice(prefix.length)) ? Number(s.slice(prefix.length)) : 0; };
+  const highest = Math.max(0, ...p.add.map(x => ours(x.data.orderNo)));
+  const blank = p.add.filter(x => !x.data.orderNo).length;
+  let next = (blank || highest) ? await store.reserveNumbers('orderNo', blank, first, highest ? highest + 1 : 0) : 0;
+  const by = (store.getUser() || {}).name || 'system';
+  p.add.forEach(x => {
+    const data = { ...x.data };
+    if (x.custKey) data.customerId = custId[x.custKey];
+    if (!data.orderNo) data.orderNo = prefix + (next++);
+    data.events = [{ at: store.nowIso(), by, what: 'Imported from a spreadsheet' }];
+    ops.push({ op: 'create', coll: 'orders', data });
+  });
+  p.update.forEach(x => {
+    const patch = { ...x.data };
+    if (x.custKey) patch.customerId = custId[x.custKey];
+    ops.push({ op: 'update', coll: 'orders', id: x.id, patch, event: 'Updated from a spreadsheet' });
+  });
+  return ops;
+}
+
 // ------------------------------------------------------------ the window ----
 
 export function openImport(kind, settings) {
@@ -325,12 +489,13 @@ export function openImport(kind, settings) {
       const ok = w.querySelector('#modal-ok'); ok.disabled = true; ok.textContent = 'Importing…';
       try {
         const coll = KINDS[K].coll;
-        const ops = [
+        const ops = K === 'orders' ? await orderOps(p, settings) : [
           ...p.add.map(x => ({ op: 'create', coll, data: x.data })),
           ...p.update.map(x => ({ op: 'update', coll, id: x.id, patch: x.data, event: 'Updated from a spreadsheet' }))
         ];
         for (let i = 0; i < ops.length; i += 400) await store.batchWrite(ops.slice(i, i + 400));
-        toast(KINDS[K].label + ': ' + p.add.length + ' added, ' + p.update.length + ' updated' + (p.skip.length ? ', ' + p.skip.length + ' skipped' : ''));
+        toast(KINDS[K].label + ': ' + p.add.length + ' added, ' + p.update.length + ' updated' + (p.skip.length ? ', ' + p.skip.length + ' skipped' : '')
+          + (p.newCustomers && p.newCustomers.length ? ', ' + p.newCustomers.length + ' new customer' + (p.newCustomers.length === 1 ? '' : 's') : ''));
       } catch (e) {
         toast('Import stopped: ' + e.message + '. What was saved before it stopped stays; run the same file again to finish.', 'warn');
         ok.disabled = false; ok.textContent = 'Import'; return false;
@@ -340,7 +505,9 @@ export function openImport(kind, settings) {
   const card = m.wrap.querySelector('.modal-card');
   card.style.maxWidth = '900px';
   const body = card.querySelector('#im-body');
-  const opts = (w) => ({ update: (w.querySelector('#im-update') || {}).checked !== false, inclVat: !!(w.querySelector('#im-vat') || {}).checked, vatRate });
+  const canAddCustomers = store.can('customers', 'edit');
+  const opts = (w) => ({ update: (w.querySelector('#im-update') || {}).checked !== false, inclVat: !!(w.querySelector('#im-vat') || {}).checked, vatRate,
+    addCustomers: canAddCustomers && (w.querySelector('#im-addcust') || {}).checked !== false });
   function dataRows() { const rows = (sheets[sheetIx] || { rows: [] }).rows; return rows.slice(headerRow + 1); }
   function headers() { return ((sheets[sheetIx] || { rows: [] }).rows[headerRow] || []).map(x => String(x || '').trim()); }
   function currentPlan(w) { return plan(K, dataRows(), map, opts(w)); }
@@ -361,8 +528,9 @@ export function openImport(kind, settings) {
         ${sheets ? `<label>Headings on row <input id="im-head" type="number" min="1" value="${headerRow + 1}" style="width:60px"></label>` : ''}
       </div>
       <div class="btn-row" style="margin:.6rem 0; gap:1rem; flex-wrap:wrap">
-        ${K !== 'bom' ? `<label class="check"><input type="checkbox" id="im-update" ${card.querySelector('#im-update') && !card.querySelector('#im-update').checked ? '' : 'checked'}> Update ones already here (same name)</label>` : ''}
-        ${vatReg && (K === 'materials' || K === 'products') ? `<label class="check"><input type="checkbox" id="im-vat" ${card.querySelector('#im-vat') && card.querySelector('#im-vat').checked ? 'checked' : ''}> Prices in the file include VAT (${Math.round(vatRate * 100)}%)</label>` : ''}
+        ${K !== 'bom' ? `<label class="check"><input type="checkbox" id="im-update" ${card.querySelector('#im-update') && !card.querySelector('#im-update').checked ? '' : 'checked'}> Update ones already here (same ${K === 'orders' ? 'order no.' : 'name'})</label>` : ''}
+        ${K === 'orders' && canAddCustomers ? `<label class="check"><input type="checkbox" id="im-addcust" ${card.querySelector('#im-addcust') && !card.querySelector('#im-addcust').checked ? '' : 'checked'}> Add customers that aren’t here yet</label>` : ''}
+        ${vatReg && (K === 'materials' || K === 'products' || K === 'orders') ? `<label class="check"><input type="checkbox" id="im-vat" ${card.querySelector('#im-vat') && card.querySelector('#im-vat').checked ? 'checked' : ''}> Prices in the file include VAT (${Math.round(vatRate * 100)}%)</label>` : ''}
       </div>
       ${sheets ? `
         <h4 style="margin:.8rem 0 .3rem">Which column is which</h4>
@@ -376,6 +544,9 @@ export function openImport(kind, settings) {
         ${p.skip.length ? `<details style="margin-top:.4rem"><summary class="muted">Why ${p.skip.length} row${p.skip.length === 1 ? ' is' : 's are'} skipped</summary><ul class="plain" style="max-height:140px; overflow:auto">${p.skip.slice(0, 200).map(s => `<li>Row ${s.n + headerRow + 2}: ${esc(s.why)}</li>`).join('')}</ul></details>` : ''}
         ${K === 'bom' && p.update.length ? `<p class="muted">These products get exactly the materials in the file: ${esc(p.update.slice(0, 6).map(x => x.name + ' (' + x.detail + ')').join(', '))}${p.update.length > 6 ? '…' : ''}</p>` : ''}
         ${K === 'products' && p.add.length ? '<p class="muted">New products come in without materials. Import their bills of materials next, or add them under Costing.</p>' : ''}
+        ${K === 'orders' && p.newCustomers.length ? `<p class="muted">New customers to add: ${esc(p.newCustomers.slice(0, 8).map(c => c.name).join(', '))}${p.newCustomers.length > 8 ? '…' : ''}. Fill in their details under Customers after.</p>` : ''}
+        ${K === 'orders' && p.add.some(x => x.data.status !== 'new') ? '<p class="muted">Orders that come in already past New do not take materials off the shelf: those were used before the system.</p>' : ''}
+        ${K === 'orders' && p.update.length ? '<p class="muted">Orders already here get their details updated; their stage stays as it is (move them on the Orders page).</p>' : ''}
       ` : '<p class="muted" style="margin-top:1rem">Choose the file to see what comes in. Nothing is saved until you press Import.</p>'}`;
   }
 
@@ -408,9 +579,9 @@ export function openImport(kind, settings) {
     if (t.id === 'im-sheet') { sheetIx = parseInt(t.value, 10) || 0; headerRow = findHeaderRow(sheets[sheetIx].rows); map = guessColumns(K, headers()); return draw(); }
     if (t.id === 'im-head') { headerRow = Math.max(0, (parseInt(t.value, 10) || 1) - 1); map = guessColumns(K, headers()); return draw(); }
     if (t.dataset && t.dataset.imCol) { if (t.value === '') delete map[t.dataset.imCol]; else map[t.dataset.imCol] = parseInt(t.value, 10); return draw(); }
-    if (t.id === 'im-update' || t.id === 'im-vat') return draw();
+    if (t.id === 'im-update' || t.id === 'im-vat' || t.id === 'im-addcust') return draw();
   });
   draw();
 }
 
-export { KINDS, plan, guessColumns };
+export { KINDS, plan, guessColumns, orderOps };

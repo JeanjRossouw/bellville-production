@@ -876,19 +876,28 @@ export async function remove(coll, id) {
 // transaction so two people capturing orders at the same moment can never be
 // handed the same number.
 export async function nextNumber(key, first) {
+  return reserveNumbers(key, 1, first);
+}
+
+// A run of `count` numbers in one go (an import of many orders); returns the
+// first. `atLeast` moves the sequence past numbers already used elsewhere,
+// such as order numbers that came in from a spreadsheet.
+export async function reserveNumbers(key, count, first, atLeast) {
   guardWrite('counters');
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  const floor = Number(atLeast) || 0;
   if (mode === 'demo') {
     const map = demoRead('counters');
-    const next = (map[key] && map[key].value) || first || 1;
-    map[key] = { value: next + 1 };
+    const next = Math.max((map[key] && map[key].value) || first || 1, floor);
+    map[key] = { value: next + n };
     demoWrite('counters', map);
     return next;
   }
   const ref = docRef('counters', key);
   return await cloud.fns.runTransaction(cloud.db, async (tx) => {
     const snap = await tx.get(ref);
-    const next = snap.exists() ? (snap.data().value || first || 1) : (first || 1);
-    tx.set(ref, { value: next + 1 }, { merge: true });
+    const next = Math.max(snap.exists() ? (snap.data().value || first || 1) : (first || 1), floor);
+    tx.set(ref, { value: next + n }, { merge: true });
     return next;
   });
 }
