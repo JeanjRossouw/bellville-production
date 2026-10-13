@@ -85,12 +85,13 @@ const KINDS = {
       { k: 'externalRef', label: 'Their order / invoice no.', syn: ['their ref', 'their order', 'reference', 'ref', 'customer ref', 'po', 'po number', 'their order no', 'customer order'] },
       { k: 'paidDate', label: 'Date paid / placed', date: true, syn: ['date paid', 'paid', 'order date', 'date', 'placed', 'date placed', 'ordered', 'paid date'] },
       { k: 'dueDate', label: 'Due date', date: true, syn: ['due date', 'due', 'delivery date', 'required', 'required date', 'promised', 'eta'] },
+      { k: 'fabricStatus', label: 'Fabric status', syn: ['fabric status', 'fabric state', 'fabric ordered', 'fabric stage'] },
       { k: 'status', label: 'Status (new orders only)', syn: ['status', 'stage', 'state', 'progress'] },
       { k: 'notes', label: 'Notes', syn: ['notes', 'note', 'comment', 'comments', 'instructions', 'special instructions'] }
     ],
-    template: [['Order no', 'Customer', 'Product', 'Qty', 'Fabric', 'Price each', 'Their ref', 'Date paid', 'Due date', 'Status', 'Notes'],
-      ['', 'Cape Living Interiors', '3 Seater Chesterfield', '2', 'Moldova : Oatmeal', '8500', 'PO 4471', '2026-10-01', '2026-10-29', 'New', 'Studs on the arms'],
-      ['', 'Cape Living Interiors', 'Ottoman 900mm', '1', 'Moldova : Oatmeal', '2400', 'PO 4471', '01/10/2026', '29/10/2026', 'In production', '']]
+    template: [['Order no', 'Customer', 'Product', 'Qty', 'Fabric', 'Fabric status', 'Price each', 'Their ref', 'Date paid', 'Due date', 'Status', 'Notes'],
+      ['', 'Cape Living Interiors', '3 Seater Chesterfield', '2', 'Moldova : Oatmeal', 'Ordered', '8500', 'PO 4471', '2026-10-01', '2026-10-29', 'New', 'Studs on the arms'],
+      ['', 'Cape Living Interiors', 'Ottoman 900mm', '1', 'Moldova : Oatmeal', 'Received', '2400', 'PO 4471', '01/10/2026', '29/10/2026', 'In production', '']]
   }
 };
 
@@ -251,6 +252,20 @@ const STATUS_WORDS = {
   'invoiced': ['invoiced', 'billed', 'closed', 'paid in full'],
   'cancelled': ['cancelled', 'canceled', 'void', 'deleted']
 };
+// Where the fabric is: not ordered, ordered or received ('' when empty,
+// null when not understood).
+const FABRIC_WORDS = {
+  none: ['not ordered', 'none', 'no', 'to order', 'needs ordering', 'outstanding', 'n a'],
+  ordered: ['ordered', 'on order', 'yes', 'waiting', 'awaiting', 'in transit'],
+  received: ['received', 'in', 'in stock', 'arrived', 'here', 'delivered', 'supplied', 'customer supplied', 'cmt']
+};
+export function toFabricStatus(v) {
+  const s = norm(v);
+  if (!s) return '';
+  for (const k of Object.keys(FABRIC_WORDS)) if (FABRIC_WORDS[k].includes(s)) return k;
+  return null;
+}
+
 export function toStatus(v) {
   const s = norm(v);
   if (!s) return '';
@@ -390,7 +405,10 @@ function planOrders(rows, get, vat, opts) {
     const rawStatus = get(r, 'status'), status = toStatus(rawStatus);
     if (status === 'cancelled') return out.skip.push({ n, why: 'cancelled' });
     if (status == null) return out.skip.push({ n, why: 'status “' + rawStatus + '” is not one we know (New, In production, Done, Dispatched, Invoiced)' });
+    const rawFabric = get(r, 'fabricStatus'), fabricStatus = toFabricStatus(rawFabric);
+    if (fabricStatus == null) return out.skip.push({ n, why: 'fabric status “' + rawFabric + '” is not one we know (Not ordered, Ordered, Received)' });
     const d = { product };
+    if (fabricStatus) d.fabricStatus = fabricStatus;
     const q = toNumber(get(r, 'qty'));
     if (q != null) { if (!(q > 0)) return out.skip.push({ n, why: 'quantity ' + get(r, 'qty') }); d.qty = Math.max(1, Math.round(q)); }
     const price = toNumber(get(r, 'priceEach'));
@@ -428,7 +446,7 @@ function planOrders(rows, get, vat, opts) {
       out.add.push({ name: no || product, custKey, data: {
         ...who, qty: 1, priceEach: 0, fabric: '', externalRef: '', notes: '', ...d,
         orderNo: no, paidDate: paid, dueDate: d.dueDate || addDays(paid, 28),
-        status: status || 'new', fabricStatus: 'none', source: 'import'
+        fabricStatus: 'none', status: status || 'new', source: 'import', ...(d.fabricStatus ? { fabricStatus: d.fabricStatus } : {})
       } });
     }
   });
