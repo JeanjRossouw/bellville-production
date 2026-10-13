@@ -38,6 +38,12 @@
   to = "/couchpotato/:splat"
   status = 200
   force = true
+# The owner's own sign-in page (served through the /app/ rule above).
+[[redirects]]
+  from = "https://factorymanager.co.za/admin"
+  to = "/app/admin.html"
+  status = 301
+  force = true
 
 [[redirects]]
   from = "/pos"

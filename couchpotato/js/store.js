@@ -342,6 +342,18 @@ export async function isSeller() {
   catch (e) { return false; }
 }
 
+// Becomes the app owner: the server checks the login's email against the
+// owner list (FACTORY_ADMIN_EMAILS on the site) and writes admins/<uid>.
+const ADMIN_URL = '/.netlify/functions/factory-admin';
+export async function claimSeller() {
+  if (mode === 'demo') return { admin: await isSeller() };
+  const token = await cloud.auth.currentUser.getIdToken();
+  const r = await fetch(ADMIN_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ action: 'claim' }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+
 export function watchAllCompanies(cb) {
   if (mode === 'demo') {
     const send = () => { const m = demoCompanies(); cb(Object.keys(m).map(id => ({ id, ...m[id] }))); };

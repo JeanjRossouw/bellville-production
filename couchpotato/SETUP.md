@@ -156,19 +156,21 @@ the company does in Shopify, and the details, are in `SHOPIFY-SETUP.md`.
 
 ## 5. Make yourself the seller, once
 
-The seller sees a **Clients** tab listing every company: who is on a trial,
-who is paying, who has stopped, and your monthly income. From there you can
-extend someone's trial by 14 days or give a company free access (for example
-Couch Potato, as your first client).
+The seller sees every company: who is on a trial, who is paying, who has
+stopped, and your monthly income. From there you can extend someone's trial
+by 14 days or give a company free access (for example Couch Potato, as your
+first client). It is on its own page, **/admin** (`admin.html`), and also
+as a **Clients** tab inside the app.
 
-1. Sign up in the app yourself, with your own email.
-2. Firebase → **Authentication → Users**: copy your **User UID**.
-3. Firebase → **Firestore → Start collection**: name it `admins`, set the
-   document id to your User UID, and add one field, `email`, with your email.
-4. Sign out and in again. The **Clients** tab appears.
+1. Netlify → the site → **Environment variables**: add `FACTORY_ADMIN_EMAILS`
+   with your own email address (several, separated by commas). Redeploy.
+2. Open **/admin** and sign in with that email (sign up in the app first if
+   you have no login yet). The page marks your login as the seller and
+   shows the companies.
 
-Nobody can make themselves a seller from the app; only an entry you create
-by hand in the Firebase console counts.
+Nobody can make themselves a seller from the app: only a login whose email
+is on that list can, and the database entry it needs (`admins/<uid>`) is
+written by the site's own function, never by the app.
 
 ## What happens when a trial ends or a payment stops
 
