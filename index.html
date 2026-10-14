@@ -9878,7 +9878,7 @@ ${_PRODUCTION_PRINT_STYLES}
       + '<button onclick="deliverySchedule(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:none; background:#111; color:#fff; font-weight:700; cursor:pointer">📅 Save</button>'
       + '</div>';
     let actions = '';
-    if (o.status !== 'delivered' && o.builderDone) actions += '<button onclick="builderPortalUndoDone(\'' + _escape(o.id) + '\')" title="Marked done by mistake: put it back into production" style="padding:7px 12px; border-radius:999px; border:1.5px solid #b45309; background:#fffbeb; color:#92400e; font-weight:700; font-size:12px; cursor:pointer">↩ Back to production</button>';
+    if (o.status !== 'delivered' && (o.builderDone || o.builderReceivedAt || o.status === 'done' || o.deliveryScheduled)) actions += '<button onclick="builderPortalUndoDone(\'' + _escape(o.id) + '\')" title="Marked done by mistake: put it back into production" style="padding:7px 12px; border-radius:999px; border:1.5px solid #b45309; background:#fffbeb; color:#92400e; font-weight:700; font-size:12px; cursor:pointer">↩ Back to production</button>';
     if (o.status !== 'delivered') {
       actions += '<button onclick="deliveryToggleForm(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; font-weight:700; font-size:12px; cursor:pointer">' + (o.deliveryScheduled ? '✏️ Change' : '📅 Schedule') + '</button>';
       if (digits) actions += '<button onclick="deliverySendBookingLink(\'' + r.biz + '\', \'' + _escape(o.id) + '\')" title="Let the client pick a slot" style="padding:7px 12px; border-radius:999px; border:1.5px solid #25d366; background:#f0fdf4; color:#166534; font-weight:700; font-size:12px; cursor:pointer">💬 Client picks slot</button>';
@@ -11456,17 +11456,23 @@ ${_PRODUCTION_PRINT_STYLES}
   // portal (and any delivery booked for it) and is on the job list again.
   function builderPortalUndoDone(orderId) {
     const o = _findOrderAnyBiz(orderId);
-    if (!o || !o.builderDone) return;
-    const booked = o.deliveryScheduled && o.status !== 'delivered';
-    if (!confirm('Move #' + (o.invoice || o.id) + ' — ' + (o.product || '') + ' back into production?' + (booked ? ' Its delivery on ' + o.deliveryScheduled + ' is taken off too.' : ''))) return;
+    const markedDone = !!(o && (o.builderDone || o.builderReceivedAt || o.status === 'done'));
+    if (!o || o.status === 'delivered' || !(markedDone || o.deliveryScheduled)) return;
+    const booked = !!o.deliveryScheduled;
+    // booked for delivery before it was finished: only the booking comes off
+    if (!confirm('Move #' + (o.invoice || o.id) + ' — ' + (o.product || '') + ' back into production?' + (booked ? ' Its delivery on ' + o.deliveryScheduled + ' is taken off' + (markedDone ? ' too.' : '; it shows here again once it is done.') : ''))) return;
     snapshotState();
     o.builderDone = false;
     delete o.builderDoneAt;
-    o.builderReopenedAt = new Date().toISOString();      // the order feed will not mark it done again for an older dispatch
+    delete o.builderReceivedAt;
+    if (o.status === 'done') o.status = 'in-production';    // marked Done (or received) in the main system or the portal
+    if (markedDone) o.builderReopenedAt = new Date().toISOString();      // the order feed will not mark it done again for an older dispatch
     if (booked) { delete o.deliveryScheduled; delete o.deliveryTimeFrom; delete o.deliveryTimeTo; delete o.deliveryDriverId; delete o.deliveryBy; o.deliveryBookedByClient = false; }
-    _builderPortalLogComment(o, 'Moved back to production (it was marked done by mistake)');
+    _builderPortalLogComment(o, markedDone ? 'Moved back to production (it was marked done by mistake)' : 'Delivery booking taken off: still in production');
     saveData();
-    if (_portalView === 'delivery') renderDeliveryPortal(); else renderBuilderPortal();
+    if (typeof render === 'function') render();
+    if (document.getElementById('builder-portal-content')) { if (_portalView === 'delivery') renderDeliveryPortal(); else renderBuilderPortal(); }
+    if (typeof toast === 'function') toast('#' + (o.invoice || o.id) + ' is back in production', 'success', 3000);
   }
   window.builderPortalUndoDone = builderPortalUndoDone;
   function builderPortalPrintCard(orderId) {
