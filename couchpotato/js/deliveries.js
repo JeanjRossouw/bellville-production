@@ -3,6 +3,7 @@
 // to the driver page (js/driver.js), where the client signs on delivery.
 //
 // An order carries its delivery on itself:
+//   deliveryMethod ('' or 'delivery' = a driver takes it; 'collect' = the customer fetches it),
 //   deliveryDate, deliverySlot, driverId, driverName,
 //   deliveryContact, deliveryPhone, deliveryAddress, deliveryInstructions,
 //   driverStatus (scheduled | on-way | late | issue | delivered), driverNote,
@@ -40,7 +41,9 @@ export const setDeliveryView = (v) => { view = v; };
 export const setDeliveryDay = (d) => { day = d; view = 'plan'; };
 const driverById = (id) => drivers.find(d => d.id === id) || null;
 const driverNameOf = (o) => (driverById(o.driverId) || {}).name || o.driverName || '';
-const chip = (o) => { const [l, c] = STATUS[o.driverStatus || 'scheduled'] || STATUS.scheduled; return `<span class="chip ${c}">${esc(l)}${o.driverStatus === 'late' && o.driverNote ? ' · ' + esc(o.driverNote) : ''}${o.driverStatus === 'issue' && o.driverNote ? ': ' + esc(o.driverNote) : ''}</span>`; };
+const isCollect = (o) => o.deliveryMethod === 'collect';
+const chip = (o) => {
+  if (isCollect(o)) return o.driverStatus === 'delivered' ? '<span class="chip st-disp">Collected</span>' : '<span class="chip calm">Collection</span>'; const [l, c] = STATUS[o.driverStatus || 'scheduled'] || STATUS.scheduled; return `<span class="chip ${c}">${esc(l)}${o.driverStatus === 'late' && o.driverNote ? ' · ' + esc(o.driverNote) : ''}${o.driverStatus === 'issue' && o.driverNote ? ': ' + esc(o.driverNote) : ''}</span>`; };
 
 function newCode() {
   const b = new Uint8Array(12); crypto.getRandomValues(b);
@@ -58,7 +61,9 @@ const phoneOf = (o) => o.deliveryPhone || (customerById(o.customerId) || {}).pho
 export function renderDeliveries(host, orders) {
   const t = today();
   if (!day) day = t;
-  const open = toDeliver(orders);
+  const all = toDeliver(orders);
+  const open = all.filter(o => !isCollect(o));           // by driver
+  const collections = all.filter(isCollect);              // the customer fetches it
   const unscheduled = open.filter(o => !o.deliveryDate);
   const days = [...Array(7)].map((_, i) => addDays(t, i));
   const count = (d) => open.filter(o => o.deliveryDate === d).length;
@@ -67,7 +72,7 @@ export function renderDeliveries(host, orders) {
   let body;
   if (view === 'drivers') body = renderDrivers();
   else if (view === 'done') body = renderDone(orders);
-  else body = renderPlan(open, unscheduled, overdue, days, count);
+  else body = renderPlan(open, unscheduled, overdue, days, count, collections);
   host.innerHTML = `
     <div class="page-head"><div><h1>Deliveries</h1><p class="sub">Plan the run, send it to the driver, and see it signed for.</p></div>
       <div class="btn-row"><button class="btn primary" data-act="dl-driver-new">＋ Driver</button></div></div>
@@ -89,6 +94,7 @@ function card(o, opts) {
     </div>
     <div class="dl-acts">
       <button class="btn ${o.deliveryDate ? 'ghost' : 'primary'} sm" data-act="dl-schedule" data-id="${esc(o.id)}">${o.deliveryDate ? 'Change' : 'Schedule'}</button>
+      ${!o.deliveryDate ? `<button class="btn ghost sm" data-act="dl-collect" data-id="${esc(o.id)}" title="The customer fetches it from the factory">Collection</button>` : ''}
       ${o.deliveryDate && phoneOf(o) ? `<button class="btn ghost sm" data-act="dl-confirm" data-id="${esc(o.id)}">WhatsApp client</button>` : ''}
       <button class="btn ghost sm" data-act="dl-sign" data-id="${esc(o.id)}" title="The client signs the delivery note here, on this screen">Client signs</button>
       ${o.deliveryDate ? `<button class="btn ghost sm" data-act="dl-delivered" data-id="${esc(o.id)}">Delivered</button>` : ''}
@@ -96,7 +102,29 @@ function card(o, opts) {
   </div>`;
 }
 
-function renderPlan(open, unscheduled, overdue, days, count) {
+// A piece the customer fetches: no driver, no run; the office tells them it
+// is ready and marks it collected when they have it.
+function collectCard(o) {
+  const late = o.deliveryDate && o.deliveryDate < today() && o.status === 'ready';
+  return `<div class="dl-card">
+    <div class="dl-main">
+      <div class="dl-top"><strong>${esc(o.orderNo || '')}</strong> ${chip(o)} ${o.status === 'in-production' ? '<span class="chip st-prod">still on the floor</span>' : o.status === 'ready' ? '<span class="chip st-ready">ready to collect</span>' : ''}</div>
+      <div class="dl-prod">${esc(o.product || '')}${Number(o.qty) > 1 ? ' × ' + esc(o.qty) : ''}${o.fabric ? ' <span class="muted">· ' + esc(o.fabric) + '</span>' : ''}</div>
+      <div class="muted">${esc(o.deliveryContact || o.customerName || '')}${phoneOf(o) ? ' · ' + esc(phoneOf(o)) : ''}</div>
+      <div class="dl-when" ${late ? 'style="color:#b91c1c"' : ''}>${o.deliveryDate ? 'Expected ' + esc(niceDate(o.deliveryDate)) + (late ? ' · not collected yet' : '') : 'No date yet'}</div>
+      ${o.deliveryInstructions ? `<div class="muted">Note: ${esc(o.deliveryInstructions)}</div>` : ''}
+    </div>
+    <div class="dl-acts">
+      <button class="btn ghost sm" data-act="dl-schedule" data-id="${esc(o.id)}">Change</button>
+      ${phoneOf(o) ? `<button class="btn ${o.status === 'ready' ? 'primary' : 'ghost'} sm" data-act="dl-confirm" data-id="${esc(o.id)}">WhatsApp: ready</button>` : ''}
+      <button class="btn ghost sm" data-act="dl-sign" data-id="${esc(o.id)}" title="The client signs for it here, on this screen">Client signs</button>
+      <button class="btn ghost sm" data-act="dl-delivered" data-id="${esc(o.id)}">Collected</button>
+      <button class="btn ghost sm" data-act="dl-deliver-instead" data-id="${esc(o.id)}" title="A driver takes it after all">Deliver instead</button>
+    </div>
+  </div>`;
+}
+
+function renderPlan(open, unscheduled, overdue, days, count, collections) {
   const dayBtn = (d, label) => `<button class="dl-day ${day === d ? 'on' : ''}" data-act="dl-day" data-to="${d}"><span>${esc(label)}</span><strong>${count(d)}</strong></button>`;
   const onDay = open.filter(o => o.deliveryDate === day).sort((a, b) => String(a.deliverySlot || '~').localeCompare(String(b.deliverySlot || '~')));
   const groups = {};
@@ -116,6 +144,7 @@ function renderPlan(open, unscheduled, overdue, days, count) {
       <input type="date" class="dl-pick" data-act="dl-day-pick" value="${esc(day)}" title="Another day"></div>
     <h2 style="margin-top:1rem">${esc(niceDate(day))}</h2>
     ${onDay.length ? groupHtml : `<p class="muted">Nothing booked for this day yet. Schedule from the list below.</p>`}
+    ${collections.length ? `<h2 style="margin-top:1.4rem">Collections (${collections.length})</h2><div class="card">${collections.slice().sort((a, b) => String(a.deliveryDate || '~').localeCompare(String(b.deliveryDate || '~'))).map(collectCard).join('')}</div>` : ''}
     <h2 style="margin-top:1.4rem">Waiting for a delivery date (${unscheduled.length})</h2>
     ${unscheduled.length ? `<div class="card">${unscheduled.map(o => card(o, {})).join('')}</div>` : '<p class="muted">Everything finished has a delivery date.</p>'}`;
 }
@@ -143,8 +172,8 @@ function renderDone(orders) {
     <thead><tr><th>Delivered</th><th>Order</th><th>To</th><th>By</th><th>Signed</th><th></th></tr></thead>
     <tbody>${done.map(o => `<tr>
       <td class="nowrap">${esc(String(o.deliveredAt).slice(0, 16).replace('T', ' '))}</td>
-      <td><strong>${esc(o.orderNo)}</strong><div class="muted">${esc(o.product || '')}</div></td>
-      <td>${esc(o.deliveryContact || o.customerName || '')}<div class="muted">${esc(addressOf(o))}</div></td>
+      <td><strong>${esc(o.orderNo)}</strong>${isCollect(o) ? ' <span class="chip calm">collected</span>' : ''}<div class="muted">${esc(o.product || '')}</div></td>
+      <td>${esc(o.deliveryContact || o.customerName || '')}<div class="muted">${isCollect(o) ? 'Collected at the factory' : esc(addressOf(o))}</div></td>
       <td>${esc(o.deliveredBy || '')}</td>
       <td>${o.hasDeliveryNote ? esc(o.signedBy || 'signed') : '<span class="muted">no signature</span>'}</td>
       <td class="r nowrap">${o.hasDeliveryNote ? `<button class="btn ghost sm" data-act="dl-note" data-id="${esc(o.id)}">Signed note</button>` : `<button class="btn ghost sm" data-act="dl-sign" data-id="${esc(o.id)}">Client signs</button>`}
@@ -158,21 +187,34 @@ export function scheduleDelivery(id, orders) {
   const o = orders.find(x => x.id === id); if (!o) return;
   const c = customerById(o.customerId) || {};
   const opts = (list, cur, blank) => [{ value: '', label: blank }].concat(list).map(x => ({ ...x, selected: x.value === cur }));
-  openModal('Delivery for ' + (o.orderNo || ''), `
+  const collect = isCollect(o);
+  const { wrap } = openModal((collect ? 'Collection of ' : 'Delivery for ') + (o.orderNo || ''), `
     <p class="muted">${esc(o.product || '')}${Number(o.qty) > 1 ? ' × ' + esc(o.qty) : ''} for ${esc(o.customerName || '')}</p>
+    ${field('How it gets to them', 'dl-method', { type: 'select', value: collect ? 'collect' : 'delivery', options: [{ value: 'delivery', label: 'A driver delivers it' }, { value: 'collect', label: 'The customer collects it from the factory' }] })}
     ${row(field('Date', 'dl-date', { type: 'date', value: o.deliveryDate || (day >= today() ? day : today()) }),
-      field('Time slot', 'dl-slot', { type: 'select', value: o.deliverySlot || '', options: opts(SLOTS.map(s => ({ value: s, label: s })), o.deliverySlot, 'Any time') }))}
-    ${field('Driver', 'dl-driver', { type: 'select', value: o.driverId || (drivers.length === 1 ? drivers[0].id : ''), options: opts(drivers.map(d => ({ value: d.id, label: d.name })), o.driverId, drivers.length ? 'Choose a driver…' : 'No drivers yet: add one first') })}
+      `<div data-dl="delivery">${field('Time slot', 'dl-slot', { type: 'select', value: o.deliverySlot || '', options: opts(SLOTS.map(s => ({ value: s, label: s })), o.deliverySlot, 'Any time') })}</div>`)}
+    <div data-dl="delivery">${field('Driver', 'dl-driver', { type: 'select', value: o.driverId || (drivers.length === 1 ? drivers[0].id : ''), options: opts(drivers.map(d => ({ value: d.id, label: d.name })), o.driverId, drivers.length ? 'Choose a driver…' : 'No drivers yet: add one first') })}</div>
     ${row(field('Receiving it', 'dl-contact', { value: o.deliveryContact || c.contact || o.customerName || '' }), field('Their cell', 'dl-phone', { value: o.deliveryPhone || c.phone || '' }))}
-    ${field('Delivery address', 'dl-addr', { type: 'textarea', value: o.deliveryAddress || [c.address, c.area].filter(Boolean).join(', ') })}
-    ${field('Note for the driver', 'dl-note', { value: o.deliveryInstructions || '', placeholder: 'Gate code, stairs, call first…' })}`, {
-    okLabel: 'Save delivery',
+    <div data-dl="delivery">${field('Delivery address', 'dl-addr', { type: 'textarea', value: o.deliveryAddress || [c.address, c.area].filter(Boolean).join(', ') })}</div>
+    ${field('Note', 'dl-note', { value: o.deliveryInstructions || '', placeholder: 'Gate code, stairs, call first…' })}
+    <p class="muted" data-dl="collect">The date is when they are expected to fetch it. They get a WhatsApp from the Collections list once it is ready.</p>`, {
+    okLabel: 'Save',
     onOk: async (w) => {
+      const method = val(w, 'dl-method');
       const date = val(w, 'dl-date');
+      if (method === 'collect') {
+        await store.update('orders', id, {
+          deliveryMethod: 'collect', deliveryDate: date || '', deliverySlot: '', driverId: '', driverName: '',
+          deliveryContact: val(w, 'dl-contact'), deliveryPhone: val(w, 'dl-phone'), deliveryInstructions: val(w, 'dl-note'),
+          driverStatus: 'scheduled', driverNote: ''
+        }, 'For collection' + (date ? ', expected ' + date : ''));
+        toast((o.orderNo || 'Order') + ' marked for collection');
+        return;
+      }
       if (!date) { toast('Pick the delivery date', 'warn'); return false; }
       const dId = val(w, 'dl-driver'); const d = driverById(dId);
       await store.update('orders', id, {
-        deliveryDate: date, deliverySlot: val(w, 'dl-slot'), driverId: dId || '', driverName: d ? d.name : '',
+        deliveryMethod: 'delivery', deliveryDate: date, deliverySlot: val(w, 'dl-slot'), driverId: dId || '', driverName: d ? d.name : '',
         deliveryContact: val(w, 'dl-contact'), deliveryPhone: val(w, 'dl-phone'), deliveryAddress: val(w, 'dl-addr'), deliveryInstructions: val(w, 'dl-note'),
         driverStatus: 'scheduled', driverNote: ''
       }, 'Delivery booked for ' + date + (d ? ' with ' + d.name : ''));
@@ -180,12 +222,43 @@ export function scheduleDelivery(id, orders) {
       toast((o.orderNo || 'Order') + ' booked for ' + niceDate(date));
     }
   });
+  // the driver, slot and address only matter for a delivery
+  const card = wrap.querySelector('.modal-card');
+  const sel = card.querySelector('#dl-method');
+  const show = () => { const c = sel.value === 'collect'; card.querySelectorAll('[data-dl="delivery"]').forEach(el => { el.hidden = c; }); card.querySelectorAll('[data-dl="collect"]').forEach(el => { el.hidden = !c; }); };
+  sel.addEventListener('change', show); show();
+}
+
+// One tap from the waiting list: the customer fetches it.
+export async function markForCollection(id, orders) {
+  const o = orders.find(x => x.id === id); if (!o) return;
+  const c = customerById(o.customerId) || {};
+  await store.update('orders', id, {
+    deliveryMethod: 'collect', driverId: '', driverName: '', deliverySlot: '', driverStatus: 'scheduled', driverNote: '',
+    deliveryContact: o.deliveryContact || c.contact || o.customerName || '', deliveryPhone: o.deliveryPhone || c.phone || ''
+  }, 'For collection');
+  toast((o.orderNo || 'Order') + ' marked for collection: tell the customer when it is ready');
+}
+
+// Back to a delivery: it returns to the waiting list for a date and a driver.
+export async function deliverInstead(id, orders) {
+  const o = orders.find(x => x.id === id); if (!o) return;
+  await store.update('orders', id, { deliveryMethod: 'delivery', deliveryDate: '', deliverySlot: '', driverStatus: '' }, 'Changed to a delivery');
+  toast((o.orderNo || 'Order') + ' is back on the delivery list');
 }
 
 // The booking, confirmed to the client on WhatsApp.
 export function confirmToClient(id, orders) {
   const o = orders.find(x => x.id === id); if (!o) return;
   const who = String(o.deliveryContact || o.customerName || '').split(' ')[0] || 'there';
+  if (isCollect(o)) {
+    const where = [settings.address, settings.phone ? 'Phone ' + settings.phone : ''].filter(Boolean).join('. ');
+    const msg = 'Hi ' + who + ', ' + (settings.name || '') + ' here. Your ' + (o.product || 'order') + ' (' + (o.orderNo || '') + ') '
+      + (o.status === 'ready' ? 'is ready for collection' : 'will be ready for collection' + (o.deliveryDate ? ' on ' + niceDate(o.deliveryDate) : ' soon')) + '.'
+      + (where ? ' Collect from ' + where + '.' : '') + ' Reply here to say when you are coming.';
+    window.open('https://wa.me/' + waDigits(phoneOf(o)) + '?text=' + encodeURIComponent(msg), '_blank');
+    return;
+  }
   const msg = 'Hi ' + who + ', ' + (settings.name || '') + ' here. Your ' + (o.product || 'order') + ' (' + (o.orderNo || '') + ') will be delivered on '
     + niceDate(o.deliveryDate) + (o.deliverySlot ? ' between ' + o.deliverySlot.replace(' - ', ' and ') : '') + '.'
     + (addressOf(o) ? ' To: ' + addressOf(o) + '.' : '') + ' The driver will WhatsApp you when on the way. Reply here if that time does not suit.';
@@ -215,12 +288,13 @@ export function printRun(driverId, orders) {
 
 export async function markDelivered(id, orders) {
   const o = orders.find(x => x.id === id); if (!o) return;
-  if (!confirm('Mark ' + (o.orderNo || 'this order') + ' as delivered, without a signature?')) return;
+  const word = isCollect(o) ? 'collected' : 'delivered';
+  if (!confirm('Mark ' + (o.orderNo || 'this order') + ' as ' + word + ', without a signature?')) return;
   const now = store.nowIso(); const who = (store.getUser() || {}).name || 'office';
   const patch = { driverStatus: 'delivered', driverStatusAt: now, deliveredAt: now, deliveredBy: who, hasDeliveryNote: false };
   if (['new', 'in-production', 'ready'].includes(o.status)) Object.assign(patch, { status: 'dispatched', dispatchedAt: o.dispatchedAt || now, dispatchedBy: who });
-  await store.update('orders', id, patch, 'Delivered (marked by the office)');
-  toast((o.orderNo || 'Order') + ' delivered');
+  await store.update('orders', id, patch, (isCollect(o) ? 'Collected' : 'Delivered') + ' (marked by the office)');
+  toast((o.orderNo || 'Order') + ' ' + word);
 }
 
 // The client signs here, in the office or on the office tablet: a
@@ -236,7 +310,7 @@ export function clientSigns(id, orders) {
       if (dataUrl) await store.saveDeliveryNote(id, { orderId: id, orderNo: o.orderNo || '', dataUrl, signedBy, at: now, driver: me });
       const patch = { driverStatus: 'delivered', driverStatusAt: now, deliveredAt: o.deliveredAt || now, deliveredBy: o.deliveredBy || me, signedBy: signedBy || o.signedBy || '', hasDeliveryNote: !!dataUrl || !!o.hasDeliveryNote };
       if (['new', 'in-production', 'ready'].includes(o.status)) Object.assign(patch, { status: 'dispatched', dispatchedAt: o.dispatchedAt || now, dispatchedBy: me });
-      await store.update('orders', id, patch, dataUrl ? 'Delivery note signed by ' + signedBy : 'Handed over without a signature');
+      await store.update('orders', id, patch, dataUrl ? (isCollect(o) ? 'Collected, signed for by ' : 'Delivery note signed by ') + signedBy : (isCollect(o) ? 'Collected' : 'Handed over') + ' without a signature');
       toast((o.orderNo || 'Order') + (dataUrl ? ' signed for by ' + signedBy : ' marked delivered'));
     } catch (e) { toast('Could not save: ' + e.message, 'warn'); }
   });
@@ -244,7 +318,7 @@ export function clientSigns(id, orders) {
 
 export async function undoDelivered(id, orders) {
   const o = orders.find(x => x.id === id); if (!o) return;
-  if (!confirm('Put ' + (o.orderNo || 'this order') + ' back on the delivery list' + (o.hasDeliveryNote ? ' and remove its signed note' : '') + '?')) return;
+  if (!confirm('Put ' + (o.orderNo || 'this order') + ' back on the ' + (isCollect(o) ? 'collections' : 'delivery') + ' list' + (o.hasDeliveryNote ? ' and remove its signed note' : '') + '?')) return;
   const patch = { driverStatus: 'scheduled', driverStatusAt: store.nowIso(), deliveredAt: null, deliveredBy: null, signedBy: null, hasDeliveryNote: false };
   if (o.status === 'dispatched' && !o.invoiceId) Object.assign(patch, { status: 'ready', dispatchedAt: null, dispatchedBy: null });
   await store.update('orders', id, patch, 'Delivery undone');

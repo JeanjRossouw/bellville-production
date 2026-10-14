@@ -426,26 +426,50 @@ export async function initStore() {
 //   3. they have just filled in the sign-up form → create their company
 //   4. none of these                            → role 'none' (the app offers to create one)
 async function resolveUser(u) {
-  const { doc, getDoc } = cloud.fns;
+  const { doc, getDoc, setDoc, updateDoc } = cloud.fns;
   const email = lower(u.email);
-  const me = await getDoc(doc(cloud.db, 'users', u.uid));
-  if (me.exists() && me.data().companyId) {
-    const cid = me.data().companyId;
-    const [mem, comp] = await Promise.all([
-      getDoc(doc(cloud.db, 'companies', cid, 'members', u.uid)),
-      getDoc(doc(cloud.db, 'companies', cid))
-    ]);
-    if (mem.exists() && comp.exists()) {
+  const meRef = doc(cloud.db, 'users', u.uid);
+  const me = await getDoc(meRef);
+  const mine = me.exists() ? me.data() : {};
+  const known = { ...(mine.companies || {}) };        // every company this login belongs to
+  // null when they are no longer a member there (the rules then refuse the read)
+  const load = async (cid) => {
+    try {
+      const [mem, comp] = await Promise.all([
+        getDoc(doc(cloud.db, 'companies', cid, 'members', u.uid)),
+        getDoc(doc(cloud.db, 'companies', cid))
+      ]);
+      if (!mem.exists() || !comp.exists()) return null;
       company = { id: cid, ...normCompany(comp.data()) };
-      return { uid: u.uid, email, name: mem.data().name || me.data().name || email, role: mem.data().role || 'none', companyId: cid };
+      return { uid: u.uid, email, name: mem.data().name || mine.name || email, role: mem.data().role || 'none', companyId: cid };
+    } catch (e) { return null; }
+  };
+  const stillMember = async (cid) => { try { return (await getDoc(doc(cloud.db, 'companies', cid, 'members', u.uid))).exists(); } catch (e) { return false; } };
+  // the company they were last in; failing that (removed from it), any other of theirs
+  const order = [mine.companyId, ...Object.keys(known)].filter((c, i, a) => c && a.indexOf(c) === i);
+  for (const cid of order) {
+    const user = await load(cid);
+    if (!user) { delete known[cid]; continue; }
+    // companies they have since been removed from drop off the list
+    for (const other of Object.keys(known)) if (other !== cid && !(await stillMember(other))) delete known[other];
+    const patch = {};
+    if (cid !== mine.companyId) patch.companyId = cid;
+    if (known[cid] !== (company.name || '') || Object.keys(known).length !== Object.keys(mine.companies || {}).length) { known[cid] = company.name || ''; patch.companies = known; }
+    if (Object.keys(patch).length) await (me.exists() ? updateDoc(meRef, patch) : setDoc(meRef, { email, ...patch }, { merge: true }));
+    user.companies = known;
+    // an invitation to another company waits until this person says yes
+    const inv = await getDoc(doc(cloud.db, 'invites', email));
+    if (inv.exists() && inv.data().companyId !== cid && !known[inv.data().companyId]) {
+      user.pendingInvite = { companyId: inv.data().companyId, companyName: inv.data().companyName || '', role: inv.data().role || '' };
     }
+    return user;
   }
   const invite = await getDoc(doc(cloud.db, 'invites', email));
   if (invite.exists()) return await joinCompany(u, invite.data(), (pendingSignup && pendingSignup.name) || '');
   const p = pendingSignup; pendingSignup = null;
   if (p && p.companyName) return await createCompanyFor(u, p.companyName, p.name);
   company = null;
-  return { uid: u.uid, email, name: (p && p.name) || (me.exists() && me.data().name) || email, role: 'none', companyId: null };
+  return { uid: u.uid, email, name: (p && p.name) || mine.name || email, role: 'none', companyId: null };
 }
 
 function normCompany(d) {
@@ -472,12 +496,12 @@ async function createCompanyFor(u, companyName, name) {
   const b = writeBatch(cloud.db);
   b.set(ref, { name: companyName, ownerUid: u.uid, ownerEmail: email, plan: 'trial', status: 'trial', createdAt: serverTimestamp() });
   b.set(doc(cloud.db, 'companies', cid, 'members', u.uid), { email, name: who, role: 'owner', joinedAt: nowIso() });
-  b.set(doc(cloud.db, 'users', u.uid), { email, name: who, companyId: cid });
+  b.set(doc(cloud.db, 'users', u.uid), { email, name: who, companyId: cid, companies: { [cid]: companyName } }, { merge: true });
   b.set(doc(cloud.db, 'companies', cid, 'settings', 'factory'), { name: companyName, legalName: companyName, orderPrefix: prefixFor(companyName), email, updatedAt: nowIso() });
   Object.entries(DEFAULT_ROLES).forEach(([key, r]) => b.set(doc(cloud.db, 'companies', cid, 'roles', key), { name: r.name, perms: r.perms }));
   await b.commit();
   company = { id: cid, name: companyName, ownerUid: u.uid, plan: 'trial', status: 'trial', createdAt: nowIso() };
-  return { uid: u.uid, email, name: who, role: 'owner', companyId: cid };
+  return { uid: u.uid, email, name: who, role: 'owner', companyId: cid, companies: { [cid]: companyName } };
 }
 
 async function joinCompany(u, inv, name) {
@@ -487,7 +511,8 @@ async function joinCompany(u, inv, name) {
   const who = name || inv.name || email;
   const b = writeBatch(cloud.db);
   b.set(doc(cloud.db, 'companies', cid, 'members', u.uid), { email, name: who, role: inv.role, joinedAt: nowIso(), invitedBy: inv.invitedBy || '' });
-  b.set(doc(cloud.db, 'users', u.uid), { email, name: who, companyId: cid });
+  // merge: a login that already belongs to another company keeps that one too
+  b.set(doc(cloud.db, 'users', u.uid), { email, name: who, companyId: cid, companies: { [cid]: inv.companyName || '' } }, { merge: true });
   b.delete(doc(cloud.db, 'invites', email));
   b.delete(doc(cloud.db, 'companies', cid, 'invites', email));
   await b.commit();
@@ -623,6 +648,92 @@ export async function removeMember(uid) {
   await remove('members', uid);
 }
 
+// Your own name, as the team list and the job cards show it. The database
+// rules let anyone correct their own name, and nothing else of their record.
+export async function setMyName(name) {
+  const n = String(name || '').trim();
+  if (!n) throw new Error('Type your name');
+  if (!currentUser) throw new Error('Sign in first');
+  if (mode === 'demo') {
+    if (currentUser.companyId) { const map = demoRead('members'); if (map[currentUser.uid]) { map[currentUser.uid] = { ...map[currentUser.uid], name: n }; demoWrite('members', map); } }
+    const accounts = demoAccounts(); if (accounts[currentUser.email]) { accounts[currentUser.email].name = n; saveDemoAccounts(accounts); }
+  } else {
+    const { doc, updateDoc, setDoc } = cloud.fns;
+    if (currentUser.companyId) await updateDoc(doc(cloud.db, 'companies', currentUser.companyId, 'members', currentUser.uid), { name: n, updatedAt: nowIso(), updatedBy: n });
+    await setDoc(doc(cloud.db, 'users', currentUser.uid), { name: n }, { merge: true });
+  }
+  currentUser = { ...currentUser, name: n };
+  if (mode === 'demo') localStorage.setItem('cp-demo-user', JSON.stringify(currentUser));
+  emitUser();
+}
+
+// The owner corrects someone else's name.
+export async function setMemberName(uid, name) {
+  const n = String(name || '').trim();
+  if (!n) throw new Error('Type their name');
+  if (currentUser && uid === currentUser.uid) return setMyName(n);
+  await update('members', uid, { name: n });
+  if (mode === 'demo') { const accounts = demoAccounts(); Object.keys(accounts).forEach(e => { if (accounts[e].uid === uid) accounts[e].name = n; }); saveDemoAccounts(accounts); }
+}
+
+// ------------------------------------------------- more than one company ----
+// A login may belong to several companies (the seller setting up a client,
+// an owner with two factories). users/<uid>.companies lists them; companyId
+// is the one being worked in. Switching or joining reloads the app.
+
+export function myCompanies() {
+  if (!currentUser) return [];
+  const m = currentUser.companies || (currentUser.companyId ? { [currentUser.companyId]: (company && company.name) || '' } : {});
+  return Object.keys(m).map(id => ({ id, name: m[id] || id })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function switchCompany(cid) {
+  if (!currentUser || !myCompanies().some(c => c.id === cid)) throw new Error('Not one of your companies');
+  if (mode === 'demo') {
+    const accounts = demoAccounts(); const acc = accounts[currentUser.email];
+    if (acc) { acc.companyId = cid; accounts[currentUser.email] = acc; saveDemoAccounts(accounts); }
+    const mem = jget(demoPrefix(cid) + 'members')[currentUser.uid];
+    const { pendingInvite, ...rest } = currentUser;
+    localStorage.setItem('cp-demo-user', JSON.stringify({ ...rest, companyId: cid, role: mem ? mem.role : 'none' }));
+    return;
+  }
+  await cloud.fns.setDoc(cloud.fns.doc(cloud.db, 'users', currentUser.uid), { companyId: cid }, { merge: true });
+}
+
+// Says yes to the invitation that is waiting: joins that company and works
+// in it from now on, keeping the others.
+export async function acceptInvite() {
+  if (!currentUser || !currentUser.pendingInvite) throw new Error('No invitation is waiting');
+  if (mode === 'demo') {
+    const inv = demoInvites()[currentUser.email];
+    if (!inv) throw new Error('That invitation was withdrawn');
+    demoLogin(currentUser.email, demoJoin(currentUser.email, inv, currentUser.name));
+    return;
+  }
+  const { doc, getDoc } = cloud.fns;
+  const inv = await getDoc(doc(cloud.db, 'invites', currentUser.email));
+  if (!inv.exists()) throw new Error('That invitation was withdrawn');
+  currentUser = await joinCompany(cloud.auth.currentUser, inv.data(), currentUser.name);
+  emitUser();
+}
+
+export async function declineInvite() {
+  if (!currentUser || !currentUser.pendingInvite) return;
+  const e = currentUser.email, cid = currentUser.pendingInvite.companyId;
+  if (mode === 'demo') {
+    const all = demoInvites(); delete all[e]; localStorage.setItem('cp-demo-invites', JSON.stringify(all));
+    const k = demoPrefix(cid) + 'invites'; const map = jget(k); delete map[e]; localStorage.setItem(k, JSON.stringify(map));
+  } else {
+    const { doc, writeBatch } = cloud.fns;
+    const b = writeBatch(cloud.db);
+    b.delete(doc(cloud.db, 'invites', e)); b.delete(doc(cloud.db, 'companies', cid, 'invites', e));
+    await b.commit();
+  }
+  const { pendingInvite, ...rest } = currentUser; currentUser = rest;
+  if (mode === 'demo') localStorage.setItem('cp-demo-user', JSON.stringify(currentUser));
+  emitUser();
+}
+
 // ---------------------------------------------------------- driver page ----
 //
 // Drivers do not log in: their private link carries <companyId>.<code>. In
@@ -717,20 +828,29 @@ function demoCreateCompany(email, companyName, name) {
   demoMemberSet(cid, 'demo-' + email, { email, name: name || email, role: 'owner' });
   localStorage.setItem(demoPrefix(cid) + 'settings', JSON.stringify({ factory: { name: companyName, legalName: companyName, orderPrefix: prefixFor(companyName), email, updatedAt: nowIso() } }));
   localStorage.setItem(demoPrefix(cid) + 'roles', JSON.stringify(Object.fromEntries(Object.entries(DEFAULT_ROLES).map(([k, r]) => [k, { name: r.name, perms: r.perms }]))));
-  return { uid: 'demo-' + email, name: name || email, companyId: cid, role: 'owner' };
+  return { uid: 'demo-' + email, name: name || email, companyId: cid, role: 'owner', companies: { [cid]: companyName } };
 }
 function demoJoin(email, inv, name) {
   const all = demoInvites(); delete all[email]; localStorage.setItem('cp-demo-invites', JSON.stringify(all));
   const k = demoPrefix(inv.companyId) + 'invites'; const map = jget(k); delete map[email]; localStorage.setItem(k, JSON.stringify(map));
-  const acc = { uid: 'demo-' + email, name: name || inv.name || email, companyId: inv.companyId, role: inv.role };
+  const accounts = demoAccounts(); const prev = accounts[email] || {};
+  const was = prev.companies || (prev.companyId ? { [prev.companyId]: (demoCompanies()[prev.companyId] || {}).name || '' } : {});
+  const acc = { uid: 'demo-' + email, name: name || prev.name || inv.name || email, companyId: inv.companyId, role: inv.role,
+    companies: { ...was, [inv.companyId]: inv.companyName || (demoCompanies()[inv.companyId] || {}).name || '' } };
   demoMemberSet(inv.companyId, acc.uid, { email, name: acc.name, role: inv.role, invitedBy: inv.invitedBy || '' });
-  const accounts = demoAccounts(); accounts[email] = acc; saveDemoAccounts(accounts);
+  accounts[email] = acc; saveDemoAccounts(accounts);
   return acc;
 }
 function demoLogin(email, acc) {
   // the role always comes from the company's member list, like the cloud rules
   const mem = acc.companyId ? jget(demoPrefix(acc.companyId) + 'members')[acc.uid] : null;
-  currentUser = { uid: acc.uid, email, name: acc.name, role: acc.companyId ? (mem ? mem.role : 'none') : 'none', companyId: acc.companyId || null };
+  const list = acc.companies || (acc.companyId ? { [acc.companyId]: (demoCompanies()[acc.companyId] || {}).name || '' } : {});
+  Object.keys(list).forEach(cid => { if (!jget(demoPrefix(cid) + 'members')[acc.uid]) delete list[cid]; });   // removed from it since
+  currentUser = { uid: acc.uid, email, name: acc.name, role: acc.companyId ? (mem ? mem.role : 'none') : 'none', companyId: acc.companyId || null, companies: list };
+  const inv = demoInvites()[email];
+  if (inv && acc.companyId && inv.companyId !== acc.companyId && !currentUser.companies[inv.companyId]) {
+    currentUser.pendingInvite = { companyId: inv.companyId, companyName: inv.companyName || '', role: inv.role || '' };
+  }
   company = acc.companyId ? { id: acc.companyId, ...demoCompanies()[acc.companyId] } : null;
   localStorage.setItem('cp-demo-user', JSON.stringify(currentUser));
   emitUser();
@@ -985,12 +1105,12 @@ function seedDemoBase() {
   demoWrite('orders', {
     'd1': mk(1001, { status: 'in-production', fabricStatus: 'received', product: '3 Seater Chesterfield', paidDate: day(-24), dueDate: day(4), planWeek: monday(0) }),
     'd2': mk(1002, { status: 'new', product: '2 Seater Amber', fabric: 'Adore : Flint Grey', priceEach: 6400, paidDate: day(-6), dueDate: day(22) }),
-    'd3': mk(1003, { status: 'ready', product: 'Corner Unit 2.8 x 2.8', fabric: 'Magical : Eclipse', priceEach: 15900, fabricStatus: 'received', paidDate: day(-30), dueDate: day(-2), planWeek: monday(0) }),
-    'd5': mk(1005, { status: 'dispatched', product: 'Ottoman 900mm', fabric: 'Adore : Flint Grey', priceEach: 2400, qty: 2, fabricStatus: 'received', paidDate: day(-35), dueDate: day(-7), dispatchedAt: new Date(Date.now() - 86400000).toISOString(), dispatchedBy: 'Thandi' }),
+    'd3': mk(1003, { status: 'ready', product: 'Corner Unit 2.8 x 2.8', fabric: 'Magical : Eclipse', priceEach: 15900, fabricStatus: 'received', paidDate: day(-30), dueDate: day(-2), planWeek: monday(0), readyAt: day(-1) }),
+    'd5': mk(1005, { status: 'dispatched', product: 'Ottoman 900mm', fabric: 'Adore : Flint Grey', priceEach: 2400, qty: 2, fabricStatus: 'received', paidDate: day(-35), dueDate: day(-7), readyAt: day(-2), dispatchedAt: new Date(Date.now() - 86400000).toISOString(), dispatchedBy: 'Thandi' }),
     'd4': { ...mk(1004, { status: 'new', product: 'Daybed 2.4m', priceEach: 11200, paidDate: day(-10), dueDate: day(18), fabricStatus: 'ordered', planWeek: monday(7) }), customerId: 'd-walkin', customerName: 'Private client — J. Marais', source: 'manual', externalRef: '' }
   });
   demoWrite('counters', { orderNo: { value: 1006 }, invoiceNo: { value: 1 } });
-  demoWrite('settings', { factory: {
+  demoWrite('settings', { factory: { weeklyTarget: 150000,
     phone: '021 000 0000', email: 'factory@couchpotato.co.za',
     labourRate: 85, unitsPerMonth: 60,
     vatRegistered: true, vatNo: '4123456789', regNo: '2015/123456/07', address: '21 Induland Crescent, Lansdowne, Cape Town',
@@ -1078,6 +1198,12 @@ function seedDemoDeliveries() {
       deliveryAddress: c.address || c.area || '', deliveryInstructions: note, driverStatus: 'scheduled' });
     if (o.status === 'new' || o.status === 'in-production' || o.status === 'dispatched') o.status = 'ready';
   });
+  // and one the customer fetches from the factory
+  const col = orders.r5;
+  if (col) {
+    const c = custs[col.customerId] || {};
+    Object.assign(col, { status: 'ready', deliveryMethod: 'collect', deliveryDate: tomorrow, deliveryContact: c.contact || col.customerName, deliveryPhone: c.phone || '082 555 0101', driverStatus: 'scheduled', deliveryInstructions: 'Coming with a bakkie' });
+  }
   demoWrite('orders', orders);
 }
 
@@ -1160,6 +1286,8 @@ function seedDemoExtras() {
     };
     if (status === 'in-production' || status === 'ready') o.planWeek = monday(pick([0, 0, 7, 7, 14]));
     if (status === 'new' && rnd() < 0.5) o.planWeek = monday(pick([7, 14, 21]));
+    if (status === 'ready') o.readyAt = day(-Math.floor(rnd() * 4));
+    if (status === 'dispatched') o.readyAt = day(-Math.floor(rnd() * 6 + 1));
     if (status === 'dispatched') { o.dispatchedAt = new Date(Date.now() - Math.floor(rnd() * 5 + 1) * 86400000).toISOString(); o.dispatchedBy = pick(['Sipho', 'Thandi']); }
     orders['r' + i] = o;
   }

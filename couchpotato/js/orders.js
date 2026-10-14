@@ -153,6 +153,10 @@ export async function setStatus(id, status) {
   if (status === 'invoiced' && !o.invoiceId) { toast('Raise the invoice under Money → Invoices: that marks it Invoiced', 'warn'); return; }
   const meta = statusMeta(status);
   const patch = { status };
+  // when it was finished, for the week's production figures
+  if (status === 'ready' && o.status !== 'ready') patch.readyAt = store.nowIso();
+  if (status === 'dispatched' && !o.readyAt && o.status !== 'ready') patch.readyAt = store.nowIso();   // straight out of the door counts as finished now
+  if ((status === 'new' || status === 'in-production') && o.readyAt) patch.readyAt = '';
   if (status === 'dispatched' && !o.dispatchedAt) {
     patch.dispatchedAt = store.nowIso();
     patch.dispatchedBy = (store.getUser() || {}).name || 'system';
@@ -277,6 +281,7 @@ function orderCard(o) {
         <div class="order-chips">
           ${statusChip(o.status)}${o.invoiceNo ? ' <span class="chip st-inv">' + esc(o.invoiceNo) + '</span>' : ''}
           ${dueBadge(o)}
+          ${o.deliveryMethod === 'collect' && o.status !== 'invoiced' ? '<span class="chip calm" title="The customer collects it from the factory">Collection</span>' : ''}
           ${o.fabric ? fabricChip(o.fabricStatus) : ''}
         </div>
       </div>

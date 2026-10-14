@@ -15,6 +15,14 @@
   # esbuild bundles each function with its node_modules (e.g. jose, @netlify/blobs)
   node_bundler = "esbuild"
 
+# The two timed jobs. Declared here because Netlify does not pick up the
+# schedule written inside these functions (the deploy record showed none),
+# so without this they only ever ran when called by hand.
+[functions."factory-shopify-poll"]
+  schedule = "*/15 * * * *"
+[functions."couchpotato-feed"]
+  schedule = "*/15 * * * *"
+
 # Friendly path for the dedicated till on the main site: /pos boots POS-only mode.
 # (A separate POS site can instead use a pos.* subdomain, which auto-detects.)
 # ---- factorymanager.co.za: Factory Manager's own address ----

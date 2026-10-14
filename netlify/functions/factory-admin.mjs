@@ -10,7 +10,7 @@
 // Env: FACTORY_ADMIN_EMAILS   the owner's email addresses, comma-separated
 //      FACTORY_SERVICE_ACCOUNT the same key the billing function uses
 import { verifyFirebaseToken } from './lib/auth.mjs';
-import { getDoc, patchDoc, projectId } from './lib/factory-firestore.mjs';
+import { getDoc, patchDoc, projectId, serviceAccount } from './lib/factory-firestore.mjs';
 
 const json = (status, obj) => ({ statusCode: status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, body: JSON.stringify(obj) });
 
@@ -24,6 +24,10 @@ export const handler = async (event) => {
     catch { return json(400, { error: 'Invalid request' }); }
     if (body.action !== 'claim') return json(400, { error: 'Unknown action' });
 
+    // The site's own setup comes first, so a missing key is named as such
+    // rather than blamed on the sign-in.
+    try { serviceAccount(); }
+    catch { return json(503, { error: 'The site is not set up yet: the environment variable FACTORY_SERVICE_ACCOUNT is missing on the Netlify site. Add it, redeploy, then try again.' }); }
     const header = (event.headers || {}).authorization || (event.headers || {}).Authorization || '';
     let user;
     try { user = await verifyFirebaseToken(header.startsWith('Bearer ') ? header.slice(7) : '', projectId()); }

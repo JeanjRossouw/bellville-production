@@ -3,7 +3,7 @@
 // field to an order: planWeek (the Monday of the week it is built).
 import * as store from './store.js';
 import { allOrders, orderById, setStatus } from './orders.js';
-import { esc, money, today, niceDate, daysUntil, statusChip, fabricChip, FABRIC_STATES, openModal, toast, empty } from './ui.js';
+import { esc, money, today, niceDate, daysUntil, statusChip, statusMeta, fabricChip, FABRIC_STATES, openModal, toast, empty, field, val, docHeader } from './ui.js';
 import { qrSvg, scanUrl } from './qr.js';
 
 let settings = {};
@@ -35,7 +35,9 @@ export function weeks(count) {
   return out;
 }
 
-const onFloor = (o) => o.status !== 'dispatched' && o.status !== 'invoiced' && o.status !== 'cancelled';
+// On the floor: being built, or waiting to be. A piece marked Done leaves
+// the floor at once; it is then on Deliveries and Scan out, waiting to go.
+const onFloor = (o) => o.status === 'new' || o.status === 'in-production';
 
 // Which column an order sits in: a week Monday, 'later', or 'pool'.
 function bucketOf(o, wks) {
@@ -128,9 +130,11 @@ export function renderFloor(host, overviewHtml) {
       <div class="btn-row">
         <button class="btn ghost" data-act="print-planner">Planner</button>
         <button class="btn ghost" data-act="print-week-jobs">This week's job cards</button>
+        ${store.can('profit') ? '<button class="btn ghost" data-act="print-week-report" title="What the week produced, against the target">Week’s production</button>' : ''}
       </div>
     </div>
     ${overviewHtml || ''}
+    ${weekStrip()}
     <div class="btn-row" style="margin-bottom:.9rem">${tab('planner', 'Planner')}${tab('fabric', 'Fabric')}</div>
     ${body}`;
   wireDragDrop(host);
@@ -260,6 +264,81 @@ function jobCardHtml(o) {
     <div class="notes"><b>Notes</b><br>${esc(o.notes || '')}</div>
     <div class="ft"><span>Order placed ${esc(niceDate(o.paidDate || o.createdAt))}</span><span>Printed ${esc(niceDate(today()))}</span></div>
   </div>`;
+}
+
+// ------------------------------------------------ the week's production ----
+// What the week produced against the owner's target. Finished = marked Done
+// (or straight out of the door) in that week; planned = on that week's
+// planner. Values are the orders' prices, excl. VAT. Money roles only.
+
+const valueOf = (o) => (Number(o.priceEach) || 0) * (Number(o.qty) || 1);
+// the day a piece was finished: readyAt, else its Done step, else when it left
+export function finishedOn(o) {
+  if (o.readyAt) return String(o.readyAt).slice(0, 10);
+  const ev = (o.events || []).filter(e => /Moved to Done/.test(e.what || '')).pop();
+  if (ev && ev.at) return String(ev.at).slice(0, 10);
+  if ((o.status === 'dispatched' || o.status === 'invoiced') && o.dispatchedAt) return String(o.dispatchedAt).slice(0, 10);
+  return '';
+}
+export function weekFigures(mon) {
+  const sun = plusDays(mon, 6);
+  const inWeek = (d) => d && d >= mon && d <= sun;
+  const rows = allOrders().filter(o => o.status !== 'cancelled');
+  const finished = rows.filter(o => inWeek(finishedOn(o)));
+  const planned = rows.filter(o => o.planWeek === mon);
+  const open = planned.filter(o => !finished.includes(o) && (o.status === 'new' || o.status === 'in-production'));
+  const out = rows.filter(o => inWeek(String(o.dispatchedAt || '').slice(0, 10)));
+  const sum = (a) => a.reduce((t, o) => t + valueOf(o), 0);
+  const target = Number(settings.weeklyTarget) || 0;
+  const finishedValue = sum(finished);
+  return { mon, sun, target, finished, planned, open, out, finishedValue, plannedValue: sum(planned), openValue: sum(open), outValue: sum(out), pct: target ? Math.round(finishedValue / target * 100) : null };
+}
+function weekStrip() {
+  if (!store.can('profit')) return '';
+  const f = weekFigures(mondayOf(today()));
+  const cur = settings.currency || 'R';
+  const cls = f.target ? (f.finishedValue >= f.target ? 'green' : f.pct >= 70 ? 'amber' : 'red') : '';
+  const tile = (n, label, c) => `<div class="tile ${c || ''}"><div class="tile-n">${n}</div><div class="tile-l">${label}</div></div>`;
+  return `<div class="tiles week-strip">
+    ${tile(esc(money(f.finishedValue, cur)), 'Finished this week · ' + f.finished.length + ' piece' + (f.finished.length === 1 ? '' : 's'))}
+    ${tile(f.target ? f.pct + '%' : '—', f.target ? 'of the ' + esc(money(f.target, cur)) + ' weekly target' : 'No weekly target yet (Settings)', cls)}
+    ${tile(esc(money(f.openValue, cur)), 'Planned this week, still to finish · ' + f.open.length)}
+    ${tile(esc(money(f.outValue, cur)), 'Left the factory this week · ' + f.out.length)}
+  </div>`;
+}
+export function weekReportDialog() {
+  if (!store.can('profit')) { toast('Your role cannot see the money side', 'warn'); return; }
+  const start = mondayOf(today());
+  const short = (d) => niceDate(d).replace(/ \d{4}$/, '');
+  const choices = [];
+  for (let i = 1; i >= -8; i--) {
+    const mon = plusDays(start, i * 7);
+    choices.push({ value: mon, label: (i === 1 ? 'Next week' : i === 0 ? 'This week' : i === -1 ? 'Last week' : 'Week of ' + short(mon)) + ' · ' + short(mon) + ' – ' + short(plusDays(mon, 6)) });
+  }
+  openModal('The week’s production', field('Week', 'wr-week', { type: 'select', value: start, options: choices })
+    + '<p class="muted">What was finished that week against the weekly target (Settings → Numbering and terms), what was planned but not finished, and what left the factory.</p>',
+    { okLabel: 'Print', onOk: (w) => { printWeekReport(val(w, 'wr-week') || start); } });
+}
+export function printWeekReport(mon) {
+  const f = weekFigures(mon);
+  const cur = settings.currency || 'R';
+  const range = niceDate(mon) + ' – ' + niceDate(f.sun);
+  const line = (o, extra) => `<tr><td><b>${esc(o.orderNo || '')}</b></td><td>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' × ' + esc(o.qty) : ''}</td><td>${esc(o.customerName || '')}</td><td>${extra}</td><td style="text-align:right">${esc(money(valueOf(o), cur))}</td></tr>`;
+  const table = (items, col, extra, total) => items.length
+    ? `<table class="pl"><tr><th>Order</th><th>Product</th><th>Customer</th><th>${col}</th><th style="text-align:right">Value excl. VAT</th></tr>${items.map(o => line(o, extra(o))).join('')}
+       <tr><td colspan="4" style="text-align:right"><b>Total</b></td><td style="text-align:right"><b>${esc(money(total, cur))}</b></td></tr></table>`
+    : '<p><i>None</i></p>';
+  const verdict = !f.target ? 'No weekly target set' : f.finishedValue >= f.target ? 'Target met: ' + f.pct + '%' : f.pct + '% of target, short by ' + money(f.target - f.finishedValue, cur);
+  const body = `<div class="page">
+    ${docHeader(settings, 'WEEK’S PRODUCTION', range, [verdict])}
+    <table class="pl"><tr><th>Target</th><th>Finished</th><th>Of target</th><th>Planned for the week</th><th>Planned, not finished</th><th>Left the factory</th></tr>
+      <tr><td>${f.target ? esc(money(f.target, cur)) : '—'}</td><td>${esc(money(f.finishedValue, cur))} · ${f.finished.length}</td><td><b>${f.pct == null ? '—' : f.pct + '%'}</b></td>
+      <td>${esc(money(f.plannedValue, cur))} · ${f.planned.length}</td><td>${esc(money(f.openValue, cur))} · ${f.open.length}</td><td>${esc(money(f.outValue, cur))} · ${f.out.length}</td></tr></table>
+    <h2>Finished this week (${f.finished.length})</h2>${table(f.finished, 'Finished', o => esc(niceDate(finishedOn(o))), f.finishedValue)}
+    <h2>Planned for this week, not finished (${f.open.length})</h2>${table(f.open, 'Status', o => esc(statusMeta(o.status).label) + (o.dueDate ? ' · due ' + esc(niceDate(o.dueDate)) : ''), f.openValue)}
+    <h2>Left the factory this week (${f.out.length})</h2>${table(f.out, 'Out', o => esc(niceDate(String(o.dispatchedAt).slice(0, 10))), f.outValue)}
+  </div>`;
+  openPrint('Week’s production ' + mon, body);
 }
 
 export function printJobCard(id) {

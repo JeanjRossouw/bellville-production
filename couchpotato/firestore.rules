@@ -97,7 +97,9 @@ service cloud.firestore {
                           && get(/databases/$(database)/documents/invites/$(myEmail())).data.companyId == cid
                           && get(/databases/$(database)/documents/invites/$(myEmail())).data.role == request.resource.data.role ) );
         // Only an owner changes roles, and never their own (so a company is never left without one).
-        allow update: if isOwner(cid) && uid != request.auth.uid && validRole(cid, request.resource.data.role);
+        // Anyone may correct their own name, and nothing else of their record.
+        allow update: if (isOwner(cid) && uid != request.auth.uid && validRole(cid, request.resource.data.role))
+                      || (signedIn() && request.auth.uid == uid && onlyChanged(['name', 'updatedAt', 'updatedBy']));
         // An owner removes people; anyone may leave.
         allow delete: if isOwner(cid) && uid != request.auth.uid || (signedIn() && request.auth.uid == uid && role(cid) != 'owner');
       }
