@@ -1067,6 +1067,8 @@ export function seedDemoIfEmpty() {
   if (!had) seedDemoBase();
   seedDemoExtras();
   seedDemoDeliveries();
+  seedDemoWages();
+  seedDemoHistory();
   return !had;
 }
 
@@ -1087,7 +1089,7 @@ function seedDemoBase() {
   const day = (offset) => {
     const d = new Date();
     d.setDate(d.getDate() + offset);
-    return d.toISOString().split('T')[0];
+    return localDate(d);
   };
   const monday = (offset) => {
     const d = new Date(); d.setDate(d.getDate() + offset);
@@ -1207,6 +1209,174 @@ function seedDemoDeliveries() {
   demoWrite('orders', orders);
 }
 
+// Wages: four people, paid four ways, and last week's run already paid.
+function seedDemoWages() {
+  const st = demoRead('staff');
+  if (st.s1) return;
+  const now = nowIso();
+  Object.assign(st, {
+    s1: { name: 'Sipho Dlamini', job: 'Upholsterer', phone: '082 111 2222', idNumber: '8605125800083', payType: 'piece', rate: 95, uif: true, bank: 'Capitec 1234567890', active: true, createdAt: now, createdBy: 'demo' },
+    s2: { name: 'Thandi Mokoena', job: 'Sewing', phone: '083 222 3333', idNumber: '9102030800084', payType: 'weekly', rate: 2600, uif: true, bank: 'FNB 62012345678', active: true, createdAt: now, createdBy: 'demo' },
+    s3: { name: 'Pieter Swart', job: 'Frames', phone: '084 333 4444', idNumber: '7811205800085', payType: 'hourly', rate: 62, uif: true, bank: 'Standard Bank 001234567', active: true, createdAt: now, createdBy: 'demo' },
+    s4: { name: 'Nomsa Jacobs', job: 'Office', phone: '082 444 5555', idNumber: '8907170800086', payType: 'monthly', rate: 14500, uif: true, bank: 'Nedbank 1098765432', active: true, createdAt: now, createdBy: 'demo' }
+  });
+  demoWrite('staff', st);
+  const plus = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return localDate(d); };
+  const thisMon = (() => { const d = new Date(); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return localDate(d); })();
+  const last = plus(thisMon, -7);
+  const runs = demoRead('wageRuns');
+  runs['w-' + last] = { id: 'w-' + last, kind: 'week', start: last, end: plus(last, 6), status: 'paid', paidAt: plus(last, 4) + 'T15:00:00.000Z', paidBy: 'Jean',
+    lines: [
+      { staffId: 's1', name: 'Sipho Dlamini', job: 'Upholsterer', payType: 'piece', rate: 95, uif: true, hours: 4, overtime: 0, bonus: 0, advances: 0, deductions: [], note: '',
+        pieces: [{ orderId: 'past-1', orderNo: 'CP-0991', product: '3 Seater Chesterfield', hours: 14, amount: 1330 }, { orderId: 'past-2', orderNo: 'CP-0994', product: 'Ottoman 900mm', hours: 4, amount: 380 }, { orderId: 'past-3', orderNo: 'CP-0996', product: 'Wingback Chair', hours: 9, amount: 855 }] },
+      { staffId: 's2', name: 'Thandi Mokoena', job: 'Sewing', payType: 'weekly', rate: 2600, uif: true, hours: 0, overtime: 3, pieces: [], bonus: 0, advances: 0, deductions: [{ what: 'Loan repayment', amount: 200 }], note: '' },
+      { staffId: 's3', name: 'Pieter Swart', job: 'Frames', payType: 'hourly', rate: 62, uif: true, hours: 45, overtime: 6, pieces: [], bonus: 0, advances: 300, deductions: [], note: '' }
+    ], createdAt: now, createdBy: 'demo', updatedAt: now, updatedBy: 'demo' };
+  demoWrite('wageRuns', runs);
+}
+
+// Six months before the recent weeks: finished orders with their invoices
+// and payments (a few still owing), till sales, purchase orders received,
+// quotes won and lost, and the wage runs, so Profit, the statements and
+// every history tab look like a factory that has been running. Seeded once.
+function seedDemoHistory() {
+  const counters = demoRead('counters');
+  if (counters.demoHistory) return;
+  let seed = 20260401;
+  const rnd = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const pick = (a) => a[Math.floor(rnd() * a.length)];
+  const between = (lo, hi) => lo + Math.floor(rnd() * (hi - lo + 1));
+  const plus = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return localDate(d); };
+  const at = (iso, h) => iso + 'T' + String(h || 9).padStart(2, '0') + ':00:00.000Z';
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const pad = (n) => String(n).padStart(4, '0');
+  const todayIso = localDate();
+  const thisMon = (() => { const d = new Date(todayIso + 'T12:00:00'); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return localDate(d); })();
+  const settings = demoRead('settings').factory || {};
+  const vat = settings.vatRegistered ? (Number(settings.vatRate) || 0.15) : 0;
+  const prefix = settings.invoicePrefix || 'INV-';
+  const customers = demoRead('customers'), products = demoRead('products'), materials = demoRead('materials');
+  const orders = demoRead('orders'), invoices = demoRead('invoices'), sales = demoRead('sales'), runs = demoRead('wageRuns'), pos = demoRead('purchaseOrders'), moves = demoRead('stockMoves'), quotes = demoRead('quotes');
+  const custIds = ['d-bellville', 'd-bellville', 'd-bellville', 'd-stellenbosch', 'd-durbanville', 'd-walkin', 'd-botha'].filter(id => customers[id]);
+  if (!custIds.length) return;
+  const catalogue = [['3 Seater Chesterfield', 8500], ['2 Seater Amber', 6400], ['Corner Unit 2.8 x 2.8', 15900], ['Daybed 2.4m', 11200], ['Ottoman 900mm', 2400], ['Alaska 3 Seater 2.4m', 9200], ['Paris Chesterfield', 12800], ['Wingback Chair', 4600]];
+  const fabrics = ['Linen Look : Natural', 'Moldova : Oatmeal', 'Hertex Velvet : Forest', 'Boucle : Cream', 'Magical : Eclipse', 'Adore : Flint Grey', 'Corduroy : Magnet'];
+  const hoursOf = (name) => { const p = Object.values(products).find(x => x.name === name); return (p && Number(p.labourHours)) || 8; };
+  let orderN = 760;
+  let invoiceN = Math.max(1, (counters.invoiceNo && counters.invoiceNo.value) || 1);
+  let saleN = Math.max(1, (counters.saleNo && counters.saleNo.value) || 1);
+  let poN = Math.max(1, (counters.poNo && counters.poNo.value) || 1);
+  let quoteN = Math.max(1, (counters.quoteNo && counters.quoteNo.value) || 1);
+  const shelf = [['Ottoman 900mm', 2400, 'p-ott'], ['Linen Scatter Cushion 50cm', 390, ''], ['Oak Side Table', 2520, ''], ['Wingback Chair', 4600, 'p-wing']];
+  const suppliers = ['Foam Factory', 'Timber City', 'Hertex Fabrics', 'Fabric Library'];
+  const matList = Object.keys(materials).map(id => ({ id, ...materials[id] }));
+  for (let w = -26; w <= -2; w++) {
+    const mon = plus(thisMon, w * 7), friday = plus(mon, 4);
+    const byCust = {}, weekOrders = [];
+    const n = between(5, 8);
+    for (let i = 0; i < n; i++) {
+      const cid = pick(custIds); const c = customers[cid] || {};
+      const [product, price] = pick(catalogue);
+      const qty = rnd() < 0.1 ? 2 : 1;
+      const paidDate = plus(mon, -between(20, 30));
+      const readyDay = plus(mon, between(1, 4));
+      const outDay = plus(readyDay, between(0, 2));
+      const id = 'h' + orderN;
+      const o = { orderNo: 'CP-' + pad(orderN), customerId: cid, customerName: c.name || '', externalRef: cid === 'd-bellville' ? String(2400 + orderN) : '', source: cid === 'd-bellville' ? 'feed' : 'manual',
+        product, qty, fabric: pick(fabrics), fabricStatus: 'received', notes: '', paidDate, dueDate: plus(paidDate, 28), priceEach: price, status: 'invoiced', planWeek: mon,
+        readyAt: at(readyDay, 15), dispatchedAt: at(outDay, 11), dispatchedBy: pick(['Sipho', 'Thandi']), deliveryMethod: rnd() < 0.2 ? 'collect' : 'delivery',
+        events: [{ at: at(paidDate, 9), by: 'Nomsa', what: 'Order captured' }, { at: at(mon, 8), by: 'Sipho', what: 'Moved to In production' }, { at: at(readyDay, 15), by: 'Sipho', what: 'Moved to Done' }, { at: at(outDay, 11), by: 'Thandi', what: 'Moved to Dispatched' }],
+        createdAt: at(paidDate, 9), createdBy: 'Nomsa', updatedAt: at(outDay, 11), updatedBy: 'Thandi' };
+      orders[id] = o; weekOrders.push({ id, o });
+      (byCust[cid] = byCust[cid] || []).push({ id, o });
+      orderN++;
+    }
+    // one invoice per customer for the week, on the Friday; the older ones paid
+    Object.keys(byCust).forEach(cid => {
+      const c = customers[cid] || {}; const terms = Number(c.termsDays) || 0;
+      const lines = byCust[cid].map(({ id, o }) => ({ orderId: id, orderNo: o.orderNo, externalRef: o.externalRef || '', description: o.product + (o.fabric ? ' — ' + o.fabric : ''), qty: o.qty, unitPrice: o.priceEach }));
+      const subtotal = r2(lines.reduce((s, l) => s + l.qty * l.unitPrice, 0)), vatAmt = r2(subtotal * vat), total = r2(subtotal + vatAmt);
+      const invoiceNo = prefix + pad(invoiceN);
+      const dueDate = plus(friday, terms);
+      const payDay = terms === 0 ? friday : plus(friday, between(Math.min(terms, 3), terms + 12));
+      const paid = (w <= -6 || terms === 0 || rnd() < 0.5) && payDay <= todayIso;
+      const method = terms === 0 ? pick(['EFT', 'Card', 'Cash']) : 'EFT';
+      const invId = 'hi' + invoiceN;
+      invoices[invId] = { invoiceNo, customerId: cid, customerName: c.name || '', date: friday, dueDate, lines, subtotal, vat: vatAmt, vatRate: vat, total,
+        status: paid ? 'paid' : 'issued', paidAt: paid ? payDay : '', payments: paid ? [{ at: payDay, amount: total, method, ref: terms === 0 ? '' : 'Payment ' + invoiceNo, by: 'Nomsa' }] : [], note: '',
+        events: [{ at: at(friday, 16), by: 'Nomsa', what: 'Invoice issued' }].concat(paid ? [{ at: at(payDay, 10), by: 'Nomsa', what: 'Payment R ' + total + ' (' + method + ') — paid in full' }] : []),
+        createdAt: at(friday, 16), createdBy: 'Nomsa', updatedAt: at(paid ? payDay : friday, 16), updatedBy: 'Nomsa' };
+      byCust[cid].forEach(({ o }) => { o.invoiceId = invId; o.invoiceNo = invoiceNo; o.events.push({ at: at(friday, 16), by: 'Nomsa', what: 'Invoiced on ' + invoiceNo }); });
+      invoiceN++;
+    });
+    // the showroom till: shelf pieces, paid there and then
+    const nSales = between(2, 4);
+    for (let i = 0; i < nSales; i++) {
+      const date = plus(mon, between(0, 5)); if (date > todayIso) continue;
+      const saleNo = 'S-' + pad(saleN), invoiceNo = prefix + pad(invoiceN);
+      const lines = []; const nl = rnd() < 0.3 ? 2 : 1;
+      for (let k = 0; k < nl; k++) { const [name, price, pid] = pick(shelf); lines.push({ productId: pid, name, qty: 1, unitPrice: price, kind: 'stock', fabric: '', note: '' }); }
+      const subtotal = r2(lines.reduce((s, l) => s + l.qty * l.unitPrice, 0)), vatAmt = r2(subtotal * vat), total = r2(subtotal + vatAmt);
+      const method = pick(['Card', 'Card', 'Cash', 'EFT']);
+      const invId = 'hs' + saleN;
+      invoices[invId] = { invoiceNo, customerId: '', customerName: 'Walk-in customer', date, dueDate: date, lines: lines.map(l => ({ orderId: '', orderNo: '', externalRef: saleNo, description: l.name, qty: l.qty, unitPrice: l.unitPrice })),
+        subtotal, vat: vatAmt, vatRate: vat, total, status: 'paid', paidAt: date, payments: [{ at: date, amount: total, method, ref: '', by: 'Nomsa' }], note: 'Till sale ' + saleNo, saleNo,
+        events: [{ at: at(date, 14), by: 'Nomsa', what: 'Raised at the till (' + saleNo + ')' }], createdAt: at(date, 14), createdBy: 'Nomsa', updatedAt: at(date, 14), updatedBy: 'Nomsa' };
+      sales['hsl' + saleN] = { saleNo, date, customerId: '', customerName: 'Walk-in customer', lines, subtotal, discount: 0, vat: vatAmt, total, paidNow: total, method, ref: '', balance: 0, invoiceId: invId, invoiceNo, note: '', by: 'Nomsa',
+        createdAt: at(date, 14), createdBy: 'Nomsa', updatedAt: at(date, 14), updatedBy: 'Nomsa' };
+      saleN++; invoiceN++;
+    }
+    // the week's wages, paid on the Friday: Sipho's pieces are this week's sofas and chairs
+    const built = weekOrders.filter(x => ['3 Seater Chesterfield', 'Paris Chesterfield', 'Alaska 3 Seater 2.4m', 'Wingback Chair', '2 Seater Amber'].includes(x.o.product)).slice(0, between(2, 4));
+    const pieces = built.map(({ id, o }) => { const h = hoursOf(o.product) * (o.qty || 1); return { orderId: id, orderNo: o.orderNo, product: o.product, hours: h, amount: r2(h * 95) }; });
+    runs['w-' + mon] = { id: 'w-' + mon, kind: 'week', start: mon, end: plus(mon, 6), status: 'paid', paidAt: at(friday, 15), paidBy: 'Jean',
+      lines: [
+        { staffId: 's1', name: 'Sipho Dlamini', job: 'Upholsterer', payType: 'piece', rate: 95, uif: true, hours: pick([0, 0, 2, 4]), overtime: 0, pieces, bonus: 0, advances: 0, deductions: [], note: '' },
+        { staffId: 's2', name: 'Thandi Mokoena', job: 'Sewing', payType: 'weekly', rate: 2600, uif: true, hours: 0, overtime: pick([0, 0, 2, 3, 5]), pieces: [], bonus: 0, advances: rnd() < 0.15 ? 300 : 0, deductions: (((w % 4) + 4) % 4 === 0) ? [{ what: 'Loan repayment', amount: 200 }] : [], note: '' },
+        { staffId: 's3', name: 'Pieter Swart', job: 'Frames', payType: 'hourly', rate: 62, uif: true, hours: pick([45, 45, 45, 40, 36]), overtime: pick([0, 0, 3, 6, 8]), pieces: [], bonus: 0, advances: 0, deductions: [], note: '' }
+      ], createdAt: at(friday, 15), createdBy: 'Jean', updatedAt: at(friday, 15), updatedBy: 'Jean' };
+    // a supplier delivery every third week or so, received in full
+    if (((w % 3) + 3) % 3 === 0 && matList.length) {
+      const poNo = (settings.poPrefix || 'PO-') + pad(poN);
+      const picked = matList.slice().sort(() => rnd() - 0.5).slice(0, between(2, 3));
+      const lines = picked.map(m => { const q = m.unit === 'each' ? between(10, 40) : between(20, 120); return { materialId: m.id, name: m.name, unit: m.unit || '', qty: q, cost: Number(m.cost) || 0, received: q }; });
+      const when = plus(mon, 2), supplier = pick(suppliers);
+      pos['hpo' + poN] = { poNo, supplier, supplierPhone: '', supplierEmail: '', expectedDate: when, notes: '', lines, status: 'received', sentAt: at(plus(mon, -5), 10), receivedAt: at(when, 11),
+        events: [{ at: at(plus(mon, -5), 10), by: 'Nomsa', what: 'Purchase order raised' }, { at: at(when, 11), by: 'Pieter', what: 'Received in full' }], createdAt: at(plus(mon, -5), 10), createdBy: 'Nomsa', updatedAt: at(when, 11), updatedBy: 'Pieter' };
+      lines.forEach((l, i) => { moves['hmv' + poN + '-' + i] = { materialId: l.materialId, name: l.name, unit: l.unit, qty: l.qty, kind: 'received', ref: poNo, note: supplier, createdAt: at(when, 11), createdBy: 'Pieter', updatedAt: at(when, 11), updatedBy: 'Pieter' }; });
+      poN++;
+    }
+    // a quote now and then: most won, some lost, one that lapsed
+    if (((w % 4) + 4) % 4 === 2) {
+      const cid = pick(['d-stellenbosch', 'd-durbanville', 'd-botha'].filter(c => customers[c])); const c = customers[cid] || {};
+      const [product, price] = pick(catalogue); const qty = between(1, 3);
+      const sent = plus(mon, 1), outcome = pick(['accepted', 'accepted', 'accepted', 'declined', 'expired']);
+      const quoteNo = (settings.quotePrefix || 'Q-') + pad(quoteN);
+      quotes['hq' + quoteN] = { quoteNo, customerId: cid, customerName: c.name || '', prospect: null, lines: [{ productId: '', description: product, fabric: pick(fabrics), qty, unitPrice: price }], discount: 0, validUntil: plus(sent, 14),
+        notes: 'Lead time 4 weeks from deposit.', status: outcome === 'expired' ? 'sent' : outcome, sentAt: at(sent, 10), acceptedAt: outcome === 'accepted' ? at(plus(sent, between(1, 6)), 12) : '', declinedAt: outcome === 'declined' ? at(plus(sent, between(1, 6)), 12) : '',
+        events: [{ at: at(sent, 10), by: 'Nomsa', what: 'Quote sent' }].concat(outcome === 'accepted' ? [{ at: at(plus(sent, 3), 12), by: 'Nomsa', what: 'Accepted' }] : outcome === 'declined' ? [{ at: at(plus(sent, 3), 12), by: 'Nomsa', what: 'Declined' }] : []),
+        createdAt: at(sent, 10), createdBy: 'Nomsa', updatedAt: at(sent, 10), updatedBy: 'Nomsa' };
+      quoteN++;
+    }
+  }
+  // monthly salaries for the last five months
+  for (let m = -5; m <= -1; m++) {
+    const d = new Date(todayIso + 'T12:00:00'); const first = new Date(d.getFullYear(), d.getMonth() + m, 1, 12), last = new Date(d.getFullYear(), d.getMonth() + m + 1, 0, 12);
+    const ym = localDate(first).slice(0, 7), end = localDate(last);
+    runs['m-' + ym] = { id: 'm-' + ym, kind: 'month', start: ym + '-01', end, status: 'paid', paidAt: at(plus(end, -5), 12), paidBy: 'Jean',
+      lines: [{ staffId: 's4', name: 'Nomsa Jacobs', job: 'Office', payType: 'monthly', rate: 14500, uif: true, hours: 0, overtime: 0, pieces: [], bonus: 0, advances: 0, deductions: [], note: '' }],
+      createdAt: at(end, 12), createdBy: 'Jean', updatedAt: at(end, 12), updatedBy: 'Jean' };
+  }
+  demoWrite('orders', orders); demoWrite('invoices', invoices); demoWrite('sales', sales); demoWrite('wageRuns', runs);
+  demoWrite('purchaseOrders', pos); demoWrite('stockMoves', moves); demoWrite('quotes', quotes);
+  counters.invoiceNo = { value: Math.max(invoiceN, (counters.invoiceNo && counters.invoiceNo.value) || 0) };
+  counters.saleNo = { value: Math.max(saleN, (counters.saleNo && counters.saleNo.value) || 0) };
+  counters.poNo = { value: Math.max(poN, (counters.poNo && counters.poNo.value) || 0) };
+  counters.quoteNo = { value: Math.max(quoteN, (counters.quoteNo && counters.quoteNo.value) || 0) };
+  counters.demoHistory = { value: 1 };
+  demoWrite('counters', counters);
+}
+
 // The stock room: people, a few tools, and some stock already given out.
 function seedDemoStoreroom() {
   const st = demoRead('storeStaff');
@@ -1244,8 +1414,8 @@ function seedDemoExtras() {
   let seed = 20261006;
   const rnd = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
   const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
-  const day = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return d.toISOString().split('T')[0]; };
-  const monday = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.toISOString().split('T')[0]; };
+  const day = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return localDate(d); };
+  const monday = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return localDate(d); };
 
   const customers = demoRead('customers');
   const extraCust = {

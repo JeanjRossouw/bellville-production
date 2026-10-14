@@ -3,7 +3,7 @@
 // field to an order: planWeek (the Monday of the week it is built).
 import * as store from './store.js';
 import { allOrders, orderById, setStatus } from './orders.js';
-import { esc, money, today, niceDate, daysUntil, statusChip, statusMeta, fabricChip, FABRIC_STATES, openModal, toast, empty, field, val, docHeader } from './ui.js';
+import { esc, money, today, isoLocal, niceDate, daysUntil, statusChip, statusMeta, fabricChip, FABRIC_STATES, openModal, toast, empty, field, val, docHeader } from './ui.js';
 import { qrSvg, scanUrl } from './qr.js';
 
 let settings = {};
@@ -14,12 +14,12 @@ let floorView = 'planner';   // planner | fabric
 // --------------------------------------------------------------- weeks ------
 
 export function mondayOf(iso) {
-  const d = new Date((iso || today()) + 'T00:00:00');
+  const d = new Date((iso || today()) + 'T12:00:00');
   if (isNaN(d.getTime())) return mondayOf(today());
   d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-  return d.toISOString().split('T')[0];
+  return isoLocal(d);
 }
-const plusDays = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toISOString().split('T')[0]; };
+const plusDays = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return isoLocal(d); };
 
 export function weeks(count) {
   const start = mondayOf(today());

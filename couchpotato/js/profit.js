@@ -10,7 +10,7 @@
 // overheads (Costing → Overheads). Labour and materials are the costing's
 // estimates, not timesheets or invoices; the report says so.
 import { productByName, costOf, overheadPerUnit } from './costing.js';
-import { esc, money, today } from './ui.js';
+import { esc, money, today, isoLocal } from './ui.js';
 
 let settings = {};
 let month = '';         // 'YYYY-MM' being looked at
@@ -80,8 +80,8 @@ export function monthTotals(list, m) {
 }
 
 function lastMonths(n) {
-  const out = []; const d = new Date(today() + 'T00:00:00'); d.setDate(1);
-  for (let i = 0; i < n; i++) { out.push(d.toISOString().slice(0, 7)); d.setMonth(d.getMonth() - 1); }
+  const out = []; const d = new Date(today() + 'T12:00:00'); d.setDate(1);
+  for (let i = 0; i < n; i++) { out.push(isoLocal(d).slice(0, 7)); d.setMonth(d.getMonth() - 1); }
   return out;
 }
 

@@ -17,6 +17,7 @@ import { renderScan, setScanSettings, startCamera, stopCamera, manualFind, confi
 import { startPos, renderPos, setPosSettings, posAction, posInput, allSales } from './pos.js';
 import { startQuotes, renderQuotes, setQuoteSettings, setQuoteFilter, newQuote, editQuote, copyQuote, sendQuote, printQuote, acceptQuote, declineQuote } from './quotes.js';
 import { renderProfit, setProfitSettings, setProfitMonth } from './profit.js';
+import { startWages, renderWages, setWagesSettings, setWageView, setWagePeriod, wageInput, newStaff, editStaff, toggleStaff, addPiece, removePiece, addDeduction, removeDeduction, saveRun, markPaid, reopenRun, printWageSheet, printPayslips, exportRun } from './wages.js';
 import {
   startDeliveries, renderDeliveries, setDeliverySettings, setDeliveryView, setDeliveryDay, scheduleDelivery, markForCollection, deliverInstead, confirmToClient,
   sendRun, printRun, markDelivered, undoDelivered, viewNote, clientSigns, newDriver, editDriver, sendDriverLink, copyDriverLink, relinkDriver, removeDriver
@@ -68,6 +69,7 @@ const NAV = [
   { key: 'storeroom', label: 'Stock room', group: 'buying' },
   { key: 'invoices', label: 'Invoices', group: 'money' },
   { key: 'profit', label: 'Profit', group: 'money' },
+  { key: 'wages', label: 'Wages', group: 'money' },
   { key: 'settings', label: 'Settings' },
   { key: 'clients', label: 'Clients' }
 ];
@@ -82,7 +84,7 @@ const allowedViews = (user) => !user ? [] : NAV.map(n => n.key).filter(k =>
 const viewOnly = (k) => store.getUser() && store.getUser().role !== 'owner' && k !== 'clients' && levelOf(store.myPerms(), k) === 'view';
 // Actions that only look, print or switch what is shown — allowed on a view-only screen.
 const LOOK_ONLY = new Set(['filter-status', 'floor-view', 'cost-view', 'stock-view', 'quote-filter', 'profit-month', 'inv-view',
-  'print-job', 'print-week-jobs', 'print-week-report', 'print-planner', 'print-pricesheet', 'print-costsheet', 'inv-print', 'stmt-print', 'inv-export',
+  'print-job', 'print-week-jobs', 'print-week-report', 'wg-view', 'wg-period', 'wg-print-sheet', 'wg-print-slips', 'wg-export', 'wg-open', 'print-planner', 'print-pricesheet', 'print-costsheet', 'inv-print', 'stmt-print', 'inv-export',
   'po-print', 'quote-print', 'scan-start', 'scan-stop', 'scan-find', 'notify',
   'sr-view', 'sr-asset-history',
   'dl-view', 'dl-day', 'dl-day-pick', 'dl-print-run', 'dl-note', 'dl-confirm', 'dl-send-run', 'dl-driver-copy']);
@@ -145,11 +147,14 @@ async function boot() {
       setStockSettings(settings);
       setQuoteSettings(settings);
       setProfitSettings(settings);
+  setWagesSettings(settings);
+      setWagesSettings(settings);
       setDeliverySettings(settings);
       setStoreroomSettings(settings);
       // only what this person's role may see is loaded at all
       if (store.can('quotes')) startQuotes(() => { if (view === 'quotes') paint(); }, settings);
       if (store.can('deliveries')) startDeliveries(() => { if (view === 'deliveries') paint(); }, settings, store.can('deliveries', 'edit'));
+      if (store.can('wages')) startWages(() => { if (view === 'wages') paint(); }, settings);
       if (store.can('storeroom')) startStoreroom(() => { if (view === 'storeroom') paint(); }, settings);
       if (store.can('stock') || store.can('storeroom')) startStock(() => { if (view === 'stock' || view === 'storeroom') paint(); }, settings);
       if (store.can('pos') || store.can('profit')) startPos(() => { if (view === 'pos' || view === 'profit') paint(); }, settings);
@@ -462,6 +467,7 @@ function paintScreen() {
   if (view === 'profit') return renderProfit(screen, allOrders(), allSales());
   if (view === 'deliveries') return renderDeliveries(screen, allOrders());
   if (view === 'storeroom') return renderStoreroom(screen, allOrders());
+  if (view === 'wages') return renderWages(screen);
   if (view === 'scan') return renderScan(screen);
   if (view === 'invoices') return renderInvoices(screen);
   if (view === 'pos') return renderPos(screen);
@@ -812,6 +818,7 @@ async function saveSettings() {
   setStockSettings(settings);
   setQuoteSettings(settings);
   setProfitSettings(settings);
+  setWagesSettings(settings);
   setDeliverySettings(settings);
   setStoreroomSettings(settings);
   const bn = document.querySelector('.brand-name');
@@ -853,6 +860,21 @@ async function onAction(e) {
     case 'sr-asset-repair': return assetRepair(id);
     case 'sr-asset-gone': return assetGone(id);
     case 'sr-asset-history': return assetHistory(id);
+    case 'wg-view': setWageView(b.dataset.to); return paint();
+    case 'wg-open': setWagePeriod(id); return paint();
+    case 'wg-staff-new': return newStaff();
+    case 'wg-staff-edit': return editStaff(id);
+    case 'wg-staff-toggle': return toggleStaff(id);
+    case 'wg-piece-add': return addPiece(id);
+    case 'wg-piece-del': return removePiece(id, b.dataset.order);
+    case 'wg-ded-add': return addDeduction(id);
+    case 'wg-ded-del': return removeDeduction(id, b.dataset.i);
+    case 'wg-save': return saveRun();
+    case 'wg-paid': return markPaid();
+    case 'wg-reopen': return reopenRun();
+    case 'wg-print-sheet': return printWageSheet();
+    case 'wg-print-slips': return printPayslips();
+    case 'wg-export': return exportRun();
     case 'sr-person-new': return newPerson();
     case 'sr-person-edit': return editPerson(id);
     case 'sr-person-toggle': return togglePerson(id);
@@ -939,7 +961,7 @@ async function onAction(e) {
     case 'save-overheads': {
       const patch = await saveOverheads(document.getElementById('screen'));
       settings = { ...settings, ...patch };
-      setOrderSettings(settings); setFloorSettings(settings); setCostingSettings(settings); setStockSettings(settings); setProfitSettings(settings); setQuoteSettings(settings);
+      setOrderSettings(settings); setFloorSettings(settings); setCostingSettings(settings); setStockSettings(settings); setProfitSettings(settings); setWagesSettings(settings); setQuoteSettings(settings);
       return paint();
     }
     case 'print-pricesheet': return printPriceSheet();
@@ -978,6 +1000,7 @@ function onChangeEvent(e) {
   if (t.id === 'o-filter-status') { setFilter({ status: t.value }); return paint(); }
   const act = t.dataset ? t.dataset.act : '';
   if (viewOnly(view) && (act === 'fabric' || act === 'due')) { toast('Your role can only look at this screen.', 'warn'); paint(); return; }
+  if (act === 'wg-period') { setWagePeriod(t.value); return paint(); }
   if (act === 'member-role') return memberRole(t.dataset.id, t.value);
   if (act === 'role-perm') return rolePerm(t.dataset.id, t.dataset.area, t.value);
   if (t.id === 'pf-month') { setProfitMonth(t.value); return paint(); }
@@ -991,6 +1014,7 @@ function onChangeEvent(e) {
 
 let searchTimer = null;
 function onInput(e) {
+  if (e.target.dataset && e.target.dataset.wg) return wageInput(e.target);
   if (e.target.classList && e.target.classList.contains('pos-in')) {
     if (e.target.id === 'pos-search') { clearTimeout(searchTimer); searchTimer = setTimeout(() => posInput(e.target), 160); return; }
     return posInput(e.target);

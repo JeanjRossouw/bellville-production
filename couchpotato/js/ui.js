@@ -7,13 +7,16 @@ export const esc = (s) => String(s == null ? '' : s)
 export const money = (n, cur) => (cur || 'R') + ' ' + (Math.round((Number(n) || 0) * 100) / 100)
   .toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export const today = () => new Date().toISOString().split('T')[0];
+// Dates as YYYY-MM-DD in the person's own time zone. A date built at local
+// midnight must never be read back in UTC: in South Africa that is a day early.
+export const isoLocal = (d) => d.toLocaleDateString('en-CA');
+export const today = () => isoLocal(new Date());
 
 export function addDays(iso, days) {
-  const d = new Date((iso || today()) + 'T00:00:00');
+  const d = new Date((iso || today()) + 'T12:00:00');
   if (isNaN(d.getTime())) return '';
   d.setDate(d.getDate() + days);
-  return d.toISOString().split('T')[0];
+  return isoLocal(d);
 }
 
 export function niceDate(iso) {

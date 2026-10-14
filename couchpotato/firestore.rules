@@ -204,6 +204,15 @@ service cloud.firestore {
         allow read: if isMember(cid);
         allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'orders') || ed(cid, 'pos') || ed(cid, 'quotes') || ed(cid, 'invoices') || ed(cid, 'stock') || ed(cid, 'factory') || ed(cid, 'scan') || ed(cid, 'costing'));
       }
+      // Pay: the staff list and the wage runs. Only the Wages area sees them.
+      match /staff/{id} {
+        allow read: if isMember(cid) && sees(cid, 'wages');
+        allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'wages');
+      }
+      match /wageRuns/{id} {
+        allow read: if isMember(cid) && sees(cid, 'wages');
+        allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'wages');
+      }
       // The online shop (Shopify). Its app keys are read and written only by the
       // server (netlify/functions/factory-shopify.mjs), never by the app; the
       // connection status is shown to the team but only the server writes it.
@@ -223,9 +232,9 @@ service cloud.firestore {
 
       // Anything else a future version keeps: the settings screen decides.
       match /{coll}/{id} {
-        allow read: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes']);
+        allow read: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'staff', 'wageRuns']);
         allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'settings')
-                     && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes']);
+                     && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'staff', 'wageRuns']);
       }
     }
   }
