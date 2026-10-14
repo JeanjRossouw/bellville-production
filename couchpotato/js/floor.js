@@ -35,7 +35,9 @@ export function weeks(count) {
   return out;
 }
 
-const onFloor = (o) => o.status !== 'dispatched' && o.status !== 'invoiced' && o.status !== 'cancelled';
+// On the floor: being built, or waiting to be. A piece marked Done leaves
+// the floor at once; it is then on Deliveries and Scan out, waiting to go.
+const onFloor = (o) => o.status === 'new' || o.status === 'in-production';
 
 // Which column an order sits in: a week Monday, 'later', or 'pool'.
 function bucketOf(o, wks) {
