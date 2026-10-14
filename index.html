@@ -9792,7 +9792,7 @@ ${_PRODUCTION_PRINT_STYLES}
           <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
           <button onclick="builderPortalPrintCard('${_escape(o.id)}')" title="Print this order's job card" style="padding:7px 12px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; color:#111; font-weight:700; font-size:12.5px; cursor:pointer">🖨️ Job card</button>
           ${o.builderDone
-            ? '<span style="font-size:12px; font-weight:800; color:#166534">✅ DONE — awaiting collection</span>'
+            ? `<span style="font-size:12px; font-weight:800; color:#166534">✅ DONE — awaiting collection</span><button onclick="builderPortalUndoDone('${_escape(o.id)}')" title="Marked done by mistake: put it back into production" style="padding:7px 12px; border-radius:999px; border:1.5px solid #b45309; background:#fffbeb; color:#92400e; font-weight:700; font-size:12.5px; cursor:pointer">↩ Back to production</button>`
             : `<button onclick="builderPortalMarkDone('${_escape(o.id)}')" style="padding:7px 14px; border-radius:999px; border:1.5px solid #16a34a; background:#f0fdf4; color:#166534; font-weight:700; font-size:12.5px; cursor:pointer">✓ Mark done</button>`}
           </span>
         </div>
@@ -9878,6 +9878,7 @@ ${_PRODUCTION_PRINT_STYLES}
       + '<button onclick="deliverySchedule(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:none; background:#111; color:#fff; font-weight:700; cursor:pointer">📅 Save</button>'
       + '</div>';
     let actions = '';
+    if (o.status !== 'delivered' && o.builderDone) actions += '<button onclick="builderPortalUndoDone(\'' + _escape(o.id) + '\')" title="Marked done by mistake: put it back into production" style="padding:7px 12px; border-radius:999px; border:1.5px solid #b45309; background:#fffbeb; color:#92400e; font-weight:700; font-size:12px; cursor:pointer">↩ Back to production</button>';
     if (o.status !== 'delivered') {
       actions += '<button onclick="deliveryToggleForm(\'' + _escape(o.id) + '\')" style="padding:7px 12px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; font-weight:700; font-size:12px; cursor:pointer">' + (o.deliveryScheduled ? '✏️ Change' : '📅 Schedule') + '</button>';
       if (digits) actions += '<button onclick="deliverySendBookingLink(\'' + r.biz + '\', \'' + _escape(o.id) + '\')" title="Let the client pick a slot" style="padding:7px 12px; border-radius:999px; border:1.5px solid #25d366; background:#f0fdf4; color:#166534; font-weight:700; font-size:12px; cursor:pointer">💬 Client picks slot</button>';
@@ -11451,6 +11452,23 @@ ${_PRODUCTION_PRINT_STYLES}
     renderBuilderPortal();
   }
   window.builderPortalMarkDone = builderPortalMarkDone;
+  // Marked DONE by mistake: back into production. It leaves the Delivery
+  // portal (and any delivery booked for it) and is on the job list again.
+  function builderPortalUndoDone(orderId) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o || !o.builderDone) return;
+    const booked = o.deliveryScheduled && o.status !== 'delivered';
+    if (!confirm('Move #' + (o.invoice || o.id) + ' — ' + (o.product || '') + ' back into production?' + (booked ? ' Its delivery on ' + o.deliveryScheduled + ' is taken off too.' : ''))) return;
+    snapshotState();
+    o.builderDone = false;
+    delete o.builderDoneAt;
+    o.builderReopenedAt = new Date().toISOString();      // the order feed will not mark it done again for an older dispatch
+    if (booked) { delete o.deliveryScheduled; delete o.deliveryTimeFrom; delete o.deliveryTimeTo; delete o.deliveryDriverId; delete o.deliveryBy; o.deliveryBookedByClient = false; }
+    _builderPortalLogComment(o, 'Moved back to production (it was marked done by mistake)');
+    saveData();
+    if (_portalView === 'delivery') renderDeliveryPortal(); else renderBuilderPortal();
+  }
+  window.builderPortalUndoDone = builderPortalUndoDone;
   function builderPortalPrintCard(orderId) {
     const o = _findOrderAnyBiz(orderId);
     if (!o) return;

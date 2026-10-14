@@ -108,6 +108,8 @@ export function applyDispatches(data, cpDispatched) {
       const cp = byKey[feedKey(biz, o.id)];
       if (!cp) return;
       const when = String(cp.dispatchedAt || today()).slice(0, 10);
+      // moved back into production by hand after this dispatch: leave it
+      if (o.builderReopenedAt && String(cp.dispatchedAt || '') <= String(o.builderReopenedAt)) return;
       o.builderDone = true;
       o.builderDoneAt = when;
       if (!Array.isArray(o.builderComments)) o.builderComments = [];
