@@ -26,6 +26,7 @@ export const AREAS = [
   { key: 'deliveries', label: 'Deliveries', hint: 'Schedule deliveries, drivers, signed delivery notes' },
   { key: 'invoices', label: 'Invoices', hint: 'Invoices, payments, statements' },
   { key: 'profit', label: 'Profit', hint: 'Sales, costs and profit per month' },
+  { key: 'wages', label: 'Wages', hint: 'Staff pay: hours, piece-work, payslips' },
   { key: 'settings', label: 'Business settings', hint: 'Company details, numbering, VAT' }
 ];
 export const LEVELS = [
@@ -39,7 +40,7 @@ const all = (level) => Object.fromEntries(AREAS.map(a => [a.key, level]));
 // Every new company starts with these; the owner can change them, rename
 // them, delete them and add their own.
 export const DEFAULT_ROLES = {
-  office: { name: 'Office', perms: all('edit') },
+  office: { name: 'Office', perms: { ...all('edit'), wages: 'none' } },      // pay is the owner's unless granted
   sales: { name: 'Sales / till', perms: { ...all('none'), pos: 'edit', quotes: 'edit', orders: 'edit', customers: 'edit' } },
   factory: { name: 'Factory floor', perms: { ...all('none'), factory: 'edit', scan: 'edit', stock: 'edit', orders: 'view', deliveries: 'view' } },
   // receives, counts and gives out; cannot change prices, materials or orders
@@ -64,6 +65,8 @@ export const WRITE_AREAS = {
   counters: ['orders', 'pos', 'quotes', 'invoices', 'stock', 'factory', 'scan', 'costing'],
   drivers: ['deliveries'],
   deliveryNotes: ['deliveries'],
+  staff: ['wages'],
+  wageRuns: ['wages'],
   settings: ['settings']
 };
 
@@ -79,7 +82,9 @@ export const READ_AREAS = {
   storeStaff: ['storeroom'],
   assets: ['storeroom', 'stock'],
   drivers: ['deliveries'],          // each driver's private link is a secret: Edit only (see app.js)
-  deliveryNotes: ['deliveries', 'orders']
+  deliveryNotes: ['deliveries', 'orders'],
+  staff: ['wages'],
+  wageRuns: ['wages']
 };
 
 export const levelOf = (perms, area) => (perms && perms[area]) || 'none';

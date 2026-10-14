@@ -933,3 +933,6 @@ ol.steps code { font-size: 11.5px; background: var(--paper); border: 1px solid v
 .invite-bar .btn.ghost { background: none; color: #fff; border-color: #777; }
 
 .tile.green { background: #dcfce7; }
+
+.wg-tbl td { vertical-align: top; }
+.wg-tbl input[type=number] { font: inherit; font-size: 12.5px; padding: .3rem .4rem; border: 1px solid var(--line); border-radius: 6px; }
