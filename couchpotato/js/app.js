@@ -12,14 +12,13 @@ import {
 } from './orders.js';
 import {
   renderFloor, setFloorView, setFloorSettings, startBuild, moveMenu,
-  printJobCard, printWeekJobCards, printPlanner
-} from './floor.js';
+  printJobCard, printWeekJobCards, printPlanner, weekReportDialog } from './floor.js';
 import { renderScan, setScanSettings, startCamera, stopCamera, manualFind, confirmDispatch, notifyCustomer } from './scan.js';
 import { startPos, renderPos, setPosSettings, posAction, posInput, allSales } from './pos.js';
 import { startQuotes, renderQuotes, setQuoteSettings, setQuoteFilter, newQuote, editQuote, copyQuote, sendQuote, printQuote, acceptQuote, declineQuote } from './quotes.js';
 import { renderProfit, setProfitSettings, setProfitMonth } from './profit.js';
 import {
-  startDeliveries, renderDeliveries, setDeliverySettings, setDeliveryView, setDeliveryDay, scheduleDelivery, confirmToClient,
+  startDeliveries, renderDeliveries, setDeliverySettings, setDeliveryView, setDeliveryDay, scheduleDelivery, markForCollection, deliverInstead, confirmToClient,
   sendRun, printRun, markDelivered, undoDelivered, viewNote, clientSigns, newDriver, editDriver, sendDriverLink, copyDriverLink, relinkDriver, removeDriver
 } from './deliveries.js';
 import {
@@ -83,7 +82,7 @@ const allowedViews = (user) => !user ? [] : NAV.map(n => n.key).filter(k =>
 const viewOnly = (k) => store.getUser() && store.getUser().role !== 'owner' && k !== 'clients' && levelOf(store.myPerms(), k) === 'view';
 // Actions that only look, print or switch what is shown — allowed on a view-only screen.
 const LOOK_ONLY = new Set(['filter-status', 'floor-view', 'cost-view', 'stock-view', 'quote-filter', 'profit-month', 'inv-view',
-  'print-job', 'print-week-jobs', 'print-planner', 'print-pricesheet', 'print-costsheet', 'inv-print', 'stmt-print', 'inv-export',
+  'print-job', 'print-week-jobs', 'print-week-report', 'print-planner', 'print-pricesheet', 'print-costsheet', 'inv-print', 'stmt-print', 'inv-export',
   'po-print', 'quote-print', 'scan-start', 'scan-stop', 'scan-find', 'notify',
   'sr-view', 'sr-asset-history',
   'dl-view', 'dl-day', 'dl-day-pick', 'dl-print-run', 'dl-note', 'dl-confirm', 'dl-send-run', 'dl-driver-copy']);
@@ -514,7 +513,8 @@ function renderSettings(host) {
       <h2>Numbering and terms</h2>
       ${row(field('Order number prefix', 's-oprefix', { value: s.orderPrefix }), field('Next order number', 's-ofirst', { value: s.firstOrderNo, type: 'number', min: 1 }))}
       ${row(field('Invoice prefix', 's-iprefix', { value: s.invoicePrefix }), field('Default payment terms (days)', 's-terms', { value: s.paymentTermsDays, type: 'number', min: 0 }))}
-      ${row(field('Made-to-order lead time (days)', 's-lead', { value: s.leadDays == null ? 28 : s.leadDays, type: 'number', min: 1 }), '<div class="fld"></div>')}
+      ${row(field('Made-to-order lead time (days)', 's-lead', { value: s.leadDays == null ? 28 : s.leadDays, type: 'number', min: 1 }),
+        field('Weekly production target (R, excl. VAT)', 's-target', { value: s.weeklyTarget || '', type: 'number', min: 0, step: '1', placeholder: 'e.g. 150000 — the Factory floor shows progress against it' }))}
       ${row(
         field('VAT registered', 's-vatreg', { type: 'select', value: s.vatRegistered ? 'yes' : 'no', options: [{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }] }),
         field('VAT rate (%)', 's-vatrate', { value: Math.round((s.vatRate || 0) * 100), type: 'number', min: 0, step: '0.01' })
@@ -797,6 +797,7 @@ async function saveSettings() {
     invoicePrefix: g('s-iprefix') || 'INV-',
     paymentTermsDays: parseInt(g('s-terms'), 10) || 0,
     leadDays: parseInt(g('s-lead'), 10) || 28,
+    weeklyTarget: parseFloat(g('s-target')) || 0,
     vatRegistered: g('s-vatreg') === 'yes',
     vatRate: (parseFloat(g('s-vatrate')) || 0) / 100
   };
@@ -828,6 +829,7 @@ async function onAction(e) {
   if (b.dataset.act.startsWith('pos-')) return posAction(b.dataset.act, b);
   switch (b.dataset.act) {
     case 'new-order': return newOrder();
+    case 'print-week-report': return weekReportDialog();
     case 'export-orders': return exportOrders();
     case 'edit-order': return editOrder(id);
     case 'del-order': return deleteOrder(id);
@@ -857,6 +859,8 @@ async function onAction(e) {
     case 'dl-view': setDeliveryView(b.dataset.to); return paint();
     case 'dl-day': setDeliveryDay(b.dataset.to); return paint();
     case 'dl-schedule': return scheduleDelivery(id, allOrders());
+    case 'dl-collect': return markForCollection(id, allOrders());
+    case 'dl-deliver-instead': return deliverInstead(id, allOrders());
     case 'dl-confirm': return confirmToClient(id, allOrders());
     case 'dl-delivered': return markDelivered(id, allOrders());
     case 'dl-sign': return clientSigns(id, allOrders());

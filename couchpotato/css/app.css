@@ -931,3 +931,5 @@ ol.steps code { font-size: 11.5px; background: var(--paper); border: 1px solid v
 .invite-bar { background: #292524; color: #fff; text-align: center; font-size: 13px; padding: .55rem 1rem; display: flex; gap: .8rem; justify-content: center; align-items: center; flex-wrap: wrap; border-bottom: 1px solid #44403c; }
 .invite-bar .btn { background: #fff; color: #1c1917; border-color: #fff; }
 .invite-bar .btn.ghost { background: none; color: #fff; border-color: #777; }
+
+.tile.green { background: #dcfce7; }
