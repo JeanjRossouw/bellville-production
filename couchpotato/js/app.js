@@ -350,6 +350,7 @@ function showApp(user) {
         <span class="brand-sub">${esc(PRODUCT.name)}</span>
       </div>
       <div class="top-right">
+        ${store.myCompanies().length > 1 ? `<select class="co-switch" id="co-switch" title="Switch to another of your companies">${store.myCompanies().map(c => `<option value="${esc(c.id)}" ${c.id === user.companyId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>` : ''}
         ${store.storeMode() === 'demo' ? '<span class="chip demo-chip" title="No database connected — data stays in this browser">DEMO</span>' : ''}
         ${statusChip()}
         <span class="who">${esc(user.name || user.email)}<span class="role">${esc(store.roleLabel(user.role))}</span></span>
@@ -357,9 +358,17 @@ function showApp(user) {
       </div>
     </header>
     <nav class="tabs" id="tabs">${navHtml(user)}</nav>
+    ${user.pendingInvite ? `<div class="invite-bar">You have been invited to join <strong>${esc(user.pendingInvite.companyName || 'another company')}</strong>${user.pendingInvite.role ? ' as ' + esc(user.pendingInvite.role) : ''}. You keep ${esc(settings.name || 'this company')} as well.
+      <button class="btn sm" id="inv-accept">Join ${esc(user.pendingInvite.companyName || 'them')}</button><button class="btn sm ghost" id="inv-decline">No thanks</button></div>` : ''}
     ${store.accessState() !== 'ok' ? `<div class="readonly-bar">Read only — ${esc((LOCK_TEXT[store.accessState()] || [''])[0].toLowerCase())}. ${store.getUser().role === 'owner' ? '<button class="btn sm" id="ro-pay">Subscribe</button>' : 'Ask the owner to subscribe.'}</div>` : ''}
     <main class="shell" id="screen"></main>`;
   const roPay = document.getElementById('ro-pay'); if (roPay) roPay.addEventListener('click', startCheckout);
+  const sw = document.getElementById('co-switch');
+  if (sw) sw.addEventListener('change', async () => { try { await store.switchCompany(sw.value); location.reload(); } catch (e) { toast('Could not switch: ' + e.message, 'warn'); } });
+  const ia = document.getElementById('inv-accept');
+  if (ia) ia.addEventListener('click', async () => { ia.disabled = true; try { await store.acceptInvite(); location.reload(); } catch (e) { toast('Could not join: ' + e.message, 'warn'); ia.disabled = false; } });
+  const idl = document.getElementById('inv-decline');
+  if (idl) idl.addEventListener('click', async () => { try { await store.declineInvite(); } catch (e) { toast('Could not decline: ' + e.message, 'warn'); } });
 
   document.getElementById('sign-out').addEventListener('click', signOutAndReset);
   document.getElementById('tabs').addEventListener('click', (e) => {
@@ -484,11 +493,17 @@ function overview() {
 
 function renderSettings(host) {
   const s = settings;
+  const me = store.getUser() || {};
   host.innerHTML = `
     <div class="page-head"><div>
       <h1>Settings</h1>
       <p class="sub">The factory’s own details. These appear on job cards, quotes and invoices.</p>
     </div></div>
+    <div class="card">
+      <h2>You</h2>
+      ${row(field('Your name', 'me-name', { value: me.name || '', placeholder: 'First name and surname' }), `<div class="fld"><span>Email</span><div class="muted" style="padding:.55rem 0">${esc(me.email || '')}</div></div>`)}
+      <div class="card-actions"><button class="btn primary" data-act="my-name-save">Save my name</button></div>
+    </div>
     <div class="card">
       <h2>Business details</h2>
       ${row(field('Trading name', 's-name', { value: s.name }), field('Registered name', 's-legal', { value: s.legalName }))}
@@ -706,7 +721,7 @@ function teamCard() {
     ${members.map(m => `<div class="team-row">
       <div><div class="who-n">${esc(m.name || m.email)}${m.id === me.uid ? ' <span class="muted">(you)</span>' : ''}</div><div class="who-e">${esc(m.email || '')}</div></div>
       <select data-act="member-role" data-id="${esc(m.id)}" ${m.id === me.uid || (m.role === 'owner' && owners < 2) ? 'disabled' : ''}>${roleOpts(m.role)}</select>
-      <div class="team-acts">${m.id === me.uid ? '' : `<button class="btn ghost sm" data-act="member-remove" data-id="${esc(m.id)}">Remove</button>`}</div>
+      <div class="team-acts"><button class="btn ghost sm" data-act="member-rename" data-id="${esc(m.id)}">Edit name</button>${m.id === me.uid ? '' : `<button class="btn ghost sm" data-act="member-remove" data-id="${esc(m.id)}">Remove</button>`}</div>
     </div>`).join('') || '<p class="muted">Loading…</p>'}
     ${team.invites.length ? `<h2>Invited, not signed up yet</h2>` + team.invites.map(i => `<div class="team-row">
       <div><div class="who-n">${esc(i.name || i.email)}</div><div class="who-e">${esc(i.email)} · ${esc(store.roleLabel(i.role))}</div></div>
@@ -743,6 +758,20 @@ async function memberRole(uid, role) {
   if (!confirm('Change ' + (m.name || m.email) + ' to ' + store.roleLabel(role) + '?')) { paint(); return; }
   try { await store.setMemberRole(uid, role); toast('Role changed'); }
   catch (e) { toast('Could not change the role: ' + e.message, 'warn'); paint(); }
+}
+
+async function memberRename(uid) {
+  const m = team.members.find(x => x.id === uid); if (!m) return;
+  const n = prompt('Name for ' + (m.email || 'this person') + ':', m.name || '');
+  if (n == null) return;
+  try { await store.setMemberName(uid, n); toast('Name saved'); }
+  catch (e) { toast('Could not save the name: ' + e.message, 'warn'); }
+}
+
+async function saveMyName() {
+  const el = document.getElementById('me-name'); if (!el) return;
+  try { await store.setMyName(el.value); toast('Name saved'); }
+  catch (e) { toast('Could not save the name: ' + e.message, 'warn'); }
 }
 
 async function memberRemove(uid) {
@@ -870,6 +899,8 @@ async function onAction(e) {
     case 'role-rename': return roleRename(id);
     case 'role-del': return roleDelete(id);
     case 'member-remove': return memberRemove(id);
+    case 'member-rename': return memberRename(id);
+    case 'my-name-save': return saveMyName();
     case 'invite-cancel': {
       const inv = team.invites.find(i => i.id === id);
       if (inv && confirm('Cancel the invitation for ' + inv.email + '?')) { await store.cancelInvite(inv.email); toast('Invitation cancelled'); }
