@@ -14,6 +14,7 @@
 // Phase 1 action: "getProducts". (Phase 2 will add "createOrder".)
 import { getStore, connectLambda } from '@netlify/blobs';
 import { readDoc, writeDoc } from './lib/firestore.mjs';
+import { requireUser } from './lib/auth.mjs';
 const API_VERSION = '2024-10';
 
 function env(...names) {
@@ -516,7 +517,10 @@ async function sharedGet({ key }) {
   return { data: doc && Object.keys(doc).length ? doc : null };
 }
 async function sharedSave({ key, data }) {
+  // A staff list with no manager would lock every till out of its own settings.
+  if (key === 'staff' && !validStaffList(data)) { const e = new Error('The staff list needs at least one manager with a 4–6 digit PIN'); e.status = 400; throw e; }
   await writeDoc(sharedKeyDoc(key), data || {}, 'pos');
+  if (key === 'staff') staffCache = { at: 0, list: null };
   return { ok: true };
 }
 async function getCosts() {
@@ -963,6 +967,105 @@ async function salesReport({ since, until }) {
   return { orderCount, salesCents, itemCount, items: Object.values(byVariant), points };
 }
 
+// ---- Who may call what ------------------------------------------------------
+// Two checks on every call, both on the server so the till's hidden buttons
+// are no longer the only thing standing between the internet and the shop:
+//
+//  1. A Firebase ID token from the POS's project (Authorization: Bearer …).
+//     The till signs in anonymously, so this proves "a copy of the POS", not
+//     "a person" — anyone can mint an anonymous token with the public web key.
+//  2. A staff PIN (X-Staff-Pin), checked against the shared staff list
+//     (pos-shared-staff) — the same list and roles the till's lock screen uses.
+//     This is what identifies cashier vs manager.
+//
+// Rules per action. 'staff' = any valid PIN; 'manager' = role admin; a function
+// covers the per-person permissions (canRefund, canReceive, canAddProducts).
+// An action not listed here is refused. The one exception is reading the staff
+// list itself (sharedGet key=staff), which the lock screen needs before anyone
+// has signed in — see staffListAccess.
+const isAdmin = (s) => s.role === 'admin';
+const ACCESS = {
+  getProducts: 'staff',
+  createOrder: 'staff', fulfillOrder: 'staff', syncWebOrders: 'staff',
+  parkSale: 'staff', listParked: 'staff', deleteParked: 'staff',
+  searchCustomers: 'staff', createCustomer: 'staff', customerSetTag: 'staff', customerOrders: 'staff',
+  docSave: 'staff', docList: 'staff', docDelete: 'staff', lookupOrder: 'staff',
+  gcCreate: 'staff', gcBalance: 'staff', gcFind: 'staff', gcDebit: 'staff',
+  scBalance: 'staff', scDebit: 'staff',
+  // Refunds — and the store credit a refund can be paid out as.
+  refundCreate: (s) => isAdmin(s) || !!s.canRefund,
+  scCredit: (s) => isAdmin(s) || !!s.canRefund,
+  receiveStock: (s) => isAdmin(s) || !!s.canReceive,
+  productCreate: (s) => isAdmin(s) || !!s.canAddProducts,
+  // Manager screens: cost prices, catalogue editor, stock-take reconcile,
+  // dashboard, sales history, Lightspeed import.
+  getCosts: 'manager', saveCosts: 'manager', setCosts: 'manager',
+  productUpdate: 'manager', productArchive: 'manager', productDelete: 'manager',
+  setStock: 'manager', salesReport: 'manager', listOrders: 'manager', importHistoric: 'manager',
+  // Shared settings: quick keys are anyone's; staff and wholesale prices are
+  // edited on the manager-only Register panel.
+  sharedGet: 'staff',
+  sharedSave: (s, b) => b.key === 'quickkeys' || isAdmin(s)
+};
+function allowed(action, staff, body) {
+  const rule = ACCESS[action];
+  if (!rule || !staff) return false;
+  if (rule === 'staff') return true;
+  if (rule === 'manager') return isAdmin(staff);
+  return !!rule(staff, body);
+}
+
+// The staff list, cached briefly so a busy till isn't a Firestore read per call.
+let staffCache = { at: 0, list: null };
+async function staffList() {
+  if (staffCache.list && Date.now() - staffCache.at < 30000) return staffCache.list;
+  const doc = await readDoc(sharedKeyDoc('staff'));
+  const list = doc && Array.isArray(doc.staff) ? doc.staff : [];
+  staffCache = { at: Date.now(), list };
+  return list;
+}
+function findStaff(list, pin) {
+  const p = String(pin || '').trim();
+  if (!/^\d{4,6}$/.test(p)) return null;
+  return list.find(s => s && String(s.pin) === p) || null;
+}
+
+// Wrong PINs are counted per IP so the 10,000 four-digit PINs can't simply be
+// tried in a loop. Best-effort: without Blobs it fails open rather than lock
+// the shop out of its own till.
+const PIN_FAIL_LIMIT = 20;
+const PIN_FAIL_WINDOW_MS = 15 * 60 * 1000;
+function clientIp(event) {
+  const h = event.headers || {};
+  return String(h['x-nf-client-connection-ip'] || h['client-ip'] || (h['x-forwarded-for'] || '').split(',')[0] || 'unknown').trim();
+}
+async function pinFailures(event) {
+  try {
+    const store = getStore('reptipos-pinfail');
+    const key = 'ip-' + clientIp(event).replace(/[^0-9a-fA-F.:]/g, '_');
+    const rec = await store.get(key, { type: 'json' });
+    const fresh = rec && Date.now() - rec.since < PIN_FAIL_WINDOW_MS ? rec : { since: Date.now(), n: 0 };
+    return {
+      blocked: fresh.n >= PIN_FAIL_LIMIT,
+      record: async () => { try { await store.setJSON(key, { since: fresh.since, n: fresh.n + 1 }); } catch (e) {} }
+    };
+  } catch (e) { return { blocked: false, record: async () => {} }; }
+}
+
+// Reading the staff list. The lock screen downloads it to check PINs offline,
+// so it carries every PIN: only someone who already holds a valid PIN gets it.
+// While the shop has no staff at all (first run) the empty list is returned,
+// and the first manager may be saved, so a new till can still be set up.
+async function staffListAccess(list, staff) {
+  if (!list.length) return { data: null };
+  if (staff) return { data: (await readDoc(sharedKeyDoc('staff'))) || null };
+  return { data: null, locked: true };
+}
+function validStaffList(data) {
+  const arr = data && Array.isArray(data.staff) ? data.staff : [];
+  return arr.length > 0 && arr.some(s => s && s.role === 'admin' && /^\d{4,6}$/.test(String(s.pin || '')));
+}
+
 export const handler = async (event) => {
   // Lambda-style functions must hand Blobs its credentials from the event;
   // without this every getStore() throws and all the Blobs-backed guards
@@ -972,6 +1075,41 @@ export const handler = async (event) => {
   let body;
   try { body = JSON.parse(event.body || '{}'); } catch { return { statusCode: 400, body: 'Invalid JSON' }; }
   const json = (status, obj) => ({ statusCode: status, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) });
+
+  // 1. Signed in to the POS's Firebase project.
+  try { await requireUser(event); }
+  catch (e) { return json(401, { error: 'Unauthorized: ' + e.message }); }
+
+  // 2. Which staff member (if any) this is.
+  const h = event.headers || {};
+  const pin = h['x-staff-pin'] || h['X-Staff-Pin'] || '';
+  let list, staff = null;
+  try { list = await staffList(); }
+  catch (e) { return json(502, { error: 'Could not read the staff list: ' + e.message }); }
+  if (pin) {
+    const throttle = await pinFailures(event);
+    if (throttle.blocked) return json(429, { error: 'Too many wrong PINs — wait 15 minutes and try again' });
+    staff = findStaff(list, pin);
+    if (!staff) { await throttle.record(); }
+  }
+
+  if (body.action === 'sharedGet' && body.key === 'staff') {
+    return json(200, await staffListAccess(list, staff));
+  }
+  if (body.action === 'sharedSave' && body.key === 'staff' && !list.length) {
+    // First run: no staff anywhere yet, so there is no PIN to check.
+    if (!validStaffList(body.data)) return json(400, { error: 'The first staff list needs a manager with a 4–6 digit PIN' });
+    await writeDoc(sharedKeyDoc('staff'), body.data, 'pos');
+    staffCache = { at: 0, list: null };
+    return json(200, { ok: true });
+  }
+  if (!staff) return json(403, { error: pin ? 'That staff PIN is not recognised — sign in again' : 'Sign in with a staff PIN first' });
+  if (!allowed(body.action, staff, body)) {
+    return json(403, { error: ACCESS[body.action] ? `Not allowed for ${staff.name || 'this login'} — ask a manager` : `Unknown action "${body.action}"` });
+  }
+  // A cashier allowed to receive stock still may not overwrite cost prices.
+  if (body.action === 'receiveStock' && !isAdmin(staff)) body.updateCost = false;
+
   try {
     if (body.action === 'getProducts') {
       const products = await getProducts();
@@ -1022,6 +1160,6 @@ export const handler = async (event) => {
     if (body.action === 'refundCreate') return json(200, await refundCreate(body));
     return json(400, { error: `Unknown action "${body.action}"` });
   } catch (e) {
-    return json(e.status === 401 ? 401 : (e.status === 400 ? 400 : 502), { error: e.message });
+    return json([400, 401, 403].includes(e.status) ? e.status : 502, { error: e.message });
   }
 };
