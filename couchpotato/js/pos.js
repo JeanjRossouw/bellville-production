@@ -51,6 +51,7 @@ import { printInvoice, invoiceById, paidAmount, balance } from './invoices.js';
 import { openBarcodeCamera } from './barcode.js';
 import { esc, money, field, row, val, openModal, toast, today, addDays, niceDate, empty, statusMeta, productImg, vatSplit, inclLabel } from './ui.js';
 import * as till from './till.js';
+import * as shopstock from './shopstock.js';
 
 let settings = {};
 let sales = [];
@@ -66,12 +67,14 @@ let wedgeOn = false;
 export function startPos(cb, cfg) {
   onChange = cb; settings = cfg || {};
   till.startTill(() => rerender(), cfg);
+  shopstock.startShopStock(() => rerender(), cfg);
   if (!wedgeOn) { document.addEventListener('keydown', onScannerKey, true); wedgeOn = true; }
   if (unwatch) unwatch();
   unwatch = store.watch('sales', rows => { sales = rows.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))); if (onChange) onChange(); });
   try { const saved = JSON.parse(localStorage.getItem('cp-pos-cart') || 'null'); if (saved && Array.isArray(saved.lines)) cart = saved; } catch (e) {}
 }
-export const setPosSettings = (cfg) => { settings = cfg || {}; till.setTillSettings(cfg); };
+export const setPosSettings = (cfg) => { settings = cfg || {}; till.setTillSettings(cfg); shopstock.setShopStockSettings(cfg); };
+let quickEdit = false;      // tapping a tile stars it instead of selling it
 export const setPosShop = (s) => till.setTillShop(s);
 const emptyCart = () => ({ lines: [], customerId: '', discount: 0, discountPct: 0, note: '' });
 export const allSales = () => sales;
@@ -689,8 +692,9 @@ export function renderPos(h) {
   const tab = (key, label) => `<button class="btn ${posTab === key ? 'primary' : 'ghost'} sm" data-act="pos-tab" data-to="${key}">${label}</button>`;
   h.innerHTML = `
     <div class="page-head"><div><h1>Point of sale</h1><p class="sub">${till.shopOn() ? 'Selling the online shop’s stock' + (till.catalogueAt() ? ' · stock as at ' + esc(new Date(till.catalogueAt()).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })) : '') + (till.catalogueLoading() ? ' · reading the shop…' : '') + '. ' : ''}Made-to-order lines go straight to the factory.${!till.openShift() ? ' <span class="chip calm" title="Open it under Register for the day’s cash-up">register closed</span>' : ''}${store.shopifyPendingCount() ? ' <span class="chip late">' + store.shopifyPendingCount() + ' sale(s) still to reach the shop</span>' : ''}${till.catalogueError() ? ' <span class="chip late">' + esc(till.catalogueError()) + '</span>' : ''}</p></div>
-      <div class="btn-row">${me ? `<span class="chip calm" title="Who is ringing">${esc(me.name)}${till.isManager(me) ? ' · manager' : ''}</span><button class="btn ghost sm" data-act="till-lock" title="Lock the till">🔒 Lock</button>` : ''}${till.shopOn() ? `<button class="btn ghost sm" data-act="till-refresh" title="Read the shop’s stock again">↻</button>` : ''}${tab('sale', 'New sale')}${tab('sales', 'Sales')}${tab('register', 'Register')}</div></div>
-    ${posTab === 'sale' ? saleHtml(cur) : posTab === 'register' ? till.registerHtml(sales) : salesHtml(cur)}`;
+      <div class="btn-row">${me ? `<span class="chip calm" title="Who is ringing">${esc(me.name)}${till.isManager(me) ? ' · manager' : ''}</span><button class="btn ghost sm" data-act="till-lock" title="Lock the till">🔒 Lock</button>` : ''}${till.shopOn() ? `<button class="btn ghost sm" data-act="till-refresh" title="Read the shop’s stock again">↻</button>` : ''}${tab('sale', 'New sale')}${tab('sales', 'Sales')}${tab('register', 'Register')}${till.shopOn() ? tab('stock', 'Stock') : ''}${tab('dash', 'Dashboard')}</div></div>
+    ${posTab === 'sale' ? saleHtml(cur) : posTab === 'register' ? till.registerHtml(sales) : posTab === 'stock' ? '<div id="ss-host"></div>' : posTab === 'dash' ? shopstock.dashboardHtml(sales) : salesHtml(cur)}`;
+  if (posTab === 'stock') shopstock.renderShopStock(h.querySelector('#ss-host'), sales);
   if (posTab === 'sale') {
     const s = h.querySelector('#pos-search');
     if (s) {
@@ -714,6 +718,7 @@ function tiles() {
   return out;
 }
 const matchesTile = (t, q) => !q || [t.name, t.sku, t.barcode].some(v => String(v || '').toLowerCase().includes(q));
+const keyOf = (t) => t.shop ? t.id.slice(2) : 'p-' + t.id;
 function saleHtml(cur) {
   const prods = tiles();
   const cats = [...new Set(prods.map(p => p.category || 'Other'))].sort();
@@ -733,9 +738,16 @@ function saleHtml(cur) {
       <div class="btn-row" style="margin-bottom:.7rem">
         <button class="btn ${!cat ? 'primary' : 'ghost'} sm" data-act="pos-cat" data-to="">All</button>
         ${cats.map(x => `<button class="btn ${cat === x ? 'primary' : 'ghost'} sm" data-act="pos-cat" data-to="${esc(x)}">${esc(x)}</button>`).join('')}
+        <span style="flex:1"></span>
+        <button class="btn ${quickEdit ? 'primary' : 'ghost'} sm" data-act="pos-quick-edit" title="Tap products to add them to, or take them off, the quick keys">⭐ ${quickEdit ? 'Done' : 'Quick keys'}</button>
       </div>
+      ${quickEdit ? '<p class="notice-inline">Tap a product to star it (or un-star it). Starred products show first. Tap Done when you are finished.</p>' : ''}
+      ${!cat && !q && !quickEdit && prods.some(p => shopstock.isQuickKey(keyOf(p))) ? `<div class="pos-grid pos-quick">${prods.filter(p => shopstock.isQuickKey(keyOf(p))).map(p => `
+        <button class="pos-tile quick${p.stock === 'stock' && p.tracked && !(p.qty > 0) ? ' out' : ''}" data-act="pos-add" data-id="${esc(p.id)}"${p.stock === 'stock' && p.tracked && !(p.qty > 0) ? ' disabled' : ''}>
+          <span class="pos-tile-cat">⭐ ${esc(p.category || '')}</span><span class="pos-tile-name">${esc(p.name)}</span><span class="pos-tile-price">${esc(money(p.price || 0, cur))}</span>
+        </button>`).join('')}</div>` : ''}
       ${shown.length ? `<div class="pos-grid">${shown.map(p => `
-        <button class="pos-tile${p.stock === 'stock' && p.tracked && !(p.qty > 0) ? ' out' : ''}" data-act="pos-add" data-id="${esc(p.id)}"${p.stock === 'stock' && p.tracked && !(p.qty > 0) ? ' disabled' : ''}>
+        <button class="pos-tile${p.stock === 'stock' && p.tracked && !(p.qty > 0) ? ' out' : ''}${shopstock.isQuickKey(keyOf(p)) ? ' starred' : ''}" data-act="pos-add" data-id="${esc(p.id)}" data-key="${esc(keyOf(p))}" data-name="${esc(p.name)}"${p.stock === 'stock' && p.tracked && !(p.qty > 0) && !quickEdit ? ' disabled' : ''}>
           ${productImg({ imageUrl: p.image }, 'pos-tile-img', 400)}
           <span class="pos-tile-cat">${esc(p.category || '')}</span>
           <span class="pos-tile-name">${esc(p.name)}</span>
@@ -1031,11 +1043,13 @@ async function completeReturn(saleId, picks, refund, method, reason) {
 // ---------------------------------------------------------------- events ----
 
 export function posAction(act, el) {
+  if (act.startsWith('ss-')) return shopstock.shopStockAction(act, el);
   const i = parseInt(el.dataset.i, 10);
   switch (act) {
     case 'pos-tab': posTab = el.dataset.to; return rerender();
     case 'pos-cat': cat = el.dataset.to; return rerender();
-    case 'pos-add': if (addAny(el.dataset.id)) rerender(); return;
+    case 'pos-add': if (quickEdit) return shopstock.toggleQuickKey(el.dataset.key, el.dataset.name); if (addAny(el.dataset.id)) rerender(); return;
+    case 'pos-quick-edit': quickEdit = !quickEdit; return rerender();
     case 'pos-line-disc': return lineDiscount(i);
     case 'pos-giftcard': return addGiftCard();
     case 'pos-pay': return payOnSale(el.dataset.id);

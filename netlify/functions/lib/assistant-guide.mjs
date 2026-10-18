@@ -68,6 +68,25 @@ password; the owner invites the team under Settings and gives each person a role
 - On account: Take payment → "On account": the goods go now, the balance is on the
   customer's invoice. "Account payment" on the Sales tab takes money from a customer who
   owes, oldest sale first; "Pay" on one sale does the same for that sale.
+- Quick keys: ⭐ Quick keys on the sale screen, then tap products to star them (tap again to
+  un-star); starred products show first on the till. Tap Done to finish.
+- Stock tab (with the shop connected):
+  - Receive stock: a delivery from a supplier. Type the supplier and their invoice number,
+    then scan each item (every scan adds one), search and press Enter, or load the
+    supplier's invoice (PDF, Excel or CSV) and the lines are matched by code or name; lines
+    not found are listed to pick by hand or skip. Fix quantities and costs, then "Book it
+    in": the pieces go onto the shop's stock (Shopify) and the delivery is listed below with
+    Labels (barcode labels for what came in) and Print. "Send again" if the shop could not
+    be reached.
+  - Stock take: "Count the whole shop" or one category. Scan each item (adds one) or type the
+    count; the difference against the shop shows. "Make it the shop's stock" (a manager, or
+    a manager's PIN) sets the counted numbers as the shop's stock; lines not counted are left
+    alone. Past counts are listed.
+  - Labels: pick shop products and how many labels of each, 3 across on an A4 label sheet.
+- Dashboard tab: today / this week / this month from the till's sales: sales value, money
+  taken, number of sales, average sale, items per sale, gross profit (where a cost is known
+  from deliveries; only for roles that see costing or profit), takings by method, top 5
+  products by quantity and by value, and sales by hour.
 - Register tab (the cash-up): Open register with the cash float at the start of the day.
   It then shows the cash expected in the drawer (float + cash sales + cash in − cash refunds
   − cash out), card and EFT totals, the sales count and the takings per person. "Cash in" /

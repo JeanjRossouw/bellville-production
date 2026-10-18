@@ -884,7 +884,7 @@ async function onAction(e) {
   if (!b) return;
   if (viewOnly(view) && !LOOK_ONLY.has(b.dataset.act)) { toast('Your role can only look at this screen. Ask the owner if you need to change things here.', 'warn'); return; }
   const id = b.dataset.id;
-  if (b.dataset.act.startsWith('pos-') || b.dataset.act.startsWith('till-')) return posAction(b.dataset.act, b);
+  if (b.dataset.act.startsWith('pos-') || b.dataset.act.startsWith('till-') || b.dataset.act.startsWith('ss-')) return posAction(b.dataset.act, b);
   switch (b.dataset.act) {
     case 'new-order': return newOrder();
     case 'print-week-report': return weekReportDialog();

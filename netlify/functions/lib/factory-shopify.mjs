@@ -158,6 +158,52 @@ export async function adjustStock(cfg, inventoryItemId, delta) {
   await api(cfg, '/inventory_levels/adjust.json', { method: 'POST', body: { location_id, inventory_item_id: Number(inventoryItemId), available_adjustment: Math.round(delta) } });
 }
 
+// Stock received at the shop: add the pieces, one line at a time, so one
+// item Shopify refuses (not stocked here, tracking off, a bundle) never sinks
+// the rest of the delivery: adjust → connect it to the location and try again
+// → switch the variant's tracking on and try again → give up on that line.
+export async function receiveLines(cfg, lines) {
+  const location_id = Number(await locationId(cfg));
+  const connect = (item) => api(cfg, '/inventory_levels/connect.json', { method: 'POST', body: { location_id, inventory_item_id: Number(item) } }).catch(() => {});
+  const adjust = (item, qty) => api(cfg, '/inventory_levels/adjust.json', { method: 'POST', body: { location_id, inventory_item_id: Number(item), available_adjustment: Math.round(qty) } });
+  const received = [], failed = [];
+  for (const l of lines) {
+    try {
+      try { await adjust(l.inventoryItemId, l.qty); }
+      catch (e1) {
+        await connect(l.inventoryItemId);
+        try { await adjust(l.inventoryItemId, l.qty); }
+        catch (e2) {
+          if (!l.variantId) throw e2;
+          await api(cfg, `/variants/${Number(l.variantId)}.json`, { method: 'PUT', body: { variant: { id: Number(l.variantId), inventory_management: 'shopify' } } });
+          await connect(l.inventoryItemId);
+          await adjust(l.inventoryItemId, l.qty);
+        }
+      }
+      received.push({ inventoryItemId: String(l.inventoryItemId), qty: Math.round(l.qty) });
+    } catch (e) { failed.push({ inventoryItemId: String(l.inventoryItemId), name: l.name || '', error: String(e.message || e).replace(/^Shopify \w+ \S+ /, '').slice(0, 200) }); }
+  }
+  return { received, failed };
+}
+// A stock take: the counted number becomes the shop's count (setting a total
+// is its own safeguard: doing it twice changes nothing).
+export async function setLevels(cfg, lines) {
+  const location_id = Number(await locationId(cfg));
+  const done = [], failed = [];
+  for (const l of lines) {
+    const body = { location_id, inventory_item_id: Number(l.inventoryItemId), available: Math.max(0, Math.round(Number(l.counted) || 0)) };
+    try {
+      try { await api(cfg, '/inventory_levels/set.json', { method: 'POST', body }); }
+      catch (e) {
+        await api(cfg, '/inventory_levels/connect.json', { method: 'POST', body: { location_id, inventory_item_id: body.inventory_item_id } }).catch(() => {});
+        await api(cfg, '/inventory_levels/set.json', { method: 'POST', body });
+      }
+      done.push(String(l.inventoryItemId));
+    } catch (e) { failed.push({ inventoryItemId: String(l.inventoryItemId), name: l.name || '', error: String(e.message || e).slice(0, 160) }); }
+  }
+  return { done, failed };
+}
+
 // Ask Shopify to tell us about new and paid orders at `address`.
 export async function addWebhooks(cfg, address) {
   const { json } = await api(cfg, '/webhooks.json?limit=250');

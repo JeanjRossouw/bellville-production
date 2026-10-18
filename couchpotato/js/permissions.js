@@ -70,6 +70,9 @@ export const WRITE_AREAS = {
   tillStaff: ['settings'],
   tillShifts: ['pos'],
   giftCards: ['pos'],
+  grvs: ['pos', 'stock', 'storeroom'],
+  stockTakes: ['pos', 'stock', 'storeroom'],
+  shopProducts: ['pos', 'stock', 'costing'],
   settings: ['settings']
 };
 
@@ -90,7 +93,10 @@ export const READ_AREAS = {
   wageRuns: ['wages'],
   tillStaff: ['pos', 'settings'],
   tillShifts: ['pos', 'profit'],
-  giftCards: ['pos', 'profit']
+  giftCards: ['pos', 'profit'],
+  grvs: ['pos', 'stock', 'storeroom', 'profit'],
+  stockTakes: ['pos', 'stock', 'storeroom'],
+  shopProducts: ['pos', 'stock', 'costing', 'profit']
 };
 
 export const levelOf = (perms, area) => (perms && perms[area]) || 'none';
