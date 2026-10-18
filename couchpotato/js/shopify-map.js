@@ -33,16 +33,18 @@ export function orderLines(o) {
     && (li.product_id || li.variant_id || li.requires_shipping !== false));
 }
 
-// The price of one piece before VAT, after the shop's discounts. Factory
-// Manager keeps prices excluding VAT; Shopify stores often show them including it.
-export function unitPriceExVat(o, li, vatRate) {
+// The price of one piece as the customer paid it, after the shop's discounts.
+// Factory Manager keeps prices including VAT, as the customer pays them.
+export function unitPriceInclVat(o, li, vatRate) {
   const qty = Number(li.quantity) || 1;
   const disc = (li.discount_allocations || []).reduce((s, d) => s + (Number(d.amount) || 0), 0) || Number(li.total_discount) || 0;
   const each = (Number(li.price) || 0) - disc / qty;
-  // not VAT registered, or no VAT on this item: the shop's price is the whole price
-  if (!o.taxes_included || !(Number(vatRate) > 0) || li.taxable === false) return r2(each);
-  const rate = Array.isArray(li.tax_lines) ? li.tax_lines.reduce((s, t) => s + (Number(t.rate) || 0), 0) : Number(vatRate);
-  return rate > 0 ? r2(each / (1 + rate)) : r2(each);
+  // the shop already shows prices with VAT, the company is not VAT registered,
+  // or there is no VAT on this item: the shop's price is the whole price
+  if (o.taxes_included !== false || !(Number(vatRate) > 0) || li.taxable === false) return r2(each);
+  // a shop that adds VAT at the checkout: add it here too
+  const rate = Array.isArray(li.tax_lines) && li.tax_lines.length ? li.tax_lines.reduce((s, t) => s + (Number(t.rate) || 0), 0) : Number(vatRate);
+  return rate > 0 ? r2(each * (1 + rate)) : r2(each);
 }
 
 // Fabric or colour, if the shop asks for it: a line property first (custom
@@ -118,7 +120,7 @@ export function mapLine(o, li, { customerId, customerName, product, fromStock, l
     notes,
     paidDate: paid ? paidDay : '',
     dueDate: addDays(paidDay, fromStock ? 7 : (leadDays == null ? 28 : leadDays)),
-    priceEach: unitPriceExVat(o, li, vatRate),
+    priceEach: unitPriceInclVat(o, li, vatRate),
     status: fromStock ? 'ready' : 'new',
     ...(fromStock ? { fromStock: true, readyAt: now } : {}),
     deliveryContact: ship.name || customerName || '',
@@ -132,7 +134,8 @@ export function mapLine(o, li, { customerId, customerName, product, fromStock, l
 
 // A Shopify product variant as a Factory Manager product.
 export function mapProduct(v, { taxesIncluded, vatRate }) {
-  const price = taxesIncluded && vatRate ? r2(v.price / (1 + vatRate)) : r2(v.price);
+  // prices are kept incl. VAT: a shop that shows them without VAT gets it added
+  const price = taxesIncluded === false && vatRate ? r2(v.price * (1 + vatRate)) : r2(v.price);
   return {
     name: v.title, category: v.category || '', sellingPrice: price,
     ...(v.tracked ? { stock: Math.max(0, Math.round(v.qoh) || 0) } : {}),

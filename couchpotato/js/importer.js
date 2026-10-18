@@ -345,7 +345,10 @@ function bestSheet(kind, sheets) {
 // What the import would do, row by row, before anything is written.
 function plan(kind, rows, map, opts) {
   const K = KINDS[kind];
-  const vat = opts.inclVat ? (Number(opts.vatRate) || 0) : 0;
+  // Selling prices are kept incl. VAT, costs excl. VAT: a file of selling
+  // prices without VAT gets it added, a file of costs with VAT has it taken off.
+  const rate = Number(opts.vatRate) || 0;
+  const adj = (x) => kind === 'materials' ? (opts.inclVat && rate ? x / (1 + rate) : x) : (opts.addVat && rate ? x * (1 + rate) : x);
   const get = (r, k) => map[k] == null ? '' : String(r[map[k]] == null ? '' : r[map[k]]).trim();
   const out = { add: [], update: [], skip: [] };
   if (kind === 'bom') {
@@ -367,7 +370,7 @@ function plan(kind, rows, map, opts) {
     byProd.forEach(b => out.update.push({ id: b.p.id, name: b.p.name, data: { materials: b.lines }, detail: b.lines.length + ' material' + (b.lines.length === 1 ? '' : 's') }));
     return out;
   }
-  if (kind === 'orders') return planOrders(rows, get, vat, opts);
+  if (kind === 'orders') return planOrders(rows, get, adj, opts);
   if (kind === 'invoices') return planInvoices(rows, get, opts);
   const existing = kind === 'materials' ? allMaterials() : kind === 'products' ? allProducts() : allCustomers();
   const seen = new Map();
@@ -379,7 +382,7 @@ function plan(kind, rows, map, opts) {
       if (f.k === 'name' || map[f.k] == null) return;
       const raw = get(r, f.k);
       if (raw === '') return;
-      if (f.money) { const x = toNumber(raw); if (x != null) d[f.k] = Math.round((vat ? x / (1 + vat) : x) * 100) / 100; }
+      if (f.money) { const x = toNumber(raw); if (x != null) d[f.k] = Math.round(adj(x) * 100) / 100; }
       else if (f.num) { const x = toNumber(raw); if (x != null) d[f.k] = f.k === 'termsDays' || f.k === 'stock' ? Math.round(x) : x; }
       else if (f.k === 'unit') d.unit = toUnit(raw);
       else if (f.k === 'email') d.email = raw.toLowerCase();
@@ -413,7 +416,7 @@ function plan(kind, rows, map, opts) {
 // here yet is added along with its orders (when that is ticked). The stage
 // is only set for new orders: an order already here is moved on the Orders
 // page, where its stock comes off the shelf.
-function planOrders(rows, get, vat, opts) {
+function planOrders(rows, get, adj, opts) {
   const out = { add: [], update: [], skip: [], newCustomers: [] };
   const custs = allCustomers(), existing = allOrders();
   const fresh = new Map(), seen = new Set();
@@ -432,7 +435,7 @@ function planOrders(rows, get, vat, opts) {
     const q = toNumber(get(r, 'qty'));
     if (q != null) { if (!(q > 0)) return out.skip.push({ n, why: 'quantity ' + get(r, 'qty') }); d.qty = Math.max(1, Math.round(q)); }
     const price = toNumber(get(r, 'priceEach'));
-    if (price != null) d.priceEach = Math.round((vat ? price / (1 + vat) : price) * 100) / 100;
+    if (price != null) d.priceEach = Math.round(adj(price) * 100) / 100;
     ['fabric', 'externalRef', 'notes'].forEach(k => { const x = get(r, k); if (x) d[k] = x; });
     for (const k of ['paidDate', 'dueDate']) {
       const raw = get(r, k);
@@ -624,7 +627,7 @@ export function openImport(kind, settings) {
   card.style.maxWidth = '900px';
   const body = card.querySelector('#im-body');
   const canAddCustomers = store.can('customers', 'edit');
-  const opts = (w) => ({ update: (w.querySelector('#im-update') || {}).checked !== false, inclVat: !!(w.querySelector('#im-vat') || {}).checked, vatRate,
+  const opts = (w) => ({ update: (w.querySelector('#im-update') || {}).checked !== false, inclVat: !!(w.querySelector('#im-vat') || {}).checked, addVat: !!(w.querySelector('#im-addvat') || {}).checked, vatRate,
     addCustomers: canAddCustomers && (w.querySelector('#im-addcust') || {}).checked !== false });
   function dataRows() { const rows = (sheets[sheetIx] || { rows: [] }).rows; return rows.slice(headerRow + 1); }
   function headers() { return ((sheets[sheetIx] || { rows: [] }).rows[headerRow] || []).map(x => String(x || '').trim()); }
@@ -648,7 +651,8 @@ export function openImport(kind, settings) {
       <div class="btn-row" style="margin:.6rem 0; gap:1rem; flex-wrap:wrap">
         ${K !== 'bom' && K !== 'invoices' ? `<label class="check"><input type="checkbox" id="im-update" ${card.querySelector('#im-update') && !card.querySelector('#im-update').checked ? '' : 'checked'}> Update ones already here (same ${K === 'orders' ? 'order no.' : 'name'})</label>` : ''}
         ${(K === 'orders' || K === 'invoices') && canAddCustomers ? `<label class="check"><input type="checkbox" id="im-addcust" ${card.querySelector('#im-addcust') && !card.querySelector('#im-addcust').checked ? '' : 'checked'}> Add customers that aren’t here yet</label>` : ''}
-        ${vatReg && (K === 'materials' || K === 'products' || K === 'orders') ? `<label class="check"><input type="checkbox" id="im-vat" ${card.querySelector('#im-vat') && card.querySelector('#im-vat').checked ? 'checked' : ''}> Prices in the file include VAT (${Math.round(vatRate * 100)}%)</label>` : ''}
+        ${vatReg && K === 'materials' ? `<label class="check"><input type="checkbox" id="im-vat" ${card.querySelector('#im-vat') && card.querySelector('#im-vat').checked ? 'checked' : ''}> Costs in the file include VAT (${Math.round(vatRate * 100)}%): take it off</label>` : ''}
+        ${vatReg && (K === 'products' || K === 'orders') ? `<label class="check"><input type="checkbox" id="im-addvat" ${card.querySelector('#im-addvat') && card.querySelector('#im-addvat').checked ? 'checked' : ''}> Prices in the file are excl. VAT: add ${Math.round(vatRate * 100)}% (prices are kept incl. VAT)</label>` : ''}
         ${vatReg && K === 'invoices' ? `<label class="check"><input type="checkbox" id="im-vat" ${card.querySelector('#im-vat') && !card.querySelector('#im-vat').checked ? '' : 'checked'}> Totals include VAT (${Math.round(vatRate * 100)}%)</label>` : ''}
       </div>
       ${sheets ? `
@@ -700,7 +704,7 @@ export function openImport(kind, settings) {
     if (t.id === 'im-sheet') { sheetIx = parseInt(t.value, 10) || 0; headerRow = findHeaderRow(sheets[sheetIx].rows); map = guessColumns(K, headers()); return draw(); }
     if (t.id === 'im-head') { headerRow = Math.max(0, (parseInt(t.value, 10) || 1) - 1); map = guessColumns(K, headers()); return draw(); }
     if (t.dataset && t.dataset.imCol) { if (t.value === '') delete map[t.dataset.imCol]; else map[t.dataset.imCol] = parseInt(t.value, 10); return draw(); }
-    if (t.id === 'im-update' || t.id === 'im-vat' || t.id === 'im-addcust') return draw();
+    if (t.id === 'im-update' || t.id === 'im-vat' || t.id === 'im-addvat' || t.id === 'im-addcust') return draw();
   });
   draw();
 }

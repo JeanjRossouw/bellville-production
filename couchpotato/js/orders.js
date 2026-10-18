@@ -10,7 +10,7 @@ import { consumeForOrder, returnForOrder } from './stock.js';
 import { toXlsx, toCsv, download } from './exporter.js';
 import {
   esc, money, field, row, val, openModal, toast, empty, today, addDays,
-  niceDate, daysUntil, statusChip, statusMeta, STATUSES, fabricChip, FABRIC_STATES
+  niceDate, daysUntil, statusChip, statusMeta, STATUSES, fabricChip, FABRIC_STATES, inclLabel
 } from './ui.js';
 
 let orders = [];
@@ -30,6 +30,7 @@ export function startOrders(cb, cfg) {
 
 export const allOrders = () => orders;
 export const setOrderSettings = (cfg) => { settings = cfg || {}; };
+const vatRate = () => settings.vatRegistered ? (Number(settings.vatRate) || 0) : 0;
 export const orderById = (id) => orders.find(o => o.id === id) || null;
 
 // ------------------------------------------------------------- capture ------
@@ -47,8 +48,8 @@ function form(o) {
     field('Product', 'o-product', { value: o.product, placeholder: 'e.g. 3 Seater Chesterfield', list: 'o-product-list' }),
     field('Qty', 'o-qty', { value: o.qty || 1, type: 'number', min: 1 })
   ) + row(
-    field('Fabric / colour', 'o-fabric', { value: o.fabric, placeholder: 'e.g. Moldova : Oatmeal' }),
-    field('Price each (excl. VAT)', 'o-price', { value: o.priceEach || '', type: 'number', min: 0, step: '0.01', placeholder: '0.00' })
+    field('Fabric / colour', 'o-fabric', { value: o.fabric, placeholder: 'Pick from the list, or type it', list: 'fabric-list' }),
+    field('Price each' + inclLabel(vatRate()), 'o-price', { value: o.priceEach || '', type: 'number', min: 0, step: '0.01', placeholder: '0.00' })
   ) + row(
     field('Date paid / order placed', 'o-paid', { value: paid, type: 'date' }),
     field('Due out of the factory', 'o-due', { value: o.dueDate || addDays(paid, 28), type: 'date' })
@@ -132,15 +133,25 @@ export function editOrder(id) {
   wireProductPrice(editWrap);
 }
 
-export async function deleteOrder(id) {
+// Orders are not deleted: a mistake, or one called off, is cancelled and kept
+// on record with why, so its number and history never go missing.
+export async function cancelOrder(id) {
   const o = orderById(id);
   if (!o) return;
-  if (!confirm('Delete ' + (o.orderNo || 'this order') + ' — ' + (o.product || '') + '?')) return;
+  const why = prompt('Cancel ' + (o.orderNo || 'this order') + ' — ' + (o.product || '') + '?\n\nWhy is it cancelled? (it stays on record)', '');
+  if (why === null) return;
   // its materials came off the shelf when it started: put them back if it was never built
   if (o.materialsUsed && (o.status === 'new' || o.status === 'in-production')
-      && confirm('Put the materials for ' + (o.orderNo || 'this order') + ' back in stock?')) await returnForOrder(o, 'deleted');
-  await store.remove('orders', id);
-  toast('Order deleted');
+      && confirm('Put the materials for ' + (o.orderNo || 'this order') + ' back in stock?')) await returnForOrder(o, 'cancelled');
+  await store.update('orders', id, { status: 'cancelled', cancelledAt: store.nowIso(), cancelledBy: (store.getUser() || {}).name || '', cancelReason: why.trim() },
+    'Cancelled' + (why.trim() ? ': ' + why.trim() : ''));
+  toast((o.orderNo || 'Order') + ' cancelled. It stays on record (show All to see it)');
+}
+export async function reopenOrder(id) {
+  const o = orderById(id);
+  if (!o || !confirm('Reopen ' + (o.orderNo || 'this order') + ' as New?')) return;
+  await store.update('orders', id, { status: 'new', cancelledAt: '', cancelReason: '' }, 'Reopened');
+  toast((o.orderNo || 'Order') + ' is back as New');
 }
 
 // -------------------------------------------------------------- changes -----
@@ -190,7 +201,7 @@ export async function setDue(id, dueDate) {
 // Excel and imported again (orders are matched by their number).
 export function orderRows(list) {
   const fab = (k) => (FABRIC_STATES.find(f => f.key === k) || FABRIC_STATES[0]).label;
-  const head = ['Order no', 'Customer', 'Product', 'Qty', 'Fabric', 'Price each (excl. VAT)', 'Total (excl. VAT)', 'Their ref',
+  const head = ['Order no', 'Customer', 'Product', 'Qty', 'Fabric', 'Price each' + inclLabel(vatRate()), 'Total' + inclLabel(vatRate()), 'Their ref',
     'Date paid', 'Due date', 'Status', 'Fabric status', 'Planned week', 'Dispatched', 'Invoice no', 'Notes', 'Captured', 'Captured by'];
   const rows = list.map(o => {
     const qty = Number(o.qty) || 1, price = Number(o.priceEach) || 0;
@@ -260,7 +271,7 @@ function dueBadge(o) {
 
 function orderCard(o) {
   const cur = settings.currency || 'R';
-  const next = STATUSES[STATUSES.findIndex(s => s.key === o.status) + 1];
+  const next = o.status === 'cancelled' ? null : STATUSES[STATUSES.findIndex(s => s.key === o.status) + 1];
   return `
     <div class="card order">
       <div class="order-top">
@@ -272,7 +283,7 @@ function orderCard(o) {
           <h2>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' <span class="qty">× ' + esc(o.qty) + '</span>' : ''}</h2>
           <div class="meta">
             <div>${esc(o.customerName || 'No customer')}${o.externalRef ? ' · their ref ' + esc(o.externalRef) : ''}</div>
-            ${o.fabric ? `<div>${esc(o.fabric)}</div>` : ''}
+            ${o.fabric ? `<div>${esc(o.fabric)}${o.fabricPo ? ' <span class="muted">· ' + esc(o.fabricStatus === 'received' ? 'in the stock room' : 'on order') + ', ' + esc(o.fabricPo) + '</span>' : ''}</div>` : ''}
             ${o.paidDate ? `<div class="muted">Paid ${esc(niceDate(o.paidDate))}</div>` : ''}
             ${o.priceEach ? `<div class="muted">${esc(money(o.priceEach, cur))} each · ${esc(money(o.priceEach * (o.qty || 1), cur))} total</div>` : ''}
             ${o.planWeek ? `<div class="muted">Planned for the week of ${esc(niceDate(o.planWeek))}</div>` : ''}
@@ -285,6 +296,7 @@ function orderCard(o) {
           ${o.fabric ? fabricChip(o.fabricStatus) : ''}
         </div>
       </div>
+      ${o.status === 'cancelled' ? `<p class="notes"><strong>Cancelled</strong>${o.cancelReason ? ': ' + esc(o.cancelReason) : ''}${o.cancelledBy ? ' · ' + esc(o.cancelledBy) : ''}</p>` : ''}
       ${o.notes ? `<p class="notes">${esc(o.notes)}</p>` : ''}
       <div class="order-controls">
         <label class="inline">Due
@@ -300,7 +312,8 @@ function orderCard(o) {
         ${o.status === 'dispatched' && !o.invoiceId && store.can('invoices', 'edit') ? `<button class="btn primary sm" data-act="inv-order" data-id="${esc(o.id)}" title="Raise the invoice for this order">Invoice it</button>` : ''}
         ${o.status === 'invoiced' && !o.invoiceId ? `<button class="btn ghost sm" data-act="status" data-id="${esc(o.id)}" data-to="dispatched" title="Marked invoiced without an invoice: put it back in the To invoice list">Back to Dispatched</button>` : ''}
         <button class="btn ghost sm" data-act="edit-order" data-id="${esc(o.id)}">Edit</button>
-        <button class="btn danger sm" data-act="del-order" data-id="${esc(o.id)}">Delete</button>
+        ${['new', 'in-production', 'ready'].includes(o.status) ? `<button class="btn danger sm" data-act="cancel-order" data-id="${esc(o.id)}" title="Call it off. It stays on record">Cancel order</button>` : ''}
+        ${o.status === 'cancelled' ? `<button class="btn ghost sm" data-act="reopen-order" data-id="${esc(o.id)}">Reopen</button>` : ''}
       </div>
     </div>`;
 }
@@ -344,6 +357,7 @@ export function renderOrders(host) {
         <option value="open"${filter.status === 'open' ? ' selected' : ''}>Open orders</option>
         <option value="all"${filter.status === 'all' ? ' selected' : ''}>Everything</option>
         ${STATUSES.map(s => `<option value="${s.key}"${s.key === filter.status ? ' selected' : ''}>${esc(s.label)} only</option>`).join('')}
+        <option value="cancelled"${filter.status === 'cancelled' ? ' selected' : ''}>Cancelled only</option>
       </select>
     </div>
 

@@ -10,7 +10,7 @@
 import * as store from './store.js';
 import { allCustomers, customerById } from './customers.js';
 import { allProducts, productByName, costOf } from './costing.js';
-import { esc, money, field, row, val, openModal, toast, empty, today, addDays, niceDate, openPrint, docHeader, waDigits } from './ui.js';
+import { esc, money, field, row, val, openModal, toast, empty, today, addDays, niceDate, openPrint, docHeader, waDigits, vatSplit, exVat, inclLabel } from './ui.js';
 
 let quotes = [];
 let settings = {};
@@ -42,9 +42,9 @@ const validDays = () => Number(settings.quoteValidDays) || 30;
 export function totals(q) {
   const subtotalRaw = r2((q.lines || []).reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.unitPrice) || 0), 0));
   const discount = Math.min(subtotalRaw, r2(q.discount));
-  const subtotal = r2(subtotalRaw - discount);
-  const vat = r2(subtotal * vatRate());
-  return { subtotalRaw, discount, subtotal, vat, total: r2(subtotal + vat) };
+  // prices include VAT: the total is the lines less the discount, VAT inside it
+  const { gross, ex, vat } = vatSplit(subtotalRaw - discount, vatRate());
+  return { subtotalRaw, discount, subtotal: ex, vat, total: gross };
 }
 
 const isExpired = (q) => q.status === 'sent' && q.validUntil && q.validUntil < today();
@@ -63,7 +63,7 @@ const contactOf = (q) => {
 
 export function renderQuotes(host) {
   const open = quotes.filter(q => q.status === 'draft' || q.status === 'sent');
-  const openValue = open.reduce((s, q) => s + totals(q).subtotal, 0);
+  const openValue = open.reduce((s, q) => s + totals(q).total, 0);
   const month = today().slice(0, 7);
   const wonMonth = quotes.filter(q => q.status === 'accepted' && String(q.acceptedAt || '').slice(0, 7) === month);
   const since = addDays(today(), -90);
@@ -77,8 +77,8 @@ export function renderQuotes(host) {
       <div class="btn-row"><button class="btn primary" data-act="quote-new">＋ New quote</button></div></div>
     <div class="tiles">
       ${tile(open.length, 'Open quotes')}
-      ${tile(money(openValue, cur()), 'Open, excl. VAT')}
-      ${tile(money(wonMonth.reduce((s, q) => s + totals(q).subtotal, 0), cur()), 'Won this month')}
+      ${tile(money(openValue, cur()), 'Open')}
+      ${tile(money(wonMonth.reduce((s, q) => s + totals(q).total, 0), cur()), 'Won this month')}
       ${tile(decided.length ? Math.round(won / decided.length * 100) + '%' : '—', 'Won, last 90 days')}
     </div>
     <div class="btn-row" style="margin:.2rem 0 .9rem">${tab('open', 'Open')}${tab('accepted', 'Accepted')}${tab('all', 'All')}</div>
@@ -108,7 +108,7 @@ function lineRow(l, i) {
   l = l || {};
   return `<div class="q-row" data-row="${i}">
     <input class="q-desc" list="q-prod-list" value="${esc(l.description || '')}" placeholder="Product or description">
-    <input class="q-fabric" value="${esc(l.fabric || '')}" placeholder="Fabric / colour">
+    <input class="q-fabric" value="${esc(l.fabric || '')}" placeholder="Fabric / colour" list="fabric-list">
     <input class="q-qty" type="number" min="1" step="1" value="${esc(l.qty || 1)}">
     <input class="q-price" type="number" min="0" step="0.01" value="${esc(l.unitPrice == null ? '' : l.unitPrice)}" placeholder="price each">
     <button type="button" class="icon-btn q-del" title="Remove">✕</button>
@@ -125,11 +125,11 @@ function quoteForm(q) {
     + `<div id="q-prospect" ${q.prospect ? '' : 'hidden'}>${row(field('Name', 'q-p-name', { value: p.name, placeholder: 'Their name or business' }), field('Cell / WhatsApp', 'q-p-phone', { value: p.phone }))}
        ${row(field('Email', 'q-p-email', { type: 'email', value: p.email }), field('Area / address', 'q-p-addr', { value: p.address }))}</div>`
     + `<div class="fld"><span>What is being quoted</span>
-        <div class="q-head muted"><span>Product</span><span>Fabric</span><span>Qty</span><span>Each excl. VAT</span><span></span></div>
+        <div class="q-head muted"><span>Product</span><span>Fabric</span><span>Qty</span><span>Each${esc(inclLabel(vatRate()))}</span><span></span></div>
         <div id="q-lines">${(q.lines && q.lines.length ? q.lines : [{}]).map(lineRow).join('')}</div>
         <button type="button" class="btn ghost sm" id="q-add" style="margin-top:.4rem">＋ Add a line</button>
       </div>`
-    + row(field('Discount (' + cur() + ', excl. VAT)', 'q-disc', { type: 'number', min: 0, step: '0.01', value: q.discount || '' }), field('Valid until', 'q-valid', { type: 'date', value: q.validUntil || addDays(today(), validDays()) }))
+    + row(field('Discount (' + cur() + ')', 'q-disc', { type: 'number', min: 0, step: '0.01', value: q.discount || '' }), field('Valid until', 'q-valid', { type: 'date', value: q.validUntil || addDays(today(), validDays()) }))
     + `<div class="q-total" id="q-total"></div>`
     + field('Notes on the quote', 'q-notes', { type: 'textarea', value: q.notes, placeholder: 'Lead time, delivery, deposit, anything they should know' })
     + `<datalist id="q-prod-list">${allProducts().map(pr => `<option value="${esc(pr.name)}"></option>`).join('')}</datalist>`;
@@ -151,14 +151,14 @@ function wireForm(w) {
       if (pr) {
         const c = costOf(pr);
         cost += c.total * qty;
-        const m = price - c.total;
-        hint.innerHTML = 'Your cost ' + esc(money(c.total, cur())) + ' each · margin <strong style="color:' + (m < 0 ? '#b91c1c' : '#1f7a3a') + '">' + esc(money(m, cur())) + (price > 0 ? ' (' + Math.round(m / price * 100) + '%)' : '') + '</strong>';
+        const m = exVat(price, vatRate()) - c.total;     // margin on what the business keeps, excl. VAT
+        hint.innerHTML = 'Your cost ' + esc(money(c.total, cur())) + ' each · margin <strong style="color:' + (m < 0 ? '#b91c1c' : '#1f7a3a') + '">' + esc(money(m, cur())) + (price > 0 ? ' (' + Math.round(m / exVat(price, vatRate()) * 100) + '%)' : '') + '</strong>' + (vatRate() ? ' <span class="muted">excl. VAT</span>' : '');
       } else { hint.textContent = r.querySelector('.q-desc').value ? 'Not in the catalogue: no cost to compare' : ''; if (r.querySelector('.q-desc').value) costed = false; }
     });
     const t = totals({ lines: [{ qty: 1, unitPrice: sub }], discount: parseFloat(w.querySelector('#q-disc').value) || 0 });
     const margin = t.subtotal - cost;
-    w.querySelector('#q-total').innerHTML = `<div>Subtotal ${esc(money(t.subtotal, cur()))}${t.vat ? ' · VAT ' + esc(money(t.vat, cur())) : ''} · <strong>Total ${esc(money(t.total, cur()))}</strong></div>`
-      + (cost ? `<div class="muted">Only you see this: cost ${esc(money(cost, cur()))}, margin ${esc(money(margin, cur()))}${t.subtotal ? ' (' + Math.round(margin / t.subtotal * 100) + '%)' : ''}${costed ? '' : ', some lines not costed'}</div>` : '');
+    w.querySelector('#q-total').innerHTML = `<div><strong>Total ${esc(money(t.total, cur()))}</strong>${t.vat ? ' · includes VAT ' + esc(money(t.vat, cur())) : ''}</div>`
+      + (cost ? `<div class="muted">Only you see this: cost ${esc(money(cost, cur()))}, margin ${esc(money(margin, cur()))}${t.subtotal ? ' (' + Math.round(margin / t.subtotal * 100) + '%)' : ''}${t.vat ? ' excl. VAT' : ''}${costed ? '' : ', some lines not costed'}</div>` : '');
   };
   // picking a catalogue product fills its price, unless one was typed
   lines.addEventListener('change', (e) => {
@@ -273,9 +273,8 @@ export function printQuote(id) {
     <table><tr><th>Description</th><th class="r">Qty</th><th class="r">Each</th><th class="r">Amount</th></tr>
       ${(q.lines || []).map(l => `<tr><td>${esc(l.description)}${l.fabric ? '<br><small>' + esc(l.fabric) + '</small>' : ''}</td><td class="r">${esc(l.qty)}</td><td class="r">${esc(money(l.unitPrice, cur()))}</td><td class="r">${esc(money(l.qty * l.unitPrice, cur()))}</td></tr>`).join('')}
       ${t.discount ? `<tr><td colspan="3" class="r">Discount</td><td class="r">−${esc(money(t.discount, cur()))}</td></tr>` : ''}
-      <tr class="tot"><td colspan="3" class="r">Subtotal</td><td class="r">${esc(money(t.subtotal, cur()))}</td></tr>
-      ${t.vat ? `<tr class="tot"><td colspan="3" class="r">VAT ${Math.round(vatRate() * 100)}%</td><td class="r">${esc(money(t.vat, cur()))}</td></tr>` : ''}
-      <tr class="tot big"><td colspan="3" class="r">TOTAL</td><td class="r">${esc(money(t.total, cur()))}</td></tr>
+      <tr class="tot big"><td colspan="3" class="r">TOTAL${t.vat ? ' (incl. VAT)' : ''}</td><td class="r">${esc(money(t.total, cur()))}</td></tr>
+      ${t.vat ? `<tr><td colspan="3" class="r">Includes VAT ${Math.round(vatRate() * 100)}%</td><td class="r">${esc(money(t.vat, cur()))}</td></tr>` : ''}
     </table>
     ${q.notes ? `<p style="white-space:pre-line">${esc(q.notes)}</p>` : ''}
     ${settings.bankDetails ? `<div class="bank"><b>To go ahead, pay to</b>${esc(settings.bankDetails)}\nReference: ${esc(q.quoteNo)}</div>` : ''}
@@ -291,7 +290,7 @@ export function acceptQuote(id) {
   const q = quoteById(id); if (!q) return;
   const t = totals(q);
   openModal('Accepted: ' + q.quoteNo, `
-    <p>${(q.lines || []).length} order${(q.lines || []).length === 1 ? '' : 's'} will go to the factory for <strong>${esc(customerName(q))}</strong>, worth ${esc(money(t.subtotal, cur()))} excl. VAT.${q.customerId ? '' : ' They will be added to your customers.'}</p>
+    <p>${(q.lines || []).length} order${(q.lines || []).length === 1 ? '' : 's'} will go to the factory for <strong>${esc(customerName(q))}</strong>, worth ${esc(money(t.total, cur()))}${esc(inclLabel(vatRate()))}.${q.customerId ? '' : ' They will be added to your customers.'}</p>
     ${row(field('Date paid / order placed', 'qa-paid', { type: 'date', value: today() }), field('Due out of the factory', 'qa-due', { type: 'date', value: addDays(today(), leadDays()) }))}`, {
     okLabel: 'Create the orders',
     onOk: async (w) => {
@@ -303,7 +302,7 @@ export function acceptQuote(id) {
         customerId = await store.create('customers', { name: p.name, contact: p.name, phone: p.phone || '', email: p.email || '', address: p.address || '', area: '', termsDays: 0, notes: 'Added from quote ' + q.quoteNo });
         cname = p.name;
       }
-      const factor = t.subtotalRaw > 0 ? t.subtotal / t.subtotalRaw : 1;
+      const factor = t.subtotalRaw > 0 ? t.total / t.subtotalRaw : 1;     // the discount, spread over the lines (prices stay incl. VAT)
       const orderNos = [];
       for (const l of q.lines || []) {
         const n = await store.nextNumber('orderNo', settings.firstOrderNo || 1001);

@@ -8,7 +8,7 @@
 // products (one document each, carrying its bill of materials and selling
 // price) and the overheads + labour rate, which live in settings.
 import * as store from './store.js';
-import { esc, money, field, row, val, openModal, toast, empty, niceDate, today, imgUrl, productImg } from './ui.js';
+import { esc, money, field, row, val, openModal, toast, empty, niceDate, today, imgUrl, productImg, exVat, inclLabel } from './ui.js';
 import { nextShopCode, labelSheetHtml, encodable } from './barcode.js';
 
 export const UNITS = ['m', 'm²', 'sheet', 'each', 'kg', 'L', 'roll', 'pack'];
@@ -25,11 +25,23 @@ export function startCosting(cb, cfg) {
   settings = cfg || {};
   if (unwatchM) unwatchM();
   if (unwatchP) unwatchP();
-  unwatchM = store.watch('materials', rows => { materials = rows.sort(byName); if (onChange) onChange(); });
+  unwatchM = store.watch('materials', rows => { materials = rows.sort(byName); refreshFabricList(); if (onChange) onChange(); });
   unwatchP = store.watch('products', rows => { products = rows.sort(byName); if (onChange) onChange(); });
 }
 const byName = (a, b) => String(a.name || '').localeCompare(String(b.name || ''));
 export const setCostingSettings = (cfg) => { settings = cfg || {}; };
+
+// Fabrics are materials marked as fabric (or, until someone says otherwise,
+// named like one). Every fabric box in the app (orders, quotes, the till)
+// offers them from one list, kept on the page and refreshed when they change.
+export const isFabric = (m) => m.isFabric != null ? !!m.isFabric : /fabric|leather|velvet|linen|suede|chenille|boucl/i.test(m.name || '');
+export const allFabrics = () => materials.filter(isFabric);
+export const fabricByName = (name) => { const n = String(name || '').trim().toLowerCase(); return n ? allFabrics().find(m => String(m.name || '').toLowerCase() === n) || null : null; };
+function refreshFabricList() {
+  let dl = document.getElementById('fabric-list');
+  if (!dl) { dl = document.createElement('datalist'); dl.id = 'fabric-list'; document.body.appendChild(dl); }
+  dl.innerHTML = allFabrics().map(m => `<option value="${esc(m.name)}"></option>`).join('');
+}
 export const setCostView = (v) => { costView = v; };
 export const allProducts = () => products;
 export const allMaterials = () => materials;
@@ -44,6 +56,7 @@ export function overheadPerUnit() {
   return units > 0 ? total / units : 0;
 }
 export const labourRate = () => Number(settings.labourRate) || 0;
+const vatRate = () => settings.vatRegistered ? (Number(settings.vatRate) || 0) : 0;
 
 export function costOf(p) {
   const lines = (p.materials || []).map(l => {
@@ -55,9 +68,10 @@ export function costOf(p) {
   const labour = (Number(p.labourHours) || 0) * labourRate();
   const overhead = overheadPerUnit();
   const total = material + labour + overhead;
-  const price = Number(p.sellingPrice) || 0;
-  const margin = price - total;
-  return { lines, material, labour, overhead, total, price, margin, marginPct: price > 0 ? margin / price : null };
+  // the selling price includes VAT; the margin is on what the business keeps
+  const price = Number(p.sellingPrice) || 0, priceEx = exVat(price, vatRate());
+  const margin = priceEx - total;
+  return { lines, material, labour, overhead, total, price, priceEx, margin, marginPct: priceEx > 0 ? margin / priceEx : null };
 }
 
 // ----------------------------------------------------------- materials ------
@@ -73,10 +87,11 @@ function materialForm(m) {
   ) + row(
     field('Reorder when it drops below', 'm-level', { value: m.reorderLevel || '', type: 'number', min: 0, step: '0.01', placeholder: 'Leave blank to not track' }),
     field('Usual order quantity', 'm-reqty', { value: m.reorderQty || '', type: 'number', min: 0, step: '0.01', placeholder: 'e.g. a roll or a pallet' })
-  ) + field('Notes', 'm-notes', { value: m.notes, type: 'textarea', placeholder: 'Size, grade, colour code…' });
+  ) + `<label class="check"><input type="checkbox" id="m-fabric"${m.name != null ? (isFabric(m) ? ' checked' : '') : ''}> This is a fabric: offer it in the fabric list on orders, quotes and the till</label>`
+    + field('Notes', 'm-notes', { value: m.notes, type: 'textarea', placeholder: 'Size, grade, colour code…' });
 }
 const readMaterial = (w) => ({ name: val(w, 'm-name'), unit: val(w, 'm-unit'), cost: parseFloat(val(w, 'm-cost')) || 0, supplier: val(w, 'm-supplier'), notes: val(w, 'm-notes'),
-  reorderLevel: parseFloat(val(w, 'm-level')) || 0, reorderQty: parseFloat(val(w, 'm-reqty')) || 0 });
+  reorderLevel: parseFloat(val(w, 'm-level')) || 0, reorderQty: parseFloat(val(w, 'm-reqty')) || 0, isFabric: !!(w.querySelector('#m-fabric') || {}).checked });
 
 export function newMaterial() {
   openModal('New material', materialForm(null), {
@@ -119,7 +134,7 @@ function productForm(p) {
     field('Category', 'p-cat', { value: p.category, placeholder: 'e.g. Sofas, Corner units, Chairs' })
   ) + row(
     field('Labour hours per piece', 'p-hours', { value: p.labourHours == null ? '' : p.labourHours, type: 'number', min: 0, step: '0.25' }),
-    field('Selling price each (excl. VAT)', 'p-price', { value: p.sellingPrice == null ? '' : p.sellingPrice, type: 'number', min: 0, step: '0.01' })
+    field('Selling price each' + inclLabel(vatRate()), 'p-price', { value: p.sellingPrice == null ? '' : p.sellingPrice, type: 'number', min: 0, step: '0.01' })
   ) + row(
     field('In stock on the showroom floor', 'p-stock', { value: p.stock == null ? '' : p.stock, type: 'number', min: 0, placeholder: '0 = made to order only' }),
     field('Barcode', 'p-barcode', { value: p.barcode, placeholder: 'Scan it, or leave blank for a shop code' })
@@ -172,7 +187,7 @@ function wireProductForm(wrap) {
       <div><span>Labour ${d.labourHours || 0}h × ${esc(money(labourRate(), cur))}</span><strong>${esc(money(c.labour, cur))}</strong></div>
       <div><span>Overhead share</span><strong>${esc(money(c.overhead, cur))}</strong></div>
       <div class="tot"><span>Cost to build</span><strong>${esc(money(c.total, cur))}</strong></div>
-      <div class="${c.margin < 0 ? 'bad' : 'good'}"><span>Margin at ${esc(money(c.price, cur))}</span><strong>${esc(money(c.margin, cur))}${c.marginPct != null ? ' · ' + Math.round(c.marginPct * 100) + '%' : ''}</strong></div>`;
+      <div class="${c.margin < 0 ? 'bad' : 'good'}"><span>Margin at ${esc(money(c.price, cur))}${vatRate() ? ' (excl. VAT: ' + esc(money(c.priceEx, cur)) + ')' : ''}</span><strong>${esc(money(c.margin, cur))}${c.marginPct != null ? ' · ' + Math.round(c.marginPct * 100) + '%' : ''}</strong></div>`;
   };
   w.addEventListener('input', live);
   w.addEventListener('change', live);
@@ -304,7 +319,7 @@ function materialsHtml(cur) {
   return head + `<div class="card" style="padding:0; overflow:auto"><table class="tbl">
     <thead><tr><th>Material</th><th>Unit</th><th class="r">Cost / unit</th><th>Supplier</th><th class="r">Used in</th><th></th></tr></thead>
     <tbody>${materials.map(m => `<tr>
-      <td><strong>${esc(m.name)}</strong>${m.notes ? '<div class="muted">' + esc(m.notes) + '</div>' : ''}</td>
+      <td><strong>${esc(m.name)}</strong>${isFabric(m) ? ' <span class="chip calm">fabric</span>' : ''}${m.notes ? '<div class="muted">' + esc(m.notes) + '</div>' : ''}</td>
       <td>${esc(m.unit)}</td>
       <td class="r">${esc(money(m.cost, cur))}</td>
       <td>${esc(m.supplier || '')}</td>
@@ -381,8 +396,8 @@ export function printPriceSheet() {
   const vat = settings.vatRegistered ? (Number(settings.vatRate) || 0) : 0;
   const cats = grouped();
   const body = header('PRICE LIST') + Object.keys(cats).sort().map(cat => `<h2>${esc(cat)}</h2><table>
-    <tr><th>Product</th><th class="r">Price excl. VAT</th>${vat ? '<th class="r">VAT</th><th class="r">Price incl. VAT</th>' : ''}</tr>
-    ${cats[cat].filter(p => Number(p.sellingPrice) > 0).map(p => { const px = Number(p.sellingPrice); return `<tr><td>${esc(p.name)}</td><td class="r">${esc(money(px, cur))}</td>${vat ? `<td class="r">${esc(money(px * vat, cur))}</td><td class="r"><b>${esc(money(px * (1 + vat), cur))}</b></td>` : ''}</tr>`; }).join('')}
+    <tr><th>Product</th><th class="r">Price${vat ? ' incl. VAT' : ''}</th></tr>
+    ${cats[cat].filter(p => Number(p.sellingPrice) > 0).map(p => `<tr><td>${esc(p.name)}</td><td class="r"><b>${esc(money(Number(p.sellingPrice), cur))}</b></td></tr>`).join('')}
   </table>`).join('') + `<div class="ft">Prices valid for 30 days from the date above. Made to order${settings.paymentTermsDays ? ' · payment terms ' + settings.paymentTermsDays + ' days' : ''}.</div>`;
   openPrint('Price list', body);
 }

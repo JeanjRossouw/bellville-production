@@ -2,7 +2,7 @@
 //
 // A piece counts in the month it left the factory (dispatched), or the day it
 // was sold from showroom stock. For each:
-//   sales      its price excl. VAT (after any quote or till discount)
+//   sales      its price excl. VAT (prices include VAT; it is taken out here)
 //   materials  its bill of materials at today's material prices
 //   labour     its labour hours × the labour rate
 // A return counts against the month it came back in.
@@ -10,7 +10,7 @@
 // overheads (Costing → Overheads). Labour and materials are the costing's
 // estimates, not timesheets or invoices; the report says so.
 import { productByName, costOf, overheadPerUnit } from './costing.js';
-import { esc, money, today, isoLocal } from './ui.js';
+import { esc, money, today, isoLocal, exVat } from './ui.js';
 
 let settings = {};
 let month = '';         // 'YYYY-MM' being looked at
@@ -31,7 +31,7 @@ export function pieces(orders, sales) {
     const c = p ? costOf(p) : null;
     out.push({
       month: String(o.dispatchedAt).slice(0, 7), ref: o.orderNo, who: o.customerName || '', product: o.product || '', qty,
-      sales: r2((Number(o.priceEach) || 0) * qty),
+      sales: exVat((Number(o.priceEach) || 0) * qty, settings.vatRegistered ? Number(settings.vatRate) || 0 : 0),   // order prices include VAT
       materials: c ? r2(c.material * qty) : 0, labour: c ? r2(c.labour * qty) : 0,
       overheadShare: c ? r2(c.overhead * qty) : 0, costed: !!c, kind: 'order'
     });

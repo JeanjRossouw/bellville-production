@@ -9,8 +9,8 @@ kept on the server.
 
 - **Online orders → factory orders.** Each order line becomes a factory order
   with the company's own order number. It carries the customer, the fabric or
-  colour (the variant or a "Fabric"/"Colour" line property), the price before
-  VAT after discounts, the paid date, a due date from the lead time, and the
+  colour (the variant or a "Fabric"/"Colour" line property), the price the
+  customer paid (incl. VAT) after discounts, the paid date, a due date from the lead time, and the
   delivery address. Orders show an **online #1001** tag.
   - Comes in **once paid** (deposit, full, or paid and partly refunded) by default, or **as soon as
     placed** if the owner picks that. An order taken in unpaid gets its paid
@@ -25,8 +25,8 @@ kept on the server.
   - Every order comes in once only, however often Shopify sends it.
 - **Products → price list** ("Bring in products"). Every active variant is
   linked to a product: by its Shopify link, or the first time by exact name.
-  Prices (less VAT, when the company is VAT registered and the shop shows
-  prices with VAT) and shelf counts (where Shopify keeps count) come from the
+  Prices (incl. VAT, as the app keeps them: VAT is added only when the company
+  is VAT registered and the shop shows prices without it) and shelf counts (where Shopify keeps count) come from the
   shop. The factory's own names, recipes and costs are never touched. New
   ones are added.
   Each product's **picture** comes too (the variant's own, else the product's
