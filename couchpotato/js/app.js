@@ -19,6 +19,7 @@ import { startPos, renderPos, setPosSettings, setPosShop, setPosXero, posAction,
 import { staffCardHtml } from './till.js';
 import { startQuotes, renderQuotes, setQuoteSettings, setQuoteFilter, newQuote, editQuote, copyQuote, sendQuote, printQuote, acceptQuote, declineQuote } from './quotes.js';
 import { renderProfit, setProfitSettings, setProfitMonth } from './profit.js';
+import { startToday, renderToday, setTodaySettings, todayAction, syncRoster } from './today.js';
 import { startWages, renderWages, setWagesSettings, setWageView, setWagePeriod, wageInput, newStaff, editStaff, toggleStaff, addPiece, removePiece, addDeduction, removeDeduction, saveRun, markPaid, reopenRun, printWageSheet, printPayslips, exportRun } from './wages.js';
 import {
   startDeliveries, renderDeliveries, setDeliverySettings, setDeliveryView, setDeliveryDay, scheduleDelivery, markForCollection, deliverInstead, confirmToClient,
@@ -49,7 +50,7 @@ const TILL = new URLSearchParams(location.search).get('pos') === '1';
 if (TILL) document.documentElement.classList.add('till');
 
 let settings = { ...FACTORY_DEFAULTS };
-let view = TILL ? 'pos' : 'orders';
+let view = TILL ? 'pos' : 'home';
 let booted = false;
 // A job-card QR opens the app with ?scan=<order id>: remember it until the
 // orders have loaded, then go straight to the dispatch screen for that order.
@@ -59,6 +60,7 @@ if (pendingScan) history.replaceState(null, '', location.pathname);
 // The menu: screens grouped into drop-downs, so the bar stays short. A
 // group with only one screen this person may see shows as a plain tab.
 const NAV = [
+  { key: 'home', label: 'Today' },
   { key: 'pos', label: 'Point of sale', group: 'sales' },
   { key: 'quotes', label: 'Quotes', group: 'sales' },
   { key: 'customers', label: 'Customers', group: 'sales' },
@@ -81,7 +83,7 @@ const GROUPS = [['sales', 'Sales'], ['production', 'Production'], ['buying', 'Bu
 // Settings → Roles. The owner sees everything, plus the team and billing.
 let seller = false;          // the seller's own login: sees every company under Clients
 const allowedViews = (user) => !user ? [] : NAV.map(n => n.key).filter(k =>
-  k === 'clients' ? seller : k === 'settings' ? (user.role === 'owner' || store.can('settings')) : store.can(k));
+  k === 'home' ? true : k === 'clients' ? seller : k === 'settings' ? (user.role === 'owner' || store.can('settings')) : store.can(k));
 // A screen the role may only look at: nothing on it may change data.
 const viewOnly = (k) => store.getUser() && store.getUser().role !== 'owner' && k !== 'clients' && levelOf(store.myPerms(), k) === 'view';
 // Actions that only look, print or switch what is shown — allowed on a view-only screen.
@@ -154,18 +156,20 @@ async function boot() {
       setProfitSettings(settings);
   setWagesSettings(settings);
       setWagesSettings(settings);
+      setTodaySettings(settings);
       setDeliverySettings(settings);
       setStoreroomSettings(settings);
       // only what this person's role may see is loaded at all
       if (store.can('quotes')) startQuotes(() => { if (view === 'quotes') paint(); }, settings);
-      if (store.can('deliveries')) startDeliveries(() => { if (view === 'deliveries') paint(); }, settings, store.can('deliveries', 'edit'));
-      if (store.can('wages')) startWages(() => { if (view === 'wages') paint(); }, settings);
+      if (store.can('deliveries')) startDeliveries(() => { if (view === 'deliveries' || view === 'home') paint(); }, settings, store.can('deliveries', 'edit'));
+      if (store.can('wages')) startWages(() => { syncRoster(); if (view === 'wages' || view === 'home') paint(); }, settings);
+      if (store.can('factory') || store.can('wages')) startToday(() => { if (view === 'home') paint(); }, settings);
       if (store.can('storeroom')) startStoreroom(() => { if (view === 'storeroom') paint(); }, settings);
-      if (store.can('stock') || store.can('storeroom')) startStock(() => { if (view === 'stock' || view === 'storeroom') paint(); }, settings);
+      if (store.can('stock') || store.can('storeroom')) startStock(() => { if (view === 'stock' || view === 'storeroom' || view === 'home') paint(); }, settings);
       if (store.can('pos') || store.can('profit')) startPos(() => { if (view === 'pos' || view === 'profit') paint(); }, settings);
-      if (store.can('invoices') || store.can('pos') || store.can('profit')) startInvoices(() => { if (view === 'invoices' || view === 'orders') paint(); }, settings);
+      if (store.can('invoices') || store.can('pos') || store.can('profit')) startInvoices(() => { if (view === 'invoices' || view === 'orders' || view === 'home') paint(); }, settings);
       startCosting(() => { if (view === 'costing' || view === 'orders' || view === 'pos' || view === 'stock') paint(); }, settings);
-      startCustomers(() => { if (view === 'customers' || view === 'orders' || view === 'pos') paint(); });
+      startCustomers(() => { if (view === 'customers' || view === 'orders' || view === 'pos' || view === 'home') paint(); });
       startOrders(() => {
         if (view !== 'settings') paint();   // includes Stock (what open orders need) and Profit
         if (pendingScan) { const id = pendingScan; pendingScan = ''; view = 'scan'; paint(); confirmDispatch(id); }
@@ -411,6 +415,8 @@ function statusChip() {
 function navHtml(user) {
   const ok = allowedViews(user);
   const parts = [];
+  // Today comes first: the whole factory on one screen
+  if (ok.includes('home')) parts.push(`<button class="tab" data-view="home"><span>Today</span></button>`);
   GROUPS.forEach(([g, label]) => {
     const items = NAV.filter(n => n.group === g && ok.includes(n.key));
     if (!items.length) return;
@@ -418,7 +424,7 @@ function navHtml(user) {
     parts.push(`<button class="tab tab-group" data-group="${g}" aria-haspopup="true"><span class="tg-label">${esc(label)}</span><span class="tg-now"></span><i class="caret"></i></button>
       <div class="tab-menu" data-menu="${g}" hidden role="menu">${items.map(n => `<button class="tab-item" data-view="${n.key}" role="menuitem">${esc(n.label)}</button>`).join('')}</div>`);
   });
-  NAV.filter(n => !n.group && ok.includes(n.key)).forEach(n => parts.push(`<button class="tab" data-view="${n.key}"><span>${esc(n.label)}</span></button>`));
+  NAV.filter(n => !n.group && n.key !== 'home' && ok.includes(n.key)).forEach(n => parts.push(`<button class="tab" data-view="${n.key}"><span>${esc(n.label)}</span></button>`));
   return parts.join('');
 }
 
@@ -504,6 +510,7 @@ function paintScreen() {
   const screen = document.getElementById('screen');
   if (!screen) return;
   if (view !== 'scan') stopCamera(screen);
+  if (view === 'home') return renderToday(screen);
   if (view === 'orders') return renderOrders(screen);
   if (view === 'customers') return renderCustomers(screen, allOrders());
   if (view === 'settings') return renderSettings(screen);
@@ -919,6 +926,7 @@ async function saveSettings() {
   setQuoteSettings(settings);
   setProfitSettings(settings);
   setWagesSettings(settings);
+  setTodaySettings(settings);
   setDeliverySettings(settings);
   setStoreroomSettings(settings);
   const bn = document.querySelector('.brand-name');
@@ -934,6 +942,12 @@ async function onAction(e) {
   if (viewOnly(view) && !LOOK_ONLY.has(b.dataset.act)) { toast('Your role can only look at this screen. Ask the owner if you need to change things here.', 'warn'); return; }
   const id = b.dataset.id;
   if (b.dataset.act.startsWith('pos-') || b.dataset.act.startsWith('till-') || b.dataset.act.startsWith('ss-')) return posAction(b.dataset.act, b);
+  if (b.dataset.act.startsWith('today-')) return todayAction(b, (to, sub) => {
+    if (!allowedViews(store.getUser()).includes(to)) { toast('Your role does not open that screen', 'warn'); return; }
+    if (to === 'invoices' && sub) setInvView(sub);
+    if (to === 'stock') setStockView('materials');
+    view = to; paint(); window.scrollTo(0, 0);
+  });
   switch (b.dataset.act) {
     case 'new-order': return newOrder();
     case 'print-week-report': return weekReportDialog();

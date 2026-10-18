@@ -29,6 +29,24 @@ password; the owner invites the team under Settings and gives each person a role
 - Every list screen has a search box at the top. Type any words (order number, customer,
   product, fabric, phone, area); every word must match. Orders and the till have their own.
 
+## Today (the first screen)
+- The whole factory on one screen. Tiles: In production (pieces being built, how many are
+  due within a week, how many are late), Raw stock (materials that will run short once the
+  waiting orders are built), To dispatch (pieces done and waiting to go out, and how many
+  went out today), On shift (who has clocked in, of the staff on the register). Tap a tile
+  to open its screen; On shift opens the register.
+- Orders finished this week: a bar per day, today's outlined, against last week.
+- Assistant: what needs doing now, each with the button that does it. A late order → Send
+  opens a message to the client with a new expected date (and moves the order's due date if
+  ticked). A piece done but the client not told → Send opens WhatsApp saying it is finished.
+  An order due within 3 days and not started → Plan it. Stock running short → Order stock.
+  Overdue invoices → Statements. "Later" hides one until tomorrow.
+- Due in the next 7 days and overdue: the open orders, soonest first.
+- The register (On shift): tap a name to clock them in, again to clock them out; "Clock
+  everyone in" does the lot. The names come from Money → Wages (active staff); the register
+  shows no pay. Factory-floor and wages roles may clock people in.
+- Each part shows only to a role that may see what it is about.
+
 ## Point of sale (the showroom till)
 - Till staff and PINs: under Settings → Till staff the owner adds each person with a PIN
   (4–6 digits), as a Manager or a Cashier with a discount limit (%) and whether they may do

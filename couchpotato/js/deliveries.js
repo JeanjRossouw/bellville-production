@@ -257,12 +257,14 @@ export function confirmToClient(id, orders) {
       + (o.status === 'ready' ? 'is ready for collection' : 'will be ready for collection' + (o.deliveryDate ? ' on ' + niceDate(o.deliveryDate) : ' soon')) + '.'
       + (where ? ' Collect from ' + where + '.' : '') + ' Reply here to say when you are coming.';
     window.open('https://wa.me/' + waDigits(phoneOf(o)) + '?text=' + encodeURIComponent(msg), '_blank');
+    if (o.status === 'ready') store.update('orders', o.id, { clientToldAt: store.nowIso() }, 'Client told it is ready for collection').catch(() => {});
     return;
   }
   const msg = 'Hi ' + who + ', ' + (settings.name || '') + ' here. Your ' + (o.product || 'order') + ' (' + (o.orderNo || '') + ') will be delivered on '
     + niceDate(o.deliveryDate) + (o.deliverySlot ? ' between ' + o.deliverySlot.replace(' - ', ' and ') : '') + '.'
     + (addressOf(o) ? ' To: ' + addressOf(o) + '.' : '') + ' The driver will WhatsApp you when on the way. Reply here if that time does not suit.';
   window.open('https://wa.me/' + waDigits(phoneOf(o)) + '?text=' + encodeURIComponent(msg), '_blank');
+  if (o.status === 'ready') store.update('orders', o.id, { clientToldAt: store.nowIso() }, 'Client told the delivery day').catch(() => {});
 }
 
 function runText(d, list) {
