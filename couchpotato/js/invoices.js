@@ -7,7 +7,7 @@
 import * as store from './store.js';
 import { allOrders, orderById } from './orders.js';
 import { allCustomers, customerById } from './customers.js';
-import { esc, money, field, row, val, openModal, toast, empty, niceDate, today, addDays, openPrint, docHeader } from './ui.js';
+import { esc, money, field, row, val, openModal, toast, empty, niceDate, today, addDays, openPrint, docHeader, vatSplit, inclLabel } from './ui.js';
 
 let invoices = [];
 let unwatch = null;
@@ -41,10 +41,12 @@ export const paidAmount = (inv) => r2((inv.payments || []).reduce((s, p) => s + 
 export const balance = (inv) => r2((Number(inv.total) || 0) - paidAmount(inv));
 export const isOverdue = (inv) => inv.status === 'issued' && balance(inv) > 0 && !!inv.dueDate && inv.dueDate < today();
 
+// Line prices include VAT: the total is what the lines add up to and the VAT
+// is worked out inside it. subtotal stays the amount excl. VAT, as on every
+// invoice before, so statements, exports and profit read the same fields.
 function totalsFor(lines) {
-  const subtotal = r2(lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.unitPrice) || 0), 0));
-  const vat = r2(subtotal * vatRate());
-  return { subtotal, vat, total: r2(subtotal + vat) };
+  const { gross, ex, vat } = vatSplit(lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.unitPrice) || 0), 0), vatRate());
+  return { subtotal: ex, vat, total: gross };
 }
 
 // ---------------------------------------------------------------- queue -----
@@ -63,7 +65,7 @@ export function newInvoiceFor(orderIds) {
   const lineRow = (o, i) => `<div class="inv-line" data-i="${i}">
       <input class="il-desc" value="${esc((o.product || '') + (o.fabric ? ' — ' + o.fabric : ''))}" title="Description">
       <input class="il-qty" type="number" min="0" step="1" value="${esc(o.qty || 1)}" title="Qty">
-      <input class="il-price" type="number" min="0" step="0.01" value="${esc(o.priceEach || '')}" placeholder="price each" title="Price each excl. VAT">
+      <input class="il-price" type="number" min="0" step="0.01" value="${esc(o.priceEach || '')}" placeholder="price each" title="Price each${esc(inclLabel(vatRate()))}">
       <span class="il-tot muted"></span>
     </div>`;
   const m = openModal('New invoice — ' + (c.name || ''), `
@@ -92,7 +94,7 @@ export function newInvoiceFor(orderIds) {
         const id = await store.create('invoices', {
           invoiceNo, customerId: custId, customerName: c.name || orders[0].customerName || '',
           date: val(w, 'iv-date') || today(), dueDate: val(w, 'iv-due') || '',
-          lines, subtotal: t.subtotal, vat: t.vat, vatRate: vatRate(), total: t.total,
+          lines, incl: true, subtotal: t.subtotal, vat: t.vat, vatRate: vatRate(), total: t.total,
           status: 'issued', payments: [], note: val(w, 'iv-note'),
           events: [{ at: store.nowIso(), by: (store.getUser() || {}).name || 'system', what: 'Invoice issued' }]
         });
@@ -110,9 +112,8 @@ export function newInvoiceFor(orderIds) {
       lines.push({ qty: q, unitPrice: p });
     });
     const t = totalsFor(lines);
-    card.querySelector('#iv-live').innerHTML = `<div><span>Subtotal</span><strong>${esc(money(t.subtotal, cur))}</strong></div>`
-      + (vatRate() ? `<div><span>VAT ${Math.round(vatRate() * 100)}%</span><strong>${esc(money(t.vat, cur))}</strong></div>` : '')
-      + `<div class="tot"><span>Total</span><strong>${esc(money(t.total, cur))}</strong></div>`;
+    card.querySelector('#iv-live').innerHTML = `<div class="tot"><span>Total</span><strong>${esc(money(t.total, cur))}</strong></div>`
+      + (vatRate() ? `<div class="muted"><span>Includes VAT ${Math.round(vatRate() * 100)}%</span><span>${esc(money(t.vat, cur))}</span></div>` : '');
   };
   card.addEventListener('input', live);
   live();
@@ -202,7 +203,7 @@ function queueHtml(q, cur) {
     const c = customerById(cid) || { name: rows[0].customerName };
     const total = rows.reduce((s, o) => s + (Number(o.priceEach) || 0) * (o.qty || 1), 0);
     return `<div class="card">
-      <div class="page-head" style="margin:0 0 .5rem"><div><h2>${esc(c.name || '')}</h2><p class="sub">${rows.length} order${rows.length === 1 ? '' : 's'} · ${esc(money(total, cur))} excl. VAT</p></div>
+      <div class="page-head" style="margin:0 0 .5rem"><div><h2>${esc(c.name || '')}</h2><p class="sub">${rows.length} order${rows.length === 1 ? '' : 's'} · ${esc(money(total, cur))}${esc(inclLabel(vatRate()))}</p></div>
         <div class="btn-row">
           <button class="btn ghost sm" data-act="inv-selected" data-cust="${esc(cid)}">Invoice ticked</button>
           <button class="btn primary sm" data-act="inv-customer" data-cust="${esc(cid)}">Invoice all ${rows.length}</button>
@@ -237,7 +238,7 @@ function listHtml(cur) {
   return sel + `<div class="card" style="padding:0; overflow:auto; margin-top:.6rem"><table class="tbl">
     <thead><tr><th>Invoice</th><th>Customer</th><th>Date</th><th>Due</th><th class="r">Total</th><th class="r">Owing</th><th>Status</th><th></th></tr></thead>
     <tbody>${rows.map(i => `<tr${i.status === 'void' ? ' style="opacity:.5"' : ''}>
-      <td><strong>${esc(i.invoiceNo)}</strong><div class="muted">${(i.lines || []).map(l => l.orderNo).filter(Boolean).join(', ')}</div></td>
+      <td><strong>${esc(i.invoiceNo)}</strong><div class="muted">${esc([orderNosOf(i).join(', '), i.saleNo ? 'sale ' + i.saleNo : ''].filter(Boolean).join(' · '))}</div></td>
       <td>${esc(i.customerName)}</td><td>${esc(niceDate(i.date))}</td><td>${esc(niceDate(i.dueDate))}</td>
       <td class="r">${esc(money(i.total, cur))}</td><td class="r">${i.status === 'void' ? '—' : esc(money(balance(i), cur))}</td>
       <td>${statusChipInv(i)}</td>
@@ -270,23 +271,36 @@ function statementsHtml(cur) {
 
 const coHeader = (kind, no, lines) => docHeader(settings, kind, no, lines);
 
+// The order numbers an invoice is for, each once, in line order.
+export const orderNosOf = (inv) => [...new Set((inv.lines || []).map(l => l.orderNo).filter(Boolean))];
+
+// The totals under the lines. An invoice priced incl. VAT shows its total and
+// the VAT inside it; an older one (lines excl. VAT) its subtotal, VAT, total.
+function totalRows(inv, cur, label) {
+  const m = (x) => esc(money(Math.abs(Number(x) || 0), cur)), pct = Math.round((inv.vatRate || 0) * 100);
+  if (inv.incl) return `<tr class="tot big"><td colspan="3" class="r">${label}${inv.vat ? ' (incl. VAT)' : ''}</td><td class="r">${m(inv.total)}</td></tr>`
+    + (inv.vat ? `<tr><td colspan="3" class="r">Includes VAT ${pct}%</td><td class="r">${m(inv.vat)}</td></tr><tr><td colspan="3" class="r">Amount excl. VAT</td><td class="r">${m(inv.subtotal)}</td></tr>` : '');
+  return `<tr class="tot"><td colspan="3" class="r">Subtotal</td><td class="r">${m(inv.subtotal)}</td></tr>`
+    + (inv.vat ? `<tr class="tot"><td colspan="3" class="r">VAT ${pct}%</td><td class="r">${m(inv.vat)}</td></tr>` : '')
+    + `<tr class="tot big"><td colspan="3" class="r">${label}</td><td class="r">${m(inv.total)}</td></tr>`;
+}
+
 export function printInvoice(id) {
   const inv = invoiceById(id);
   if (!inv) return;
   if (inv.kind === 'credit') return printCreditNote(inv);
   const cur = settings.currency || 'R';
   const c = customerById(inv.customerId) || {};
+  const nos = orderNosOf(inv);
   const body = `${inv.status === 'paid' ? '<div class="paid">PAID</div>' : ''}
-    ${coHeader(settings.vatRegistered ? 'TAX INVOICE' : 'INVOICE', inv.invoiceNo, ['Date ' + niceDate(inv.date), inv.dueDate ? 'Due ' + niceDate(inv.dueDate) : ''])}
+    ${coHeader(settings.vatRegistered ? 'TAX INVOICE' : 'INVOICE', inv.invoiceNo, ['Date ' + niceDate(inv.date), inv.dueDate ? 'Due ' + niceDate(inv.dueDate) : '', nos.length ? (nos.length === 1 ? 'Order ' : 'Orders ') + nos.join(', ') : '', inv.saleNo ? 'Sale ' + inv.saleNo : ''])}
     <div class="two">
       <div class="box"><h4>Invoice to</h4><strong>${esc(inv.customerName)}</strong><br>${esc([c.contact, c.address, c.area].filter(Boolean).join('\n')).replace(/\n/g, '<br>')}${c.email ? '<br>' + esc(c.email) : ''}${c.phone ? '<br>' + esc(c.phone) : ''}</div>
-      <div class="box"><h4>Orders</h4>${(inv.lines || []).map(l => esc(l.orderNo) + (l.externalRef ? ' (their ref ' + esc(l.externalRef) + ')' : '')).join('<br>')}</div>
+      <div class="box"><h4>${nos.length === 1 ? 'Order no.' : 'Order nos.'}</h4><strong>${nos.length ? nos.map(esc).join('<br>') : '—'}</strong>${[...new Set((inv.lines || []).map(l => l.externalRef).filter(Boolean))].map(r => '<br>their ref ' + esc(r)).join('')}${inv.saleNo ? '<br>Till sale ' + esc(inv.saleNo) : ''}</div>
     </div>
     <table><tr><th>Description</th><th class="r">Qty</th><th class="r">Each</th><th class="r">Amount</th></tr>
       ${(inv.lines || []).map(l => `<tr><td>${esc(l.description)}${l.orderNo ? '<br><small>Order ' + esc(l.orderNo) + '</small>' : ''}</td><td class="r">${esc(l.qty)}</td><td class="r">${esc(money(l.unitPrice, cur))}</td><td class="r">${esc(money(l.qty * l.unitPrice, cur))}</td></tr>`).join('')}
-      <tr class="tot"><td colspan="3" class="r">Subtotal</td><td class="r">${esc(money(inv.subtotal, cur))}</td></tr>
-      ${inv.vat ? `<tr class="tot"><td colspan="3" class="r">VAT ${Math.round((inv.vatRate || 0) * 100)}%</td><td class="r">${esc(money(inv.vat, cur))}</td></tr>` : ''}
-      <tr class="tot big"><td colspan="3" class="r">TOTAL</td><td class="r">${esc(money(inv.total, cur))}</td></tr>
+      ${totalRows(inv, cur, 'TOTAL')}
       ${paidAmount(inv) ? `<tr><td colspan="3" class="r">Paid</td><td class="r">${esc(money(paidAmount(inv), cur))}</td></tr><tr class="tot"><td colspan="3" class="r">Balance due</td><td class="r">${esc(money(balance(inv), cur))}</td></tr>` : ''}
     </table>
     ${inv.note ? `<p>${esc(inv.note)}</p>` : ''}
@@ -306,9 +320,7 @@ function printCreditNote(inv) {
     </div>
     <table><tr><th>Description</th><th class="r">Qty</th><th class="r">Each</th><th class="r">Amount</th></tr>
       ${(inv.lines || []).map(l => `<tr><td>${esc(l.description)}${l.orderNo ? '<br><small>Order ' + esc(l.orderNo) + '</small>' : ''}</td><td class="r">${esc(l.qty)}</td><td class="r">${esc(money(Math.abs(l.unitPrice), cur))}</td><td class="r">${esc(money(Math.abs(l.qty * l.unitPrice), cur))}</td></tr>`).join('')}
-      <tr class="tot"><td colspan="3" class="r">Subtotal</td><td class="r">${esc(money(Math.abs(inv.subtotal), cur))}</td></tr>
-      ${inv.vat ? `<tr class="tot"><td colspan="3" class="r">VAT ${Math.round((inv.vatRate || 0) * 100)}%</td><td class="r">${esc(money(Math.abs(inv.vat), cur))}</td></tr>` : ''}
-      <tr class="tot big"><td colspan="3" class="r">TOTAL CREDIT</td><td class="r">${esc(money(Math.abs(inv.total), cur))}</td></tr>
+      ${totalRows(inv, cur, 'TOTAL CREDIT')}
       ${(inv.payments || []).map(p => `<tr><td colspan="3" class="r">${/^Off /.test(p.method || '') ? 'Taken off ' + esc(String(p.method).slice(4)) : 'Refunded (' + esc(p.method || '') + ')'}</td><td class="r">${esc(money(Math.abs(p.amount), cur))}</td></tr>`).join('')}
     </table>
     ${inv.note ? `<p>${esc(inv.note)}</p>` : ''}
@@ -336,9 +348,9 @@ export function printStatement(customerId) {
 
 // CSV of every invoice line, for whoever does the books.
 export function exportCsv() {
-  const rows = [['Invoice', 'Status', 'Date', 'Due', 'Customer', 'Order', 'Their ref', 'Description', 'Qty', 'Each excl', 'Line excl', 'Invoice subtotal', 'VAT', 'Invoice total', 'Paid', 'Owing', 'Paid on']];
+  const rows = [['Invoice', 'Status', 'Date', 'Due', 'Customer', 'Order', 'Their ref', 'Description', 'Qty', 'Each', 'Line', 'Line prices', 'Invoice excl. VAT', 'VAT', 'Invoice total', 'Paid', 'Owing', 'Paid on']];
   invoices.slice().reverse().forEach(i => (i.lines || []).forEach(l => rows.push([
-    i.invoiceNo, i.status, i.date, i.dueDate, i.customerName, l.orderNo, l.externalRef || '', l.description, l.qty, r2(l.unitPrice), r2(l.qty * l.unitPrice),
+    i.invoiceNo, i.status, i.date, i.dueDate, i.customerName, l.orderNo, l.externalRef || '', l.description, l.qty, r2(l.unitPrice), r2(l.qty * l.unitPrice), i.incl || !i.vat ? 'incl. VAT' : 'excl. VAT',
     r2(i.subtotal), r2(i.vat), r2(i.total), paidAmount(i), i.status === 'void' ? 0 : balance(i), i.paidAt || ''
   ])));
   if (rows.length === 1) { toast('No invoices to export yet', 'warn'); return; }

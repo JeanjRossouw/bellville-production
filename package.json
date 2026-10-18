@@ -7,6 +7,7 @@
     "dev": "netlify dev"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
     "@netlify/blobs": "^8.1.0",
     "jose": "^5.9.6"
   }

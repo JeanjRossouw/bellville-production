@@ -28,7 +28,7 @@ import { allCustomers, customerById } from './customers.js';
 import { allOrders } from './orders.js';
 import { printInvoice, invoiceById, paidAmount, balance } from './invoices.js';
 import { openBarcodeCamera } from './barcode.js';
-import { esc, money, field, row, val, openModal, toast, today, addDays, niceDate, empty, statusMeta, productImg } from './ui.js';
+import { esc, money, field, row, val, openModal, toast, today, addDays, niceDate, empty, statusMeta, productImg, vatSplit, inclLabel } from './ui.js';
 
 let settings = {};
 let sales = [];
@@ -123,7 +123,7 @@ function onSearchEnter(el) {
 }
 
 function addCustom() {
-  openModal('Other item', row(field('Description', 'pc-name', { placeholder: 'e.g. Delivery fee, scatter cushion' }), field('Price each (excl. VAT)', 'pc-price', { type: 'number', min: 0, step: '0.01' })), {
+  openModal('Other item', row(field('Description', 'pc-name', { placeholder: 'e.g. Scatter cushion, fitting' }), field('Price each' + inclLabel(vatRate()), 'pc-price', { type: 'number', min: 0, step: '0.01' })), {
     okLabel: 'Add to sale',
     onOk: (w) => {
       const name = val(w, 'pc-name'); const price = parseFloat(val(w, 'pc-price')) || 0;
@@ -133,13 +133,32 @@ function addCustom() {
     }
   });
 }
+// Delivery: one line on the sale, with where it goes. Made-to-order pieces on
+// the same sale are booked as a delivery to that address.
+function addDelivery() {
+  const c = customerById(cart.customerId) || {};
+  const had = cart.lines.find(l => l.delivery);
+  let last = ''; try { last = localStorage.getItem('cp-pos-delfee') || ''; } catch (e) {}
+  openModal('Delivery', field('Deliver to', 'pd-addr', { type: 'textarea', value: had ? had.deliveryAddress : [c.address, c.area].filter(Boolean).join(', '), placeholder: 'Street, suburb, town' })
+    + row(field('Delivery fee' + inclLabel(vatRate()), 'pd-fee', { type: 'number', min: 0, step: '0.01', value: had ? had.unitPrice : last }), field('Note for the driver', 'pd-note', { value: had ? had.note : '', placeholder: 'e.g. Phone before, 2nd floor' })), {
+    okLabel: had ? 'Change delivery' : 'Add delivery',
+    onOk: (w) => {
+      const addr = val(w, 'pd-addr').trim(), fee = parseFloat(val(w, 'pd-fee')) || 0;
+      if (!addr) { toast('Where must it be delivered?', 'warn'); return false; }
+      try { localStorage.setItem('cp-pos-delfee', String(fee)); } catch (e) {}
+      const line = { productId: '', name: 'Delivery to ' + addr.replace(/\s*\n\s*/g, ', '), qty: 1, unitPrice: fee, kind: 'stock', fabric: '', note: val(w, 'pd-note'), custom: true, delivery: true, deliveryAddress: addr };
+      if (had) cart.lines[cart.lines.indexOf(had)] = line; else cart.lines.push(line);
+      persist(); rerender();
+    }
+  });
+}
 function lineTotal(l) { return r2((Number(l.qty) || 0) * (Number(l.unitPrice) || 0)); }
 export function totals() {
   const subtotalRaw = r2(cart.lines.reduce((s, l) => s + lineTotal(l), 0));
   const discount = Math.min(subtotalRaw, r2(cart.discount));
-  const subtotal = r2(subtotalRaw - discount);
-  const vat = r2(subtotal * vatRate());
-  return { subtotalRaw, discount, subtotal, vat, total: r2(subtotal + vat), lines: cart.lines.length, pieces: cart.lines.reduce((s, l) => s + (Number(l.qty) || 0), 0) };
+  // prices include VAT: the total is what the lines add up to, the VAT is inside it
+  const { gross, ex, vat } = vatSplit(subtotalRaw - discount, vatRate());
+  return { subtotalRaw, discount, subtotal: ex, vat, total: gross, lines: cart.lines.length, pieces: cart.lines.reduce((s, l) => s + (Number(l.qty) || 0), 0) };
 }
 
 // ------------------------------------------------------------- customer -----
@@ -187,8 +206,8 @@ function checkout() {
     <div class="cost-live" style="margin-top:0">
       <div><span>Items</span><strong>${esc(money(t.subtotalRaw, cur))}</strong></div>
       ${t.discount ? `<div><span>Discount</span><strong>− ${esc(money(t.discount, cur))}</strong></div>` : ''}
-      ${vatRate() ? `<div><span>VAT ${Math.round(vatRate() * 100)}%</span><strong>${esc(money(t.vat, cur))}</strong></div>` : ''}
       <div class="tot"><span>Total</span><strong>${esc(money(t.total, cur))}</strong></div>
+      ${vatRate() ? `<div class="muted"><span>Includes VAT ${Math.round(vatRate() * 100)}%</span><span>${esc(money(t.vat, cur))}</span></div>` : ''}
     </div>
     <div class="pay-kinds">
       <button type="button" class="btn primary" data-pay="full">Paid in full</button>
@@ -222,16 +241,19 @@ async function completeSale(amount, method, ref) {
   const saleNo = 'S-' + String(sn).padStart(4, '0');
   const due = addDays(today(), leadDays());
 
-  // 1. orders for made-to-order lines
+  // 1. orders for made-to-order lines (to the sale's delivery address, if it has one)
+  const delivery = cart.lines.find(l => l.delivery);
   const lines = [];
   for (const l of cart.lines) {
-    const line = { kind: l.kind, productId: l.productId || '', name: l.name, qty: Number(l.qty) || 0, unitPrice: r2(l.unitPrice), fabric: l.fabric || '', note: l.note || '', orderId: '', orderNo: '' };
+    const line = { kind: l.kind, productId: l.productId || '', name: l.name, qty: Number(l.qty) || 0, unitPrice: r2(l.unitPrice), fabric: l.fabric || '', note: l.note || '', orderId: '', orderNo: '',
+      ...(l.custom ? { custom: true } : {}), ...(l.delivery ? { delivery: true } : {}) };
     if (l.kind === 'order') {
       const n = await store.nextNumber('orderNo', settings.firstOrderNo || 1001);
       const orderNo = (settings.orderPrefix || 'CP-') + n;
       const id = await store.create('orders', {
         orderNo, customerId: c ? c.id : '', customerName: c ? c.name : '', externalRef: saleNo, source: 'pos', saleNo,
         product: l.name, qty: line.qty, fabric: l.fabric || '', notes: [l.note, 'Sold at the till on ' + saleNo].filter(Boolean).join('\n'),
+        ...(delivery ? { deliveryMethod: 'delivery', deliveryAddress: delivery.deliveryAddress, deliveryInstructions: delivery.note || '' } : {}),
         paidDate: today(), dueDate: due, priceEach: line.unitPrice, status: 'new', fabricStatus: 'none',
         events: [{ at: now, by: who, what: 'Sold at the till (' + saleNo + ')' }]
       });
@@ -253,7 +275,7 @@ async function completeSale(amount, method, ref) {
   if (t.discount) invLines.push({ orderId: '', orderNo: '', externalRef: '', description: 'Discount', qty: 1, unitPrice: -t.discount });
   const invoiceId = await store.create('invoices', {
     invoiceNo, customerId: c ? c.id : '', customerName: c ? c.name : 'Walk-in customer', date: today(),
-    dueDate: paid ? today() : due, lines: invLines, subtotal: t.subtotal, vat: t.vat, vatRate: vatRate(), total: t.total,
+    dueDate: paid ? today() : due, lines: invLines, incl: true, subtotal: t.subtotal, vat: t.vat, vatRate: vatRate(), total: t.total,
     status: paid ? 'paid' : 'issued', paidAt: paid ? today() : '', payments, note: 'Till sale ' + saleNo + (cart.note ? ' · ' + cart.note : ''),
     saleNo, events: [{ at: now, by: who, what: 'Raised at the till (' + saleNo + ')' }]
   });
@@ -261,7 +283,7 @@ async function completeSale(amount, method, ref) {
 
   // 3. the sale itself
   const saleId = await store.create('sales', { saleNo, date: today(), customerId: c ? c.id : '', customerName: c ? c.name : 'Walk-in customer',
-    lines, subtotal: t.subtotal, discount: t.discount, vat: t.vat, total: t.total, paidNow: r2(amount), method, ref, balance: r2(t.total - amount),
+    lines, incl: true, subtotal: t.subtotal, discount: t.discount, vat: t.vat, total: t.total, paidNow: r2(amount), method, ref, balance: r2(t.total - amount),
     invoiceId, invoiceNo, note: cart.note, by: who });
 
   // pieces from the shelf also come off the online shop's count
@@ -309,6 +331,7 @@ function saleHtml(cur) {
         <input id="pos-search" class="search pos-in" placeholder="Search, or scan a barcode…" value="${esc(search)}" autocomplete="off">
         <button class="btn ghost" data-act="pos-scan" title="Scan a barcode with the camera">📷 Scan</button>
         <button class="btn ghost" data-act="pos-custom">Other item</button>
+        <button class="btn ghost" data-act="pos-delivery" title="Add a delivery fee and where it goes">🚚 Delivery</button>
       </div>
       <div class="btn-row" style="margin-bottom:.7rem">
         <button class="btn ${!cat ? 'primary' : 'ghost'} sm" data-act="pos-cat" data-to="">All</button>
@@ -341,14 +364,14 @@ function saleHtml(cur) {
               <button class="${l.kind === 'order' ? 'on' : ''}" data-act="pos-kind" data-i="${i}" data-to="order">Made to order</button>
               <button class="${l.kind === 'stock' ? 'on' : ''}" data-act="pos-kind" data-i="${i}" data-to="stock">From stock</button>
             </div>
-            ${l.kind === 'order' ? `<input class="pos-in" data-field="fabric" data-i="${i}" value="${esc(l.fabric)}" placeholder="Fabric / colour">` : ''}`}
+            ${l.kind === 'order' ? `<input class="pos-in" data-field="fabric" data-i="${i}" value="${esc(l.fabric)}" placeholder="Fabric / colour" list="fabric-list">` : ''}`}
             <input class="pos-in" data-field="note" data-i="${i}" value="${esc(l.note)}" placeholder="Note (optional)">
           </div>`).join('') : '<div class="muted" style="padding:1.2rem .4rem; text-align:center">Tap a product to start a sale.</div>'}
         </div>
         <div class="pos-totals">
           <div><span>Items (${t.pieces})</span><strong>${esc(money(t.subtotalRaw, cur))}</strong></div>
           <div><span>Discount</span><span><input class="pos-in" data-field="discount" type="number" min="0" step="0.01" value="${cart.discount || ''}" placeholder="0.00" style="width:110px; text-align:right"></span></div>
-          ${vatRate() ? `<div><span>VAT ${Math.round(vatRate() * 100)}%</span><strong>${esc(money(t.vat, cur))}</strong></div>` : ''}
+          ${vatRate() ? `<div class="muted"><span>Includes VAT ${Math.round(vatRate() * 100)}%</span><strong>${esc(money(t.vat, cur))}</strong></div>` : ''}
           <div class="tot"><span>Total</span><strong>${esc(money(t.total, cur))}</strong></div>
         </div>
         <div class="btn-row">
@@ -413,6 +436,7 @@ function lineState(l) {
   if (l.kind !== 'order') return { ok: true, mode: 'back', counted: true };
   const o = allOrders().find(x => x.id === l.orderId);
   if (!o) return { ok: true, mode: 'gone', note: 'The factory order is no longer on the system' };
+  if (o.status === 'cancelled') return { ok: true, mode: 'gone', o, note: 'Factory order ' + o.orderNo + ' is cancelled: refund only' };
   if (o.status === 'new') return { ok: true, mode: 'cancel', o, note: 'Not started: factory order ' + o.orderNo + ' is cancelled' };
   if (o.status === 'ready') return { ok: true, mode: 'built', o, note: 'Finished, not delivered: order ' + o.orderNo + ' is closed' };
   if (o.status === 'dispatched' || o.status === 'invoiced') return { ok: true, mode: 'back', o, counted: true, note: 'Delivered: the piece comes back' };
@@ -548,7 +572,8 @@ async function completeReturn(saleId, picks, refund, method, reason) {
     if (st.mode === 'cancel' || st.mode === 'built') {
       // not delivered: the order goes (or gets smaller), so it leaves the floor and the delivery list
       const left = (Number(st.o.qty) || 1) - p.qty;
-      if (left <= 0) ops.push({ op: 'remove', coll: 'orders', id: st.o.id });
+      // orders are never deleted: one fully returned is cancelled, and stays on record
+      if (left <= 0) ops.push({ op: 'update', coll: 'orders', id: st.o.id, patch: { status: 'cancelled', cancelledAt: now, cancelReason: 'Returned at the till (' + returnNo + ')' }, event: 'Cancelled: returned at the till (' + returnNo + ')' });
       else ops.push({ op: 'update', coll: 'orders', id: st.o.id, patch: { qty: left }, event: p.qty + ' returned at the till (' + returnNo + ')' });
       rec.cancelled = true;
     } else if (st.mode === 'back' && st.o) {
@@ -562,7 +587,9 @@ async function completeReturn(saleId, picks, refund, method, reason) {
   if (setOff > 0) payments.push({ at: today(), amount: -setOff, method: 'Off ' + (s.invoiceNo || 'the invoice'), ref: returnNo, by: who });
   ops.push({ op: 'create', coll: 'invoices', id: creditId, data: {
     kind: 'credit', invoiceNo: creditNo, customerId: s.customerId || '', customerName: s.customerName || 'Walk-in customer', date: today(), dueDate: '',
-    lines: lines.map(x => ({ orderId: '', orderNo: x.orderNo, externalRef: '', qty: x.qty, unitPrice: -r2(x.ex / x.qty),
+    // a sale priced incl. VAT is credited the same way: its lines carry the VAT
+    incl: !!s.incl,
+    lines: lines.map(x => ({ orderId: '', orderNo: x.orderNo, externalRef: '', qty: x.qty, unitPrice: -r2((s.incl ? x.ex * (1 + saleVat(s)) : x.ex) / x.qty),
       description: 'Returned: ' + x.name + (x.cancelled ? ' (order closed)' : x.restock ? ' (back on the shelf)' : '') })),
     subtotal: -ex, vat: -vat, vatRate: saleVat(s), total: -credit, status: 'paid', paidAt: today(), payments,
     note: 'Return ' + returnNo + ' against ' + (s.invoiceNo || s.saleNo) + (reason ? ' · ' + reason : ''),
@@ -600,6 +627,7 @@ export function posAction(act, el) {
     case 'pos-cat': cat = el.dataset.to; return rerender();
     case 'pos-add': addProduct(el.dataset.id); return rerender();
     case 'pos-custom': return addCustom();
+    case 'pos-delivery': return addDelivery();
     case 'pos-qty': { const l = cart.lines[i]; if (!l) return; l.qty = Math.max(1, (Number(l.qty) || 1) + parseInt(el.dataset.d, 10)); persist(); return rerender(); }
     case 'pos-remove': cart.lines.splice(i, 1); persist(); return rerender();
     case 'pos-kind': { const l = cart.lines[i]; if (!l) return; l.kind = el.dataset.to; persist(); return rerender(); }

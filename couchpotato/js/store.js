@@ -196,6 +196,19 @@ function demoBilling(action) {
 
 const SHOPIFY_URL = '/.netlify/functions/factory-shopify';
 
+// The help assistant (netlify/functions/factory-assistant.mjs). Each question
+// costs money, so only a signed-in login may ask; the demo has no login.
+const ASSISTANT_URL = '/.netlify/functions/factory-assistant';
+export async function askAssistant(messages, screen) {
+  if (mode === 'demo') return { answer: 'The help assistant answers in the live app, once you are signed in. (It is not part of the demo, because every question is sent to the AI service.)' };
+  const token = await cloud.auth.currentUser.getIdToken();
+  const r = await fetch(ASSISTANT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify({ messages, screen, role: (currentUser || {}).role || '' }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ('The assistant could not answer (' + r.status + ')'));
+  return j;
+}
+
 export async function shopifyCall(action, payload) {
   if (mode === 'demo') return demoShopify(action, payload || {});
   const token = await cloud.auth.currentUser.getIdToken();

@@ -48,7 +48,7 @@ export const FACTORY_DEFAULTS = {
   vatRate: 0.15,
   vatRegistered: false,
   currency: 'R',
-  weeklyTarget: 0,            // the week's production target, rands excl. VAT (0 = none)
+  weeklyTarget: 0,            // the week's production target, rands at selling prices, incl. VAT (0 = none)
   paymentTermsDays: 30,
   leadDays: 28,
   bankDetails: ''

@@ -4,10 +4,11 @@ import { FACTORY_DEFAULTS, isCloudConfigured, isDemoForced, PRODUCT, TRIAL_DAYS 
 import { AREAS, LEVELS, levelOf } from './permissions.js';
 import { renderClients, clientExtend, clientFree, setClients, setClientPlan } from './clients.js';
 import { esc, field, row, toast, money, daysUntil, openModal } from './ui.js';
+import { startAssistant } from './assistant.js';
 import { openImport } from './importer.js';
 import { startCustomers, renderCustomers, newCustomer, editCustomer, deleteCustomer } from './customers.js';
 import {
-  startOrders, renderOrders, newOrder, editOrder, deleteOrder, setStatus, setFabric,
+  startOrders, renderOrders, newOrder, editOrder, cancelOrder, reopenOrder, setStatus, setFabric,
   setDue, setFilter, getFilter, setOrderSettings, allOrders, exportOrders
 } from './orders.js';
 import {
@@ -340,6 +341,7 @@ function showNoScreens(user) {
 // Signing out reloads the page, so nothing from one company's session can
 // linger in memory when the next person signs in.
 async function signOutAndReset() {
+  try { sessionStorage.removeItem('cp-assistant-chat'); } catch (e) {}     // the next person starts a fresh help chat
   try { await store.signOutNow(); } finally { location.replace(location.pathname); }
 }
 
@@ -385,6 +387,7 @@ function showApp(user) {
   document.getElementById('screen').addEventListener('change', onChangeEvent);
   document.getElementById('screen').addEventListener('input', onInput);
   paint();
+  startAssistant(() => (NAV.find(n => n.key === view) || {}).label || view);
 }
 
 function statusChip() {
@@ -445,10 +448,51 @@ function markActive() {
   });
 }
 
+// A search box on every list screen (Orders and the till have their own). It
+// filters what is on the screen as you type, every word must match, and it
+// keeps its words while the screen refreshes or you move between screens.
+const SEARCH_VIEWS = {
+  customers: 'Search customers: name, phone, area…', quotes: 'Search quotes: number, customer, product…',
+  factory: 'Search the floor: order no., product, customer, fabric…', deliveries: 'Search deliveries: order no., customer, address…',
+  costing: 'Search products or materials…', stock: 'Search stock: material, supplier, order no.…',
+  storeroom: 'Search the stock room…', invoices: 'Search invoices: number, order no., customer…',
+  wages: 'Search staff…', profit: 'Search: order no., customer, product…', clients: 'Search companies…'
+};
+const ROW_SEL = 'tbody tr, .card.cust, .pcard, .sr-row, .dl-card, .stock-line, .team-row';
+const searchWords = {};
+function addSearch(screen) {
+  const ph = SEARCH_VIEWS[view];
+  if (!ph || screen.querySelector('#view-search')) return;
+  const bar = `<div class="view-search"><input type="search" class="search" id="view-search" placeholder="${esc(ph)}" value="${esc(searchWords[view] || '')}" autocomplete="off" aria-label="Search this screen"><span class="vs-none muted" hidden>Nothing here matches.</span></div>`;
+  const head = screen.querySelector('.page-head');
+  if (head) head.insertAdjacentHTML('afterend', bar); else screen.insertAdjacentHTML('afterbegin', bar);
+  applySearch(screen);
+}
+function applySearch(screen) {
+  const words = String(searchWords[view] || '').toLowerCase().split(/\s+/).filter(Boolean);
+  const hits = (el) => { const t = el.textContent.toLowerCase(); return words.every(w => t.includes(w)); };
+  screen.querySelectorAll('.vs-off').forEach(el => el.classList.remove('vs-off'));
+  if (!words.length) { const n = screen.querySelector('.vs-none'); if (n) n.hidden = true; return; }
+  const rows = [...screen.querySelectorAll(ROW_SEL)].filter(r => !r.closest('.view-search') && !r.querySelector(ROW_SEL));
+  let shown = 0;
+  rows.forEach(r => { if (hits(r)) shown++; else r.classList.add('vs-off'); });
+  // a table, or a group of cards, with nothing left in it goes too, with its heading
+  screen.querySelectorAll('table').forEach(t => {
+    const rs = t.querySelectorAll('tbody tr'); if (!rs.length || [...rs].some(r => !r.classList.contains('vs-off'))) return;
+    const box = t.closest('.card') || t; box.classList.add('vs-off');
+    const h = box.previousElementSibling; if (h && /^H[1-4]$/.test(h.tagName)) h.classList.add('vs-off');
+  });
+  const n = screen.querySelector('.vs-none'); if (n) n.hidden = !!shown || !rows.length;
+}
+
 function paint() {
   markActive();
+  // the search box keeps its place and its caret while the screen is redrawn
+  const a = document.activeElement, typing = a && a.id === 'view-search' ? a.selectionStart : null;
   paintScreen();
   const screen = document.getElementById('screen');
+  if (screen) addSearch(screen);
+  if (typing != null) { const i = document.getElementById('view-search'); if (i) { i.focus(); try { i.setSelectionRange(typing, typing); } catch (e) {} } }
   if (screen && viewOnly(view)) screen.insertAdjacentHTML('afterbegin', '<div class="viewonly-note">View only: your role can look at this screen but not change anything on it.</div>');
 }
 
@@ -520,7 +564,7 @@ function renderSettings(host) {
       ${row(field('Order number prefix', 's-oprefix', { value: s.orderPrefix }), field('Next order number', 's-ofirst', { value: s.firstOrderNo, type: 'number', min: 1 }))}
       ${row(field('Invoice prefix', 's-iprefix', { value: s.invoicePrefix }), field('Default payment terms (days)', 's-terms', { value: s.paymentTermsDays, type: 'number', min: 0 }))}
       ${row(field('Made-to-order lead time (days)', 's-lead', { value: s.leadDays == null ? 28 : s.leadDays, type: 'number', min: 1 }),
-        field('Weekly production target (R, excl. VAT)', 's-target', { value: s.weeklyTarget || '', type: 'number', min: 0, step: '1', placeholder: 'e.g. 150000 — the Factory floor shows progress against it' }))}
+        field('Weekly production target (R' + (s.vatRegistered ? ', incl. VAT' : '') + ')', 's-target', { value: s.weeklyTarget || '', type: 'number', min: 0, step: '1', placeholder: 'e.g. 150000 — the Factory floor shows progress against it' }))}
       ${row(
         field('VAT registered', 's-vatreg', { type: 'select', value: s.vatRegistered ? 'yes' : 'no', options: [{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }] }),
         field('VAT rate (%)', 's-vatrate', { value: Math.round((s.vatRate || 0) * 100), type: 'number', min: 0, step: '0.01' })
@@ -839,7 +883,8 @@ async function onAction(e) {
     case 'print-week-report': return weekReportDialog();
     case 'export-orders': return exportOrders();
     case 'edit-order': return editOrder(id);
-    case 'del-order': return deleteOrder(id);
+    case 'cancel-order': return cancelOrder(id);
+    case 'reopen-order': return reopenOrder(id);
     case 'status': return setStatus(id, b.dataset.to);
     case 'new-customer': return newCustomer();
     case 'edit-customer': return editCustomer(id);
@@ -1014,6 +1059,7 @@ function onChangeEvent(e) {
 
 let searchTimer = null;
 function onInput(e) {
+  if (e.target.id === 'view-search') { searchWords[view] = e.target.value; return applySearch(document.getElementById('screen')); }
   if (e.target.dataset && e.target.dataset.wg) return wageInput(e.target);
   if (e.target.classList && e.target.classList.contains('pos-in')) {
     if (e.target.id === 'pos-search') { clearTimeout(searchTimer); searchTimer = setTimeout(() => posInput(e.target), 160); return; }

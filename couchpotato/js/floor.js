@@ -239,8 +239,8 @@ function openPrint(title, body) {
   win.document.close();
 }
 
+// No prices on a job card: it goes to the floor.
 function jobCardHtml(o) {
-  const cur = settings.currency || 'R';
   const fab = o.fabric ? (FABRIC_STATES.find(f => f.key === o.fabricStatus) || FABRIC_STATES[0]).label : '';
   return `<div class="page">
     <div class="hd">
@@ -256,7 +256,6 @@ function jobCardHtml(o) {
       <tr><th>Fabric</th><td>${o.fabric ? '<b>' + esc(o.fabric) + '</b> &nbsp;·&nbsp; ' + esc(fab) : '<i>none</i>'}</td></tr>
       <tr><th>Due out</th><td class="big">${esc(niceDate(o.dueDate) || '—')}</td></tr>
       <tr><th>Planned week</th><td>${o.planWeek ? 'Week of ' + esc(niceDate(o.planWeek)) : '<i>not planned</i>'}</td></tr>
-      ${o.priceEach ? `<tr><th>Price</th><td>${esc(money(o.priceEach, cur))} each</td></tr>` : ''}
     </table>
     <div class="sign">
       ${['Built by', 'Checked by', 'Dispatched by'].map(l => `<div class="sg"><b>${l}</b><div class="ln"></div><small>name / date</small></div>`).join('')}
@@ -269,7 +268,7 @@ function jobCardHtml(o) {
 // ------------------------------------------------ the week's production ----
 // What the week produced against the owner's target. Finished = marked Done
 // (or straight out of the door) in that week; planned = on that week's
-// planner. Values are the orders' prices, excl. VAT. Money roles only.
+// planner. Values are the orders' prices (incl. VAT). Money roles only.
 
 const valueOf = (o) => (Number(o.priceEach) || 0) * (Number(o.qty) || 1);
 // the day a piece was finished: readyAt, else its Done step, else when it left
@@ -325,7 +324,7 @@ export function printWeekReport(mon) {
   const range = niceDate(mon) + ' – ' + niceDate(f.sun);
   const line = (o, extra) => `<tr><td><b>${esc(o.orderNo || '')}</b></td><td>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' × ' + esc(o.qty) : ''}</td><td>${esc(o.customerName || '')}</td><td>${extra}</td><td style="text-align:right">${esc(money(valueOf(o), cur))}</td></tr>`;
   const table = (items, col, extra, total) => items.length
-    ? `<table class="pl"><tr><th>Order</th><th>Product</th><th>Customer</th><th>${col}</th><th style="text-align:right">Value excl. VAT</th></tr>${items.map(o => line(o, extra(o))).join('')}
+    ? `<table class="pl"><tr><th>Order</th><th>Product</th><th>Customer</th><th>${col}</th><th style="text-align:right">Value</th></tr>${items.map(o => line(o, extra(o))).join('')}
        <tr><td colspan="4" style="text-align:right"><b>Total</b></td><td style="text-align:right"><b>${esc(money(total, cur))}</b></td></tr></table>`
     : '<p><i>None</i></p>';
   const verdict = !f.target ? 'No weekly target set' : f.finishedValue >= f.target ? 'Target met: ' + f.pct + '%' : f.pct + '% of target, short by ' + money(f.target - f.finishedValue, cur);

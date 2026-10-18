@@ -135,9 +135,10 @@ service cloud.firestore {
       match /orders/{id} {
         allow read: if isMember(cid);
         allow create, delete: if isMember(cid) && companyActive(cid) && orderEditor(cid);
-        // the stock room may only book a client's fabric in
+        // the stock room (booking fabric in) and buying (ordering fabric for
+        // an order) may only change where the order's fabric is
         allow update: if isMember(cid) && companyActive(cid) && (orderEditor(cid)
-                      || (ed(cid, 'storeroom') && onlyChanged(['fabricStatus', 'fabricReceivedAt', 'fabricNote', 'updatedAt', 'updatedBy', 'events'])));
+                      || ((ed(cid, 'storeroom') || ed(cid, 'stock')) && onlyChanged(['fabricStatus', 'fabricReceivedAt', 'fabricNote', 'fabricPo', 'updatedAt', 'updatedBy', 'events'])));
       }
       // Drivers carry the secret code in their private link (it works like a
       // key): only roles that may edit deliveries read them. The driver page itself goes through the

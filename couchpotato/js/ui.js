@@ -4,6 +4,19 @@ export const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
+// Prices include VAT. Every price typed in or shown is what the customer pays;
+// for a VAT-registered company the VAT is worked out inside it, never added on.
+//   vatSplit(1150, 0.15) → { gross: 1150, ex: 1000, vat: 150 }
+const r2m = (n) => Math.round((Number(n) || 0) * 100) / 100;
+export function vatSplit(gross, rate) {
+  const g = r2m(gross), r = Number(rate) || 0;
+  const ex = r ? r2m(g / (1 + r)) : g;
+  return { gross: g, ex, vat: r2m(g - ex) };
+}
+export const exVat = (gross, rate) => vatSplit(gross, rate).ex;
+// "incl. VAT" after a price, for a VAT-registered company only
+export const inclLabel = (rate) => (Number(rate) || 0) ? ' (incl. VAT)' : '';
+
 // A product's picture: a web address only (the shop's, or one typed in). Shopify's
 // own pictures are asked for small, so a till full of them stays quick.
 export const imgUrl = (u) => { u = String(u || '').trim(); return /^https?:\/\/[^\s"'<>]+$/i.test(u) ? u : ''; };
@@ -51,7 +64,10 @@ export const STATUSES = [
   { key: 'invoiced', label: 'Invoiced', icon: '', cls: 'st-inv', help: 'Billed to the customer' }
 ];
 
-export const statusMeta = (key) => STATUSES.find(s => s.key === key) || STATUSES[0];
+// Orders are never deleted: one made by mistake, or called off, is cancelled
+// and stays on record (it can be reopened).
+export const CANCELLED = { key: 'cancelled', label: 'Cancelled', icon: '', cls: 'st-cancel', help: 'Called off: kept on record, off the floor' };
+export const statusMeta = (key) => key === 'cancelled' ? CANCELLED : STATUSES.find(s => s.key === key) || STATUSES[0];
 
 export function statusChip(key) {
   const s = statusMeta(key);

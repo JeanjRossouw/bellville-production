@@ -66,7 +66,7 @@ export function labelSheetHtml(items, settings) {
   items.forEach(({ p, copies }) => {
     for (let i = 0; i < (copies || 1); i++) {
       cells.push(`<div class="lbl"><div class="nm">${esc(p.name)}</div>
-        <div class="pr">${esc(money((Number(p.sellingPrice) || 0) * (1 + vat), cur))}${vat ? ' <small>incl. VAT</small>' : ''}</div>
+        <div class="pr">${esc(money(Number(p.sellingPrice) || 0, cur))}${vat ? ' <small>incl. VAT</small>' : ''}</div>
         <div class="bc">${encodable(p.barcode) ? barcodeSvg(p.barcode) : '<div style="font:9pt Arial;color:#900">This code has letters a barcode cannot hold. Change it on the product.</div>'}</div><div class="cd">${esc(p.barcode)}</div></div>`);
     }
   });

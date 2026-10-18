@@ -17,7 +17,8 @@
 // so two people using and receiving stock at the same moment cannot lose
 // each other's change.
 import * as store from './store.js';
-import { allMaterials, materialById, productByName } from './costing.js';
+import { allMaterials, materialById, productByName, isFabric } from './costing.js';
+import { allOrders } from './orders.js';
 import { esc, money, field, row, val, openModal, toast, empty, today, niceDate, addDays, openPrint, docHeader, waDigits } from './ui.js';
 
 let pos = [];
@@ -72,7 +73,7 @@ export async function logMove(materialId, qty, kind, ref, note, extra) {
 }
 export const allMoves = () => moves;
 // Moves that record who has stock, without changing the count on the shelf.
-export const ALLOCATION = ['issued', 'issue-return', 'client-fabric'];
+export const ALLOCATION = ['issued', 'issue-return', 'client-fabric', 'order-fabric'];
 
 // A piece goes into production: its materials come off the shelf, once.
 export async function consumeForOrder(o) {
@@ -114,7 +115,8 @@ export function levels(orders) {
     if (!need) { unknown++; return; }
     need.forEach(l => { if (map[l.materialId]) { map[l.materialId].needed += l.qty; map[l.materialId].waiting++; } });
   });
-  pos.filter(p => p.status === 'sent' || p.status === 'part').forEach(p => (p.lines || []).forEach(l => {
+  pos.filter(p => p.status === 'sent' || p.status === 'part').forEach(p => (p.lines || []).filter(l => !l.forOrderId).forEach(l => {
+    // fabric bought for one order is that order's, not stock on order
     const out = (Number(l.qty) || 0) - (Number(l.received) || 0);
     if (out > 0 && map[l.materialId]) map[l.materialId].onOrder += out;
   }));
@@ -211,7 +213,7 @@ function renderPOs() {
 }
 
 const MOVE_KIND = { used: 'Used on', returned: 'Back from', received: 'Received on', 'received-direct': 'Received', count: 'Stock count', opening: 'First count',
-  issued: 'Given to', 'issue-return': 'Brought back by', 'client-fabric': 'Client fabric for' };
+  issued: 'Given to', 'issue-return': 'Brought back by', 'client-fabric': 'Client fabric for', 'order-fabric': 'Fabric bought for' };
 function renderMoves() {
   if (!moves.length) return empty('', 'Nothing has moved yet', 'Every count, delivery and order that uses materials is listed here.');
   return `<div class="card" style="padding:0; overflow:auto"><table class="tbl">
@@ -259,7 +261,19 @@ function poLineRow(l, i) {
     <input class="po-qty" type="number" min="0" step="0.01" value="${esc(l.qty == null ? '' : l.qty)}" placeholder="qty">
     <input class="po-cost" type="number" min="0" step="0.01" value="${esc(l.cost == null ? '' : l.cost)}" placeholder="cost each">
     <button type="button" class="icon-btn po-del" title="Remove">✕</button>
+    <select class="po-for" title="Fabric for one customer's order: the stock room books it in against that order">
+      <option value="">For stock</option>
+      ${openForFabric(l.forOrderId).map(o => `<option value="${esc(o.id)}"${o.id === l.forOrderId ? ' selected' : ''}>For order ${esc(o.orderNo || '')} · ${esc(o.customerName || '')}${o.fabric ? ' · ' + esc(o.fabric) : ''}</option>`).join('')}
+    </select>
   </div>`;
+}
+
+// Orders that may still need fabric bought for them: open, not yet in, the
+// ones without any fabric ordered first.
+function openForFabric(keepId) {
+  const rank = { none: 0, '': 0, ordered: 1, received: 2 };
+  return allOrders().filter(o => o.id === keepId || (['new', 'in-production'].includes(o.status) && o.fabricStatus !== 'received'))
+    .sort((a, b) => (rank[a.fabricStatus || ''] || 0) - (rank[b.fabricStatus || ''] || 0) || String(a.orderNo || '').localeCompare(String(b.orderNo || ''), undefined, { numeric: true }));
 }
 
 // The most recent contact details used for a supplier, so they are typed once.
@@ -317,7 +331,9 @@ function readPo(w) {
   w.querySelectorAll('#po-lines .po-row').forEach(r => {
     const id = r.querySelector('.po-mat').value; const m = materialById(id);
     const qty = r3(parseFloat(r.querySelector('.po-qty').value));
-    if (m && qty > 0) lines.push({ materialId: id, name: m.name, unit: m.unit || '', qty, cost: Math.round((parseFloat(r.querySelector('.po-cost').value) || 0) * 100) / 100, received: 0 });
+    const fo = allOrders().find(o => o.id === r.querySelector('.po-for').value);
+    if (m && qty > 0) lines.push({ materialId: id, name: m.name, unit: m.unit || '', qty, cost: Math.round((parseFloat(r.querySelector('.po-cost').value) || 0) * 100) / 100, received: 0,
+      forOrderId: fo ? fo.id : '', forOrderNo: fo ? fo.orderNo || '' : '' });
   });
   return { supplier: val(w, 'po-sup'), expectedDate: val(w, 'po-exp'), supplierPhone: val(w, 'po-phone'), supplierEmail: val(w, 'po-email'), notes: val(w, 'po-notes'), lines };
 }
@@ -356,7 +372,7 @@ export function editPurchaseOrder(id) {
 
 function poText(p) {
   return 'Hi ' + (p.supplier || '') + ', purchase order ' + p.poNo + ' from ' + (settings.name || '') + ':\n'
-    + (p.lines || []).map(l => '• ' + qtyTxt(l.qty) + ' ' + (l.unit || '') + ' ' + l.name).join('\n')
+    + (p.lines || []).map(l => '• ' + qtyTxt(l.qty) + ' ' + (l.unit || '') + ' ' + l.name + (l.forOrderNo ? ' (for our order ' + l.forOrderNo + ', please mark it)' : '')).join('\n')
     + (p.expectedDate ? '\nPlease deliver by ' + niceDate(p.expectedDate) + '.' : '')
     + (p.notes ? '\n' + p.notes : '')
     + '\nPlease quote ' + p.poNo + ' on your invoice. Thank you, ' + who() + (settings.phone ? ' (' + settings.phone + ')' : '');
@@ -376,7 +392,15 @@ export function sendPurchaseOrder(id) {
     <p class="muted">Once it has gone, tap <strong>Mark as sent</strong>: the materials then count as on order.</p>`, {
     okLabel: p.status === 'draft' ? 'Mark as sent' : 'Done',
     onOk: async () => {
-      if (p.status === 'draft') { await store.update('purchaseOrders', id, { status: 'sent', sentAt: store.nowIso() }, 'Sent to the supplier'); toast(p.poNo + ' sent — now on order'); }
+      if (p.status === 'draft') {
+        await store.update('purchaseOrders', id, { status: 'sent', sentAt: store.nowIso() }, 'Sent to the supplier');
+        // fabric bought for an order: the order now shows it as ordered, on this PO
+        for (const l of (p.lines || []).filter(x => x.forOrderId)) {
+          const o = allOrders().find(x => x.id === l.forOrderId);
+          if (o && o.fabricStatus !== 'received') await store.update('orders', o.id, { fabricStatus: 'ordered', fabricPo: p.poNo }, 'Fabric ordered: ' + qtyTxt(l.qty) + ' ' + (l.unit || '') + ' ' + l.name + ' on ' + p.poNo + ' from ' + (p.supplier || 'the supplier'));
+        }
+        toast(p.poNo + ' sent — now on order');
+      }
     }
   });
   m.wrap.querySelector('#ps-wa').addEventListener('click', () => window.open('https://wa.me/' + phone + '?text=' + encodeURIComponent(poText(p)), '_blank'));
@@ -406,7 +430,7 @@ export function receivePurchaseOrder(id) {
   const lines = (p.lines || []).map((l, i) => ({ ...l, i, out: r3((Number(l.qty) || 0) - (Number(l.received) || 0)) }));
   openModal('Receive ' + p.poNo + ' from ' + (p.supplier || ''), `
     <p class="muted">Enter what actually arrived. Anything short stays on order.</p>
-    ${lines.map(l => `<div class="po-recv"><span><strong>${esc(l.name)}</strong><div class="muted">ordered ${esc(qtyTxt(l.qty))} ${esc(l.unit)}${l.received ? ', already received ' + esc(qtyTxt(l.received)) : ''}</div></span>
+    ${lines.map(l => `<div class="po-recv"><span><strong>${esc(l.name)}</strong><div class="muted">ordered ${esc(qtyTxt(l.qty))} ${esc(l.unit)}${l.received ? ', already received ' + esc(qtyTxt(l.received)) : ''}</div>${l.forOrderNo ? '<div><span class="chip calm">for order ' + esc(l.forOrderNo) + '</span></div>' : ''}</span>
       <input type="number" min="0" step="0.01" data-line="${l.i}" value="${l.out > 0 ? esc(qtyTxt(l.out)) : 0}" ${l.out > 0 ? '' : 'disabled'}><span class="muted">${esc(l.unit)}</span></div>`).join('')}
     ${store.can('costing', 'edit') ? `<label class="check"><input type="checkbox" id="pr-price" checked> Update material prices to this order's prices</label>` : ''}`, {
     okLabel: 'Book it in',
@@ -419,6 +443,15 @@ export function receivePurchaseOrder(id) {
       const newLines = (p.lines || []).map((l, i) => got[i] ? { ...l, received: r3((Number(l.received) || 0) + got[i]) } : l);
       for (const [i, q] of Object.entries(got)) {
         const l = p.lines[i];
+        if (l.forOrderId) {
+          // bought for one order: it is that order's fabric, set aside for it in the
+          // stock room, so it is not added to the stock on the shelf
+          await logMove(l.materialId, q, 'order-fabric', l.forOrderNo, p.poNo + ' · ' + (p.supplier || ''), { name: l.name, unit: l.unit || '' });
+          const o = allOrders().find(x => x.id === l.forOrderId);
+          if (o) await store.update('orders', o.id, { fabricStatus: 'received', fabricReceivedAt: store.nowIso(), fabricPo: p.poNo, fabricNote: qtyTxt(q) + ' ' + (l.unit || '') + ' ' + l.name + ' on ' + p.poNo },
+            'Fabric received in the stock room: ' + qtyTxt(q) + ' ' + (l.unit || '') + ' ' + l.name + ' (' + p.poNo + ')');
+          continue;
+        }
         if (!materialById(l.materialId)) continue;
         const patch = { onHand: store.inc(q) };
         if (prices && Number(l.cost) > 0) patch.cost = Number(l.cost);
