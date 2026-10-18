@@ -8,6 +8,8 @@
 //   POST { action:'pushSale', saleId }   a till sale took stock: tell Shopify  any member
 //                                        (a sale from the shop's stock becomes a Shopify order)
 //   POST { action:'catalogue' }          the shop's products and stock, for the till  any member
+//   POST { action:'receive', grvId }     a delivery (grvs/<id>) onto the shop's stock, once
+//   POST { action:'setStock', takeId }   a stock take (stockTakes/<id>): counts become the shop's count
 //   POST ?c=<company id> from Shopify (orders/create, orders/paid)           signed by Shopify
 //
 // What lives where (all written here, with the service account; the app
@@ -306,6 +308,53 @@ async function tillOrder(who, sale, saleId) {
   }
 }
 
+// A delivery booked in at the till (grvs/<id>) goes onto the shop's count,
+// once: the GRV is claimed first; a retry after a lost answer sends only
+// what is not marked received yet.
+const INV = /^\d{1,20}$/;
+async function receive(who, body) {
+  const grvId = String(body.grvId || '');
+  if (!CID.test(grvId)) throw new Error('Which delivery?');
+  const st = await getDoc(statusPath(who.cid));
+  if (!st || !st.connected) throw new Error('The shop is not connected');
+  const grv = await getDoc(`companies/${who.cid}/grvs/${grvId}`);
+  if (!grv) throw new Error('Delivery not found');
+  const claimPath = `companies/${who.cid}/shopifyPushes/grv-${grvId}`;
+  const claim = await getDoc(claimPath);
+  if (claim && claim.state === 'done') return { ok: true, already: true, received: grv.received || [], failed: grv.failed || [] };
+  if (claim && claim.state === 'making' && Date.now() - Date.parse(claim.at || 0) < 2 * 60000) throw new Error('This delivery is being sent to Shopify right now');
+  if (!claim) await createDoc(claimPath, { at: nowIso(), by: who.member.name || '', state: 'making' });
+  else await patchDoc(claimPath, { at: nowIso(), state: 'making' });
+  const had = new Set((grv.received || []).map(r => r.inventoryItemId));
+  const lines = (grv.lines || []).filter(l => INV.test(String(l.inventoryItemId || '')) && Number(l.qty) > 0 && !had.has(String(l.inventoryItemId)))
+    .map(l => ({ inventoryItemId: String(l.inventoryItemId), variantId: INV.test(String(l.variantId || '')) ? String(l.variantId) : '', qty: Math.round(Number(l.qty)), name: l.name || '' }));
+  const cfg = await secretsOf(who.cid);
+  let r;
+  try { r = lines.length ? await shopify.receiveLines(cfg, lines) : { received: [], failed: [] }; }
+  catch (e) { await patchDoc(claimPath, { state: 'failed', error: e.message }).catch(() => {}); throw e; }
+  const received = [...(grv.received || []), ...r.received], failed = r.failed;
+  const done = !failed.length;
+  await patchDoc(`companies/${who.cid}/grvs/${grvId}`, { received, failed, status: done ? 'received' : 'part', sentAt: nowIso() });
+  await patchDoc(claimPath, { state: done ? 'done' : 'part', doneAt: nowIso() });
+  return { ok: true, received: r.received, failed };
+}
+// A stock take's counts become the shop's count.
+async function setStock(who, body) {
+  const takeId = String(body.takeId || '');
+  if (!CID.test(takeId)) throw new Error('Which stock take?');
+  const st = await getDoc(statusPath(who.cid));
+  if (!st || !st.connected) throw new Error('The shop is not connected');
+  const take = await getDoc(`companies/${who.cid}/stockTakes/${takeId}`);
+  if (!take) throw new Error('Stock take not found');
+  const lines = (take.lines || []).filter(l => INV.test(String(l.inventoryItemId || '')) && l.counted != null && l.counted !== '')
+    .map(l => ({ inventoryItemId: String(l.inventoryItemId), counted: Number(l.counted), name: l.name || '' }));
+  if (!lines.length) throw new Error('Nothing counted yet');
+  const cfg = await secretsOf(who.cid);
+  const r = await shopify.setLevels(cfg, lines);
+  await patchDoc(`companies/${who.cid}/stockTakes/${takeId}`, { status: r.failed.length ? 'part' : 'done', reconciledAt: nowIso(), reconciledBy: who.member.name || '', set: r.done.length, failed: r.failed });
+  return { ok: true, set: r.done.length, failed: r.failed };
+}
+
 // A till sale took pieces off the shelf: take the same off Shopify, once.
 async function pushSale(who, body) {
   const saleId = String(body.saleId || '');
@@ -395,7 +444,7 @@ export const handler = async (event) => {
   try { who = await whoIs(event); } catch (e) { return json(403, { error: e.message }); }
   // a locked company (trial over, payment stopped) is read only here too;
   // disconnecting and the till's stock (which skips itself) are still allowed
-  if (['connect', 'settings', 'products', 'sync'].includes(body.action) && !companyActive(who.company)) {
+  if (['connect', 'settings', 'products', 'sync', 'receive', 'setStock'].includes(body.action) && !companyActive(who.company)) {
     return json(403, { error: 'Your subscription is not active, so the app is read only. Subscribe under Billing to use the online shop again.' });
   }
   try {
@@ -413,6 +462,8 @@ export const handler = async (event) => {
       case 'pushSale': return json(200, await pushSale(who, body));
       case 'pushReturn': return json(200, await pushReturn(who, body));
       case 'catalogue': return json(200, await catalogue(who));
+      case 'receive': return json(200, await receive(who, body));
+      case 'setStock': return json(200, await setStock(who, body));
       default: return json(400, { error: 'Unknown action' });
     }
   } catch (e) {
@@ -422,4 +473,4 @@ export const handler = async (event) => {
 };
 
 // for the tests
-export { connect, disconnect, products, pushSale, pushReturn, catalogue };
+export { connect, disconnect, products, pushSale, pushReturn, catalogue, receive, setStock };

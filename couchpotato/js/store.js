@@ -283,6 +283,20 @@ function demoShopify(action, p) {
   if (action === 'disconnect') { save({ connected: false, disconnectedAt: nowIso(), webhooks: '' }); return { ok: true }; }
   if (action === 'settings') { save({ importWhen: p.importWhen === 'placed' ? 'placed' : 'paid' }); return { ok: true }; }
   if (action === 'pushSale' || action === 'pushReturn') return { ok: true, adjusted: 0 };
+  if (action === 'receive') {
+    // the demo shop's count goes up by what was booked in
+    const g = (demoRead('grvs') || {})[p.grvId]; if (!g) throw new Error('Delivery not found');
+    (g.lines || []).forEach(l => { const v = DEMO_SHOP.find(x => x.shopifyVariantId === l.variantId); if (v && v.tracked) v.qoh += Number(l.qty) || 0; });
+    const gm = demoRead('grvs'); gm[p.grvId] = { ...g, status: 'received', received: (g.lines || []).map(l => ({ inventoryItemId: l.inventoryItemId, qty: l.qty })), failed: [], sentAt: nowIso() }; demoWrite('grvs', gm);
+    return { ok: true, received: gm[p.grvId].received, failed: [] };
+  }
+  if (action === 'setStock') {
+    const t = (demoRead('stockTakes') || {})[p.takeId]; if (!t) throw new Error('Stock take not found');
+    let n = 0;
+    (t.lines || []).forEach(l => { if (l.counted == null || l.counted === '') return; const v = DEMO_SHOP.find(x => x.shopifyVariantId === l.variantId); if (v) { v.qoh = Math.max(0, Math.round(Number(l.counted))); n++; } });
+    const tm = demoRead('stockTakes'); tm[p.takeId] = { ...t, status: 'done', reconciledAt: nowIso(), reconciledBy: (currentUser || {}).name || '', set: n, failed: [] }; demoWrite('stockTakes', tm);
+    return { ok: true, set: n, failed: [] };
+  }
   if (action === 'catalogue') {
     const { vatRate } = vat();
     return { connected: true, shopName: st.shopName, at: nowIso(), items: DEMO_SHOP.map(v => ({ variantId: v.shopifyVariantId, inventoryItemId: v.shopifyInventoryItemId, productId: v.shopifyProductId,
@@ -934,8 +948,8 @@ export async function create(coll, data) {
   return ref.id;
 }
 
-// A record with an id we choose (role keys).
-async function setWithId(coll, id, data) {
+// A record with an id we choose (role keys, the till's shop products).
+export async function setWithId(coll, id, data) {
   guardWrite(coll);
   const who = currentUser ? currentUser.name : 'system';
   const record = { ...data, updatedAt: nowIso(), updatedBy: who };
@@ -1486,3 +1500,5 @@ function seedDemoExtras() {
   counters.orderNo = { value: Math.max(n, (counters.orderNo && counters.orderNo.value) || 0) };
   demoWrite('counters', counters);
 }
+
+export const createWithId = setWithId;
