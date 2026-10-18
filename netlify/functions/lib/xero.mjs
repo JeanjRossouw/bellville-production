@@ -28,6 +28,7 @@ export const SCOPES = 'openid profile email accounting.invoices accounting.payme
 function tokenStore() { return getStore('xero-tokens'); }
 export async function loadTokens(biz) { return await tokenStore().get(biz, { type: 'json' }); }
 export async function saveTokens(biz, t) { await tokenStore().setJSON(biz, t); }
+export async function deleteTokens(biz) { try { await tokenStore().delete(biz); } catch (e) { /* nothing stored */ } }
 
 export function clientCreds() {
   const id = process.env.XERO_CLIENT_ID;

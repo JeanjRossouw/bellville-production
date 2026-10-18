@@ -207,6 +207,14 @@ password; the owner invites the team under Settings and gives each person a role
   terms, weekly production target, team and invitations, roles: who sees what,
   subscription, and the Online shop (Shopify) connection.
 
+## Accounting (Xero)
+- Settings → Accounting (Xero) → Connect Xero: sign in to Xero in the new tab and pick the
+  organisation. Then fill in the bank account code (where the till money goes) and the sales
+  account code (default 200) and Save. From then on every till sale paid in full goes to Xero
+  by itself as a paid sales invoice (prices incl. VAT); the Sales tab shows the Xero invoice
+  number on the sale. A layby or account sale goes when it is paid in full. If Xero could not
+  be reached, the sale waits on the till and is sent later. Disconnect stops it.
+
 ## Online shop (Shopify)
 - Settings → Online shop → Connect Shopify with the store address, Client ID and Client
   secret from an app made in the Shopify Dev Dashboard. Paid online orders then come in as

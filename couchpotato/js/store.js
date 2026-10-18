@@ -218,6 +218,43 @@ export async function shopifyCall(action, payload) {
   return j;
 }
 
+// ---- accounting (Xero) ----
+// Each company connects its own Xero (netlify/functions/factory-xero.mjs); a
+// till sale paid in full goes there as a paid invoice, through the same
+// pending queue as the shop's pushes, so an outage never loses one.
+const XERO_URL = '/.netlify/functions/factory-xero';
+export async function xeroCall(action, payload) {
+  if (mode === 'demo') return demoXero(action, payload || {});
+  const token = await cloud.auth.currentUser.getIdToken();
+  const r = await fetch(XERO_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ action, ...(payload || {}) }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+function demoXero(action, p) {
+  const ints = demoRead('integrations'); const st = ints.xero || {};
+  const save = (patch) => { ints.xero = { ...st, ...patch }; demoWrite('integrations', ints); return ints.xero; };
+  if (action === 'status') return { connected: !!st.connected, tenantName: st.tenantName || '', bankAccount: st.bankAccount || '', revenueAccount: st.revenueAccount || '200', taxType: st.taxType || '', lastError: '', ready: true };
+  if (action === 'connectUrl') { save({ connected: true, tenantName: 'Demo Organisation', connectedAt: nowIso() }); return { url: '', demo: true }; }
+  if (action === 'settings') { save({ bankAccount: p.bankAccount || '', revenueAccount: p.revenueAccount || '200', taxType: p.taxType || '', autoPush: p.autoPush !== false }); return { ok: true }; }
+  if (action === 'disconnect') { save({ connected: false, tenantName: '' }); return { ok: true }; }
+  if (action === 'pushSale') {
+    if (!st.connected) return { ok: true, skipped: 'not connected' };
+    if (!st.bankAccount) return { ok: true, skipped: 'no bank account code in the Xero settings' };
+    const m = demoRead('sales'); const sale = m[p.saleId]; if (!sale) throw new Error('Sale not found');
+    if (Number(sale.balance) > 0.005) return { ok: true, skipped: 'not paid in full yet' };
+    if (sale.xeroInvoiceId) return { ok: true, already: true, invoice: sale.xeroInvoiceNumber };
+    sale.xeroInvoiceId = 'demo-' + p.saleId; sale.xeroInvoiceNumber = 'INV-X' + String(Object.keys(m).length).padStart(4, '0'); sale.xeroAt = nowIso(); demoWrite('sales', m);
+    save({ lastPushAt: nowIso() });
+    return { ok: true, invoice: sale.xeroInvoiceNumber };
+  }
+  throw new Error('Unknown action');
+}
+export function xeroPushSale(saleId) {
+  shopifyRetryPending();
+  pushOne('xero|' + saleId);
+}
+
 // A till sale took pieces off the shelf: Shopify takes the same off its
 // count. Quietly, in the background. If it cannot get through (offline, a
 // hiccup), the sale waits on this device and is sent again with the next sale
@@ -232,10 +269,11 @@ async function pushOne(key) {
   try {
     if (ret[0] === 'ret') await shopifyCall('pushReturn', { saleId: ret[1], returnNo: ret[2] });
     else if (ret[0] === 'paid') await shopifyCall('markPaid', { saleId: ret[1] });
+    else if (ret[0] === 'xero') await xeroCall('pushSale', { saleId: ret[1] });
     else await shopifyCall('pushSale', { saleId: key });
     savePending(pendingPushes().filter(x => x !== key));
   } catch (e) {
-    console.warn('Shopify stock not sent yet:', e.message);
+    console.warn((ret[0] === 'xero' ? 'Xero' : 'Shopify') + ' not reached yet:', e.message);
     if (!/not found|Which sale|Which return/i.test(e.message)) { const p = pendingPushes(); if (!p.includes(key)) savePending(p.concat(key)); }
     else savePending(pendingPushes().filter(x => x !== key));
   }

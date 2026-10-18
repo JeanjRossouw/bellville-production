@@ -116,6 +116,8 @@ EFT. PayFast debits it every month until the company cancels. The price is
    | `FACTORY_PRICE` | optional: the monthly price in rands, e.g. `799` |
    | `FACTORY_PLAN_NAME` | optional: the plan's name, default `Standard` |
    | `FACTORY_APP_PATH` | optional: where the app lives on the site, default `couchpotato/`; set to `/` once it has its own site |
+   | `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET` | optional: switches on **Settings → Accounting (Xero)**. One Xero app (developer.xero.com, Web app) for the whole site; each company then connects its own organisation |
+   | `XERO_REDIRECT_URI` | with the two above: `https://factorymanager.co.za/.netlify/functions/factory-xero?action=callback` (the same URL goes into the Xero app's redirect URIs) |
    | `ANTHROPIC_API_KEY` | optional: switches on the **?** help assistant (an Anthropic API key, from console.anthropic.com). Each question costs a few cents; every login may ask 60 a day |
 
 5. Redeploy. The owner of each company now sees **Settings → Billing** with a

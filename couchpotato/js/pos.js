@@ -76,6 +76,10 @@ export function startPos(cb, cfg) {
 export const setPosSettings = (cfg) => { settings = cfg || {}; till.setTillSettings(cfg); shopstock.setShopStockSettings(cfg); };
 let quickEdit = false;      // tapping a tile stars it instead of selling it
 export const setPosShop = (s) => till.setTillShop(s);
+let xero = null;
+export const setPosXero = (x) => { xero = x; };
+// a sale paid in full goes to Xero, when the company has connected it
+const sendToXero = (saleId) => { if (xero && xero.connected) store.xeroPushSale(saleId); };
 const emptyCart = () => ({ lines: [], customerId: '', discount: 0, discountPct: 0, note: '' });
 export const allSales = () => sales;
 export const setPosTab = (t) => { posTab = t; };
@@ -536,6 +540,7 @@ async function completeSale(pays, kind, extra) {
     ...(lines.some(l => l.shop) && kind !== 'layby' ? { shopifySale: true } : {}) };
   const saleId = await store.create('sales', sale);
 
+  if (r2(t.total - amount) <= 0.005) sendToXero(saleId);
   // pieces from the shelf also come off the online shop's count: a sale of the
   // shop's stock becomes a Shopify order (a layby's only when it is collected)
   if (kind !== 'layby') {
@@ -626,8 +631,9 @@ async function takePayment(s, inv, pays) {
   const paidNow = r2((Number(s.paidNow) || 0) + amount);
   const left = r2(Math.max(0, (Number(s.total) || 0) - paidNow));
   await store.update('sales', s.id, { paidNow, balance: left, payments: [...(s.payments || []), ...pays.map(p => ({ ...p, at: now, by: who }))] });
-  // an account sale settled: the shop's order is marked paid too
+  // an account sale settled: the shop's order is marked paid too; a sale paid in full goes to Xero
   if (left <= 0.005 && s.kind === 'account' && s.shopifySale) store.shopifyMarkPaid(s.id);
+  if (left <= 0.005) sendToXero(s.id);
 }
 // A paid layby goes out of the door: its stock leaves, the shop gets its order, points are earned.
 async function collectLayby(id) {
@@ -830,7 +836,7 @@ function salesHtml(cur) {
           ${(s.returns || []).map(r => `<div class="muted" style="margin-top:3px">↩ ${esc(r.returnNo)} ${esc(niceDate(r.date))}: ${esc((r.lines || []).map(x => x.qty + '× ' + x.name).join(', '))}${Number(r.refund) ? ' · refunded ' + esc(money(r.refund, cur)) : ''}${r.creditId ? ` <button class="btn ghost sm" data-act="pos-reprint" data-id="${esc(r.creditId)}">${esc(r.creditNo || 'Credit note')}</button>` : ''}</div>`).join('')}</td>
         <td class="r">${esc(money(s.total, cur))}</td><td class="r">${esc(money(s.paidNow, cur))}${s.method ? '<div class="muted">' + esc(s.method) + '</div>' : ''}</td>
         <td class="r">${Number(s.balance) > 0 ? '<strong>' + esc(money(s.balance, cur)) + '</strong>' : '—'}</td>
-        <td>${esc(s.invoiceNo || '')}</td>
+        <td>${esc(s.invoiceNo || '')}${s.xeroInvoiceNumber ? '<div class="muted">Xero ' + esc(s.xeroInvoiceNumber) + '</div>' : ''}</td>
         <td class="r nowrap">${Number(s.balance) > 0.005 ? `<button class="btn primary sm" data-act="pos-pay" data-id="${esc(s.id)}">Pay</button> ` : ''}${s.kind === 'layby' && !s.collectedAt && !(Number(s.balance) > 0.005) ? `<button class="btn primary sm" data-act="pos-collect" data-id="${esc(s.id)}">Collect</button> ` : ''}<button class="btn ghost sm" data-act="pos-slip" data-id="${esc(s.id)}" title="80 mm slip">Slip</button>${s.invoiceId ? ` <button class="btn ghost sm" data-act="pos-reprint" data-id="${esc(s.invoiceId)}" title="A4 invoice">Invoice</button>` : ''} <button class="btn ghost sm" data-act="pos-share" data-id="${esc(s.id)}" data-how="wa" title="Send the slip on WhatsApp">WA</button>${(s.lines || []).some((l, i) => returnedQty(s, i) < (Number(l.qty) || 0)) ? ` <button class="btn ghost sm" data-act="pos-return" data-id="${esc(s.id)}">Return</button>` : ''}</td>
       </tr>`).join('')}</tbody></table></div>` : empty('', 'No sales yet', 'Ring up the first one under New sale.')}`;
 }
