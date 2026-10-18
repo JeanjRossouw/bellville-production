@@ -566,6 +566,7 @@ function renderSettings(host) {
       <h2>Numbering and terms</h2>
       ${row(field('Order number prefix', 's-oprefix', { value: s.orderPrefix }), field('Next order number', 's-ofirst', { value: s.firstOrderNo, type: 'number', min: 1 }))}
       ${row(field('Invoice prefix', 's-iprefix', { value: s.invoicePrefix }), field('Default payment terms (days)', 's-terms', { value: s.paymentTermsDays, type: 'number', min: 0 }))}
+      ${row(field('Loyalty points at the till (% of the sale, 1 point = R1; 0 = off)', 's-loyalty', { value: s.loyaltyPct == null ? 5 : s.loyaltyPct, type: 'number', min: 0, step: '0.5' }), field('Till cash float (R)', 's-float', { value: s.tillFloat || '', type: 'number', min: 0, step: '1', placeholder: 'Offered when the register opens' }))}
       ${row(field('Made-to-order lead time (days)', 's-lead', { value: s.leadDays == null ? 28 : s.leadDays, type: 'number', min: 1 }),
         field('Weekly production target (R' + (s.vatRegistered ? ', incl. VAT' : '') + ')', 's-target', { value: s.weeklyTarget || '', type: 'number', min: 0, step: '1', placeholder: 'e.g. 150000 — the Factory floor shows progress against it' }))}
       ${row(
@@ -851,6 +852,8 @@ async function saveSettings() {
     invoicePrefix: g('s-iprefix') || 'INV-',
     paymentTermsDays: parseInt(g('s-terms'), 10) || 0,
     leadDays: parseInt(g('s-lead'), 10) || 28,
+    loyaltyPct: Math.max(0, parseFloat(g('s-loyalty')) || 0),
+    tillFloat: Math.max(0, parseFloat(g('s-float')) || 0),
     weeklyTarget: parseFloat(g('s-target')) || 0,
     vatRegistered: g('s-vatreg') === 'yes',
     vatRate: (parseFloat(g('s-vatrate')) || 0) / 100

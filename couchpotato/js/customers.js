@@ -117,6 +117,7 @@ export function renderCustomers(host, orders) {
           ${c.email ? `<div>${esc(c.email)}</div>` : ''}
           ${c.area || c.address ? `<div>${esc([c.address, c.area].filter(Boolean).join(', '))}</div>` : ''}
           <div class="muted">Terms: ${c.termsDays ? c.termsDays + ' days' : 'on collection'} · ${counts[c.id] || 0} order${(counts[c.id] || 0) === 1 ? '' : 's'} all time</div>
+          ${Number(c.storeCredit) > 0 || Number(c.points) > 0 ? `<div><strong>${Number(c.storeCredit) > 0 ? 'Store credit R ' + esc((Math.round(Number(c.storeCredit) * 100) / 100).toLocaleString('en-ZA', { minimumFractionDigits: 2 })) : ''}${Number(c.storeCredit) > 0 && Number(c.points) > 0 ? ' · ' : ''}${Number(c.points) > 0 ? '⭐ ' + esc(Math.round(Number(c.points))) + ' points' : ''}</strong></div>` : ''}
           ${c.createdAt ? `<div class="muted">Added ${esc(niceDate(c.createdAt))}</div>` : ''}
           <div class="muted" title="Used when another system feeds orders in for this customer">Feed id: <code>${esc(c.id)}</code></div>
         </div>

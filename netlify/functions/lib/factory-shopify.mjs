@@ -125,7 +125,7 @@ export async function listOrders(cfg, sinceIso, deadline = Infinity) {
 // Tagged with the sale, so a retry can find an order that was made but whose
 // answer never came back.
 export const TILL_TAG = 'factory-manager-till';
-export async function createTillOrder(cfg, { saleId, saleNo, lines, paid, method, taxesIncluded, vatRate, vat }) {
+export async function createTillOrder(cfg, { saleId, saleNo, lines, paid, onAccount, method, taxesIncluded, vatRate, vat }) {
   const order = {
     line_items: lines.map(l => l.variantId
       ? { variant_id: Number(l.variantId), quantity: l.qty, price: Number(l.price).toFixed(2) }
@@ -134,7 +134,7 @@ export async function createTillOrder(cfg, { saleId, saleNo, lines, paid, method
     fulfillment_status: 'fulfilled',
     inventory_behaviour: 'decrement_ignoring_policy',     // the till already sold it: never refuse a paid sale
     source_name: 'factory-manager',
-    tags: TILL_TAG + ', fm-sale-' + saleId,
+    tags: TILL_TAG + ', fm-sale-' + saleId + (onAccount ? ', on-account' : ''),
     note: 'Till sale ' + saleNo + (method ? ' · ' + method : ''),
     send_receipt: false, send_fulfillment_receipt: false,
     taxes_included: !!taxesIncluded,
