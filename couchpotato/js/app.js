@@ -15,7 +15,8 @@ import {
   renderFloor, setFloorView, setFloorSettings, startBuild, moveMenu,
   printJobCard, printWeekJobCards, printPlanner, weekReportDialog } from './floor.js';
 import { renderScan, setScanSettings, startCamera, stopCamera, manualFind, confirmDispatch, notifyCustomer } from './scan.js';
-import { startPos, renderPos, setPosSettings, posAction, posInput, allSales } from './pos.js';
+import { startPos, renderPos, setPosSettings, setPosShop, posAction, posInput, allSales } from './pos.js';
+import { staffCardHtml } from './till.js';
 import { startQuotes, renderQuotes, setQuoteSettings, setQuoteFilter, newQuote, editQuote, copyQuote, sendQuote, printQuote, acceptQuote, declineQuote } from './quotes.js';
 import { renderProfit, setProfitSettings, setProfitMonth } from './profit.js';
 import { startWages, renderWages, setWagesSettings, setWageView, setWagePeriod, wageInput, newStaff, editStaff, toggleStaff, addPiece, removePiece, addDeduction, removeDeduction, saveRun, markPaid, reopenRun, printWageSheet, printPayslips, exportRun } from './wages.js';
@@ -128,7 +129,7 @@ async function boot() {
         store.watch('payments', rows => { billing.payments = rows; if (view === 'settings') paint(); });
         // only the Online shop card is redrawn: the 15-minute check writes here,
         // and a full repaint would wipe settings the owner is still typing
-        store.watch('integrations', rows => { shop = rows.find(r => r.id === 'shopify') || null; if (view === 'settings') redrawShopCard(); });
+        store.watch('integrations', rows => { shop = rows.find(r => r.id === 'shopify') || null; setPosShop(shop); if (view === 'settings') redrawShopCard(); });
         store.getPlan().then(r => { billing.plan = r.plan; billing.configured = !!r.configured; setClientPlan(r.plan); if (view === 'settings') paint(); });
       }
       // a payment, a cancellation or an extended trial takes effect live
@@ -138,6 +139,8 @@ async function boot() {
       if (BILLING_RETURN === 'cancelled') toast('Payment cancelled — nothing was charged.', 'warn');
       store.seedDemoIfEmpty();
       store.shopifyRetryPending();      // till sales whose stock could not reach the online shop yet
+      // the till sells the shop's stock when the shop is connected (the owner's watch above covers the owner)
+      if (user.role !== 'owner' && store.can('pos')) store.watch('integrations', rows => setPosShop(rows.find(r => r.id === 'shopify') || null));
       settings = await store.loadSettings(FACTORY_DEFAULTS);
       setOrderSettings(settings);
       setFloorSettings(settings);
@@ -572,6 +575,7 @@ function renderSettings(host) {
       <div class="card-actions"><button class="btn primary" data-act="save-settings">Save settings</button></div>
     </div>
     ${store.getUser().role === 'owner' ? billingCard() + shopCard() + rolesCard() + teamCard() : ''}
+    ${store.can('settings', 'edit') && store.can('pos') ? staffCardHtml() : ''}
     <div class="card">
       <h2>How this system is wired</h2>
       <ul class="plain">
@@ -877,7 +881,7 @@ async function onAction(e) {
   if (!b) return;
   if (viewOnly(view) && !LOOK_ONLY.has(b.dataset.act)) { toast('Your role can only look at this screen. Ask the owner if you need to change things here.', 'warn'); return; }
   const id = b.dataset.id;
-  if (b.dataset.act.startsWith('pos-')) return posAction(b.dataset.act, b);
+  if (b.dataset.act.startsWith('pos-') || b.dataset.act.startsWith('till-')) return posAction(b.dataset.act, b);
   switch (b.dataset.act) {
     case 'new-order': return newOrder();
     case 'print-week-report': return weekReportDialog();
@@ -1040,7 +1044,9 @@ async function onAction(e) {
 
 function onChangeEvent(e) {
   const t = e.target;
-  if (t.classList && t.classList.contains('pos-in')) return posInput(t);
+  // the search box is handled as it is typed in; its late 'change' (fired as the
+  // screen redraws) would put a code just scanned back into it
+  if (t.classList && t.classList.contains('pos-in')) return t.id === 'pos-search' ? undefined : posInput(t);
   if (t.id === 'o-filter-cust') { setFilter({ customer: t.value }); return paint(); }
   if (t.id === 'o-filter-status') { setFilter({ status: t.value }); return paint(); }
   const act = t.dataset ? t.dataset.act : '';

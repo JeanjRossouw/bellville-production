@@ -210,6 +210,12 @@ service cloud.firestore {
         allow read: if isMember(cid) && sees(cid, 'wages');
         allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'wages');
       }
+      // The till's staff and their PINs (hashed): the till reads them to unlock;
+      // only the owner, or whoever may change the business settings, sets them.
+      match /tillStaff/{id} {
+        allow read: if isMember(cid) && (sees(cid, 'pos') || sees(cid, 'settings'));
+        allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'settings');
+      }
       match /wageRuns/{id} {
         allow read: if isMember(cid) && sees(cid, 'wages');
         allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'wages');
@@ -233,9 +239,9 @@ service cloud.firestore {
 
       // Anything else a future version keeps: the settings screen decides.
       match /{coll}/{id} {
-        allow read: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'staff', 'wageRuns']);
+        allow read: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'staff', 'wageRuns', 'tillStaff']);
         allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'settings')
-                     && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'staff', 'wageRuns']);
+                     && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'staff', 'wageRuns', 'tillStaff']);
       }
     }
   }

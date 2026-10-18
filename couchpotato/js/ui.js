@@ -122,7 +122,8 @@ export function openModal(title, html, opts) {
       </div>
     </div>`;
   wrap.classList.add('open');
-  const close = () => { wrap.classList.remove('open'); wrap.innerHTML = ''; document.removeEventListener('keydown', onKey); };
+  // onClose: called when it is closed without OK (✕, Cancel, Escape, the backdrop)
+  const close = (viaOk) => { wrap.classList.remove('open'); wrap.innerHTML = ''; document.removeEventListener('keydown', onKey); if (viaOk !== true && o.onClose) o.onClose(); };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
   wrap.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', close));
@@ -130,7 +131,7 @@ export function openModal(title, html, opts) {
   ok.addEventListener('click', async () => {
     if (!o.onOk) return close();
     const res = await o.onOk(wrap);
-    if (res !== false) close();
+    if (res !== false) close(true);
   });
   const first = wrap.querySelector('input, select, textarea');
   // focus the first field, unless the person has already gone to another one

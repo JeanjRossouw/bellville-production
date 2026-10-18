@@ -94,7 +94,7 @@ export async function listProducts(cfg) {
         const named = variants.length > 1 && v.title && v.title !== 'Default Title';
         out.push({
           shopifyProductId: String(p.id), shopifyVariantId: String(v.id), shopifyInventoryItemId: String(v.inventory_item_id || ''),
-          title: named ? `${p.title} — ${v.title}` : p.title, sku: v.sku || '', price: Number(v.price) || 0,
+          title: named ? `${p.title} — ${v.title}` : p.title, sku: v.sku || '', barcode: v.barcode || '', price: Number(v.price) || 0,
           tracked: v.inventory_management === 'shopify', qoh: Number(v.inventory_quantity) || 0, category: p.product_type || '', image: (img && img.src) || ''
         });
       }
@@ -117,6 +117,38 @@ export async function listOrders(cfg, sinceIso, deadline = Infinity) {
     if (url && Date.now() > deadline) return { orders, complete: false };
   }
   return { orders, complete: true };
+}
+
+// The till's sale as a Shopify order: paid, already handed over (fulfilled),
+// and taking its pieces off the shop's stock. Lines sell by variant at the
+// price the customer paid; a line with no variant is a custom line (no stock).
+// Tagged with the sale, so a retry can find an order that was made but whose
+// answer never came back.
+export const TILL_TAG = 'factory-manager-till';
+export async function createTillOrder(cfg, { saleId, saleNo, lines, paid, method, taxesIncluded, vatRate, vat }) {
+  const order = {
+    line_items: lines.map(l => l.variantId
+      ? { variant_id: Number(l.variantId), quantity: l.qty, price: Number(l.price).toFixed(2) }
+      : { title: String(l.title || 'Item').slice(0, 255), quantity: l.qty, price: Number(l.price).toFixed(2), requires_shipping: false }),
+    financial_status: paid ? 'paid' : 'pending',
+    fulfillment_status: 'fulfilled',
+    inventory_behaviour: 'decrement_ignoring_policy',     // the till already sold it: never refuse a paid sale
+    source_name: 'factory-manager',
+    tags: TILL_TAG + ', fm-sale-' + saleId,
+    note: 'Till sale ' + saleNo + (method ? ' · ' + method : ''),
+    send_receipt: false, send_fulfillment_receipt: false,
+    taxes_included: !!taxesIncluded,
+    ...(vat > 0 ? { tax_lines: [{ title: 'VAT', rate: Number(vatRate) || 0, price: Number(vat).toFixed(2) }] } : {})
+  };
+  const { json } = await api(cfg, '/orders.json', { method: 'POST', body: { order } });
+  return { id: String(json.order.id), name: json.order.name || '' };
+}
+// A till order already made for this sale (the answer may have been lost).
+export async function findTillOrder(cfg, saleId, sinceIso) {
+  const tag = 'fm-sale-' + saleId;
+  const { json } = await api(cfg, '/orders.json?status=any&limit=50&fields=id,name,tags&created_at_min=' + encodeURIComponent(sinceIso));
+  const o = (json.orders || []).find(x => String(x.tags || '').split(',').map(t => t.trim()).includes(tag));
+  return o ? { id: String(o.id), name: o.name || '' } : null;
 }
 
 // Take (or add) stock on Shopify by a number of pieces, never by setting a
