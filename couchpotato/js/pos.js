@@ -103,7 +103,13 @@ function addShopItem(variantId) {
   if (!it) return false;
   const existing = cart.lines.find(l => l.variantId === it.variantId);
   const have = (existing ? existing.qty : 0) + 1;
-  if (it.tracked && have > (Number(it.qty) || 0)) { toast(it.qty > 0 ? 'Only ' + it.qty + ' in stock' : 'Out of stock', 'warn'); return false; }
+  if (it.tracked && have > (Number(it.qty) || 0) && !(existing && existing.backorder)) {
+    // not in stock: it can still be sold as a sales order, to come in and be collected
+    if (!confirm((it.qty > 0 ? 'Only ' + it.qty + ' in stock. ' : it.name + ' is out of stock. ') + 'Sell it as a SALES ORDER (ordered in for the customer, paid on a layby and collected when it arrives)?')) return false;
+    if (existing) { existing.backorder = true; existing.qty += 1; }
+    else cart.lines.push({ productId: '', variantId: it.variantId, inventoryItemId: it.inventoryItemId, name: it.name, qty: 1, unitPrice: Number(it.price) || 0, kind: 'stock', fabric: '', note: '', disc: 0, tracked: !!it.tracked, stockQty: Number(it.qty) || 0, shop: true, backorder: true });
+    persist(); toast(it.name + ': sales order line (not in stock)'); return true;
+  }
   if (existing) existing.qty += 1;
   else cart.lines.push({ productId: '', variantId: it.variantId, inventoryItemId: it.inventoryItemId, name: it.name, qty: 1, unitPrice: Number(it.price) || 0, kind: 'stock', fabric: '', note: '', disc: 0, tracked: !!it.tracked, stockQty: Number(it.qty) || 0, shop: true });
   persist();
@@ -321,13 +327,15 @@ function checkout() {
   const missingFabric = cart.lines.filter(l => l.kind === 'order' && !l.fabric.trim());
   if (missingFabric.length && !confirm(missingFabric.length + ' made-to-order line(s) have no fabric. Continue anyway?')) return;
   // the shop's count may have moved since the tile was tapped
-  const short = cart.lines.filter(l => l.shop && l.tracked).map(l => ({ l, it: till.shopItem(l.variantId) })).filter(x => x.it && (Number(x.it.qty) || 0) < (Number(x.l.qty) || 0));
+  const short = cart.lines.filter(l => l.shop && l.tracked && !l.backorder).map(l => ({ l, it: till.shopItem(l.variantId) })).filter(x => x.it && (Number(x.it.qty) || 0) < (Number(x.l.qty) || 0));
   if (short.length) { toast(short.map(x => x.l.name + ': only ' + x.it.qty + ' in stock').join(' · '), 'warn'); return; }
+  const backorder = cart.lines.some(l => l.backorder);
+  if (backorder && !c) { toast('A sales order needs a customer — tap Customer first', 'warn'); return; }
   const t = totals();
   const cur = settings.currency || 'R';
   const payRow = (n) => `<div class="pay-row" data-n="${n}">
       <select class="py-method" data-n="${n}">${METHODS.map(x => `<option value="${x}"${(n === 1 ? 'Card' : 'Cash') === x ? ' selected' : ''}>${x}</option>`).join('')}</select>
-      <input class="py-amt" data-n="${n}" type="number" min="0" step="0.01" value="${n === 1 ? t.total : ''}" placeholder="amount" aria-label="Amount">
+      <input class="py-amt" data-n="${n}" type="number" min="0" step="0.01" value="${n === 1 ? (backorder ? r2(t.total * 0.5) : t.total) : ''}" placeholder="amount" aria-label="Amount">
       <input class="py-ref" data-n="${n}" placeholder="Reference (optional)" aria-label="Reference">
       <div class="py-cash py-gift" data-n="${n}" hidden><input class="py-code" data-n="${n}" placeholder="Gift card code" aria-label="Gift card code" autocomplete="off"><span class="py-gcbal muted"></span></div>
       <div class="py-cash" data-n="${n}" hidden><input class="py-tend" data-n="${n}" type="number" min="0" step="0.01" placeholder="Cash given" aria-label="Cash given"><span class="py-change muted">Change <strong>${esc(money(0, cur))}</strong></span></div>
@@ -350,6 +358,7 @@ function checkout() {
       <button type="button" class="btn" data-pay="wallet" title="Pay with the customer’s store credit or points">${c ? 'Credit / points' : 'Credit / points (pick a customer)'}</button>
     </div>
     <p class="muted" id="py-kind-note" hidden></p>
+    ${backorder ? field('Expected in the shop by', 'py-expected', { type: 'date', value: addDays(today(), 14) }) + '<p class="notice-inline">Not in stock: this is a <strong>sales order</strong>. The deposit is taken now; the goods are collected when they arrive and the balance is paid (Sales → Pay, then Collect).</p>' : ''}
     <div id="pay-rows">${payRow(1)}</div>
     <div class="cost-live"><div class="tot"><span id="py-bal-l">Balance after this payment</span><strong id="py-bal">${esc(money(0, cur))}</strong></div></div>
     ${hasOrder ? `<p class="muted">Made-to-order items will be due out of the factory by <strong>${esc(niceDate(addDays(today(), leadDays())))}</strong> (${leadDays()} days). Any balance is due on collection or delivery.</p>` : ''}`, {
@@ -362,9 +371,10 @@ function checkout() {
       if (!c && (kind !== 'sale' || pays.some(p => p.method === 'Store credit' || p.method === 'Points'))) { toast('Pick a customer first', 'warn'); return false; }
       const bad = checkWallet(pays, c);
       if (bad) { toast(bad, 'warn'); return false; }
+      if (backorder) kind = 'layby';
       if (kind === 'sale' && paid < t.total - 0.005 && !confirm('Only ' + money(paid, cur) + ' of ' + money(t.total, cur) + ' is paid. Record it as a deposit, with the balance due on collection or delivery?')) return false;
       const ok = w.querySelector('#modal-ok'); ok.disabled = true; ok.textContent = 'Saving…';
-      try { await completeSale(pays, kind); }
+      try { await completeSale(pays, kind, backorder ? { backorder: true, expectedDate: val(w, 'py-expected') } : null); }
       catch (e) { toast('The sale was not completed: ' + e.message, 'warn'); ok.disabled = false; ok.textContent = 'Complete sale'; return false; }
     }
   });
@@ -376,7 +386,7 @@ function checkout() {
     return { method, amount, ref: r.querySelector('.py-ref').value.trim(), tendered, change: tendered != null ? r2(Math.max(0, tendered - amount)) : 0,
       ...(method === 'Gift card' ? { code: r.querySelector('.py-code').value.trim() } : {}) };
   }).filter(p => p.amount > 0 || p.method === 'Cash');
-  let kind = 'sale';
+  let kind = backorder ? 'layby' : 'sale';
   const live = () => {
     card.querySelectorAll('.pay-row').forEach(r => {
       const m = r.querySelector('.py-method').value;
@@ -390,11 +400,11 @@ function checkout() {
     const paid = readPays(card).reduce((a, p) => a + p.amount, 0);
     const bal = Math.max(0, r2(t.total - paid));
     card.querySelector('#py-bal').textContent = money(bal, cur);
-    card.querySelector('#py-bal-l').textContent = bal > 0 ? (kind === 'layby' ? 'Still owing on the layby' : kind === 'account' ? 'Put on the account' : 'Still owing after this payment (deposit)') : 'Balance after this payment';
-    card.querySelector('#modal-ok').textContent = bal > 0 ? (kind === 'layby' ? 'Open layby' : kind === 'account' ? 'Sell on account' : 'Take deposit') : 'Complete sale';
+    card.querySelector('#py-bal-l').textContent = bal > 0 ? (backorder ? 'Still owing on the sales order' : kind === 'layby' ? 'Still owing on the layby' : kind === 'account' ? 'Put on the account' : 'Still owing after this payment (deposit)') : 'Balance after this payment';
+    card.querySelector('#modal-ok').textContent = bal > 0 ? (backorder ? 'Open sales order' : kind === 'layby' ? 'Open layby' : kind === 'account' ? 'Sell on account' : 'Take deposit') : 'Complete sale';
     const note = card.querySelector('#py-kind-note');
-    note.hidden = kind === 'sale';
-    note.textContent = kind === 'layby' ? 'Layby: the goods stay in the shop until it is paid in full and collected (Sales → Collect). Made-to-order pieces go to the factory now.' : kind === 'account' ? 'On account: the goods go now; the balance shows on the customer’s invoice and is taken with "Account payment".' : '';
+    note.hidden = kind === 'sale' || backorder;
+    note.textContent = backorder ? '' : kind === 'layby' ? 'Layby: the goods stay in the shop until it is paid in full and collected (Sales → Collect). Made-to-order pieces go to the factory now.' : kind === 'account' ? 'On account: the goods go now; the balance shows on the customer’s invoice and is taken with "Account payment".' : '';
   };
   const one = (method) => { const rows = card.querySelector('#pay-rows'); rows.innerHTML = payRow(1); rows.querySelector('.py-method').value = method; rows.querySelector('.py-amt').value = t.total; live(); const f = rows.querySelector(method === 'Cash' ? '.py-tend' : '.py-ref'); if (f) f.focus(); };
   card.querySelectorAll('[data-pay]').forEach(b => b.addEventListener('click', () => {
@@ -452,8 +462,9 @@ async function earnPoints(c, amount) {
 }
 const pointsBase = (lines, pays) => r2(lines.filter(l => l.kind !== 'giftcard').reduce((a, l) => a + (Number(l.net) || 0), 0) - pays.filter(p => p.method === 'Points' || p.method === 'Gift card' || p.method === 'Store credit').reduce((a, p) => a + p.amount, 0));
 
-async function completeSale(pays, kind) {
+async function completeSale(pays, kind, extra) {
   kind = kind || 'sale';
+  extra = extra || {};
   const t = totals();
   const nets = lineNets();
   const c = customerById(cart.customerId) || null;
@@ -469,7 +480,7 @@ async function completeSale(pays, kind) {
   const lines = [];
   for (const [i, l] of cart.lines.entries()) {
     const line = { kind: l.kind, productId: l.productId || '', name: l.name, qty: Number(l.qty) || 0, unitPrice: r2(l.unitPrice), disc: lineDisc(l), net: nets[i], fabric: l.fabric || '', note: l.note || '', orderId: '', orderNo: '',
-      ...(l.custom ? { custom: true } : {}), ...(l.delivery ? { delivery: true } : {}), ...(l.shop ? { shop: true, variantId: l.variantId, inventoryItemId: l.inventoryItemId || '' } : {}) };
+      ...(l.custom ? { custom: true } : {}), ...(l.delivery ? { delivery: true } : {}), ...(l.shop ? { shop: true, variantId: l.variantId, inventoryItemId: l.inventoryItemId || '' } : {}), ...(l.backorder ? { backorder: true } : {}) };
     if (l.kind === 'giftcard') {
       const code = till.newGiftCode();
       await store.create('giftCards', { code, amount: line.net, balance: line.net, status: 'open', saleNo, customerId: c ? c.id : '', customerName: c ? c.name : '', soldBy: who, uses: [] });
@@ -521,7 +532,7 @@ async function completeSale(pays, kind) {
     ...(cash ? { tendered: cash.tendered, change: cash.change } : {}),
     balance: r2(t.total - amount), invoiceId, invoiceNo, note: cart.note, by: who, ...(me ? { tillStaffId: me.id } : {}),
     ...(pts.earned ? { pointsEarned: pts.earned, pointsBalance: pts.balance } : {}),
-    ...(kind === 'layby' ? { status: 'layby' } : {}),
+    ...(kind === 'layby' ? { status: 'layby' } : {}), ...(extra.backorder ? { backorder: true, expectedDate: extra.expectedDate || '' } : {}),
     ...(lines.some(l => l.shop) && kind !== 'layby' ? { shopifySale: true } : {}) };
   const saleId = await store.create('sales', sale);
 
@@ -534,7 +545,7 @@ async function completeSale(pays, kind) {
 
   const made = lines.filter(l => l.kind === 'order').length;
   cart = emptyCart(); persist();
-  toast(saleNo + (kind === 'layby' ? ' layby opened' : kind === 'account' ? ' on account' : ' complete') + (made ? ' · ' + made + ' order' + (made === 1 ? '' : 's') + ' sent to the factory' : '') + (pts.earned ? ' · ' + pts.earned + ' points earned' : ''));
+  toast(saleNo + (extra.backorder ? ' sales order opened' : kind === 'layby' ? ' layby opened' : kind === 'account' ? ' on account' : ' complete') + (made ? ' · ' + made + ' order' + (made === 1 ? '' : 's') + ' sent to the factory' : '') + (pts.earned ? ' · ' + pts.earned + ' points earned' : ''));
   rerender();
   setTimeout(() => saleDone({ ...sale, id: saleId }, c), 0);     // once the payment box has closed
 }
@@ -613,7 +624,10 @@ async function takePayment(s, inv, pays) {
     await store.update('invoices', inv.id, patch, 'Payment ' + money(amount, settings.currency || 'R') + ' at the till (' + pays.map(p => p.method).join(' + ') + ')');
   }
   const paidNow = r2((Number(s.paidNow) || 0) + amount);
-  await store.update('sales', s.id, { paidNow, balance: r2(Math.max(0, (Number(s.total) || 0) - paidNow)), payments: [...(s.payments || []), ...pays.map(p => ({ ...p, at: now, by: who }))] });
+  const left = r2(Math.max(0, (Number(s.total) || 0) - paidNow));
+  await store.update('sales', s.id, { paidNow, balance: left, payments: [...(s.payments || []), ...pays.map(p => ({ ...p, at: now, by: who }))] });
+  // an account sale settled: the shop's order is marked paid too
+  if (left <= 0.005 && s.kind === 'account' && s.shopifySale) store.shopifyMarkPaid(s.id);
 }
 // A paid layby goes out of the door: its stock leaves, the shop gets its order, points are earned.
 async function collectLayby(id) {
@@ -747,12 +761,12 @@ function saleHtml(cur) {
           <span class="pos-tile-cat">⭐ ${esc(p.category || '')}</span><span class="pos-tile-name">${esc(p.name)}</span><span class="pos-tile-price">${esc(money(p.price || 0, cur))}</span>
         </button>`).join('')}</div>` : ''}
       ${shown.length ? `<div class="pos-grid">${shown.map(p => `
-        <button class="pos-tile${p.stock === 'stock' && p.tracked && !(p.qty > 0) ? ' out' : ''}${shopstock.isQuickKey(keyOf(p)) ? ' starred' : ''}" data-act="pos-add" data-id="${esc(p.id)}" data-key="${esc(keyOf(p))}" data-name="${esc(p.name)}"${p.stock === 'stock' && p.tracked && !(p.qty > 0) && !quickEdit ? ' disabled' : ''}>
+        <button class="pos-tile${p.stock === 'stock' && p.tracked && !(p.qty > 0) ? ' out' : ''}${shopstock.isQuickKey(keyOf(p)) ? ' starred' : ''}" data-act="pos-add" data-id="${esc(p.id)}" data-key="${esc(keyOf(p))}" data-name="${esc(p.name)}" title="${p.stock === 'stock' && p.tracked && !(p.qty > 0) ? 'Out of stock: tap to sell as a sales order' : ''}">
           ${productImg({ imageUrl: p.image }, 'pos-tile-img', 400)}
           <span class="pos-tile-cat">${esc(p.category || '')}</span>
           <span class="pos-tile-name">${esc(p.name)}</span>
           <span class="pos-tile-price">${esc(money(p.price || 0, cur))}</span>
-          <span class="pos-tile-stock">${p.stock === 'order' ? 'made to order' : p.stock === 'untracked' ? (p.shop ? 'in the shop' : '') : p.qty > 0 ? p.qty + ' in stock' : 'out of stock'}</span>
+          <span class="pos-tile-stock">${p.stock === 'order' ? 'made to order' : p.stock === 'untracked' ? (p.shop ? 'in the shop' : '') : p.qty > 0 ? p.qty + ' in stock' : 'out of stock · sales order'}</span>
         </button>`).join('')}</div>` : empty('', 'No products', prods.length ? 'Nothing matches.' : till.shopOn() ? 'Reading the shop’s products…' : 'Add products under Costing first.')}
     </div>
     <div class="pos-right">
@@ -769,7 +783,7 @@ function saleHtml(cur) {
               <input class="pos-in" data-field="unitPrice" data-i="${i}" type="number" min="0" step="0.01" value="${esc(l.unitPrice)}" title="Price each"${l.shop ? ' readonly' : ''}>
               <strong class="pos-line-tot">${esc(money(lineTotal(l), cur))}</strong>
             </div>
-            <div class="pos-line-disc"><button class="btn ghost sm" data-act="pos-line-disc" data-i="${i}" title="Discount on this line">${l.disc ? '− ' + esc(money(l.disc, cur)) + ' off' : '% off'}</button>${l.shop && l.tracked ? `<span class="muted">${esc(l.stockQty)} in the shop</span>` : ''}</div>
+            <div class="pos-line-disc"><button class="btn ghost sm" data-act="pos-line-disc" data-i="${i}" title="Discount on this line">${l.disc ? '− ' + esc(money(l.disc, cur)) + ' off' : '% off'}</button>${l.backorder ? '<span class="chip late" title="Not in stock: sold as a sales order">sales order</span>' : l.shop && l.tracked ? `<span class="muted">${esc(l.stockQty)} in the shop</span>` : ''}</div>
             ${l.custom || l.shop ? '' : `<div class="pos-kind">
               <button class="${l.kind === 'order' ? 'on' : ''}" data-act="pos-kind" data-i="${i}" data-to="order">Made to order</button>
               <button class="${l.kind === 'stock' ? 'on' : ''}" data-act="pos-kind" data-i="${i}" data-to="stock">From stock</button>
@@ -811,7 +825,7 @@ function salesHtml(cur) {
     ${sales.length ? `<div class="card" style="padding:0; overflow:auto"><table class="tbl">
       <thead><tr><th>Sale</th><th>Date</th><th>Customer</th><th>Items</th><th class="r">Total</th><th class="r">Paid</th><th class="r">Balance</th><th>Invoice</th><th></th></tr></thead>
       <tbody>${sales.slice(0, 200).map(s => `<tr>
-        <td><strong>${esc(s.saleNo)}</strong>${s.kind === 'layby' ? ' <span class="chip ' + (s.collectedAt ? 'calm' : 'late') + '">' + (s.collectedAt ? 'layby collected' : 'layby') + '</span>' : s.kind === 'account' ? ' <span class="chip ' + (Number(s.balance) > 0.005 ? 'late' : 'calm') + '">on account</span>' : ''}<div class="muted">${esc(s.by || '')}</div></td><td>${esc(niceDate(s.date))}</td><td>${esc(s.customerName || '')}</td>
+        <td><strong>${esc(s.saleNo)}</strong>${s.kind === 'layby' ? ' <span class="chip ' + (s.collectedAt ? 'calm' : 'late') + '">' + (s.collectedAt ? (s.backorder ? 'sales order collected' : 'layby collected') : (s.backorder ? 'sales order' + (s.expectedDate ? ' · expected ' + niceDate(s.expectedDate) : '') : 'layby')) + '</span>' : s.kind === 'account' ? ' <span class="chip ' + (Number(s.balance) > 0.005 ? 'late' : 'calm') + '">on account</span>' : ''}<div class="muted">${esc(s.by || '')}</div></td><td>${esc(niceDate(s.date))}</td><td>${esc(s.customerName || '')}</td>
         <td>${(s.lines || []).map(l => esc(l.qty + '× ' + l.name) + (l.kind === 'order' ? ' <span class="chip st-prod">' + esc(l.orderNo || 'order') + '</span>' : ' <span class="chip calm">' + (l.shop ? 'shop' : 'stock') + '</span>')).join('<br>')}${s.shopifyOrderName ? '<div class="muted">Shop order ' + esc(s.shopifyOrderName) + '</div>' : s.shopifySale ? '<div class="muted">to the shop…</div>' : ''}
           ${(s.returns || []).map(r => `<div class="muted" style="margin-top:3px">↩ ${esc(r.returnNo)} ${esc(niceDate(r.date))}: ${esc((r.lines || []).map(x => x.qty + '× ' + x.name).join(', '))}${Number(r.refund) ? ' · refunded ' + esc(money(r.refund, cur)) : ''}${r.creditId ? ` <button class="btn ghost sm" data-act="pos-reprint" data-id="${esc(r.creditId)}">${esc(r.creditNo || 'Credit note')}</button>` : ''}</div>`).join('')}</td>
         <td class="r">${esc(money(s.total, cur))}</td><td class="r">${esc(money(s.paidNow, cur))}${s.method ? '<div class="muted">' + esc(s.method) + '</div>' : ''}</td>
@@ -1073,7 +1087,7 @@ export function posAction(act, el) {
     case 'pos-custom': return addCustom();
     case 'pos-delivery': return addDelivery();
     case 'pos-qty': { const l = cart.lines[i]; if (!l) return; const q = Math.max(1, (Number(l.qty) || 1) + parseInt(el.dataset.d, 10));
-      if (l.shop && l.tracked) { const it = till.shopItem(l.variantId); const have = it ? Number(it.qty) || 0 : l.stockQty; if (q > have) { toast('Only ' + have + ' in stock', 'warn'); return; } }
+      if (l.shop && l.tracked && !l.backorder) { const it = till.shopItem(l.variantId); const have = it ? Number(it.qty) || 0 : l.stockQty; if (q > have) { if (!confirm('Only ' + have + ' in stock. Make this line a sales order (ordered in, collected when it arrives)?')) return; l.backorder = true; } }
       l.qty = q; persist(); return rerender(); }
     case 'pos-remove': cart.lines.splice(i, 1); persist(); return rerender();
     case 'pos-kind': { const l = cart.lines[i]; if (!l) return; l.kind = el.dataset.to; persist(); return rerender(); }

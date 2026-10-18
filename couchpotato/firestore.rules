@@ -221,6 +221,14 @@ service cloud.firestore {
       // Gift cards sold at the till: the code, the amount and what is left on it.
       // The shop's stock at the till: deliveries booked in (GRVs), stock takes,
       // and what the till keeps about each shop product (quick key, cost).
+      match /suppliers/{id} {
+        allow read: if isMember(cid) && (sees(cid, 'pos') || sees(cid, 'stock') || sees(cid, 'storeroom'));
+        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'pos') || ed(cid, 'stock'));
+      }
+      match /shopPos/{id} {
+        allow read: if isMember(cid) && (sees(cid, 'pos') || sees(cid, 'stock') || sees(cid, 'storeroom'));
+        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'pos') || ed(cid, 'stock') || ed(cid, 'storeroom'));
+      }
       match /grvs/{id} {
         allow read: if isMember(cid) && (sees(cid, 'pos') || sees(cid, 'stock') || sees(cid, 'storeroom') || sees(cid, 'profit'));
         allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'pos') || ed(cid, 'stock') || ed(cid, 'storeroom'));
@@ -264,9 +272,9 @@ service cloud.firestore {
 
       // Anything else a future version keeps: the settings screen decides.
       match /{coll}/{id} {
-        allow read: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'staff', 'wageRuns', 'tillStaff', 'tillShifts', 'giftCards', 'grvs', 'stockTakes', 'shopProducts']);
+        allow read: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'staff', 'wageRuns', 'tillStaff', 'tillShifts', 'giftCards', 'grvs', 'stockTakes', 'shopProducts', 'suppliers', 'shopPos']);
         allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'settings')
-                     && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'staff', 'wageRuns', 'tillStaff', 'tillShifts', 'giftCards', 'grvs', 'stockTakes', 'shopProducts']);
+                     && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'staff', 'wageRuns', 'tillStaff', 'tillShifts', 'giftCards', 'grvs', 'stockTakes', 'shopProducts', 'suppliers', 'shopPos']);
       }
     }
   }

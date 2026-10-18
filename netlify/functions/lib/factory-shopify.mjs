@@ -95,7 +95,7 @@ export async function listProducts(cfg) {
         out.push({
           shopifyProductId: String(p.id), shopifyVariantId: String(v.id), shopifyInventoryItemId: String(v.inventory_item_id || ''),
           title: named ? `${p.title} — ${v.title}` : p.title, sku: v.sku || '', barcode: v.barcode || '', price: Number(v.price) || 0,
-          tracked: v.inventory_management === 'shopify', qoh: Number(v.inventory_quantity) || 0, category: p.product_type || '', image: (img && img.src) || ''
+          tracked: v.inventory_management === 'shopify', qoh: Number(v.inventory_quantity) || 0, category: p.product_type || '', vendor: p.vendor || '', image: (img && img.src) || ''
         });
       }
     }
@@ -202,6 +202,16 @@ export async function setLevels(cfg, lines) {
     } catch (e) { failed.push({ inventoryItemId: String(l.inventoryItemId), name: l.name || '', error: String(e.message || e).slice(0, 160) }); }
   }
   return { done, failed };
+}
+
+// An order the till made as unpaid (sold on account) is paid now: a sale
+// transaction for the amount, unless the shop already shows it paid.
+export async function markOrderPaid(cfg, orderId, amount, currency) {
+  const { json } = await api(cfg, `/orders/${Number(orderId)}.json?fields=id,financial_status,currency,total_price`);
+  const o = json.order || {};
+  if (o.financial_status === 'paid') return { already: true };
+  await api(cfg, `/orders/${Number(orderId)}/transactions.json`, { method: 'POST', body: { transaction: { kind: 'sale', source: 'external', gateway: 'manual', amount: Number(amount || o.total_price || 0).toFixed(2), currency: currency || o.currency || 'ZAR' } } });
+  return { paid: true };
 }
 
 // Ask Shopify to tell us about new and paid orders at `address`.

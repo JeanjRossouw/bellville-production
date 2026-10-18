@@ -11,6 +11,16 @@
 //             (each scan adds one) or typing. The count waits in stockTakes
 //             until it is reconciled: the counted numbers become the shop's
 //             count (`setStock`). A manager reconciles.
+//   Suppliers  who the shop buys from (suppliers: name, phone, email, notes),
+//             typed in or loaded from the shop's product vendors.
+//   Order stock  purchase orders for shop stock (shopPos: { no, supplier,
+//             supplierId, lines[{variantId, inventoryItemId, name, sku, qty,
+//             cost, received}], total, status draft|sent|part|received }), sent
+//             by WhatsApp, email or print, and received straight into a
+//             delivery. What to order is suggested: a reorder level per
+//             product from the last 30 days' sales (two weeks' cover; editable,
+//             shopProducts.reorderLevel) plus what open sales orders need,
+//             less what is on hand and already on order, grouped by supplier.
 //   Quick keys  the ⭐ products shown first on the till (shopProducts.quickKey).
 //   Labels    barcode labels for shop products, from the labels view or
 //             straight after a delivery.
@@ -22,14 +32,16 @@ import * as store from './store.js';
 import * as till from './till.js';
 import { readFile } from './importer.js';
 import { labelSheetHtml, openBarcodeCamera } from './barcode.js';
-import { esc, money, field, row, val, openModal, toast, empty, today, niceDate, openPrint, isoLocal } from './ui.js';
+import { esc, money, field, row, val, openModal, toast, empty, today, niceDate, openPrint, isoLocal, docHeader, waDigits, addDays } from './ui.js';
 
 let settings = {};
-let grvs = [], takes = [], shopProds = {};
+let grvs = [], takes = [], shopProds = {}, suppliers = [], pos = [];
+let salesRef = () => [];
 let unwatch = [];
 let onChange = null;
 let view = 'receive';          // receive | take | labels | dashboard
-let draft = { supplier: '', ref: '', date: '', lines: [], unmatched: [] };
+let draft = { supplier: '', ref: '', date: '', lines: [], unmatched: [], poId: '' };
+let poDraft = null;        // a purchase order being written: { supplierId, supplier, lines }
 let takeScan = '';
 let dashRange = 'today';
 
@@ -42,6 +54,8 @@ export function startShopStock(cb, cfg) {
   unwatch.push(store.watch('grvs', rows => { grvs = rows.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))); if (onChange) onChange(); }));
   unwatch.push(store.watch('stockTakes', rows => { takes = rows.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))); if (onChange) onChange(); }));
   unwatch.push(store.watch('shopProducts', rows => { shopProds = {}; rows.forEach(r => { shopProds[r.id] = r; }); if (onChange) onChange(); }));
+  unwatch.push(store.watch('suppliers', rows => { suppliers = rows.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))); if (onChange) onChange(); }));
+  unwatch.push(store.watch('shopPos', rows => { pos = rows.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))); if (onChange) onChange(); }));
   try { const d = JSON.parse(localStorage.getItem('cp-grv-draft') || 'null'); if (d && Array.isArray(d.lines)) draft = d; } catch (e) {}
 }
 export const setShopStockSettings = (cfg) => { settings = cfg || {}; };
@@ -208,10 +222,17 @@ async function bookIn() {
   const no = 'GRV-' + String(n).padStart(4, '0');
   const lines = draft.lines.map(l => ({ ...l, qty: Math.round(l.qty), cost: r2(l.cost) }));
   const total = r2(lines.reduce((a, l) => a + l.qty * l.cost, 0));
-  const id = await store.create('grvs', { no, supplier: draft.supplier.trim(), ref: draft.ref.trim(), date: draft.date || today(), lines, total, status: 'booked', received: [], failed: [], by: till.ringer(), unmatched: draft.unmatched });
+  const id = await store.create('grvs', { no, supplier: draft.supplier.trim(), ref: draft.ref.trim(), date: draft.date || today(), lines, total, status: 'booked', received: [], failed: [], by: till.ringer(), unmatched: draft.unmatched, poId: draft.poId || '' });
+  // against a purchase order: what came in is marked received on it
+  const po = draft.poId ? pos.find(x => x.id === draft.poId) : null;
+  if (po) {
+    const pl = (po.lines || []).map(l => { const got = lines.filter(x => x.variantId === l.variantId).reduce((a, x) => a + x.qty, 0); return got ? { ...l, received: (Number(l.received) || 0) + got } : l; });
+    const done = pl.every(l => (Number(l.received) || 0) >= (Number(l.qty) || 0));
+    await store.update('shopPos', po.id, { lines: pl, status: done ? 'received' : 'part', receivedAt: store.nowIso(), grvNo: no });
+  }
   // the costs stay with the products, for the dashboard
   for (const l of lines) if (l.cost > 0) { if (shopProds[l.variantId]) await store.update('shopProducts', l.variantId, { cost: l.cost, costAt: today(), name: l.name }); else await store.createWithId('shopProducts', l.variantId, { cost: l.cost, costAt: today(), name: l.name, quickKey: false }); }
-  draft = { supplier: '', ref: '', date: '', lines: [], unmatched: [] }; persistDraft();
+  draft = { supplier: '', ref: '', date: '', lines: [], unmatched: [], poId: '' }; persistDraft();
   toast(no + ' saved · sending to the shop…');
   rerender();
   await sendGrv(id);
@@ -229,8 +250,9 @@ function receiveHtml() {
   const c = cur();
   const total = r2(draft.lines.reduce((a, l) => a + l.qty * l.cost, 0));
   const seesCost = store.can('costing') || store.can('stock');
+  const po = draft.poId ? pos.find(x => x.id === draft.poId) : null;
   return `<div class="card">
-    <h2>Receive a delivery</h2>
+    <h2>Receive a delivery</h2>${po ? `<p class="notice-inline">Receiving against <strong>${esc(po.no)}</strong> from ${esc(po.supplier)}: set what actually arrived (remove a line to leave it on order).</p>` : ''}
     ${row(field('Supplier', 'gr-sup', { value: draft.supplier, placeholder: 'Who it is from', list: 'gr-sup-list' }), field('Their invoice / delivery note no.', 'gr-ref', { value: draft.ref }))}
     <datalist id="gr-sup-list">${[...new Set(grvs.map(g => g.supplier).filter(Boolean))].map(s => `<option value="${esc(s)}"></option>`).join('')}</datalist>
     <div class="toolbar" style="margin:.4rem 0 .6rem">
@@ -321,6 +343,172 @@ function takeHtml() {
     </tbody></table></div></div>`;
 }
 
+// ------------------------------------------------------------- suppliers ---
+
+export const allSuppliers = () => suppliers;
+function supplierByName(name) { const n = String(name || '').trim().toLowerCase(); return suppliers.find(s => String(s.name || '').trim().toLowerCase() === n) || null; }
+function editSupplier(id) {
+  const sp = suppliers.find(x => x.id === id) || {};
+  openModal(id ? 'Edit ' + sp.name : 'New supplier', row(field('Name', 'sp-name', { value: sp.name }), field('WhatsApp / cell', 'sp-phone', { value: sp.phone })) + row(field('Email', 'sp-email', { type: 'email', value: sp.email }), field('Account no. with them', 'sp-acc', { value: sp.account })) + field('Notes', 'sp-notes', { type: 'textarea', value: sp.notes, placeholder: 'Order days, minimums, rep’s name…' }), {
+    okLabel: id ? 'Save' : 'Add',
+    onOk: async (w) => {
+      const name = val(w, 'sp-name'); if (!name) { toast('Give the supplier a name', 'warn'); return false; }
+      const d = { name, phone: val(w, 'sp-phone'), email: val(w, 'sp-email'), account: val(w, 'sp-acc'), notes: val(w, 'sp-notes') };
+      if (id) await store.update('suppliers', id, d); else await store.create('suppliers', d);
+      toast(name + (id ? ' saved' : ' added'));
+    }
+  });
+}
+// The shop's product vendors become suppliers (the ones not here yet).
+async function loadSuppliersFromShop() {
+  const names = [...new Set(till.shopItems().map(i => String(i.vendor || '').trim()).filter(Boolean))];
+  const fresh = names.filter(n => !supplierByName(n));
+  if (!fresh.length) { toast(names.length ? 'Every vendor in the shop is already a supplier' : 'The shop’s products have no vendor filled in', 'warn'); return; }
+  for (const n of fresh) await store.create('suppliers', { name: n, phone: '', email: '', account: '', notes: 'From the shop’s products' });
+  toast(fresh.length + ' supplier' + (fresh.length === 1 ? '' : 's') + ' added from the shop');
+}
+function suppliersHtml() {
+  const bought = {}; grvs.forEach(g => { bought[g.supplier] = (bought[g.supplier] || 0) + 1; });
+  return `<div class="card"><div class="page-head" style="margin:0 0 .5rem"><div><h2>Suppliers</h2><p class="sub">Who the shop buys from. Purchase orders go to them by WhatsApp or email.</p></div>
+      <div class="btn-row"><button class="btn ghost" data-act="ss-sup-load" title="Add the vendors on the shop’s products as suppliers">Load from Shopify</button><button class="btn primary" data-act="ss-sup-new">＋ Supplier</button></div></div>
+    ${suppliers.length ? `<table class="tbl"><thead><tr><th>Supplier</th><th>Contact</th><th class="r">Deliveries</th><th></th></tr></thead><tbody>${suppliers.map(sp => `<tr><td><strong>${esc(sp.name)}</strong>${sp.notes ? '<div class="muted">' + esc(sp.notes) + '</div>' : ''}</td><td>${esc([sp.phone, sp.email, sp.account ? 'acc ' + sp.account : ''].filter(Boolean).join(' · '))}</td><td class="r">${bought[sp.name] || 0}</td><td class="r nowrap"><button class="btn ghost sm" data-act="ss-sup-edit" data-id="${esc(sp.id)}">Edit</button> <button class="btn ghost sm" data-act="ss-po-for" data-supplier="${esc(sp.name)}">Order stock</button></td></tr>`).join('')}</tbody></table>` : '<p class="muted">No suppliers yet. Add one, or load them from the shop’s products.</p>'}
+  </div>`;
+}
+
+// -------------------------------------------------------- purchase orders ---
+
+// How many of a product sold in the last `days` days, per day.
+function velocity(variantId, days) {
+  const since = Date.now() - days * 86400000; let units = 0;
+  salesRef().forEach(s => { if (Date.parse(s.createdAt || '') >= since) (s.lines || []).forEach(l => { if (l.variantId === variantId) units += Number(l.qty) || 0; }); });
+  return units / days;
+}
+export const suggestedLevel = (variantId) => Math.ceil(velocity(variantId, 30) * 14);     // two weeks' cover
+export const reorderLevel = (variantId) => { const p = shopProds[variantId]; return p && p.reorderLevel != null ? Number(p.reorderLevel) : suggestedLevel(variantId); };
+// what open sales orders (laybys not collected) still need of each product
+function openDemand() {
+  const d = {};
+  salesRef().forEach(s => { if (s.kind === 'layby' && !s.collectedAt && s.status !== 'cancelled') (s.lines || []).forEach(l => { if (l.variantId) d[l.variantId] = (d[l.variantId] || 0) + (Number(l.qty) || 0); }); });
+  return d;
+}
+function onOrder() {
+  const d = {};
+  pos.filter(p => p.status === 'sent' || p.status === 'part').forEach(p => (p.lines || []).forEach(l => { const out = (Number(l.qty) || 0) - (Number(l.received) || 0); if (out > 0) d[l.variantId] = (d[l.variantId] || 0) + out; }));
+  return d;
+}
+export function suggestions() {
+  const demand = openDemand(), ordered = onOrder();
+  return till.shopItems().filter(i => i.tracked).map(i => {
+    const level = reorderLevel(i.variantId), need = demand[i.variantId] || 0, coming = ordered[i.variantId] || 0, onHand = Number(i.qty) || 0;
+    return { i, level, need, coming, onHand, rec: Math.max(0, level + need - onHand - coming), supplier: i.vendor || '(no supplier)' };
+  }).filter(r => r.rec > 0 || r.need > 0);
+}
+async function setLevel(variantId, level, name) {
+  const v = Math.max(0, Math.round(Number(level) || 0));
+  if (shopProds[variantId]) await store.update('shopProducts', variantId, { reorderLevel: v });
+  else await store.createWithId('shopProducts', variantId, { reorderLevel: v, name: name || '', quickKey: false });
+}
+function startPo(supplierName, lines) {
+  const sp = supplierByName(supplierName);
+  poDraft = { supplierId: sp ? sp.id : '', supplier: supplierName || '', lines: (lines || []).map(l => ({ ...l })), notes: '' };
+  view = 'order'; rerender();
+}
+function poAddLine(it, qty) {
+  if (!poDraft) return;
+  const had = poDraft.lines.find(l => l.variantId === it.variantId);
+  if (had) had.qty += qty || 1;
+  else poDraft.lines.push({ variantId: it.variantId, inventoryItemId: it.inventoryItemId, name: it.name, sku: it.sku || '', qty: qty || 1, cost: costOfShopItem(it.variantId), received: 0 });
+}
+function poSearch(q) {
+  const t = String(q || '').trim().toLowerCase(); if (!t) return;
+  const hits = till.shopItems().filter(i => [i.name, i.sku, i.barcode].some(v => String(v || '').toLowerCase().includes(t)));
+  if (hits.length === 1) { poAddLine(hits[0]); rerender(); return; }
+  if (!hits.length) { toast('Nothing in the shop matches', 'warn'); return; }
+  const m = openModal('Which product?', `<div class="pk-list">${hits.slice(0, 30).map(i => `<button type="button" class="pk-row" data-v="${esc(i.variantId)}"><strong>${esc(i.name)}</strong><span>${esc([i.sku, i.vendor].filter(Boolean).join(' · '))} · ${esc(i.qty)} in stock</span></button>`).join('')}</div>`, { okLabel: 'Close' });
+  m.wrap.querySelectorAll('[data-v]').forEach(b => b.addEventListener('click', () => { poAddLine(till.shopItem(b.dataset.v)); m.close(); rerender(); }));
+}
+const poTotal = (p) => r2((p.lines || []).reduce((a, l) => a + (Number(l.qty) || 0) * (Number(l.cost) || 0), 0));
+async function savePo() {
+  if (!poDraft) return;
+  if (!poDraft.supplier.trim()) { toast('Who is the order for?', 'warn'); return null; }
+  const lines = poDraft.lines.filter(l => Number(l.qty) > 0).map(l => ({ ...l, qty: Math.round(Number(l.qty)), cost: r2(l.cost) }));
+  if (!lines.length) { toast('Add at least one product', 'warn'); return null; }
+  let sp = supplierByName(poDraft.supplier);
+  if (!sp) { const id = await store.create('suppliers', { name: poDraft.supplier.trim(), phone: '', email: '', account: '', notes: '' }); sp = { id, name: poDraft.supplier.trim() }; }
+  const n = await store.nextNumber('shopPoNo', 1);
+  const no = 'PO-' + String(n).padStart(4, '0');
+  const id = await store.create('shopPos', { no, supplierId: sp.id, supplier: sp.name, lines, total: poTotal({ lines }), status: 'draft', notes: poDraft.notes || '', by: till.ringer() });
+  poDraft = null;
+  return id;
+}
+function poText(p) {
+  return 'Hi ' + (p.supplier || '') + ', purchase order ' + p.no + ' from ' + (settings.name || '') + ':\n'
+    + (p.lines || []).map(l => '• ' + l.qty + ' × ' + l.name + (l.sku ? ' (' + l.sku + ')' : '')).join('\n')
+    + (p.notes ? '\n' + p.notes : '')
+    + '\nPlease quote ' + p.no + ' on your invoice. Thank you, ' + till.ringer() + (settings.phone ? ' (' + settings.phone + ')' : '');
+}
+function sendPo(id) {
+  const p = pos.find(x => x.id === id); if (!p) return;
+  const sp = suppliers.find(x => x.id === p.supplierId) || {};
+  const phone = waDigits(sp.phone);
+  const m = openModal('Send ' + p.no, `<p>Send the order to <strong>${esc(p.supplier)}</strong>. The message is written for you; check it and press send.</p>
+    <pre class="po-msg">${esc(poText(p))}</pre>
+    <div class="btn-row"><button class="btn primary" id="sp-wa">WhatsApp${phone ? '' : ' (pick the chat)'}</button>${sp.email ? '<button class="btn ghost" id="sp-mail">Email</button>' : ''}<button class="btn ghost" id="sp-print">Print / PDF</button></div>
+    <p class="muted">Once it has gone, tap <strong>Mark as sent</strong>: the stock then counts as on order.</p>`, {
+    okLabel: p.status === 'draft' ? 'Mark as sent' : 'Done',
+    onOk: async () => { if (p.status === 'draft') { await store.update('shopPos', id, { status: 'sent', sentAt: store.nowIso() }); toast(p.no + ' sent · on order'); } }
+  });
+  m.wrap.querySelector('#sp-wa').addEventListener('click', () => window.open('https://wa.me/' + phone + '?text=' + encodeURIComponent(poText(p)), '_blank'));
+  const mail = m.wrap.querySelector('#sp-mail'); if (mail) mail.addEventListener('click', () => window.open('mailto:' + encodeURIComponent(sp.email) + '?subject=' + encodeURIComponent('Purchase order ' + p.no + ' from ' + (settings.name || '')) + '&body=' + encodeURIComponent(poText(p)), '_blank'));
+  m.wrap.querySelector('#sp-print').addEventListener('click', () => printPo(id));
+}
+function printPo(id) {
+  const p = pos.find(x => x.id === id); if (!p) return;
+  const c = cur(), sp = suppliers.find(x => x.id === p.supplierId) || {};
+  openPrint(p.no, `${docHeader(settings, 'PURCHASE ORDER', p.no, ['Date ' + niceDate(String(p.createdAt || today()).slice(0, 10))])}
+    <div class="two"><div class="box"><h4>Supplier</h4><strong>${esc(p.supplier)}</strong>${sp.phone ? '<br>' + esc(sp.phone) : ''}${sp.email ? '<br>' + esc(sp.email) : ''}${sp.account ? '<br>Our account ' + esc(sp.account) : ''}</div>
+      <div class="box"><h4>Deliver to</h4><strong>${esc(settings.name || '')}</strong><br>${esc(settings.address || '').replace(/\n/g, '<br>')}</div></div>
+    <table><tr><th>Product</th><th>SKU</th><th class="r">Qty</th><th class="r">Each excl. VAT</th><th class="r">Amount</th></tr>${(p.lines || []).map(l => `<tr><td>${esc(l.name)}</td><td>${esc(l.sku || '')}</td><td class="r">${esc(l.qty)}</td><td class="r">${esc(money(l.cost, c))}</td><td class="r">${esc(money(l.qty * l.cost, c))}</td></tr>`).join('')}
+      <tr class="tot big"><td colspan="4" class="r">TOTAL excl. VAT</td><td class="r">${esc(money(p.total, c))}</td></tr></table>
+    ${p.notes ? `<p>${esc(p.notes)}</p>` : ''}<div class="ft">Please quote ${esc(p.no)} on your delivery note and invoice.</div>`);
+}
+// Receive a sent order: its outstanding lines go into the delivery, to fix up and book in.
+function receivePo(id) {
+  const p = pos.find(x => x.id === id); if (!p) return;
+  if (draft.lines.length && !confirm('There is an unfinished delivery on the screen. Replace it with ' + p.no + '?')) return;
+  const sp = suppliers.find(x => x.id === p.supplierId) || {};
+  draft = { supplier: p.supplier, ref: '', date: today(), unmatched: [], poId: p.id,
+    lines: (p.lines || []).map(l => ({ variantId: l.variantId, inventoryItemId: l.inventoryItemId, name: l.name, sku: l.sku || '', barcode: (till.shopItem(l.variantId) || {}).barcode || '', qty: Math.max(0, (Number(l.qty) || 0) - (Number(l.received) || 0)), cost: Number(l.cost) || 0, price: (till.shopItem(l.variantId) || {}).price })).filter(l => l.qty > 0) };
+  persistDraft(); view = 'receive'; rerender();
+  toast('Receiving ' + p.no + ' from ' + (sp.name || p.supplier));
+}
+function orderHtml() {
+  const c = cur(), seesCost = store.can('costing') || store.can('stock');
+  if (poDraft) {
+    const total = poTotal(poDraft);
+    return `<div class="card"><h2>Purchase order</h2>
+      ${row(field('Supplier', 'po-sup', { value: poDraft.supplier, placeholder: 'Who to order from', list: 'po-sup-list' }), '<div class="fld"><span>Add a product</span><input id="po-find" placeholder="Search the shop and press Enter…" autocomplete="off"></div>')}
+      <datalist id="po-sup-list">${suppliers.map(s => `<option value="${esc(s.name)}"></option>`).join('')}</datalist>
+      ${poDraft.lines.length ? `<div style="overflow:auto"><table class="tbl ss-po"><thead><tr><th>Product</th><th class="r">Qty</th>${seesCost ? '<th class="r">Cost each</th><th class="r">Amount</th>' : ''}<th></th></tr></thead><tbody>${poDraft.lines.map((l, i) => `<tr><td><strong>${esc(l.name)}</strong><div class="muted">${esc(l.sku || '')}</div></td><td class="r"><input class="po-in" data-f="qty" data-i="${i}" type="number" min="1" step="1" value="${esc(l.qty)}" style="width:80px"></td>${seesCost ? `<td class="r"><input class="po-in" data-f="cost" data-i="${i}" type="number" min="0" step="0.01" value="${esc(l.cost || '')}" style="width:110px"></td><td class="r">${esc(money(l.qty * l.cost, c))}</td>` : ''}<td class="r"><button class="icon-btn" data-act="ss-po-remove" data-i="${i}" title="Remove">✕</button></td></tr>`).join('')}</tbody></table></div>
+      <p class="muted">${poDraft.lines.reduce((a, l) => a + (Number(l.qty) || 0), 0)} pieces${seesCost ? ' · ' + esc(money(total, c)) + ' excl. VAT' : ''}</p>` : '<p class="muted">Search for the products to order.</p>'}
+      ${field('Note to the supplier', 'po-notes', { value: poDraft.notes, placeholder: 'Delivery address, urgency…' })}
+      <div class="card-actions"><button class="btn ghost" data-act="ss-po-cancel">Cancel</button><button class="btn ghost" data-act="ss-po-save">Save draft</button><button class="btn primary" data-act="ss-po-send-new">Save and send</button></div></div>`;
+  }
+  const sug = suggestions();
+  const groups = {}; sug.forEach(r => { (groups[r.supplier] = groups[r.supplier] || []).push(r); });
+  const open = pos.filter(p => p.status !== 'received' && p.status !== 'cancelled'), done = pos.filter(p => p.status === 'received' || p.status === 'cancelled');
+  const chip = (p) => p.status === 'draft' ? '<span class="chip">draft</span>' : p.status === 'sent' ? '<span class="chip calm">sent · on order</span>' : p.status === 'part' ? '<span class="chip late">part received</span>' : p.status === 'received' ? '<span class="chip calm">received</span>' : '<span class="chip">cancelled</span>';
+  const poRow = (p) => `<tr><td><strong>${esc(p.no)}</strong><div class="muted">${esc(niceDate(String(p.createdAt || '').slice(0, 10)))} · ${esc(p.by || '')}</div></td><td>${esc(p.supplier)}</td><td class="r">${(p.lines || []).reduce((a, l) => a + (Number(l.qty) || 0), 0)}${p.status === 'part' ? ' <span class="muted">(' + (p.lines || []).reduce((a, l) => a + (Number(l.received) || 0), 0) + ' in)</span>' : ''}</td>${seesCost ? `<td class="r">${esc(money(p.total, c))}</td>` : ''}<td>${chip(p)}</td>
+    <td class="r nowrap">${p.status === 'draft' ? `<button class="btn primary sm" data-act="ss-po-send" data-id="${esc(p.id)}">Send</button> <button class="btn ghost sm" data-act="ss-po-cancel-po" data-id="${esc(p.id)}">Cancel</button>` : ''}${p.status === 'sent' || p.status === 'part' ? `<button class="btn primary sm" data-act="ss-po-receive" data-id="${esc(p.id)}">Receive</button> <button class="btn ghost sm" data-act="ss-po-send" data-id="${esc(p.id)}">Send again</button>` : ''} <button class="btn ghost sm" data-act="ss-po-print" data-id="${esc(p.id)}">Print</button></td></tr>`;
+  return `<div class="card"><div class="page-head" style="margin:0 0 .5rem"><div><h2>What to order</h2><p class="sub">The reorder level comes from the last 30 days’ sales (two weeks’ cover; change it per product), plus what open sales orders need, less what is on hand and already on order.</p></div>
+      <div class="btn-row"><button class="btn primary" data-act="ss-po-new">＋ Purchase order</button></div></div>
+    ${Object.keys(groups).length ? Object.keys(groups).sort().map(sup => `<h3 style="margin:.8rem 0 .3rem">${esc(sup)} <button class="btn primary sm" data-act="ss-po-for" data-supplier="${esc(sup)}" style="margin-left:.5rem">Create PO · ${groups[sup].reduce((a, r) => a + r.rec, 0)} pieces</button></h3>
+      <table class="tbl"><thead><tr><th>Product</th><th class="r">On hand</th><th class="r">On order</th><th class="r">Sales orders need</th><th class="r">Reorder level</th><th class="r">Order</th></tr></thead><tbody>${groups[sup].map(r => `<tr><td><strong>${esc(r.i.name)}</strong><div class="muted">${esc(r.i.sku || '')}</div></td><td class="r">${r.onHand}</td><td class="r">${r.coming || ''}</td><td class="r">${r.need || ''}</td><td class="r"><input class="ss-level" data-v="${esc(r.i.variantId)}" data-name="${esc(r.i.name)}" type="number" min="0" step="1" value="${r.level}" style="width:70px; text-align:right" title="Suggested: ${suggestedLevel(r.i.variantId)}"></td><td class="r"><strong>${r.rec}</strong></td></tr>`).join('')}</tbody></table>`).join('')
+      : '<p class="muted">Nothing to order: everything is above its reorder level and no sales orders are waiting.</p>'}
+  </div>
+  <div class="card" style="padding:0; overflow:auto"><table class="tbl"><thead><tr><th>Order</th><th>Supplier</th><th class="r">Pieces</th>${seesCost ? '<th class="r">Total</th>' : ''}<th>Status</th><th></th></tr></thead><tbody>${open.length || done.length ? [...open, ...done.slice(0, 50)].map(poRow).join('') : '<tr><td colspan="6" class="muted">No purchase orders yet.</td></tr>'}</tbody></table></div>`;
+}
+
 // ---------------------------------------------------------------- labels ---
 
 function labelsHtml() {
@@ -395,7 +583,14 @@ export function renderShopStock(h, sales) {
   host = h;
   if (!till.shopOn()) { h.innerHTML = empty('', 'Connect the online shop first', 'The shop’s stock, deliveries and stock takes work with the shop connected (Settings → Online shop).'); return; }
   const tab = (key, label) => `<button class="btn ${view === key ? 'primary' : 'ghost'} sm" data-act="ss-view" data-to="${key}">${label}</button>`;
-  h.innerHTML = `<div class="btn-row" style="margin-bottom:.8rem">${tab('receive', 'Receive stock')}${tab('take', 'Stock take')}${tab('labels', 'Labels')}</div>` + (view === 'take' ? takeHtml() : view === 'labels' ? labelsHtml() : receiveHtml());
+  salesRef = () => sales || [];
+  h.innerHTML = `<div class="btn-row" style="margin-bottom:.8rem">${tab('receive', 'Receive stock')}${tab('order', 'Order stock')}${tab('suppliers', 'Suppliers')}${tab('take', 'Stock take')}${tab('labels', 'Labels')}</div>` + (view === 'take' ? takeHtml() : view === 'labels' ? labelsHtml() : view === 'order' ? orderHtml() : view === 'suppliers' ? suppliersHtml() : receiveHtml());
+  const pf = h.querySelector('#po-find');
+  if (pf) { pf.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); const v = pf.value.trim(); const it = matchItem(v, ''); if (it) { poAddLine(it); rerender(); } else poSearch(v); } }); setTimeout(() => pf.focus(), 50); }
+  const ps = h.querySelector('#po-sup'); if (ps) ps.addEventListener('input', () => { poDraft.supplier = ps.value; });
+  const pn = h.querySelector('#po-notes'); if (pn) pn.addEventListener('input', () => { poDraft.notes = pn.value; });
+  h.querySelectorAll('.po-in').forEach(i => i.addEventListener('input', () => { const l = poDraft && poDraft.lines[parseInt(i.dataset.i, 10)]; if (!l) return; l[i.dataset.f] = i.dataset.f === 'qty' ? Math.max(1, parseInt(i.value, 10) || 1) : r2(parseFloat(i.value) || 0); }));
+  h.querySelectorAll('.ss-level').forEach(i => i.addEventListener('change', () => setLevel(i.dataset.v, i.value, i.dataset.name)));
   const scan = h.querySelector('#gr-scan');
   if (scan) { scan.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); const v = scan.value.trim(); if (!v) return; if (!receiveScan(v)) receiveSearch(v); scan.value = ''; } }); setTimeout(() => scan.focus(), 50); }
   const file = h.querySelector('#gr-file'); if (file) file.addEventListener('change', () => { importInvoice(file.files[0]); file.value = ''; });
@@ -415,12 +610,25 @@ export async function shopStockAction(act, el) {
     case 'ss-scan': return openBarcodeCamera((code) => { receiveScan(code); });
     case 'ss-remove': draft.lines.splice(i, 1); persistDraft(); return rerender();
     case 'ss-pick': return pickForMiss(i);
-    case 'ss-clear': if (confirm('Clear this delivery?')) { draft = { supplier: '', ref: '', date: '', lines: [], unmatched: [] }; persistDraft(); rerender(); } return;
+    case 'ss-clear': if (confirm('Clear this delivery?')) { draft = { supplier: '', ref: '', date: '', lines: [], unmatched: [], poId: '' }; persistDraft(); rerender(); } return;
     case 'ss-book': return bookIn();
     case 'ss-send': return sendGrv(el.dataset.id);
     case 'ss-print-grv': return printGrv(el.dataset.id);
     case 'ss-labels-grv': { const g = grvs.find(x => x.id === el.dataset.id); if (g) printLabels((g.lines || []).map(l => ({ i: { name: l.name, price: l.price, barcode: l.barcode, sku: l.sku }, copies: l.qty }))); return; }
     case 'ss-labels-print': return printLabels(till.shopItems().map(x => ({ i: x, copies: labelPicks[x.variantId] || 0 })));
+    case 'ss-sup-new': return editSupplier('');
+    case 'ss-sup-edit': return editSupplier(el.dataset.id);
+    case 'ss-sup-load': return loadSuppliersFromShop();
+    case 'ss-po-new': return startPo('', []);
+    case 'ss-po-for': return startPo(el.dataset.supplier, suggestions().filter(r => r.supplier === el.dataset.supplier && r.rec > 0).map(r => ({ variantId: r.i.variantId, inventoryItemId: r.i.inventoryItemId, name: r.i.name, sku: r.i.sku || '', qty: r.rec, cost: costOfShopItem(r.i.variantId), received: 0 })));
+    case 'ss-po-remove': if (poDraft) poDraft.lines.splice(i, 1); return rerender();
+    case 'ss-po-cancel': poDraft = null; return rerender();
+    case 'ss-po-save': { const id = await savePo(); if (id) { toast('Saved as a draft'); rerender(); } return; }
+    case 'ss-po-send-new': { const id = await savePo(); if (id) { rerender(); setTimeout(() => sendPo(id), 200); } return; }
+    case 'ss-po-send': return sendPo(el.dataset.id);
+    case 'ss-po-print': return printPo(el.dataset.id);
+    case 'ss-po-receive': return receivePo(el.dataset.id);
+    case 'ss-po-cancel-po': { const p = pos.find(x => x.id === el.dataset.id); if (p && confirm('Cancel ' + p.no + '?')) await store.update('shopPos', p.id, { status: 'cancelled' }); return; }
     case 'ss-take-start': await startTake(el.dataset.scope); return;
     case 'ss-take-scan': return openBarcodeCamera((code) => { takeScanCode(code); });
     case 'ss-take-cancel': { const t = openTake(); if (t && confirm('Cancel this count? Nothing is changed on the shop.')) await store.update('stockTakes', t.id, { status: 'cancelled' }); return; }

@@ -60,13 +60,18 @@ password; the owner invites the team under Settings and gives each person a role
   on the sale and on the Customers screen). Spent as a payment method at the till.
 - Store credit: a return can be refunded as "Store credit" instead of money; it is kept on
   the customer and spent at the till.
+- Sales order for something not in stock: tapping a sold-out product (or taking more than
+  the shop has) offers to sell it as a sales order: pick the customer, take the deposit,
+  give the date it is expected. It works like a layby: the goods are ordered in (it shows
+  under Order stock as "sales orders need"), the balance is paid and it is collected when
+  it arrives (Sales → Pay, then Collect).
 - Layby (a sales order): pick the customer, Take payment → "Layby", take the deposit. The
   goods stay in the shop and the balance shows on the Sales tab ("owed to the till"). "Pay"
   on the sale takes more money; when it is paid in full, "Collect" hands it over (stock and
   the shop's order happen then; points are earned then). Made-to-order pieces on a layby go
   to the factory straight away.
 - On account: Take payment → "On account": the goods go now, the balance is on the
-  customer's invoice. "Account payment" on the Sales tab takes money from a customer who
+  customer's invoice; when it is settled the shop's order is marked paid in Shopify too. "Account payment" on the Sales tab takes money from a customer who
   owes, oldest sale first; "Pay" on one sale does the same for that sale.
 - Quick keys: ⭐ Quick keys on the sale screen, then tap products to star them (tap again to
   un-star); starred products show first on the till. Tap Done to finish.
@@ -78,6 +83,16 @@ password; the owner invites the team under Settings and gives each person a role
     in": the pieces go onto the shop's stock (Shopify) and the delivery is listed below with
     Labels (barcode labels for what came in) and Print. "Send again" if the shop could not
     be reached.
+  - Order stock: "What to order" suggests, per supplier, what to buy: a reorder level per
+    product from the last 30 days' sales (two weeks' cover; type a different level in the
+    box), plus what open sales orders need, less what is on hand and already on order.
+    "Create PO" for a supplier makes a purchase order with those lines; "＋ Purchase order"
+    starts an empty one (search the shop, press Enter). Save and send: WhatsApp, email or
+    print, then "Mark as sent" (the stock counts as on order). "Receive" on a sent order
+    puts its outstanding lines into Receive stock to book in; the order shows part or
+    fully received.
+  - Suppliers: who the shop buys from, with WhatsApp, email and account number. "Load from
+    Shopify" adds the vendors on the shop's products as suppliers.
   - Stock take: "Count the whole shop" or one category. Scan each item (adds one) or type the
     count; the difference against the shop shows. "Make it the shop's stock" (a manager, or
     a manager's PIN) sets the counted numbers as the shop's stock; lines not counted are left
