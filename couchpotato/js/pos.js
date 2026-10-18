@@ -28,7 +28,7 @@ import { allCustomers, customerById } from './customers.js';
 import { allOrders } from './orders.js';
 import { printInvoice, invoiceById, paidAmount, balance } from './invoices.js';
 import { openBarcodeCamera } from './barcode.js';
-import { esc, money, field, row, val, openModal, toast, today, addDays, niceDate, empty, statusMeta } from './ui.js';
+import { esc, money, field, row, val, openModal, toast, today, addDays, niceDate, empty, statusMeta, productImg } from './ui.js';
 
 let settings = {};
 let sales = [];
@@ -316,6 +316,7 @@ function saleHtml(cur) {
       </div>
       ${shown.length ? `<div class="pos-grid">${shown.map(p => `
         <button class="pos-tile" data-act="pos-add" data-id="${esc(p.id)}">
+          ${productImg(p, 'pos-tile-img', 400)}
           <span class="pos-tile-cat">${esc(p.category || '')}</span>
           <span class="pos-tile-name">${esc(p.name)}</span>
           <span class="pos-tile-price">${esc(money(p.sellingPrice || 0, cur))}</span>
