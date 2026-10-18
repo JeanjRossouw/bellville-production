@@ -241,13 +241,15 @@ async function pushOne(key) {
 }
 export function shopifyPushSale(saleId, lines) {
   shopifyRetryPending();
-  if ((lines || []).some(l => l.kind === 'stock' && l.productId)) pushOne(saleId);
+  if ((lines || []).some(l => l.kind === 'stock' && (l.productId || l.variantId))) pushOne(saleId);
 }
 // Pieces brought back to the shelf at the till: Shopify adds them back.
 export function shopifyPushReturn(saleId, returnNo) {
   shopifyRetryPending();
   pushOne('ret|' + saleId + '|' + returnNo);
 }
+// how many till sales / returns are still waiting to reach Shopify on this device
+export const shopifyPendingCount = () => pendingPushes().length;
 export function shopifyRetryPending() {
   if (mode === 'demo') return;
   pendingPushes().forEach(id => pushOne(id));
@@ -260,7 +262,7 @@ const DEMO_SHOP = [
   { title: 'Wingback Chair', price: 7499, tracked: false, qoh: 0, category: 'Chairs' },
   { title: 'Linen Scatter Cushion 50cm', price: 449, tracked: true, qoh: 24, category: 'Accessories' },
   { title: 'Oak Side Table', price: 2899, tracked: true, qoh: 6, category: 'Tables' }
-].map((p, i) => ({ ...p, shopifyProductId: String(8100 + i), shopifyVariantId: String(4400 + i), shopifyInventoryItemId: String(5500 + i), sku: 'OS-' + (100 + i) }));
+].map((p, i) => ({ ...p, shopifyProductId: String(8100 + i), shopifyVariantId: String(4400 + i), shopifyInventoryItemId: String(5500 + i), sku: 'OS-' + (100 + i), barcode: '600100' + (100 + i) }));
 
 function demoShopify(action, p) {
   const ints = demoRead('integrations');
@@ -281,6 +283,11 @@ function demoShopify(action, p) {
   if (action === 'disconnect') { save({ connected: false, disconnectedAt: nowIso(), webhooks: '' }); return { ok: true }; }
   if (action === 'settings') { save({ importWhen: p.importWhen === 'placed' ? 'placed' : 'paid' }); return { ok: true }; }
   if (action === 'pushSale' || action === 'pushReturn') return { ok: true, adjusted: 0 };
+  if (action === 'catalogue') {
+    const { vatRate } = vat();
+    return { connected: true, shopName: st.shopName, at: nowIso(), items: DEMO_SHOP.map(v => ({ variantId: v.shopifyVariantId, inventoryItemId: v.shopifyInventoryItemId, productId: v.shopifyProductId,
+      name: v.title, sku: v.sku, barcode: v.barcode || '', price: mapProduct(v, { taxesIncluded: true, vatRate }).sellingPrice, tracked: v.tracked, qty: v.qoh, category: v.category, image: '' })) };
+  }
   if (action === 'products') {
     const { vatRate } = vat();
     const map = demoRead('products');

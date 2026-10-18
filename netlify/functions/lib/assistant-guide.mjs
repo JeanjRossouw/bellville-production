@@ -30,18 +30,31 @@ password; the owner invites the team under Settings and gives each person a role
   product, fabric, phone, area); every word must match. Orders and the till have their own.
 
 ## Point of sale (the showroom till)
-- Tap products (or search, or scan a barcode with 📷 Scan) to add them to the sale.
-- Each line is either "from stock" (taken off the showroom shelf count) or "made to order"
-  (becomes a factory order with its own order number when the sale is completed).
-  Made-to-order lines need a customer and should have a fabric, picked from the fabric list.
-- "Other item" adds anything not in the catalogue. "🚚 Delivery" adds a delivery fee with
-  the address; made-to-order pieces on that sale are booked as a delivery to that address.
-- A discount can be given on the whole sale. Take payment: Paid in full or Deposit, with the
-  method (Card, EFT, Cash, Other) and a reference. An invoice is raised and printed as the
-  receipt; any balance is due on collection or delivery.
-- Sales tab: today's sales, reprint a receipt, and Return: pick what comes back, whether it
-  goes back on the shelf, and the refund. A made-to-order piece not started yet is cancelled.
-  A credit note is printed.
+- Till staff and PINs: under Settings → Till staff the owner adds each person with a PIN
+  (4–6 digits), as a Manager or a Cashier with a discount limit (%) and whether they may do
+  returns. Once anyone is set up, the till starts locked: enter your PIN on the pad to unlock;
+  🔒 Lock locks it again. Each sale records who rang it. With no till staff set up, the till
+  is open and the login's name is used.
+- With the online shop connected, the till sells the SHOP'S stock: its products, prices and
+  stock counts come from Shopify (↻ reads them again; "stock as at" shows when). A product
+  with no stock is greyed out and a line can never take more than the shop has. Each sale
+  becomes an order in Shopify (paid, fulfilled, stock taken off), shown on the sale as
+  "Shop order #…"; if the shop could not be reached, the sale is sent again later ("sale(s)
+  still to reach the shop"). Factory products not in the shop are still sold made to order.
+- Tap products (or search, or scan a barcode: the shop's barcodes and SKUs work) to add them
+  to the sale. "Other item" adds anything not in the catalogue. "🚚 Delivery" adds a delivery
+  fee with the address; made-to-order pieces on that sale are booked as a delivery there.
+- Discounts: "% off" on a line, or "Discount on the sale" for the whole sale, typed as "10%"
+  or a rand amount. A cashier may discount up to their limit; more needs a manager's PIN
+  (the Manager approval box). A manager at the till can give any discount.
+- Take payment: Cash (type the cash given, the change is shown), Card, EFT, Split (two
+  methods, e.g. card and cash), or Deposit (part now, the balance on collection or
+  delivery). The 80 mm slip prints; the Sale complete box can also print the A4 invoice or
+  send the slip by WhatsApp or email. An invoice is raised for every sale.
+- Sales tab: today's sales with who rang them, Slip / Invoice / WA buttons to reprint or
+  send, and Return: pick what comes back, whether it goes back on the shelf, and the refund.
+  A cashier who may not do returns needs a manager's PIN. A made-to-order piece not started
+  yet is cancelled. A credit note is printed.
 
 ## Quotes
 - New quote: pick a customer (or a new prospect), add lines from the catalogue (price fills

@@ -32,11 +32,18 @@ kept on the server.
   Each product's **picture** comes too (the variant's own, else the product's
   first), shown on the till, in Costing and when editing a product. A picture
   typed into the app stays when the shop has none.
-- **Till → shop stock.** A sale at the till of a linked product "from stock"
-  takes the same number off Shopify's count. It is sent as "take 2 off", never
-  as a total, so an online sale at the same moment is not written over. If the
-  till is offline, the sale waits on that device and is sent with the next
-  sale or the next time the app opens; each sale counts once only.
+- **The till sells the shop's stock.** With the shop connected, the till's
+  tiles are the shop's own products, prices and counts (`catalogue`, read live
+  and kept on the device), with their barcodes and SKUs; a line never takes
+  more than the shop has. Each sale becomes one Shopify order (`pushSale`):
+  paid, fulfilled, lines at what the customer paid, tagged
+  `factory-manager-till, fm-sale-<sale id>`, stock taken off by Shopify. It is
+  made once: the sale is claimed first, and a retry looks for an order with the
+  sale's tag before making one. The till's own orders are never brought back
+  in as factory orders. If the till is offline, the sale waits on that device
+  and is sent with the next sale or the next time the app opens. A product of
+  the factory's own that is linked to a shop variant still has its stock
+  adjusted ("take 2 off") when sold from stock.
 
 Orders arrive within a minute (Shopify webhooks), and a check every 15 minutes
 (`factory-shopify-poll`) catches anything missed. Each check carries on

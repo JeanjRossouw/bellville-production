@@ -20,6 +20,8 @@ export const isPaid = (o) => PAID.includes(String((o && o.financial_status) || '
 export function wantOrder(o, when) {
   if (!o || !o.id) return false;
   if (o.cancelled_at) return false;
+  // a sale rung up on Factory Manager's own till: it is already in the app
+  if (o.source_name === 'factory-manager' || /(^|,\s*)factory-manager-till(\s*,|$)/.test(String(o.tags || ''))) return false;
   if (o.fulfillment_status === 'fulfilled') return false;     // already sent out by the shop itself
   const fs = String(o.financial_status || '');
   if (['voided', 'refunded'].includes(fs)) return false;

@@ -67,6 +67,7 @@ export const WRITE_AREAS = {
   deliveryNotes: ['deliveries'],
   staff: ['wages'],
   wageRuns: ['wages'],
+  tillStaff: ['settings'],
   settings: ['settings']
 };
 
@@ -84,7 +85,8 @@ export const READ_AREAS = {
   drivers: ['deliveries'],          // each driver's private link is a secret: Edit only (see app.js)
   deliveryNotes: ['deliveries', 'orders'],
   staff: ['wages'],
-  wageRuns: ['wages']
+  wageRuns: ['wages'],
+  tillStaff: ['pos', 'settings']
 };
 
 export const levelOf = (perms, area) => (perms && perms[area]) || 'none';

@@ -964,3 +964,22 @@ ol.steps code { font-size: 11.5px; background: var(--paper); border: 1px solid v
 .as-form { display: flex; gap: .5rem; padding: .6rem; border-top: 1px solid var(--line); }
 .as-form textarea { flex: 1; resize: none; font: inherit; }
 @media print { .as-fab, .as-panel { display: none !important; } }
+
+/* the till: lock screen, discounts, payments */
+.pos-tile.out { opacity: .45; cursor: not-allowed; }
+.pos-line-disc { display: flex; justify-content: space-between; align-items: center; gap: .5rem; font-size: 12px; }
+.till-lock { display: grid; place-items: center; padding: 2rem 0; }
+.till-lock-card { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 1.4rem; width: min(340px, 100%); text-align: center; display: grid; gap: .7rem; }
+.till-lock-card h2 { margin: 0; }
+.till-pin { font: 700 28px/1 var(--font-ui, inherit); letter-spacing: .4em; text-align: center; padding: .6rem; border: 1px solid var(--line-2); border-radius: 6px; width: 100%; }
+.till-pin.bad { border-color: #b91c1c; animation: shake .3s; }
+@keyframes shake { 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+.till-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; }
+.till-pad button { font: 700 22px/1 var(--font-ui, inherit); padding: 1rem 0; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); cursor: pointer; }
+.till-pad button:active { background: var(--ink); color: #fff; }
+.pay-kinds { grid-template-columns: repeat(5, 1fr); }
+.pay-row { display: grid; grid-template-columns: 110px 1fr 1fr; gap: .5rem; margin-bottom: .5rem; align-items: center; }
+.pay-row select, .pay-row input { font: inherit; padding: .5rem .6rem; border: 1px solid var(--line-2); border-radius: 3px; min-width: 0; }
+.py-cash { grid-column: 1 / -1; display: flex; gap: .6rem; align-items: center; }
+.py-cash input { flex: 0 0 160px; }
+@media (max-width: 600px) { .pay-kinds { grid-template-columns: repeat(3, 1fr); } .pay-row { grid-template-columns: 1fr 1fr; } .pay-row .py-ref { grid-column: 1 / -1; } }

@@ -6,6 +6,8 @@
 //   POST { action:'products' }   bring the shop's products in                owner
 //   POST { action:'sync' }       bring new online orders in now              owner
 //   POST { action:'pushSale', saleId }   a till sale took stock: tell Shopify  any member
+//                                        (a sale from the shop's stock becomes a Shopify order)
+//   POST { action:'catalogue' }          the shop's products and stock, for the till  any member
 //   POST ?c=<company id> from Shopify (orders/create, orders/paid)           signed by Shopify
 //
 // What lives where (all written here, with the service account; the app
@@ -245,6 +247,65 @@ async function products(who) {
   return { ok: true, total: rows.length, created, updated, linked };
 }
 
+// The shop's products and stock, live, for the till: every active variant
+// with its price as the customer pays it (incl. VAT), barcode and count.
+async function catalogue(who) {
+  const st = await getDoc(statusPath(who.cid));
+  if (!st || !st.connected) return { connected: false, items: [] };
+  const cfg = await secretsOf(who.cid);
+  const { vatRate } = await vatOf(who.cid);
+  const rows = await shopify.listProducts(cfg);
+  const items = rows.map(v => ({
+    variantId: v.shopifyVariantId, inventoryItemId: v.shopifyInventoryItemId, productId: v.shopifyProductId,
+    name: v.title, sku: v.sku, barcode: v.barcode, price: mapProduct(v, { taxesIncluded: st.taxesIncluded, vatRate }).sellingPrice,
+    tracked: !!v.tracked, qty: Math.round(Number(v.qoh) || 0), category: v.category, image: v.image
+  }));
+  return { connected: true, shopName: st.shopName || '', at: nowIso(), items };
+}
+
+// A sale from the shop's stock becomes one Shopify order, once: paid, handed
+// over, its pieces off the shop's count. Lines go at what the customer paid
+// for them (after every discount); made-to-order lines are the factory's and
+// stay out. The claim says a run is making it; a retry first looks for an
+// order already tagged with this sale, so a lost answer never makes two.
+const r2s = (n) => Math.round((Number(n) || 0) * 100) / 100;
+async function tillOrder(who, sale, saleId) {
+  const claimPath = `companies/${who.cid}/shopifyPushes/${saleId}`;
+  let claim = await getDoc(claimPath);
+  if (claim && (claim.orderId || claim.none)) return { ok: true, already: true, order: claim.orderName || '' };
+  if (!claim) {
+    if (!await createDoc(claimPath, { at: nowIso(), by: who.member.name || '', state: 'making' })) claim = await getDoc(claimPath);
+  }
+  if (claim && Date.now() - Date.parse(claim.at || 0) < 2 * 60000) throw new Error('This sale is being sent to Shopify right now');
+  if (claim) await patchDoc(claimPath, { at: nowIso(), by: who.member.name || '', state: 'making' });     // take over a stale one
+  const cfg = await secretsOf(who.cid);
+  try {
+    if (!cfg) throw new Error('The shop is not connected');
+    const lines = (sale.lines || []).filter(l => l.kind === 'stock' && Number(l.qty) > 0).map(l => {
+      const qty = Math.round(Number(l.qty));
+      const net = l.net != null ? Number(l.net) : qty * (Number(l.unitPrice) || 0);
+      return { variantId: l.variantId || '', title: l.name, qty, price: r2s(net / qty) };
+    });
+    if (!lines.length) { await patchDoc(claimPath, { none: true, state: 'done' }); return { ok: true, none: true }; }
+    const since = new Date(Date.parse(sale.createdAt || nowIso()) - 86400000).toISOString();
+    let made = await shopify.findTillOrder(cfg, saleId, since);
+    if (!made) {
+      const st = (await getDoc(statusPath(who.cid))) || {};
+      const total = lines.reduce((t, l) => t + l.price * l.qty, 0);
+      const rate = Number(sale.subtotal) ? (Number(sale.vat) || 0) / Number(sale.subtotal) : 0;
+      made = await shopify.createTillOrder(cfg, { saleId, saleNo: sale.saleNo || '', lines, paid: !(Number(sale.balance) > 0.005),
+        method: sale.method || '', taxesIncluded: rate > 0 || st.taxesIncluded, vatRate: rate, vat: rate ? r2s(total - total / (1 + rate)) : 0 });
+    }
+    await patchDoc(claimPath, { orderId: made.id, orderName: made.name, state: 'done', doneAt: nowIso() });
+    await patchDoc(`companies/${who.cid}/sales/${saleId}`, { shopifyOrderId: made.id, shopifyOrderName: made.name });
+    return { ok: true, order: made.name };
+  } catch (e) {
+    await deleteDoc(claimPath).catch(() => {});      // free it, so the till can try again
+    await patchDoc(statusPath(who.cid), { lastError: 'Till sale ' + (sale.saleNo || '') + ' not sent to Shopify yet: ' + e.message, lastErrorAt: nowIso() }).catch(() => {});
+    throw e;
+  }
+}
+
 // A till sale took pieces off the shelf: take the same off Shopify, once.
 async function pushSale(who, body) {
   const saleId = String(body.saleId || '');
@@ -254,6 +315,7 @@ async function pushSale(who, body) {
   if (!companyActive(who.company)) return { ok: true, skipped: 'subscription not active' };
   const sale = await getDoc(`companies/${who.cid}/sales/${saleId}`);
   if (!sale) throw new Error('Sale not found');
+  if (sale.shopifySale) return tillOrder(who, sale, saleId);
   if (!await createDoc(`companies/${who.cid}/shopifyPushes/${saleId}`, { at: nowIso(), by: who.member.name || '' })) return { ok: true, already: true };
   const cfg = await secretsOf(who.cid);
   const done = [], failed = [];
@@ -285,11 +347,16 @@ async function pushReturn(who, body) {
   const cfg = await secretsOf(who.cid);
   const done = [], failed = [];
   for (const l of ret.lines || []) {
-    if (!l.restock || !l.productId || !CID.test(String(l.productId)) || !(Number(l.qty) > 0)) continue;
-    const p = await getDoc(`companies/${who.cid}/products/${l.productId}`);
-    if (!p || !p.shopifyInventoryItemId) continue;
-    try { await shopify.adjustStock(cfg, p.shopifyInventoryItemId, Number(l.qty)); done.push(p.name); }
-    catch (e) { failed.push(p.name + ': ' + e.message); }
+    if (!l.restock || !(Number(l.qty) > 0)) continue;
+    // a line from the shop's stock carries its own inventory item; else the product's
+    let item = /^\d{1,20}$/.test(String(l.inventoryItemId || '')) ? String(l.inventoryItemId) : '', name = l.name || '';
+    if (!item && l.productId && CID.test(String(l.productId))) {
+      const p = await getDoc(`companies/${who.cid}/products/${l.productId}`);
+      if (p && p.shopifyInventoryItemId) { item = p.shopifyInventoryItemId; name = p.name; }
+    }
+    if (!item) continue;
+    try { await shopify.adjustStock(cfg, item, Number(l.qty)); done.push(name); }
+    catch (e) { failed.push(name + ': ' + e.message); }
   }
   if (failed.length) await patchDoc(statusPath(who.cid), { lastError: 'Stock for return ' + returnNo + ' not sent: ' + failed.join('; '), lastErrorAt: nowIso() });
   return { ok: true, adjusted: done.length, failed };
@@ -345,6 +412,7 @@ export const handler = async (event) => {
         return json(200, await syncCompany(who.cid));
       case 'pushSale': return json(200, await pushSale(who, body));
       case 'pushReturn': return json(200, await pushReturn(who, body));
+      case 'catalogue': return json(200, await catalogue(who));
       default: return json(400, { error: 'Unknown action' });
     }
   } catch (e) {
@@ -354,4 +422,4 @@ export const handler = async (event) => {
 };
 
 // for the tests
-export { connect, disconnect, products, pushSale, pushReturn };
+export { connect, disconnect, products, pushSale, pushReturn, catalogue };
