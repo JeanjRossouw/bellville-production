@@ -51,6 +51,15 @@ password; the owner invites the team under Settings and gives each person a role
   methods, e.g. card and cash), or Deposit (part now, the balance on collection or
   delivery). The 80 mm slip prints; the Sale complete box can also print the A4 invoice or
   send the slip by WhatsApp or email. An invoice is raised for every sale.
+- Register tab (the cash-up): Open register with the cash float at the start of the day.
+  It then shows the cash expected in the drawer (float + cash sales + cash in − cash refunds
+  − cash out), card and EFT totals, the sales count and the takings per person. "Cash in" /
+  "Cash out" record money put in or taken out that is not a sale (a cashier's cash out needs
+  a manager's PIN). "X report" prints the figures so far. "Close register" (a manager, or a
+  manager's PIN): count the cash in the drawer, see the difference (over/short), add a note,
+  and the Z report prints. Closed cash-ups are listed below with a Z report button to
+  reprint. Sales ring up whether the register is open or not; "register closed" shows on
+  the sale screen as a reminder.
 - Sales tab: today's sales with who rang them, Slip / Invoice / WA buttons to reprint or
   send, and Return: pick what comes back, whether it goes back on the shelf, and the refund.
   A cashier who may not do returns needs a manager's PIN. A made-to-order piece not started

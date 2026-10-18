@@ -481,9 +481,9 @@ export function renderPos(h) {
   const me = till.tillUser();
   const tab = (key, label) => `<button class="btn ${posTab === key ? 'primary' : 'ghost'} sm" data-act="pos-tab" data-to="${key}">${label}</button>`;
   h.innerHTML = `
-    <div class="page-head"><div><h1>Point of sale</h1><p class="sub">${till.shopOn() ? 'Selling the online shop’s stock' + (till.catalogueAt() ? ' · stock as at ' + esc(new Date(till.catalogueAt()).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })) : '') + (till.catalogueLoading() ? ' · reading the shop…' : '') + '. ' : ''}Made-to-order lines go straight to the factory.${store.shopifyPendingCount() ? ' <span class="chip late">' + store.shopifyPendingCount() + ' sale(s) still to reach the shop</span>' : ''}${till.catalogueError() ? ' <span class="chip late">' + esc(till.catalogueError()) + '</span>' : ''}</p></div>
-      <div class="btn-row">${me ? `<span class="chip calm" title="Who is ringing">${esc(me.name)}${till.isManager(me) ? ' · manager' : ''}</span><button class="btn ghost sm" data-act="till-lock" title="Lock the till">🔒 Lock</button>` : ''}${till.shopOn() ? `<button class="btn ghost sm" data-act="till-refresh" title="Read the shop’s stock again">↻</button>` : ''}${tab('sale', 'New sale')}${tab('sales', 'Sales')}</div></div>
-    ${posTab === 'sale' ? saleHtml(cur) : salesHtml(cur)}`;
+    <div class="page-head"><div><h1>Point of sale</h1><p class="sub">${till.shopOn() ? 'Selling the online shop’s stock' + (till.catalogueAt() ? ' · stock as at ' + esc(new Date(till.catalogueAt()).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })) : '') + (till.catalogueLoading() ? ' · reading the shop…' : '') + '. ' : ''}Made-to-order lines go straight to the factory.${!till.openShift() ? ' <span class="chip calm" title="Open it under Register for the day’s cash-up">register closed</span>' : ''}${store.shopifyPendingCount() ? ' <span class="chip late">' + store.shopifyPendingCount() + ' sale(s) still to reach the shop</span>' : ''}${till.catalogueError() ? ' <span class="chip late">' + esc(till.catalogueError()) + '</span>' : ''}</p></div>
+      <div class="btn-row">${me ? `<span class="chip calm" title="Who is ringing">${esc(me.name)}${till.isManager(me) ? ' · manager' : ''}</span><button class="btn ghost sm" data-act="till-lock" title="Lock the till">🔒 Lock</button>` : ''}${till.shopOn() ? `<button class="btn ghost sm" data-act="till-refresh" title="Read the shop’s stock again">↻</button>` : ''}${tab('sale', 'New sale')}${tab('sales', 'Sales')}${tab('register', 'Register')}</div></div>
+    ${posTab === 'sale' ? saleHtml(cur) : posTab === 'register' ? till.registerHtml(sales) : salesHtml(cur)}`;
   if (posTab === 'sale') {
     const s = h.querySelector('#pos-search');
     if (s) {
@@ -832,6 +832,12 @@ export function posAction(act, el) {
     case 'till-key': return till.tillKey(el.dataset.k);
     case 'till-lock': return till.lockTill();
     case 'till-refresh': return till.refreshCatalogue(true);
+    case 'till-open': return till.openRegister();
+    case 'till-cash-in': return till.cashMove('in');
+    case 'till-cash-out': return till.cashMove('out');
+    case 'till-x': { const sh = till.openShift(); if (sh) till.printReport(sh, 'X', sales); return; }
+    case 'till-close': return till.closeRegister(sales);
+    case 'till-z': { const sh = till.shiftById(el.dataset.id); if (sh) till.printReport(sh, 'Z'); return; }
     case 'till-staff-new': return till.editTillStaff('');
     case 'till-staff-edit': return till.editTillStaff(el.dataset.id);
     case 'till-staff-del': return till.removeTillStaff(el.dataset.id);
