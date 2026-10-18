@@ -62,6 +62,8 @@ export const setShopStockSettings = (cfg) => { settings = cfg || {}; };
 export const setShopStockView = (v) => { view = v; };
 export const shopProduct = (key) => shopProds[key] || null;
 export const isQuickKey = (key) => !!(shopProds[key] && shopProds[key].quickKey);
+export const setView = (v) => { view = v; };
+export const currentView = () => view;
 export const costOfShopItem = (variantId) => Number((shopProds[variantId] || {}).cost) || 0;
 const persistDraft = () => { try { localStorage.setItem('cp-grv-draft', JSON.stringify(draft)); } catch (e) {} };
 
@@ -534,6 +536,52 @@ function printLabels(items) {
   openPrint('Labels', labelSheetHtml(rows, settings));
 }
 
+// ------------------------------------------------------------- catalogue ---
+
+// The shop's products in one table: price, cost price and margin, reorder
+// level, quick key, label copies. Cost prices are the manager's business, so
+// a cashier sees the page without them.
+let catQ = '', catMissing = false; const catEdits = {}, catLabels = {};
+const seesCosts = () => !till.usesPins() || till.isManager(till.tillUser());
+function catalogueHtml() {
+  const items = till.shopItems();
+  const missing = items.filter(i => !(costOfShopItem(i.variantId) > 0)).length;
+  return `<div class="card"><h2>Catalogue</h2><p class="muted">${items.length} products from the online shop. ${seesCosts() ? 'Type a cost price or a reorder level and tap Save; the margin is worked out on the price incl. VAT.' : 'Prices come from the shop; cost prices are for managers.'}</p>
+    <div class="toolbar" style="margin-bottom:.5rem"><input id="ct-q" class="search" placeholder="Search by name, SKU, barcode, category or supplier…" value="${esc(catQ)}" autocomplete="off">${seesCosts() ? `<button class="btn ${catMissing ? 'primary' : 'ghost'} sm" data-act="ss-cat-missing">${missing} without a cost</button>` : ''}</div>
+    <div id="ct-rows" style="overflow:auto"></div>
+    <div class="card-actions">${seesCosts() ? '<button class="btn primary" data-act="ss-cat-save">Save</button>' : ''}<button class="btn ghost" data-act="ss-cat-labels">Print the labels ticked</button></div></div>`;
+}
+function drawCatalogueRows(h) {
+  const box = h.querySelector('#ct-rows'); if (!box) return;
+  const q = catQ.trim().toLowerCase();
+  let rows = till.shopItems().filter(i => !q || [i.name, i.sku, i.barcode, i.category, i.vendor, ...(i.collections || [])].some(v => String(v || '').toLowerCase().includes(q)));
+  if (catMissing) rows = rows.filter(i => !(costOfShopItem(i.variantId) > 0));
+  rows = rows.sort((a, b) => String(a.name).localeCompare(String(b.name))).slice(0, 300);
+  const c = cur(); const costs = seesCosts();
+  box.innerHTML = rows.length ? `<table class="tbl"><thead><tr><th></th><th>Product</th><th>Category</th><th class="r">Stock</th><th class="r">Price</th>${costs ? '<th class="r">Cost</th><th class="r">Margin</th><th class="r">Reorder at</th>' : ''}<th class="r">Labels</th></tr></thead><tbody>${rows.map(i => {
+    const e = catEdits[i.variantId] || {}; const cost = e.cost != null ? e.cost : costOfShopItem(i.variantId); const lvl = e.reorderLevel != null ? e.reorderLevel : (shopProds[i.variantId] && shopProds[i.variantId].reorderLevel);
+    const margin = cost > 0 && i.price > 0 ? Math.round((1 - cost / i.price) * 100) : null;
+    return `<tr><td><button class="icon-btn" data-act="ss-cat-star" data-v="${esc(i.variantId)}" data-name="${esc(i.name)}" title="Quick key">${isQuickKey(i.variantId) ? '⭐' : '☆'}</button></td>
+      <td><strong>${esc(i.name)}</strong><div class="muted">${esc(i.sku || '')}${i.barcode ? ' · ' + esc(i.barcode) : ''}${i.vendor ? ' · ' + esc(i.vendor) : ''}</div></td><td>${esc((i.collections && i.collections.length ? i.collections : [i.category]).filter(Boolean).join(', '))}</td>
+      <td class="r">${i.tracked ? esc(i.qty) : '—'}</td><td class="r">${esc(money(i.price, c))}</td>
+      ${costs ? `<td class="r"><input class="ct-in" data-v="${esc(i.variantId)}" data-f="cost" type="number" min="0" step="0.01" value="${cost > 0 ? esc(cost) : ''}" style="width:90px"></td><td class="r">${margin == null ? '—' : margin + '%'}</td><td class="r"><input class="ct-in" data-v="${esc(i.variantId)}" data-f="reorderLevel" type="number" min="0" step="1" value="${lvl > 0 ? esc(lvl) : ''}" style="width:70px"></td>` : ''}
+      <td class="r"><input class="ct-lb" data-v="${esc(i.variantId)}" type="number" min="0" step="1" value="${esc(catLabels[i.variantId] || '')}" placeholder="0" style="width:60px"></td></tr>`; }).join('')}</tbody></table>` : '<div class="muted" style="padding:.6rem">No match</div>';
+  box.querySelectorAll('.ct-in').forEach(inp => inp.addEventListener('input', () => { const v = inp.value === '' ? 0 : Math.max(0, parseFloat(inp.value) || 0); catEdits[inp.dataset.v] = { ...(catEdits[inp.dataset.v] || {}), [inp.dataset.f]: inp.dataset.f === 'cost' ? r2(v) : Math.round(v) }; }));
+  box.querySelectorAll('.ct-lb').forEach(inp => inp.addEventListener('input', () => { catLabels[inp.dataset.v] = parseInt(inp.value, 10) || 0; }));
+}
+async function saveCatalogueEdits() {
+  const keys = Object.keys(catEdits);
+  if (!keys.length) { toast('Nothing changed', 'warn'); return; }
+  for (const v of keys) {
+    const e = catEdits[v]; const it = till.shopItem(v); const patch = {};
+    if (e.cost != null) { patch.cost = e.cost; patch.costAt = today(); }
+    if (e.reorderLevel != null) patch.reorderLevel = e.reorderLevel;
+    if (shopProds[v]) await store.update('shopProducts', v, patch); else await store.createWithId('shopProducts', v, { ...patch, name: it ? it.name : '', quickKey: false });
+    delete catEdits[v];
+  }
+  toast(keys.length + ' product' + (keys.length === 1 ? '' : 's') + ' saved');
+}
+
 // ------------------------------------------------------------- dashboard ---
 
 function rangeDays() {
@@ -584,7 +632,8 @@ export function renderShopStock(h, sales) {
   if (!till.shopOn()) { h.innerHTML = empty('', 'Connect the online shop first', 'The shop’s stock, deliveries and stock takes work with the shop connected (Settings → Online shop).'); return; }
   const tab = (key, label) => `<button class="btn ${view === key ? 'primary' : 'ghost'} sm" data-act="ss-view" data-to="${key}">${label}</button>`;
   salesRef = () => sales || [];
-  h.innerHTML = `<div class="btn-row" style="margin-bottom:.8rem">${tab('receive', 'Receive stock')}${tab('order', 'Order stock')}${tab('suppliers', 'Suppliers')}${tab('take', 'Stock take')}${tab('labels', 'Labels')}</div>` + (view === 'take' ? takeHtml() : view === 'labels' ? labelsHtml() : view === 'order' ? orderHtml() : view === 'suppliers' ? suppliersHtml() : receiveHtml());
+  h.innerHTML = `<div class="btn-row" style="margin-bottom:.8rem">${tab('receive', 'Receive stock')}${tab('order', 'Order stock')}${tab('suppliers', 'Suppliers')}${tab('take', 'Stock take')}${tab('catalogue', 'Catalogue')}${tab('labels', 'Labels')}</div>` + (view === 'take' ? takeHtml() : view === 'labels' ? labelsHtml() : view === 'order' ? orderHtml() : view === 'suppliers' ? suppliersHtml() : view === 'catalogue' ? catalogueHtml() : receiveHtml());
+  const cq = h.querySelector('#ct-q'); if (cq) { cq.addEventListener('input', () => { catQ = cq.value; drawCatalogueRows(h); }); drawCatalogueRows(h); }
   const pf = h.querySelector('#po-find');
   if (pf) { pf.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); const v = pf.value.trim(); const it = matchItem(v, ''); if (it) { poAddLine(it); rerender(); } else poSearch(v); } }); setTimeout(() => pf.focus(), 50); }
   const ps = h.querySelector('#po-sup'); if (ps) ps.addEventListener('input', () => { poDraft.supplier = ps.value; });
@@ -616,6 +665,10 @@ export async function shopStockAction(act, el) {
     case 'ss-print-grv': return printGrv(el.dataset.id);
     case 'ss-labels-grv': { const g = grvs.find(x => x.id === el.dataset.id); if (g) printLabels((g.lines || []).map(l => ({ i: { name: l.name, price: l.price, barcode: l.barcode, sku: l.sku }, copies: l.qty }))); return; }
     case 'ss-labels-print': return printLabels(till.shopItems().map(x => ({ i: x, copies: labelPicks[x.variantId] || 0 })));
+    case 'ss-cat-save': return saveCatalogueEdits();
+    case 'ss-cat-missing': catMissing = !catMissing; return rerender();
+    case 'ss-cat-star': return toggleQuickKey(el.dataset.v, el.dataset.name);
+    case 'ss-cat-labels': return printLabels(Object.keys(catLabels).map(v => ({ i: till.shopItem(v) || { name: '', price: 0, barcode: '', sku: '' }, copies: catLabels[v] || 0 })));
     case 'ss-sup-new': return editSupplier('');
     case 'ss-sup-edit': return editSupplier(el.dataset.id);
     case 'ss-sup-load': return loadSuppliersFromShop();

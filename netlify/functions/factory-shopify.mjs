@@ -258,10 +258,12 @@ async function catalogue(who) {
   const cfg = await secretsOf(who.cid);
   const { vatRate } = await vatOf(who.cid);
   const rows = await shopify.listProducts(cfg);
+  let colls = {};
+  try { colls = await shopify.listCollections(cfg); } catch (e) { console.warn('collections not read for ' + who.cid + ': ' + e.message); }
   const items = rows.map(v => ({
     variantId: v.shopifyVariantId, inventoryItemId: v.shopifyInventoryItemId, productId: v.shopifyProductId,
     name: v.title, sku: v.sku, barcode: v.barcode, price: mapProduct(v, { taxesIncluded: st.taxesIncluded, vatRate }).sellingPrice,
-    tracked: !!v.tracked, qty: Math.round(Number(v.qoh) || 0), category: v.category, vendor: v.vendor || '', image: v.image
+    tracked: !!v.tracked, qty: Math.round(Number(v.qoh) || 0), category: v.category, collections: colls[v.shopifyProductId] || [], vendor: v.vendor || '', image: v.image
   }));
   return { connected: true, shopName: st.shopName || '', at: nowIso(), items };
 }

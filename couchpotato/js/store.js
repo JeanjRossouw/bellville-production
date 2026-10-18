@@ -302,10 +302,10 @@ export function shopifyRetryPending() {
 // In demo mode there is no real shop: a made-up one shows the whole flow,
 // using the same rules as the server for what an online order becomes.
 const DEMO_SHOP = [
-  { title: '3 Seater Chesterfield', price: 18999, tracked: false, qoh: 0, category: 'Couches', vendor: 'Own make' },
-  { title: 'Wingback Chair', price: 7499, tracked: false, qoh: 0, category: 'Chairs', vendor: 'Own make' },
-  { title: 'Linen Scatter Cushion 50cm', price: 449, tracked: true, qoh: 24, category: 'Accessories', vendor: 'Cushion Co' },
-  { title: 'Oak Side Table', price: 2899, tracked: true, qoh: 6, category: 'Tables', vendor: 'Timber Traders' }
+  { title: '3 Seater Chesterfield', price: 18999, tracked: false, qoh: 0, category: 'Couches', collections: ['Lounge', 'Own make'], vendor: 'Own make' },
+  { title: 'Wingback Chair', price: 7499, tracked: false, qoh: 0, category: 'Chairs', collections: ['Lounge', 'Own make'], vendor: 'Own make' },
+  { title: 'Linen Scatter Cushion 50cm', price: 449, tracked: true, qoh: 24, category: 'Accessories', collections: ['Accessories'], vendor: 'Cushion Co' },
+  { title: 'Oak Side Table', price: 2899, tracked: true, qoh: 6, category: 'Tables', collections: ['Lounge', 'Tables'], vendor: 'Timber Traders' }
 ].map((p, i) => ({ ...p, shopifyProductId: String(8100 + i), shopifyVariantId: String(4400 + i), shopifyInventoryItemId: String(5500 + i), sku: 'OS-' + (100 + i), barcode: '600100' + (100 + i) }));
 
 function demoShopify(action, p) {
@@ -354,7 +354,7 @@ function demoShopify(action, p) {
   if (action === 'catalogue') {
     const { vatRate } = vat();
     return { connected: true, shopName: st.shopName, at: nowIso(), items: DEMO_SHOP.map(v => ({ variantId: v.shopifyVariantId, inventoryItemId: v.shopifyInventoryItemId, productId: v.shopifyProductId,
-      name: v.title, sku: v.sku, barcode: v.barcode || '', price: mapProduct(v, { taxesIncluded: true, vatRate }).sellingPrice, tracked: v.tracked, qty: v.qoh, category: v.category, vendor: v.vendor || '', image: '' })) };
+      name: v.title, sku: v.sku, barcode: v.barcode || '', price: mapProduct(v, { taxesIncluded: true, vatRate }).sellingPrice, tracked: v.tracked, qty: v.qoh, category: v.category, collections: v.collections || [], vendor: v.vendor || '', image: '' })) };
   }
   if (action === 'products') {
     const { vatRate } = vat();

@@ -104,6 +104,24 @@ export async function listProducts(cfg) {
   return out;
 }
 
+// Each product's collections, so the till can show the same categories as the
+// online shop (a product can sit in several). Best-effort: the till falls back
+// to the product type when this cannot be read.
+export async function listCollections(cfg) {
+  const out = {};
+  let after = null;
+  for (let page = 0; page < 40; page++) {
+    const { json } = await api(cfg, '/graphql.json', { method: 'POST', body: { query: `query($after: String) { products(first: 100, after: $after, query: "status:active") {
+      nodes { legacyResourceId collections(first: 15) { nodes { title } } } pageInfo { hasNextPage endCursor } } }`, variables: { after } } });
+    const d = json && json.data && json.data.products;
+    if (!d) break;
+    (d.nodes || []).forEach(n => { out[String(n.legacyResourceId)] = (n.collections && n.collections.nodes || []).map(c => c.title).filter(Boolean); });
+    if (!d.pageInfo || !d.pageInfo.hasNextPage) break;
+    after = d.pageInfo.endCursor;
+  }
+  return out;
+}
+
 // Orders changed since a moment (new, paid, edited), oldest first. Stops
 // fetching more pages at `deadline` (ms timestamp); `complete` says whether
 // every page was read.

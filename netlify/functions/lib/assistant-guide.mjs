@@ -41,9 +41,35 @@ password; the owner invites the team under Settings and gives each person a role
   becomes an order in Shopify (paid, fulfilled, stock taken off), shown on the sale as
   "Shop order #…"; if the shop could not be reached, the sale is sent again later ("sale(s)
   still to reach the shop"). Factory products not in the shop are still sold made to order.
-- Tap products (or search, or scan a barcode: the shop's barcodes and SKUs work) to add them
-  to the sale. "Other item" adds anything not in the catalogue. "🚚 Delivery" adds a delivery
-  fee with the address; made-to-order pieces on that sale are booked as a delivery there.
+- The till is laid out like a shop till. At the top: the company · POS, the shop's name,
+  online/offline, how many products, then one button for each part of the day: 🛒 Sell,
+  📈 Dashboard, 👥 Clients, 📋 Orders, 📥 Receive, 📦 Count, 🗂 Catalogue, 🧾 PO Order,
+  📊 Sales, ↩ Refund, 🧾 Register, ↻ (read the shop again), who is ringing, 🔒 Lock.
+- Sell: the scan box ("Scan barcode or search by name / SKU"), 📷 scans with the camera, ⭐
+  edits the quick keys. Below it the category chips: 🗂 Categories (the landing: one picture
+  tile per category with its count; the categories are the shop's COLLECTIONS, like the
+  online store, else the product type), All, then each category. Tap a category tile or
+  chip to see its products; a typed search spans every category. A product tile shows its
+  picture, price and "stock N" / "out of stock · sales order" / "made to order".
+- On a phone the screen is one panel at a time: the 🔍 Shop / 🛒 Cart · R… bar at the
+  bottom switches between the products and the cart.
+- The cart: the customer bar (tap to pick or add), the lines, TOTAL, "Pay · N items", then
+  📋 Sales order (search the shop for an item not in stock and put it on the sale as a sales
+  order line), 📝 Quote (save the cart as a draft quote for the customer; it is listed under
+  Orders → Quotes and sent from the Quotes screen), 🎁 Gift card, ➕ Custom item (anything not
+  in the catalogue) and 🚚 Delivery (a delivery fee with the address; made-to-order pieces on
+  that sale are booked as a delivery there).
+- Clients: every customer with what they owe, deposits held on laybys, store credit and
+  points; those with balances show first, or search by name, phone or email. Tap one for
+  their profile (owing, deposits, credit, points, their sales), "Use in this sale", "Account
+  payment" and WhatsApp. ＋ New client adds one.
+- Orders: the open sales orders, laybys and account sales (Pay, Collect, Slip, WhatsApp) and
+  the Quotes tab ("To cart" puts a quote's lines on the sale).
+- Refund: type the sale number, invoice number or shop order number, or tap a recent sale,
+  and the return box opens for it (see returns below).
+- Catalogue (with the shop connected): the shop's products in one table with price, cost
+  price, margin, reorder level, ⭐ quick key and label copies; managers type costs and levels
+  and tap Save; "Print the labels ticked" prints labels.
 - Discounts: "% off" on a line, or "Discount on the sale" for the whole sale, typed as "10%"
   or a rand amount. A cashier may discount up to their limit; more needs a manager's PIN
   (the Manager approval box). A manager at the till can give any discount.
@@ -73,9 +99,9 @@ password; the owner invites the team under Settings and gives each person a role
 - On account: Take payment → "On account": the goods go now, the balance is on the
   customer's invoice; when it is settled the shop's order is marked paid in Shopify too. "Account payment" on the Sales tab takes money from a customer who
   owes, oldest sale first; "Pay" on one sale does the same for that sale.
-- Quick keys: ⭐ Quick keys on the sale screen, then tap products to star them (tap again to
-  un-star); starred products show first on the till. Tap Done to finish.
-- Stock tab (with the shop connected):
+- Quick keys: tap ⭐ next to the scan box, then ☆ on a product to pin it (⭐ to unpin); tap ⭐
+  again to finish. Pinned products show on a strip at the top of the landing and of All.
+- Receive, Count, PO Order and Catalogue open the stock room pages (with the shop connected):
   - Receive stock: a delivery from a supplier. Type the supplier and their invoice number,
     then scan each item (every scan adds one), search and press Enter, or load the
     supplier's invoice (PDF, Excel or CSV) and the lines are matched by code or name; lines
@@ -98,7 +124,7 @@ password; the owner invites the team under Settings and gives each person a role
     a manager's PIN) sets the counted numbers as the shop's stock; lines not counted are left
     alone. Past counts are listed.
   - Labels: pick shop products and how many labels of each, 3 across on an A4 label sheet.
-- Dashboard tab: today / this week / this month from the till's sales: sales value, money
+- Dashboard: today / this week / this month from the till's sales: sales value, money
   taken, number of sales, average sale, items per sale, gross profit (where a cost is known
   from deliveries; only for roles that see costing or profit), takings by method, top 5
   products by quantity and by value, and sales by hour.
