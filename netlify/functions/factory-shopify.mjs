@@ -10,6 +10,7 @@
 //   POST { action:'catalogue' }          the shop's products and stock, for the till  any member
 //   POST { action:'receive', grvId }     a delivery (grvs/<id>) onto the shop's stock, once
 //   POST { action:'setStock', takeId }   a stock take (stockTakes/<id>): counts become the shop's count
+//   POST { action:'markPaid', saleId }   an account sale settled: its Shopify order is paid now
 //   POST ?c=<company id> from Shopify (orders/create, orders/paid)           signed by Shopify
 //
 // What lives where (all written here, with the service account; the app
@@ -257,10 +258,12 @@ async function catalogue(who) {
   const cfg = await secretsOf(who.cid);
   const { vatRate } = await vatOf(who.cid);
   const rows = await shopify.listProducts(cfg);
+  let colls = {};
+  try { colls = await shopify.listCollections(cfg); } catch (e) { console.warn('collections not read for ' + who.cid + ': ' + e.message); }
   const items = rows.map(v => ({
     variantId: v.shopifyVariantId, inventoryItemId: v.shopifyInventoryItemId, productId: v.shopifyProductId,
     name: v.title, sku: v.sku, barcode: v.barcode, price: mapProduct(v, { taxesIncluded: st.taxesIncluded, vatRate }).sellingPrice,
-    tracked: !!v.tracked, qty: Math.round(Number(v.qoh) || 0), category: v.category, image: v.image
+    tracked: !!v.tracked, qty: Math.round(Number(v.qoh) || 0), category: v.category, collections: colls[v.shopifyProductId] || [], vendor: v.vendor || '', image: v.image
   }));
   return { connected: true, shopName: st.shopName || '', at: nowIso(), items };
 }
@@ -353,6 +356,23 @@ async function setStock(who, body) {
   const r = await shopify.setLevels(cfg, lines);
   await patchDoc(`companies/${who.cid}/stockTakes/${takeId}`, { status: r.failed.length ? 'part' : 'done', reconciledAt: nowIso(), reconciledBy: who.member.name || '', set: r.done.length, failed: r.failed });
   return { ok: true, set: r.done.length, failed: r.failed };
+}
+
+// An account sale settled at the till: the pending Shopify order is marked paid.
+async function markPaid(who, body) {
+  const saleId = String(body.saleId || '');
+  if (!CID.test(saleId)) throw new Error('Which sale?');
+  const st = await getDoc(statusPath(who.cid));
+  if (!st || !st.connected) return { ok: true, skipped: 'not connected' };
+  const sale = await getDoc(`companies/${who.cid}/sales/${saleId}`);
+  if (!sale) throw new Error('Sale not found');
+  if (!sale.shopifyOrderId) return { ok: true, skipped: 'no shop order' };
+  if (Number(sale.balance) > 0.005) return { ok: true, skipped: 'still owing' };
+  if (sale.shopifyPaidAt) return { ok: true, already: true };
+  const cfg = await secretsOf(who.cid);
+  const r = await shopify.markOrderPaid(cfg, sale.shopifyOrderId, sale.total, st.currency);
+  await patchDoc(`companies/${who.cid}/sales/${saleId}`, { shopifyPaidAt: nowIso() });
+  return { ok: true, ...r };
 }
 
 // A till sale took pieces off the shelf: take the same off Shopify, once.
@@ -464,6 +484,7 @@ export const handler = async (event) => {
       case 'catalogue': return json(200, await catalogue(who));
       case 'receive': return json(200, await receive(who, body));
       case 'setStock': return json(200, await setStock(who, body));
+      case 'markPaid': return json(200, await markPaid(who, body));
       default: return json(400, { error: 'Unknown action' });
     }
   } catch (e) {
@@ -473,4 +494,4 @@ export const handler = async (event) => {
 };
 
 // for the tests
-export { connect, disconnect, products, pushSale, pushReturn, catalogue, receive, setStock };
+export { connect, disconnect, products, pushSale, pushReturn, catalogue, receive, setStock, markPaid };

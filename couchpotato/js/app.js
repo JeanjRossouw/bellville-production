@@ -15,7 +15,7 @@ import {
   renderFloor, setFloorView, setFloorSettings, startBuild, moveMenu,
   printJobCard, printWeekJobCards, printPlanner, weekReportDialog } from './floor.js';
 import { renderScan, setScanSettings, startCamera, stopCamera, manualFind, confirmDispatch, notifyCustomer } from './scan.js';
-import { startPos, renderPos, setPosSettings, setPosShop, posAction, posInput, allSales } from './pos.js';
+import { startPos, renderPos, setPosSettings, setPosShop, setPosXero, posAction, posInput, allSales } from './pos.js';
 import { staffCardHtml } from './till.js';
 import { startQuotes, renderQuotes, setQuoteSettings, setQuoteFilter, newQuote, editQuote, copyQuote, sendQuote, printQuote, acceptQuote, declineQuote } from './quotes.js';
 import { renderProfit, setProfitSettings, setProfitMonth } from './profit.js';
@@ -95,6 +95,7 @@ let lastAllowed = '';
 let team = { members: [], invites: [] };
 let billing = { plan: null, configured: false, payments: [] };
 let shop = null;          // the online shop's connection status (integrations/shopify)
+let xero = null;          // the accounting link's status (integrations/xero)
 let readOnlyOk = false;      // chose "look around (read only)" on the lock screen
 let lastAccess = 'ok';
 // Back from PayFast: ?billing=done or ?billing=cancelled
@@ -129,7 +130,7 @@ async function boot() {
         store.watch('payments', rows => { billing.payments = rows; if (view === 'settings') paint(); });
         // only the Online shop card is redrawn: the 15-minute check writes here,
         // and a full repaint would wipe settings the owner is still typing
-        store.watch('integrations', rows => { shop = rows.find(r => r.id === 'shopify') || null; setPosShop(shop); if (view === 'settings') redrawShopCard(); });
+        store.watch('integrations', rows => { shop = rows.find(r => r.id === 'shopify') || null; xero = rows.find(r => r.id === 'xero') || null; setPosShop(shop); setPosXero(xero); if (view === 'settings') { redrawShopCard(); redrawXeroCard(); } });
         store.getPlan().then(r => { billing.plan = r.plan; billing.configured = !!r.configured; setClientPlan(r.plan); if (view === 'settings') paint(); });
       }
       // a payment, a cancellation or an extended trial takes effect live
@@ -140,7 +141,7 @@ async function boot() {
       store.seedDemoIfEmpty();
       store.shopifyRetryPending();      // till sales whose stock could not reach the online shop yet
       // the till sells the shop's stock when the shop is connected (the owner's watch above covers the owner)
-      if (user.role !== 'owner' && store.can('pos')) store.watch('integrations', rows => setPosShop(rows.find(r => r.id === 'shopify') || null));
+      if (user.role !== 'owner' && store.can('pos')) store.watch('integrations', rows => { setPosShop(rows.find(r => r.id === 'shopify') || null); setPosXero(rows.find(r => r.id === 'xero') || null); });
       settings = await store.loadSettings(FACTORY_DEFAULTS);
       setOrderSettings(settings);
       setFloorSettings(settings);
@@ -575,7 +576,7 @@ function renderSettings(host) {
       )}
       <div class="card-actions"><button class="btn primary" data-act="save-settings">Save settings</button></div>
     </div>
-    ${store.getUser().role === 'owner' ? billingCard() + shopCard() + rolesCard() + teamCard() : ''}
+    ${store.getUser().role === 'owner' ? billingCard() + shopCard() + xeroCard() + rolesCard() + teamCard() : ''}
     ${store.can('settings', 'edit') && store.can('pos') ? staffCardHtml() : ''}
     <div class="card">
       <h2>How this system is wired</h2>
@@ -624,6 +625,54 @@ function billingCard() {
 // come into the price list, and till sales take stock off the shop too.
 
 const ago = (iso) => { if (!iso) return ''; const m = Math.round((Date.now() - Date.parse(iso)) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : longDate(iso); };
+
+// a card is left alone while the owner is typing in one of its boxes (a button just tapped is not typing)
+const typing = (el) => { const a = document.activeElement; return !!a && el.contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName); };
+function redrawXeroCard() {
+  const el = document.getElementById('xero-card'); if (!el) return;
+  if (typing(el)) return;                                   // mid-typing: leave it be
+  el.outerHTML = xeroCard();
+}
+function xeroCard() {
+  const x = xero || {};
+  const pend = store.shopifyPendingCount();
+  if (!x.connected) return `<div class="card" id="xero-card">
+    <h2>Accounting (Xero)</h2>
+    <p>Connect your Xero organisation and every till sale that is paid in full goes to Xero by itself as a paid sales invoice (prices incl. VAT, the VAT worked out by Xero). You pick which bank account the money goes to.</p>
+    ${x.lastError ? `<p class="notice-inline">${esc(x.lastError)}</p>` : ''}
+    <div class="card-actions"><button class="btn primary" data-act="xero-connect">Connect Xero</button></div>
+  </div>`;
+  return `<div class="card" id="xero-card">
+    <h2>Accounting (Xero)</h2>
+    <p><strong>Connected to ${esc(x.tenantName || 'Xero')}</strong>. Till sales paid in full go to Xero as paid invoices${x.lastPushAt ? ' · last sent ' + esc(ago(x.lastPushAt)) : ''}.${pend ? ' <span class="chip late">' + pend + ' waiting to be sent</span>' : ''}</p>
+    ${x.lastError ? `<p class="notice-inline">${esc(x.lastError)}</p>` : ''}
+    ${!x.bankAccount ? '<p class="notice-inline">Fill in the bank account code below: nothing is sent until it is there.</p>' : ''}
+    ${row(field('Bank account code (where the till money goes)', 'xr-bank', { value: x.bankAccount || '', placeholder: 'e.g. 090 — from Xero’s chart of accounts' }), field('Sales account code', 'xr-rev', { value: x.revenueAccount || '200', placeholder: '200' }))}
+    ${field('VAT tax type (optional)', 'xr-tax', { value: x.taxType || '', placeholder: 'Leave blank to use the sales account’s rate, e.g. OUTPUT2' })}
+    <div class="card-actions">
+      <button class="btn primary" data-act="xero-save">Save</button>
+      <button class="btn ghost" data-act="xero-disconnect">Disconnect</button>
+    </div>
+  </div>`;
+}
+async function xeroConnect() {
+  try {
+    const r = await store.xeroCall('connectUrl');
+    if (r.demo) { toast('Demo: Xero connected to a pretend organisation'); return; }
+    const w = window.open(r.url, '_blank');
+    if (!w) { toast('Pop-up blocked — allow pop-ups for this site, then try again', 'warn'); return; }
+    toast('Sign in to Xero in the new tab and pick your organisation');
+  } catch (e) { toast(e.message, 'warn'); }
+}
+async function xeroSave() {
+  const g = (id) => (document.getElementById(id) || {}).value || '';
+  try { await store.xeroCall('settings', { bankAccount: g('xr-bank'), revenueAccount: g('xr-rev'), taxType: g('xr-tax') }); toast('Xero settings saved'); }
+  catch (e) { toast(e.message, 'warn'); }
+}
+async function xeroDisconnect() {
+  if (!confirm('Disconnect Xero? Sales stop going to Xero. What was sent stays there.')) return;
+  try { await store.xeroCall('disconnect'); toast('Xero disconnected'); } catch (e) { toast(e.message, 'warn'); }
+}
 
 function redrawShopCard() {
   const el = document.getElementById('shop-card');
@@ -967,6 +1016,9 @@ async function onAction(e) {
     case 'po-cancel': return cancelPurchaseOrder(id);
     case 'cancel-sub': return cancelSubscription();
     case 'shop-connect': return shopConnect();
+    case 'xero-connect': return xeroConnect();
+    case 'xero-save': return xeroSave();
+    case 'xero-disconnect': return xeroDisconnect();
     case 'shop-products': return shopProducts(b);
     case 'shop-sync': return shopSync(b);
     case 'shop-disconnect': return shopDisconnect();

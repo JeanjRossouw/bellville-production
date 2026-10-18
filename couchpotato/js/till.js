@@ -190,6 +190,7 @@ export async function removeTillStaff(id) {
 
 export const setTillShop = (s) => { const was = shopOn(); shop = s; if (shopOn() && !was) refreshCatalogue(); };
 export const shopOn = () => !!(shop && shop.connected);
+export const shopName = () => (shop && (shop.shopName || shop.domain)) || '';
 export const shopItems = () => (shopOn() ? cat.items : []);
 export const catalogueAt = () => cat.at;
 export const catalogueError = () => lastError;

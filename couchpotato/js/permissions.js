@@ -71,6 +71,8 @@ export const WRITE_AREAS = {
   tillShifts: ['pos'],
   giftCards: ['pos'],
   grvs: ['pos', 'stock', 'storeroom'],
+  suppliers: ['pos', 'stock'],
+  shopPos: ['pos', 'stock', 'storeroom'],
   stockTakes: ['pos', 'stock', 'storeroom'],
   shopProducts: ['pos', 'stock', 'costing'],
   settings: ['settings']
@@ -95,6 +97,8 @@ export const READ_AREAS = {
   tillShifts: ['pos', 'profit'],
   giftCards: ['pos', 'profit'],
   grvs: ['pos', 'stock', 'storeroom', 'profit'],
+  suppliers: ['pos', 'stock', 'storeroom'],
+  shopPos: ['pos', 'stock', 'storeroom'],
   stockTakes: ['pos', 'stock', 'storeroom'],
   shopProducts: ['pos', 'stock', 'costing', 'profit']
 };
