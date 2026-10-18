@@ -293,7 +293,7 @@ async function tillOrder(who, sale, saleId) {
       const st = (await getDoc(statusPath(who.cid))) || {};
       const total = lines.reduce((t, l) => t + l.price * l.qty, 0);
       const rate = Number(sale.subtotal) ? (Number(sale.vat) || 0) / Number(sale.subtotal) : 0;
-      made = await shopify.createTillOrder(cfg, { saleId, saleNo: sale.saleNo || '', lines, paid: !(Number(sale.balance) > 0.005),
+      made = await shopify.createTillOrder(cfg, { saleId, saleNo: sale.saleNo || '', lines, paid: !(Number(sale.balance) > 0.005), onAccount: sale.kind === 'account',
         method: sale.method || '', taxesIncluded: rate > 0 || st.taxesIncluded, vatRate: rate, vat: rate ? r2s(total - total / (1 + rate)) : 0 });
     }
     await patchDoc(claimPath, { orderId: made.id, orderName: made.name, state: 'done', doneAt: nowIso() });

@@ -11,6 +11,11 @@
 //                    live from Shopify (kept on this device for a quick start);
 //                    each sale becomes a Shopify order (see factory-shopify).
 //   the slip         an 80 mm receipt, and the same as text for WhatsApp/email.
+//   gift cards       giftCards: sold at the till (a code on the slip), used at
+//                    the till as a way to pay, what is left kept on the card.
+//   store credit, points   on the customer: credit from a return, loyalty
+//                    points earned on sales (settings.loyaltyPct, 1 point = R1);
+//                    both are ways to pay at the till.
 //   the register     tillShifts: one open cash-up at a time: opened with a
 //                    float, pay-ins and pay-outs along the way, closed with the
 //                    cash counted. What the sales took, by method and by
@@ -26,7 +31,8 @@ import { esc, money, field, row, val, openModal, toast, waDigits, niceDate } fro
 let settings = {};
 let staff = [];
 let shifts = [];
-let unwatch = null, unwatchS = null;
+let cards = [];
+let unwatch = null, unwatchS = null, unwatchG = null;
 let onChange = null;
 let current = null;            // who is ringing; in memory only, so the till starts locked
 let shop = null;               // the online shop's connection status
@@ -42,6 +48,8 @@ export function startTill(cb, cfg) {
   onChange = cb; settings = cfg || {};
   if (unwatch) unwatch();
   if (unwatchS) unwatchS();
+  if (unwatchG) unwatchG();
+  unwatchG = store.watch('giftCards', rows => { cards = rows; if (onChange) onChange(); });
   unwatchS = store.watch('tillShifts', rows => { shifts = rows.sort((a, b) => String(b.openedAt || '').localeCompare(String(a.openedAt || ''))); if (onChange) onChange(); });
   unwatch = store.watch('tillStaff', rows => {
     staff = rows.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
@@ -214,13 +222,24 @@ export function takeFromShop(lines) {
   try { localStorage.setItem(catKey(), JSON.stringify(cat)); } catch (e) {}
 }
 
+// ----------------------------------------------------------- gift cards ----
+
+export const allGiftCards = () => cards;
+export const giftCardByCode = (code) => { const c = String(code || '').replace(/[\s-]/g, '').toUpperCase(); return c ? cards.find(g => String(g.code || '').replace(/-/g, '').toUpperCase() === c) || null : null; };
+// a code nobody can guess, easy to read out: GC-XXXX-XXXX-XXXX
+export function newGiftCode() {
+  const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', b = new Uint8Array(12); crypto.getRandomValues(b);
+  const s = [...b].map(x => A[x % A.length]).join('');
+  return 'GC-' + s.slice(0, 4) + '-' + s.slice(4, 8) + '-' + s.slice(8, 12);
+}
+
 // ---------------------------------------------------------------- slip ------
 
 function slipLines(sale) {
   return (sale.lines || []).map(l => {
     const gross = r2((Number(l.qty) || 0) * (Number(l.unitPrice) || 0));
     return { name: l.name + (l.fabric ? ' (' + l.fabric + ')' : ''), qty: l.qty, each: Number(l.unitPrice) || 0, gross, disc: r2(Number(l.disc) || 0),
-      note: l.kind === 'order' ? 'made to order' + (l.orderNo ? ' ' + l.orderNo : '') : '' };
+      note: l.kind === 'order' ? 'made to order' + (l.orderNo ? ' ' + l.orderNo : '') : l.kind === 'giftcard' && l.giftCode ? 'code ' + l.giftCode : '' };
   });
 }
 const payLine = (p) => (p.method || '') + (p.ref ? ' (' + p.ref + ')' : '');
@@ -235,7 +254,8 @@ export function slipText(sale) {
   if (Number(sale.vat)) L.push('Includes VAT  ' + money(sale.vat, cur));
   (sale.payments || [{ method: sale.method, amount: sale.paidNow, ref: sale.ref }]).filter(p => Number(p.amount)).forEach(p => L.push(payLine(p) + '  ' + money(p.amount, cur)));
   if (Number(sale.tendered)) L.push('Cash given  ' + money(sale.tendered, cur), 'Change  ' + money(sale.change, cur));
-  if (Number(sale.balance) > 0) L.push('Still owing  ' + money(sale.balance, cur));
+  if (Number(sale.balance) > 0) L.push('Still owing  ' + money(sale.balance, cur) + (sale.kind === 'layby' ? ' (layby: collect when paid)' : sale.kind === 'account' ? ' (on account)' : ''));
+  if (sale.pointsEarned) L.push('Points earned  ' + sale.pointsEarned + (sale.pointsBalance != null ? ' (balance ' + sale.pointsBalance + ')' : ''));
   L.push('', 'Invoice ' + (sale.invoiceNo || ''), 'Thank you!');
   return L.filter((x, i) => x !== '' || L[i - 1] !== '').join('\n');
 }
@@ -261,7 +281,8 @@ export function printSlip(sale) {
     ${Number(sale.vat) ? `<div class="r s"><span>Includes VAT</span><span>${m(sale.vat)}</span></div>` : ''}<hr>
     ${pays.map(p => `<div class="r"><span>${esc(payLine(p))}</span><span>${m(p.amount)}</span></div>`).join('')}
     ${Number(sale.tendered) ? `<div class="r"><span>Cash given</span><span>${m(sale.tendered)}</span></div><div class="r b"><span>Change</span><span>${m(sale.change)}</span></div>` : ''}
-    ${Number(sale.balance) > 0 ? `<div class="r b"><span>Still owing</span><span>${m(sale.balance)}</span></div>` : ''}
+    ${Number(sale.balance) > 0 ? `<div class="r b"><span>Still owing${sale.kind === 'layby' ? ' (layby)' : sale.kind === 'account' ? ' (on account)' : ''}</span><span>${m(sale.balance)}</span></div>` : ''}
+    ${sale.pointsEarned ? `<div class="r s"><span>Points earned</span><span>${esc(sale.pointsEarned)}${sale.pointsBalance != null ? ' (balance ' + esc(sale.pointsBalance) + ')' : ''}</span></div>` : ''}
     <hr><div class="c s">Invoice ${esc(sale.invoiceNo || '')}${sale.shopifyOrderName ? ' · Shop ' + esc(sale.shopifyOrderName) : ''}<br>Thank you!</div>
   </body></html>`;
   const win = window.open('', '_blank');
@@ -281,16 +302,22 @@ const cashOut = (sh) => (sh.moves || []).filter(m => m.kind === 'out').reduce((t
 // Everything the register took and gave back while a shift was open, from
 // the sales themselves: by method, by person, and the cash expected in the
 // drawer (float + cash sales + cash in − cash refunds − cash out).
+export const MONEY = ['Cash', 'Card', 'EFT', 'Other'];
 export function shiftFigures(sh, sales) {
-  const by = { Cash: 0, Card: 0, EFT: 0, Other: 0 }, refunds = { Cash: 0, Card: 0, EFT: 0, Other: 0 }, staff = {};
+  const by = { Cash: 0, Card: 0, EFT: 0, 'Gift card': 0, 'Store credit': 0, Points: 0, Other: 0 }, refunds = { Cash: 0, Card: 0, EFT: 0, 'Store credit': 0, Other: 0 }, staff = {};
   let count = 0, returns = 0, value = 0;
   (sales || []).forEach(s => {
     if (inWindow(s.createdAt, sh)) {
       count++; value = r2(value + (Number(s.total) || 0));
-      const pays = s.payments && s.payments.length ? s.payments : [{ method: s.method || 'Other', amount: s.paidNow }];
-      pays.forEach(p => { const m = by[p.method] != null ? p.method : 'Other'; by[m] = r2(by[m] + (Number(p.amount) || 0)); });
-      const who = s.by || '?'; staff[who] = staff[who] || { sales: 0, taken: 0, refunds: 0 }; staff[who].sales++; staff[who].taken = r2(staff[who].taken + (Number(s.paidNow) || 0));
+      const who = s.by || '?'; staff[who] = staff[who] || { sales: 0, taken: 0, refunds: 0 }; staff[who].sales++;
     }
+    // every payment taken in the window: with the sale, or later on a layby / account
+    const pays = s.payments && s.payments.length ? s.payments : [{ method: s.method || 'Other', amount: s.paidNow, at: s.createdAt }];
+    pays.forEach(p => {
+      if (!inWindow(p.at && p.at.length > 10 ? p.at : s.createdAt, sh)) return;
+      const m = by[p.method] != null ? p.method : 'Other'; by[m] = r2(by[m] + (Number(p.amount) || 0));
+      const who = p.by || s.by || '?'; staff[who] = staff[who] || { sales: 0, taken: 0, refunds: 0 }; if (MONEY.includes(m)) staff[who].taken = r2(staff[who].taken + (Number(p.amount) || 0));
+    });
     (s.returns || []).forEach(r => {
       if (!inWindow(r.at, sh) || !(Number(r.refund) > 0)) return;
       returns++;
@@ -300,7 +327,7 @@ export function shiftFigures(sh, sales) {
   });
   const float = Number(sh.float) || 0, ins = r2(cashIn(sh)), outs = r2(cashOut(sh));
   const expected = r2(float + by.Cash + ins - refunds.Cash - outs);
-  return { by, refunds, staff, count, returns, value, float, ins, outs, expected, taken: r2(by.Cash + by.Card + by.EFT + by.Other), refunded: r2(refunds.Cash + refunds.Card + refunds.EFT + refunds.Other) };
+  return { by, refunds, staff, count, returns, value, float, ins, outs, expected, taken: r2(by.Cash + by.Card + by.EFT + by.Other), other: r2(by['Gift card'] + by['Store credit'] + by.Points), refunded: r2(refunds.Cash + refunds.Card + refunds.EFT + refunds.Other + refunds['Store credit']) };
 }
 
 export function openRegister() {
@@ -384,7 +411,7 @@ export function printReport(sh, kind, sales) {
     ${sh.closedAt ? `<div class="r s"><span>Closed</span><span>${esc(when(sh.closedAt))} ${esc(sh.closedBy || '')}</span></div>` : `<div class="r s"><span>Printed</span><span>${esc(when(new Date().toISOString()))}</span></div>`}
     <hr><div class="r"><span>Sales</span><span>${f.count}</span></div><div class="r"><span>Sales value</span><span>${m(f.value)}</span></div>
     <div class="r"><span>Cash</span><span>${m(f.by.Cash)}</span></div><div class="r"><span>Card</span><span>${m(f.by.Card)}</span></div><div class="r"><span>EFT</span><span>${m(f.by.EFT)}</span></div>${f.by.Other ? `<div class="r"><span>Other</span><span>${m(f.by.Other)}</span></div>` : ''}
-    <div class="r b"><span>Taken</span><span>${m(f.taken)}</span></div>
+    <div class="r b"><span>Money taken</span><span>${m(f.taken)}</span></div>${f.other ? `<div class="r s"><span>Gift cards / credit / points used</span><span>${m(f.other)}</span></div>` : ''}
     ${f.refunded ? `<div class="r"><span>Refunds (${f.returns})</span><span>−${m(f.refunded)}</span></div>` : ''}
     <hr><div class="r"><span>Float</span><span>${m(f.float)}</span></div><div class="r"><span>Cash sales</span><span>${m(f.by.Cash)}</span></div>
     ${(sh.moves || []).map(x => `<div class="r s"><span>${x.kind === 'in' ? 'In' : 'Out'}: ${esc(x.reason)} (${esc(x.by)})</span><span>${x.kind === 'in' ? '' : '−'}${m(x.amount)}</span></div>`).join('')}

@@ -27,6 +27,14 @@
 // card or EFT, or a split across two, and prints an 80 mm slip that can also
 // go by WhatsApp or email.
 //
+// Other ways to pay: a gift card (sold here too, with its code on the slip),
+// the customer's store credit (from a return), their loyalty points (earned on
+// every sale, settings.loyaltyPct of it, 1 point = R1). And two kinds of sale
+// that are not paid in full: a LAYBY (sales order: a deposit now, the goods
+// stay here until it is paid and collected) and ON ACCOUNT (the goods go now,
+// the customer pays later). Both leave a balance on the invoice; "Pay" on the
+// Sales tab and "Account payment" take the money later.
+//
 // A return (Sales → Return) takes back some or all of a sale's lines:
 //   from stock      back on the shelf (or not, if damaged)
 //   made to order   not started yet: the factory order is cancelled;
@@ -185,6 +193,18 @@ function addDelivery() {
 const lineGross = (l) => r2((Number(l.qty) || 0) * (Number(l.unitPrice) || 0));
 const lineDisc = (l) => Math.min(lineGross(l), r2(Number(l.disc) || 0));
 function lineTotal(l) { return r2(lineGross(l) - lineDisc(l)); }
+// A gift card sold: no stock, no VAT (that comes when it is spent), a code on the slip.
+function addGiftCard() {
+  openModal('Sell a gift card', field('Amount on the card' , 'gc-amt', { type: 'number', min: 0, step: '1', placeholder: 'e.g. 500' }) + '<p class="muted">The code prints on the slip; the customer gives it when paying with the card.</p>', {
+    okLabel: 'Add to sale',
+    onOk: (w) => {
+      const a = r2(parseFloat(val(w, 'gc-amt')) || 0);
+      if (!(a > 0)) { toast('How much?', 'warn'); return false; }
+      cart.lines.push({ productId: '', name: 'Gift card', qty: 1, unitPrice: a, kind: 'giftcard', fabric: '', note: '', disc: 0, custom: true, noVat: true });
+      persist(); rerender();
+    }
+  });
+}
 // The whole sale's discount in rands: typed as rands, or as a % of what is
 // left after the line discounts.
 function cartDiscount(afterLines) {
@@ -197,8 +217,10 @@ export function totals() {
   const cartDisc = cartDiscount(r2(subtotalRaw - lineDiscs));
   const discount = r2(lineDiscs + cartDisc);
   // prices include VAT: the total is what the lines add up to, the VAT is inside it
-  const { gross, ex, vat } = vatSplit(subtotalRaw - discount, vatRate());
-  return { subtotalRaw, lineDiscs, cartDisc, discount, subtotal: ex, vat, total: gross, lines: cart.lines.length, pieces: cart.lines.reduce((s, l) => s + (Number(l.qty) || 0), 0),
+  // (none on a gift card sold: its VAT comes when it is spent)
+  const noVat = r2(cart.lines.filter(l => l.noVat).reduce((s, l) => s + lineTotal(l), 0));
+  const { gross, ex, vat } = vatSplit(subtotalRaw - discount - noVat, vatRate());
+  return { subtotalRaw, lineDiscs, cartDisc, discount, subtotal: r2(ex + noVat), vat, total: r2(gross + noVat), lines: cart.lines.length, pieces: cart.lines.reduce((s, l) => s + (Number(l.qty) || 0), 0),
     pct: subtotalRaw > 0 ? discount / subtotalRaw * 100 : 0 };
 }
 // What each line really took, with the sale's discount spread over the lines
@@ -286,7 +308,8 @@ function pickCustomer() {
 
 // ------------------------------------------------------------- checkout -----
 
-const METHODS = ['Cash', 'Card', 'EFT', 'Other'];
+const METHODS = ['Cash', 'Card', 'EFT', 'Gift card', 'Store credit', 'Points', 'Other'];
+const loyaltyPct = () => Number(settings.loyaltyPct == null ? 5 : settings.loyaltyPct) || 0;
 function checkout() {
   if (!cart.lines.length) { toast('Nothing on the sale yet', 'warn'); return; }
   const hasOrder = cart.lines.some(l => l.kind === 'order');
@@ -303,6 +326,7 @@ function checkout() {
       <select class="py-method" data-n="${n}">${METHODS.map(x => `<option value="${x}"${(n === 1 ? 'Card' : 'Cash') === x ? ' selected' : ''}>${x}</option>`).join('')}</select>
       <input class="py-amt" data-n="${n}" type="number" min="0" step="0.01" value="${n === 1 ? t.total : ''}" placeholder="amount" aria-label="Amount">
       <input class="py-ref" data-n="${n}" placeholder="Reference (optional)" aria-label="Reference">
+      <div class="py-cash py-gift" data-n="${n}" hidden><input class="py-code" data-n="${n}" placeholder="Gift card code" aria-label="Gift card code" autocomplete="off"><span class="py-gcbal muted"></span></div>
       <div class="py-cash" data-n="${n}" hidden><input class="py-tend" data-n="${n}" type="number" min="0" step="0.01" placeholder="Cash given" aria-label="Cash given"><span class="py-change muted">Change <strong>${esc(money(0, cur))}</strong></span></div>
     </div>`;
   const m = openModal('Take payment', `
@@ -317,6 +341,12 @@ function checkout() {
       <button type="button" class="btn" data-pay="split">Split</button>
       <button type="button" class="btn" data-pay="deposit">Deposit</button>
     </div>
+    <div class="pay-kinds" style="grid-template-columns:repeat(3, 1fr); margin-top:0">
+      <button type="button" class="btn" data-pay="layby" title="A deposit now, the goods stay here until it is paid">Layby</button>
+      <button type="button" class="btn" data-pay="account" title="The goods go now, the customer pays later">On account</button>
+      <button type="button" class="btn" data-pay="wallet" title="Pay with the customer’s store credit or points">${c ? 'Credit / points' : 'Credit / points (pick a customer)'}</button>
+    </div>
+    <p class="muted" id="py-kind-note" hidden></p>
     <div id="pay-rows">${payRow(1)}</div>
     <div class="cost-live"><div class="tot"><span id="py-bal-l">Balance after this payment</span><strong id="py-bal">${esc(money(0, cur))}</strong></div></div>
     ${hasOrder ? `<p class="muted">Made-to-order items will be due out of the factory by <strong>${esc(niceDate(addDays(today(), leadDays())))}</strong> (${leadDays()} days). Any balance is due on collection or delivery.</p>` : ''}`, {
@@ -326,8 +356,12 @@ function checkout() {
       const paid = r2(pays.reduce((a, p) => a + p.amount, 0));
       if (paid < 0 || paid > t.total + 0.005) { toast('The payments must not be more than the total', 'warn'); return false; }
       for (const p of pays) if (p.method === 'Cash' && p.tendered != null && p.tendered < p.amount - 0.005) { toast('Cash given is less than the cash amount', 'warn'); return false; }
+      if (!c && (kind !== 'sale' || pays.some(p => p.method === 'Store credit' || p.method === 'Points'))) { toast('Pick a customer first', 'warn'); return false; }
+      const bad = checkWallet(pays, c);
+      if (bad) { toast(bad, 'warn'); return false; }
+      if (kind === 'sale' && paid < t.total - 0.005 && !confirm('Only ' + money(paid, cur) + ' of ' + money(t.total, cur) + ' is paid. Record it as a deposit, with the balance due on collection or delivery?')) return false;
       const ok = w.querySelector('#modal-ok'); ok.disabled = true; ok.textContent = 'Saving…';
-      try { await completeSale(pays); }
+      try { await completeSale(pays, kind); }
       catch (e) { toast('The sale was not completed: ' + e.message, 'warn'); ok.disabled = false; ok.textContent = 'Complete sale'; return false; }
     }
   });
@@ -336,28 +370,48 @@ function checkout() {
     const method = r.querySelector('.py-method').value, amount = r2(parseFloat(r.querySelector('.py-amt').value) || 0);
     const tendRaw = r.querySelector('.py-tend').value;
     const tendered = method === 'Cash' && tendRaw !== '' ? r2(parseFloat(tendRaw) || 0) : null;
-    return { method, amount, ref: r.querySelector('.py-ref').value.trim(), tendered, change: tendered != null ? r2(Math.max(0, tendered - amount)) : 0 };
+    return { method, amount, ref: r.querySelector('.py-ref').value.trim(), tendered, change: tendered != null ? r2(Math.max(0, tendered - amount)) : 0,
+      ...(method === 'Gift card' ? { code: r.querySelector('.py-code').value.trim() } : {}) };
   }).filter(p => p.amount > 0 || p.method === 'Cash');
+  let kind = 'sale';
   const live = () => {
     card.querySelectorAll('.pay-row').forEach(r => {
-      const cash = r.querySelector('.py-method').value === 'Cash';
-      r.querySelector('.py-cash').hidden = !cash;
+      const m = r.querySelector('.py-method').value;
+      r.querySelector('.py-cash:not(.py-gift)').hidden = m !== 'Cash';
+      r.querySelector('.py-gift').hidden = m !== 'Gift card';
       const amt = parseFloat(r.querySelector('.py-amt').value) || 0, tend = parseFloat(r.querySelector('.py-tend').value) || 0;
       r.querySelector('.py-change strong').textContent = money(Math.max(0, tend - amt), cur);
+      if (m === 'Gift card') { const g = till.giftCardByCode(r.querySelector('.py-code').value); r.querySelector('.py-gcbal').textContent = g ? 'on the card: ' + money(g.balance, cur) : r.querySelector('.py-code').value ? 'no card with that code' : ''; }
+      if (m === 'Store credit' && c) r.querySelector('.py-gcbal').textContent = '';
     });
     const paid = readPays(card).reduce((a, p) => a + p.amount, 0);
     const bal = Math.max(0, r2(t.total - paid));
     card.querySelector('#py-bal').textContent = money(bal, cur);
-    card.querySelector('#py-bal-l').textContent = bal > 0 ? 'Still owing after this payment (deposit)' : 'Balance after this payment';
-    card.querySelector('#modal-ok').textContent = bal > 0 ? 'Take deposit' : 'Complete sale';
+    card.querySelector('#py-bal-l').textContent = bal > 0 ? (kind === 'layby' ? 'Still owing on the layby' : kind === 'account' ? 'Put on the account' : 'Still owing after this payment (deposit)') : 'Balance after this payment';
+    card.querySelector('#modal-ok').textContent = bal > 0 ? (kind === 'layby' ? 'Open layby' : kind === 'account' ? 'Sell on account' : 'Take deposit') : 'Complete sale';
+    const note = card.querySelector('#py-kind-note');
+    note.hidden = kind === 'sale';
+    note.textContent = kind === 'layby' ? 'Layby: the goods stay in the shop until it is paid in full and collected (Sales → Collect). Made-to-order pieces go to the factory now.' : kind === 'account' ? 'On account: the goods go now; the balance shows on the customer’s invoice and is taken with "Account payment".' : '';
   };
   const one = (method) => { const rows = card.querySelector('#pay-rows'); rows.innerHTML = payRow(1); rows.querySelector('.py-method').value = method; rows.querySelector('.py-amt').value = t.total; live(); const f = rows.querySelector(method === 'Cash' ? '.py-tend' : '.py-ref'); if (f) f.focus(); };
   card.querySelectorAll('[data-pay]').forEach(b => b.addEventListener('click', () => {
     card.querySelectorAll('[data-pay]').forEach(x => x.classList.toggle('primary', x === b));
     const k = b.dataset.pay;
-    if (k === 'split') { const rows = card.querySelector('#pay-rows'); rows.innerHTML = payRow(1) + payRow(2); rows.querySelector('.py-method[data-n="1"]').value = 'Card'; rows.querySelector('.py-method[data-n="2"]').value = 'Cash'; rows.querySelector('.py-amt[data-n="1"]').value = ''; live(); rows.querySelector('.py-amt[data-n="1"]').focus(); }
-    else if (k === 'deposit') { one('Card'); const a = card.querySelector('.py-amt'); a.value = r2(t.total * 0.5); live(); a.focus(); a.select(); }
-    else one(k);
+    if (k === 'split') { kind = 'sale'; const rows = card.querySelector('#pay-rows'); rows.innerHTML = payRow(1) + payRow(2); rows.querySelector('.py-method[data-n="1"]').value = 'Card'; rows.querySelector('.py-method[data-n="2"]').value = 'Cash'; rows.querySelector('.py-amt[data-n="1"]').value = ''; live(); rows.querySelector('.py-amt[data-n="1"]').focus(); }
+    else if (k === 'deposit') { kind = 'sale'; one('Card'); const a = card.querySelector('.py-amt'); a.value = r2(t.total * 0.5); live(); a.focus(); a.select(); }
+    else if (k === 'layby') { if (!c) { toast('A layby needs a customer: tap Customer first', 'warn'); return; } kind = 'layby'; one('Card'); const a = card.querySelector('.py-amt'); a.value = r2(t.total * 0.5); live(); a.focus(); a.select(); }
+    else if (k === 'account') { if (!c) { toast('An account sale needs a customer: tap Customer first', 'warn'); return; } kind = 'account'; one('Card'); const a = card.querySelector('.py-amt'); a.value = ''; live(); }
+    else if (k === 'wallet') {
+      if (!c) { toast('Pick a customer first', 'warn'); return; }
+      kind = 'sale';
+      const credit = Math.min(t.total, Number(c.storeCredit) || 0), pts = Math.min(r2(t.total - credit), Number(c.points) || 0);
+      if (!credit && !pts) { toast(c.name + ' has no store credit or points', 'warn'); return; }
+      const rows = card.querySelector('#pay-rows'); rows.innerHTML = payRow(1) + payRow(2);
+      rows.querySelector('.py-method[data-n="1"]').value = credit ? 'Store credit' : 'Points'; rows.querySelector('.py-amt[data-n="1"]').value = credit || pts;
+      rows.querySelector('.py-method[data-n="2"]').value = credit && pts ? 'Points' : 'Card'; rows.querySelector('.py-amt[data-n="2"]').value = credit && pts ? pts : r2(t.total - (credit || pts));
+      live();
+    }
+    else { kind = 'sale'; one(k); }
   }));
   card.addEventListener('input', live); card.addEventListener('change', live);
   live();
@@ -366,7 +420,37 @@ function checkout() {
 // Everything the sale makes: factory orders for made-to-order lines, the
 // invoice with the payments on it, the sale itself (with who rang it and
 // what each line really took), then the shop's order, the slip.
-async function completeSale(pays) {
+// Can the gift card, the store credit and the points cover what is put on them?
+function checkWallet(pays, c) {
+  for (const p of pays) {
+    if (p.method === 'Gift card') { const g = till.giftCardByCode(p.code); if (!g) return 'No gift card with that code'; if (g.status === 'used' || !(Number(g.balance) > 0)) return 'That gift card has nothing left on it'; if (p.amount > Number(g.balance) + 0.005) return 'Only ' + money(g.balance, settings.currency || 'R') + ' is left on the gift card'; }
+    if (p.method === 'Store credit' && p.amount > (Number((c || {}).storeCredit) || 0) + 0.005) return 'Store credit is only ' + money((c || {}).storeCredit || 0, settings.currency || 'R');
+    if (p.method === 'Points' && p.amount > (Number((c || {}).points) || 0) + 0.005) return 'Only ' + Math.floor(Number((c || {}).points) || 0) + ' points';
+  }
+  const cards = {}; for (const p of pays.filter(x => x.method === 'Gift card')) { cards[p.code] = (cards[p.code] || 0) + p.amount; if (cards[p.code] > Number(till.giftCardByCode(p.code).balance) + 0.005) return 'The gift card is used twice for more than it holds'; }
+  return '';
+}
+// Take what was paid off the gift card, the store credit and the points.
+async function spendWallet(pays, c, who, saleNo) {
+  for (const p of pays) {
+    if (p.method === 'Gift card') { const g = till.giftCardByCode(p.code); const left = r2(Number(g.balance) - p.amount); await store.update('giftCards', g.id, { balance: left, status: left > 0.005 ? 'open' : 'used', uses: [...(g.uses || []), { at: store.nowIso(), amount: p.amount, saleNo, by: who }] }); }
+    if (p.method === 'Store credit' && c) await store.update('customers', c.id, { storeCredit: r2((Number(customerById(c.id).storeCredit) || 0) - p.amount) });
+    if (p.method === 'Points' && c) await store.update('customers', c.id, { points: Math.max(0, Math.round((Number(customerById(c.id).points) || 0) - p.amount)) });
+  }
+}
+// Points for a sale: a % of what was really paid with money (not a gift card
+// sold, not points spent). Added to the customer; returns what was earned.
+async function earnPoints(c, amount) {
+  const pts = loyaltyPct() > 0 && c && amount > 0 ? Math.floor(amount * loyaltyPct() / 100) : 0;
+  if (!pts) return { earned: 0, balance: c ? Math.round(Number(c.points) || 0) : null };
+  const now = Math.round(Number(customerById(c.id).points) || 0) + pts;
+  await store.update('customers', c.id, { points: now });
+  return { earned: pts, balance: now };
+}
+const pointsBase = (lines, pays) => r2(lines.filter(l => l.kind !== 'giftcard').reduce((a, l) => a + (Number(l.net) || 0), 0) - pays.filter(p => p.method === 'Points' || p.method === 'Gift card' || p.method === 'Store credit').reduce((a, p) => a + p.amount, 0));
+
+async function completeSale(pays, kind) {
+  kind = kind || 'sale';
   const t = totals();
   const nets = lineNets();
   const c = customerById(cart.customerId) || null;
@@ -383,6 +467,11 @@ async function completeSale(pays) {
   for (const [i, l] of cart.lines.entries()) {
     const line = { kind: l.kind, productId: l.productId || '', name: l.name, qty: Number(l.qty) || 0, unitPrice: r2(l.unitPrice), disc: lineDisc(l), net: nets[i], fabric: l.fabric || '', note: l.note || '', orderId: '', orderNo: '',
       ...(l.custom ? { custom: true } : {}), ...(l.delivery ? { delivery: true } : {}), ...(l.shop ? { shop: true, variantId: l.variantId, inventoryItemId: l.inventoryItemId || '' } : {}) };
+    if (l.kind === 'giftcard') {
+      const code = till.newGiftCode();
+      await store.create('giftCards', { code, amount: line.net, balance: line.net, status: 'open', saleNo, customerId: c ? c.id : '', customerName: c ? c.name : '', soldBy: who, uses: [] });
+      line.giftCode = code; line.note = 'Code ' + code;
+    }
     if (l.kind === 'order') {
       const n = await store.nextNumber('orderNo', settings.firstOrderNo || 1001);
       const orderNo = (settings.orderPrefix || 'CP-') + n;
@@ -394,7 +483,7 @@ async function completeSale(pays) {
         events: [{ at: now, by: who, what: 'Sold at the till (' + saleNo + ')' }]
       });
       line.orderId = id; line.orderNo = orderNo;
-    } else if (l.productId) {
+    } else if (l.productId && kind !== 'layby') {     // a layby's stock leaves the shelf when it is collected
       const p = allProducts().find(x => x.id === l.productId);
       if (p && Number.isFinite(Number(p.stock))) await store.update('products', p.id, { stock: Math.max(0, (Number(p.stock) || 0) - line.qty) });
     }
@@ -404,15 +493,15 @@ async function completeSale(pays) {
   // 2. the invoice, with the payments on it
   const inNo = await store.nextNumber('invoiceNo', settings.firstInvoiceNo || 1);
   const invoiceNo = (settings.invoicePrefix || 'INV-') + String(inNo).padStart(4, '0');
-  const payments = pays.filter(p => p.amount > 0).map(p => ({ at: today(), amount: p.amount, method: p.method, ref: p.ref, by: who }));
+  const payments = pays.filter(p => p.amount > 0).map(p => ({ at: today(), amount: p.amount, method: p.method, ref: p.method === 'Gift card' ? p.code : p.ref, by: who }));
   const paid = amount >= t.total - 0.005;
   const invLines = lines.map(l => ({ orderId: l.orderId, orderNo: l.orderNo, externalRef: '', qty: l.qty, unitPrice: l.unitPrice,
-    description: l.name + (l.fabric ? ' — ' + l.fabric : '') + (l.kind === 'order' ? ' (made to order, due ' + niceDate(due) + ')' : l.custom ? '' : ' (from stock)') }));
+    description: l.name + (l.fabric ? ' — ' + l.fabric : '') + (l.kind === 'order' ? ' (made to order, due ' + niceDate(due) + ')' : l.kind === 'giftcard' ? ' ' + (l.giftCode || '') : l.custom ? '' : ' (from stock)') }));
   if (t.discount) invLines.push({ orderId: '', orderNo: '', externalRef: '', description: 'Discount' + (t.pct ? ' (' + (Math.round(t.pct * 10) / 10) + '%)' : ''), qty: 1, unitPrice: -t.discount });
   const invoiceId = await store.create('invoices', {
     invoiceNo, customerId: c ? c.id : '', customerName: c ? c.name : 'Walk-in customer', date: today(),
     dueDate: paid ? today() : due, lines: invLines, incl: true, subtotal: t.subtotal, vat: t.vat, vatRate: vatRate(), total: t.total,
-    status: paid ? 'paid' : 'issued', paidAt: paid ? today() : '', payments, note: 'Till sale ' + saleNo + (cart.note ? ' · ' + cart.note : ''),
+    status: paid ? 'paid' : 'issued', paidAt: paid ? today() : '', payments, note: (kind === 'layby' ? 'Layby ' : kind === 'account' ? 'On account: till sale ' : 'Till sale ') + saleNo + (cart.note ? ' · ' + cart.note : ''),
     saleNo, events: [{ at: now, by: who, what: 'Raised at the till (' + saleNo + ')' }]
   });
   for (const l of lines) if (l.orderId) await store.update('orders', l.orderId, { invoiceId, invoiceNo });
@@ -420,22 +509,29 @@ async function completeSale(pays) {
   // 3. the sale itself
   const cash = pays.find(p => p.method === 'Cash' && p.tendered != null);
   const me = till.tillUser();
-  const sale = { saleNo, date: today(), time: new Date().toTimeString().slice(0, 5), customerId: c ? c.id : '', customerName: c ? c.name : 'Walk-in customer',
+  // the gift card, the store credit and the points are spent; points are earned
+  await spendWallet(pays, c, who, saleNo);
+  const pts = kind === 'sale' ? await earnPoints(c, pointsBase(lines, pays)) : { earned: 0, balance: c ? Math.round(Number(c.points) || 0) : null };
+  const sale = { saleNo, kind, date: today(), time: new Date().toTimeString().slice(0, 5), customerId: c ? c.id : '', customerName: c ? c.name : 'Walk-in customer',
     lines, incl: true, subtotal: t.subtotal, discount: t.discount, discountPct: Number(cart.discountPct) || 0, vat: t.vat, total: t.total,
-    paidNow: amount, method: [...new Set(payments.map(p => p.method))].join(' + '), ref: payments.map(p => p.ref).filter(Boolean).join(', '), payments: pays,
+    paidNow: amount, method: [...new Set(payments.map(p => p.method))].join(' + '), ref: payments.map(p => p.ref).filter(Boolean).join(', '), payments: pays.map(p => ({ ...p, at: now, by: who })),
     ...(cash ? { tendered: cash.tendered, change: cash.change } : {}),
     balance: r2(t.total - amount), invoiceId, invoiceNo, note: cart.note, by: who, ...(me ? { tillStaffId: me.id } : {}),
-    ...(lines.some(l => l.shop) ? { shopifySale: true } : {}) };
+    ...(pts.earned ? { pointsEarned: pts.earned, pointsBalance: pts.balance } : {}),
+    ...(kind === 'layby' ? { status: 'layby' } : {}),
+    ...(lines.some(l => l.shop) && kind !== 'layby' ? { shopifySale: true } : {}) };
   const saleId = await store.create('sales', sale);
 
   // pieces from the shelf also come off the online shop's count: a sale of the
-  // shop's stock becomes a Shopify order
-  store.shopifyPushSale(saleId, lines);
-  if (lines.some(l => l.shop)) { till.takeFromShop(lines); setTimeout(() => till.refreshCatalogue(true), 4000); }
+  // shop's stock becomes a Shopify order (a layby's only when it is collected)
+  if (kind !== 'layby') {
+    store.shopifyPushSale(saleId, lines);
+    if (lines.some(l => l.shop)) { till.takeFromShop(lines); setTimeout(() => till.refreshCatalogue(true), 4000); }
+  }
 
   const made = lines.filter(l => l.kind === 'order').length;
   cart = emptyCart(); persist();
-  toast(saleNo + ' complete' + (made ? ' · ' + made + ' order' + (made === 1 ? '' : 's') + ' sent to the factory' : ''));
+  toast(saleNo + (kind === 'layby' ? ' layby opened' : kind === 'account' ? ' on account' : ' complete') + (made ? ' · ' + made + ' order' + (made === 1 ? '' : 's') + ' sent to the factory' : '') + (pts.earned ? ' · ' + pts.earned + ' points earned' : ''));
   rerender();
   setTimeout(() => saleDone({ ...sale, id: saleId }, c), 0);     // once the payment box has closed
 }
@@ -447,7 +543,9 @@ function saleDone(sale, c) {
   const m = openModal('Sale ' + sale.saleNo + ' complete', `
     <div class="cost-live" style="margin-top:0"><div class="tot"><span>Total</span><strong>${esc(money(sale.total, cur))}</strong></div>
       ${sale.tendered ? `<div><span>Cash given</span><strong>${esc(money(sale.tendered, cur))}</strong></div><div class="tot"><span>Change</span><strong>${esc(money(sale.change, cur))}</strong></div>` : ''}
-      ${Number(sale.balance) > 0 ? `<div><span>Still owing</span><strong>${esc(money(sale.balance, cur))}</strong></div>` : ''}</div>
+      ${Number(sale.balance) > 0 ? `<div><span>${sale.kind === 'layby' ? 'Still owing on the layby' : sale.kind === 'account' ? 'On the account' : 'Still owing'}</span><strong>${esc(money(sale.balance, cur))}</strong></div>` : ''}
+      ${(sale.lines || []).filter(l => l.giftCode).map(l => `<div><span>Gift card ${esc(money(l.net, cur))}</span><strong>${esc(l.giftCode)}</strong></div>`).join('')}
+      ${sale.pointsEarned ? `<div><span>Points earned</span><strong>${esc(sale.pointsEarned)} (now ${esc(sale.pointsBalance)})</strong></div>` : ''}</div>
     <div class="pay-kinds" style="grid-template-columns:1fr 1fr">
       <button type="button" class="btn primary" data-slip="print">🖨 Print slip</button>
       <button type="button" class="btn" data-slip="invoice">A4 invoice</button>
@@ -460,6 +558,115 @@ function saleDone(sale, c) {
     if (k === 'print') till.printSlip(sale); else if (k === 'invoice') printInvoice(sale.invoiceId); else till.shareSlip(sale, k, c);
   }));
   setTimeout(() => till.printSlip(sale), 150);
+}
+
+// ------------------------------------------------- paying later, collecting ----
+
+// Money on a sale that still owes (a layby, an account sale, a deposit).
+function payOnSale(id) {
+  const s = sales.find(x => x.id === id); if (!s || !(Number(s.balance) > 0.005)) return;
+  const inv = s.invoiceId ? invoiceById(s.invoiceId) : null;
+  const c = customerById(s.customerId) || null;
+  const cur = settings.currency || 'R';
+  const owing = inv ? Math.max(0, balance(inv)) : Number(s.balance) || 0;
+  const m = openModal('Payment on ' + s.saleNo + (s.kind === 'layby' ? ' (layby)' : s.kind === 'account' ? ' (on account)' : ''), `
+    <p class="muted" style="margin-top:0">${esc(s.customerName || '')} · total ${esc(money(s.total, cur))} · <strong>owing ${esc(money(owing, cur))}</strong></p>
+    ${row(field('Amount', 'pl-amt', { type: 'number', min: 0, step: '0.01', value: owing }), field('Method', 'pl-method', { type: 'select', value: 'Card', options: METHODS.map(x => ({ value: x, label: x })) }))}
+    <div id="pl-cash" hidden>${row(field('Cash given', 'pl-tend', { type: 'number', min: 0, step: '0.01' }), '<div class="fld"><span>Change</span><strong id="pl-change" style="font-size:18px">—</strong></div>')}</div>
+    <div id="pl-gift" hidden>${field('Gift card code', 'pl-code')}</div>
+    ${field('Reference', 'pl-ref', { placeholder: 'Optional' })}`, {
+    okLabel: 'Take payment',
+    onOk: async (w) => {
+      const amount = r2(parseFloat(val(w, 'pl-amt')) || 0), method = val(w, 'pl-method');
+      if (!(amount > 0)) { toast('How much?', 'warn'); return false; }
+      if (amount > owing + 0.005) { toast('That is more than the ' + money(owing, cur) + ' owing', 'warn'); return false; }
+      const tendRaw = val(w, 'pl-tend'); const tendered = method === 'Cash' && tendRaw !== '' ? r2(parseFloat(tendRaw) || 0) : null;
+      if (tendered != null && tendered < amount - 0.005) { toast('Cash given is less than the amount', 'warn'); return false; }
+      const p = { method, amount, ref: val(w, 'pl-ref'), tendered, change: tendered != null ? r2(tendered - amount) : 0, ...(method === 'Gift card' ? { code: val(w, 'pl-code') } : {}) };
+      if (!c && (method === 'Store credit' || method === 'Points')) { toast('This sale has no customer', 'warn'); return false; }
+      const bad = checkWallet([p], c); if (bad) { toast(bad, 'warn'); return false; }
+      await takePayment(s, inv, [p]);
+      toast(money(amount, cur) + ' taken on ' + s.saleNo + (p.change ? ' · change ' + money(p.change, cur) : ''));
+      const after = sales.find(x => x.id === id);
+      if (after && s.kind === 'layby' && !(Number(after.balance) > 0.005)) setTimeout(() => collectLayby(id), 300);
+    }
+  });
+  const card = m.wrap.querySelector('.modal-card');
+  const live = () => { const mth = card.querySelector('#pl-method').value; card.querySelector('#pl-cash').hidden = mth !== 'Cash'; card.querySelector('#pl-gift').hidden = mth !== 'Gift card';
+    card.querySelector('#pl-change').textContent = money(Math.max(0, (parseFloat(card.querySelector('#pl-tend').value) || 0) - (parseFloat(card.querySelector('#pl-amt').value) || 0)), cur); };
+  card.addEventListener('input', live); card.addEventListener('change', live); live();
+}
+// The payment itself: on the invoice, on the sale, off the card / credit / points.
+async function takePayment(s, inv, pays) {
+  const who = till.ringer(), now = store.nowIso();
+  const c = customerById(s.customerId) || null;
+  const amount = r2(pays.reduce((a, p) => a + p.amount, 0));
+  await spendWallet(pays, c, who, s.saleNo);
+  if (inv) {
+    const payments = [...(inv.payments || []), ...pays.map(p => ({ at: today(), amount: p.amount, method: p.method, ref: p.method === 'Gift card' ? p.code : p.ref, by: who }))];
+    const paid = r2(payments.reduce((t, p) => t + (Number(p.amount) || 0), 0));
+    const patch = { payments };
+    if (paid >= (Number(inv.total) || 0) - 0.005) { patch.status = 'paid'; patch.paidAt = today(); }
+    await store.update('invoices', inv.id, patch, 'Payment ' + money(amount, settings.currency || 'R') + ' at the till (' + pays.map(p => p.method).join(' + ') + ')');
+  }
+  const paidNow = r2((Number(s.paidNow) || 0) + amount);
+  await store.update('sales', s.id, { paidNow, balance: r2(Math.max(0, (Number(s.total) || 0) - paidNow)), payments: [...(s.payments || []), ...pays.map(p => ({ ...p, at: now, by: who }))] });
+}
+// A paid layby goes out of the door: its stock leaves, the shop gets its order, points are earned.
+async function collectLayby(id) {
+  const s = sales.find(x => x.id === id); if (!s || s.kind !== 'layby' || s.collectedAt) return;
+  if (Number(s.balance) > 0.005) { toast(money(s.balance, settings.currency || 'R') + ' is still owing on ' + s.saleNo, 'warn'); return; }
+  if (!confirm('Hand over layby ' + s.saleNo + ' to ' + (s.customerName || 'the customer') + '?')) return;
+  const c = customerById(s.customerId) || null;
+  for (const l of s.lines || []) {
+    if (l.kind === 'stock' && l.productId) { const p = allProducts().find(x => x.id === l.productId); if (p && Number.isFinite(Number(p.stock))) await store.update('products', p.id, { stock: Math.max(0, (Number(p.stock) || 0) - l.qty) }); }
+  }
+  const pts = await earnPoints(c, pointsBase(s.lines || [], s.payments || []));
+  await store.update('sales', id, { status: 'collected', collectedAt: store.nowIso(), collectedBy: till.ringer(), ...(pts.earned ? { pointsEarned: pts.earned, pointsBalance: pts.balance } : {}), ...((s.lines || []).some(l => l.shop) ? { shopifySale: true } : {}) });
+  if ((s.lines || []).some(l => l.shop)) { store.shopifyPushSale(id, s.lines); till.takeFromShop(s.lines); setTimeout(() => till.refreshCatalogue(true), 4000); }
+  toast(s.saleNo + ' collected' + (pts.earned ? ' · ' + pts.earned + ' points earned' : ''));
+}
+// Money against a customer's account: the oldest open sale first.
+function accountPayment() {
+  const cur = settings.currency || 'R';
+  const owing = {}; sales.forEach(s => { if (s.customerId && Number(s.balance) > 0.005) owing[s.customerId] = r2((owing[s.customerId] || 0) + Number(s.balance)); });
+  const custs = allCustomers().filter(c => owing[c.id]).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  if (!custs.length) { toast('Nobody owes anything on the till', 'warn'); return; }
+  const m = openModal('Account payment', `
+    ${field('Customer', 'ap-cust', { type: 'select', options: custs.map(c => ({ value: c.id, label: c.name + ' — owes ' + money(owing[c.id], cur) })) })}
+    <div class="muted" id="ap-list" style="margin:-.3rem 0 .6rem"></div>
+    ${row(field('Amount', 'ap-amt', { type: 'number', min: 0, step: '0.01' }), field('Method', 'ap-method', { type: 'select', value: 'EFT', options: ['EFT', 'Card', 'Cash', 'Other'].map(x => ({ value: x, label: x })) }))}
+    <div id="ap-cash" hidden>${row(field('Cash given', 'ap-tend', { type: 'number', min: 0, step: '0.01' }), '<div class="fld"><span>Change</span><strong id="ap-change" style="font-size:18px">—</strong></div>')}</div>
+    ${field('Reference', 'ap-ref', { placeholder: 'Bank reference / receipt no.' })}`, {
+    okLabel: 'Take payment',
+    onOk: async (w) => {
+      const cid = val(w, 'ap-cust'), method = val(w, 'ap-method');
+      let left = r2(parseFloat(val(w, 'ap-amt')) || 0);
+      if (!(left > 0)) { toast('How much?', 'warn'); return false; }
+      if (left > owing[cid] + 0.005) { toast('That is more than the ' + money(owing[cid], cur) + ' owing', 'warn'); return false; }
+      const tendRaw = val(w, 'ap-tend'); const tendered = method === 'Cash' && tendRaw !== '' ? r2(parseFloat(tendRaw) || 0) : null;
+      if (tendered != null && tendered < left - 0.005) { toast('Cash given is less than the amount', 'warn'); return false; }
+      const open = sales.filter(s => s.customerId === cid && Number(s.balance) > 0.005).sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+      const total = left;
+      for (const s of open) {
+        if (left <= 0.005) break;
+        const take = Math.min(left, r2(Number(s.balance)));
+        await takePayment(s, s.invoiceId ? invoiceById(s.invoiceId) : null, [{ method, amount: take, ref: val(w, 'ap-ref'), tendered: null, change: 0 }]);
+        left = r2(left - take);
+      }
+      toast(money(total, cur) + ' taken on account' + (tendered != null && tendered > total ? ' · change ' + money(tendered - total, cur) : ''));
+    }
+  });
+  const card = m.wrap.querySelector('.modal-card');
+  const live = () => {
+    const cid = card.querySelector('#ap-cust').value;
+    card.querySelector('#ap-list').innerHTML = sales.filter(s => s.customerId === cid && Number(s.balance) > 0.005).map(s => esc(s.saleNo + ' ' + niceDate(s.date) + (s.kind ? ' (' + s.kind + ')' : '') + ': owes ' + money(s.balance, cur))).join('<br>');
+    if (!card.querySelector('#ap-amt').value) card.querySelector('#ap-amt').value = owing[cid];
+    const mth = card.querySelector('#ap-method').value; card.querySelector('#ap-cash').hidden = mth !== 'Cash';
+    card.querySelector('#ap-change').textContent = money(Math.max(0, (parseFloat(card.querySelector('#ap-tend').value) || 0) - (parseFloat(card.querySelector('#ap-amt').value) || 0)), cur);
+  };
+  card.querySelector('#ap-cust').addEventListener('change', () => { card.querySelector('#ap-amt').value = ''; live(); });
+  card.addEventListener('input', live); live();
 }
 
 // ---------------------------------------------------------------- render ----
@@ -521,6 +728,7 @@ function saleHtml(cur) {
         <button class="btn ghost" data-act="pos-scan" title="Scan a barcode with the camera">📷 Scan</button>
         <button class="btn ghost" data-act="pos-custom">Other item</button>
         <button class="btn ghost" data-act="pos-delivery" title="Add a delivery fee and where it goes">🚚 Delivery</button>
+        <button class="btn ghost" data-act="pos-giftcard" title="Sell a gift card">🎁 Gift card</button>
       </div>
       <div class="btn-row" style="margin-bottom:.7rem">
         <button class="btn ${!cat ? 'primary' : 'ghost'} sm" data-act="pos-cat" data-to="">All</button>
@@ -537,7 +745,7 @@ function saleHtml(cur) {
     </div>
     <div class="pos-right">
       <div class="card pos-cart">
-        <button class="pos-cust" data-act="pos-customer">${c ? `<strong>${esc(c.name)}</strong><span>${esc([c.phone, c.area].filter(Boolean).join(' · ') || 'tap to change')}</span>` : '<strong>Customer</strong><span>Tap to pick or add (needed for made-to-order)</span>'}</button>
+        <button class="pos-cust" data-act="pos-customer">${c ? `<strong>${esc(c.name)}</strong><span>${esc([c.phone, c.area].filter(Boolean).join(' · ') || 'tap to change')}</span>${Number(c.points) > 0 || Number(c.storeCredit) > 0 ? `<span>${Number(c.points) > 0 ? '⭐ ' + esc(Math.round(Number(c.points))) + ' points' : ''}${Number(c.points) > 0 && Number(c.storeCredit) > 0 ? ' · ' : ''}${Number(c.storeCredit) > 0 ? 'store credit ' + esc(money(c.storeCredit, cur)) : ''}</span>` : ''}` : '<strong>Customer</strong><span>Tap to pick or add (needed for made-to-order, layby, on account)</span>'}</button>
         <div class="pos-lines">${cart.lines.length ? cart.lines.map((l, i) => `
           <div class="pos-line">
             <div class="pos-line-top">
@@ -587,16 +795,17 @@ function salesHtml(cur) {
       <div class="tile"><div class="tile-n">${esc(money(taken, cur))}</div><div class="tile-l">Taken today</div></div>
       ${Object.keys(byMethod).sort().map(m => `<div class="tile"><div class="tile-n">${esc(money(byMethod[m], cur))}</div><div class="tile-l">${esc(m)} today</div></div>`).join('')}
     </div>
+    <div class="btn-row" style="margin-bottom:.7rem"><button class="btn ghost" data-act="pos-account" title="Money from a customer who owes on a layby or an account sale">Account payment</button>${(() => { const o = r2(sales.reduce((a, s) => a + Math.max(0, Number(s.balance) || 0), 0)); return o ? '<span class="chip late">owed to the till: ' + esc(money(o, cur)) + '</span>' : ''; })()}</div>
     ${sales.length ? `<div class="card" style="padding:0; overflow:auto"><table class="tbl">
       <thead><tr><th>Sale</th><th>Date</th><th>Customer</th><th>Items</th><th class="r">Total</th><th class="r">Paid</th><th class="r">Balance</th><th>Invoice</th><th></th></tr></thead>
       <tbody>${sales.slice(0, 200).map(s => `<tr>
-        <td><strong>${esc(s.saleNo)}</strong><div class="muted">${esc(s.by || '')}</div></td><td>${esc(niceDate(s.date))}</td><td>${esc(s.customerName || '')}</td>
+        <td><strong>${esc(s.saleNo)}</strong>${s.kind === 'layby' ? ' <span class="chip ' + (s.collectedAt ? 'calm' : 'late') + '">' + (s.collectedAt ? 'layby collected' : 'layby') + '</span>' : s.kind === 'account' ? ' <span class="chip ' + (Number(s.balance) > 0.005 ? 'late' : 'calm') + '">on account</span>' : ''}<div class="muted">${esc(s.by || '')}</div></td><td>${esc(niceDate(s.date))}</td><td>${esc(s.customerName || '')}</td>
         <td>${(s.lines || []).map(l => esc(l.qty + '× ' + l.name) + (l.kind === 'order' ? ' <span class="chip st-prod">' + esc(l.orderNo || 'order') + '</span>' : ' <span class="chip calm">' + (l.shop ? 'shop' : 'stock') + '</span>')).join('<br>')}${s.shopifyOrderName ? '<div class="muted">Shop order ' + esc(s.shopifyOrderName) + '</div>' : s.shopifySale ? '<div class="muted">to the shop…</div>' : ''}
           ${(s.returns || []).map(r => `<div class="muted" style="margin-top:3px">↩ ${esc(r.returnNo)} ${esc(niceDate(r.date))}: ${esc((r.lines || []).map(x => x.qty + '× ' + x.name).join(', '))}${Number(r.refund) ? ' · refunded ' + esc(money(r.refund, cur)) : ''}${r.creditId ? ` <button class="btn ghost sm" data-act="pos-reprint" data-id="${esc(r.creditId)}">${esc(r.creditNo || 'Credit note')}</button>` : ''}</div>`).join('')}</td>
         <td class="r">${esc(money(s.total, cur))}</td><td class="r">${esc(money(s.paidNow, cur))}${s.method ? '<div class="muted">' + esc(s.method) + '</div>' : ''}</td>
         <td class="r">${Number(s.balance) > 0 ? '<strong>' + esc(money(s.balance, cur)) + '</strong>' : '—'}</td>
         <td>${esc(s.invoiceNo || '')}</td>
-        <td class="r nowrap"><button class="btn ghost sm" data-act="pos-slip" data-id="${esc(s.id)}" title="80 mm slip">Slip</button>${s.invoiceId ? ` <button class="btn ghost sm" data-act="pos-reprint" data-id="${esc(s.invoiceId)}" title="A4 invoice">Invoice</button>` : ''} <button class="btn ghost sm" data-act="pos-share" data-id="${esc(s.id)}" data-how="wa" title="Send the slip on WhatsApp">WA</button>${(s.lines || []).some((l, i) => returnedQty(s, i) < (Number(l.qty) || 0)) ? ` <button class="btn ghost sm" data-act="pos-return" data-id="${esc(s.id)}">Return</button>` : ''}</td>
+        <td class="r nowrap">${Number(s.balance) > 0.005 ? `<button class="btn primary sm" data-act="pos-pay" data-id="${esc(s.id)}">Pay</button> ` : ''}${s.kind === 'layby' && !s.collectedAt && !(Number(s.balance) > 0.005) ? `<button class="btn primary sm" data-act="pos-collect" data-id="${esc(s.id)}">Collect</button> ` : ''}<button class="btn ghost sm" data-act="pos-slip" data-id="${esc(s.id)}" title="80 mm slip">Slip</button>${s.invoiceId ? ` <button class="btn ghost sm" data-act="pos-reprint" data-id="${esc(s.invoiceId)}" title="A4 invoice">Invoice</button>` : ''} <button class="btn ghost sm" data-act="pos-share" data-id="${esc(s.id)}" data-how="wa" title="Send the slip on WhatsApp">WA</button>${(s.lines || []).some((l, i) => returnedQty(s, i) < (Number(l.qty) || 0)) ? ` <button class="btn ghost sm" data-act="pos-return" data-id="${esc(s.id)}">Return</button>` : ''}</td>
       </tr>`).join('')}</tbody></table></div>` : empty('', 'No sales yet', 'Ring up the first one under New sale.')}`;
 }
 
@@ -688,7 +897,7 @@ async function openReturn(id) {
       </tr>`).join('')}</tbody></table></div>
     ${row(field('Why is it coming back?', 'rt-why', { type: 'select', value: 'Changed their mind', options: ['Changed their mind', 'Damaged', 'Faulty', 'Wrong item', 'Not as described', 'Other'].map(x => ({ value: x, label: x })) }), field('Note', 'rt-note', { placeholder: 'Optional' }))}
     <div class="cost-live" id="rt-live"></div>
-    ${row(field('Refund now', 'rt-refund', { type: 'number', min: 0, step: '0.01', value: 0 }), field('Method', 'rt-method', { type: 'select', value: String(s.method || 'Card').split(' + ')[0], options: ['Card', 'Cash', 'EFT', 'Other'].map(x => ({ value: x, label: x })) }))}
+    ${row(field('Refund now', 'rt-refund', { type: 'number', min: 0, step: '0.01', value: 0 }), field('Method', 'rt-method', { type: 'select', value: String(s.method || 'Card').split(' + ')[0], options: ['Card', 'Cash', 'EFT', 'Other'].concat(s.customerId ? ['Store credit'] : []).map(x => ({ value: x, label: x })) }))}
     <p class="muted" id="rt-hint"></p>`, {
     okLabel: 'Complete return',
     onOk: async (w) => {
@@ -808,6 +1017,8 @@ async function completeReturn(saleId, picks, refund, method, reason) {
     returns: [...(s.returns || []), { returnNo, date: today(), at: now, by: who, lines, ex, vat, credit, refund, setOff, method, reason, creditId, creditNo }],
     balance: inv ? newOwing : Math.max(0, Number(s.balance) || 0)
   } });
+  // a refund as store credit goes onto the customer, to spend at the till
+  if (method === 'Store credit' && refund > 0 && s.customerId) { const c = customerById(s.customerId); if (c) ops.push({ op: 'update', coll: 'customers', id: c.id, patch: { storeCredit: r2((Number(c.storeCredit) || 0) + refund) } }); }
   await store.batchWrite(ops);
 
   // pieces back on the shelf go back on the online shop's count too
@@ -826,6 +1037,10 @@ export function posAction(act, el) {
     case 'pos-cat': cat = el.dataset.to; return rerender();
     case 'pos-add': if (addAny(el.dataset.id)) rerender(); return;
     case 'pos-line-disc': return lineDiscount(i);
+    case 'pos-giftcard': return addGiftCard();
+    case 'pos-pay': return payOnSale(el.dataset.id);
+    case 'pos-collect': return collectLayby(el.dataset.id);
+    case 'pos-account': return accountPayment();
     case 'pos-cart-disc': return cartDiscountPrompt();
     case 'pos-slip': { const s = sales.find(x => x.id === el.dataset.id); if (s) till.printSlip(s); return; }
     case 'pos-share': { const s = sales.find(x => x.id === el.dataset.id); if (s) till.shareSlip(s, el.dataset.how, customerById(s.customerId)); return; }

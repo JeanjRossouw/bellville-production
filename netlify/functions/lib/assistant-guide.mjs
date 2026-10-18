@@ -51,6 +51,23 @@ password; the owner invites the team under Settings and gives each person a role
   methods, e.g. card and cash), or Deposit (part now, the balance on collection or
   delivery). The 80 mm slip prints; the Sale complete box can also print the A4 invoice or
   send the slip by WhatsApp or email. An invoice is raised for every sale.
+- Other ways to pay: "Gift card" (type the code from the slip; what is left stays on the
+  card), "Store credit" and "Points" (the customer's own; "Credit / points" fills them in).
+  "🎁 Gift card" on the sale screen sells a gift card for any amount (no VAT until it is
+  spent); its code prints on the slip and shows in the Sale complete box.
+- Loyalty points: every sale earns Settings → "Loyalty points at the till" % of what was
+  paid with money (default 5%), 1 point = R1, kept on the customer (shown under the customer
+  on the sale and on the Customers screen). Spent as a payment method at the till.
+- Store credit: a return can be refunded as "Store credit" instead of money; it is kept on
+  the customer and spent at the till.
+- Layby (a sales order): pick the customer, Take payment → "Layby", take the deposit. The
+  goods stay in the shop and the balance shows on the Sales tab ("owed to the till"). "Pay"
+  on the sale takes more money; when it is paid in full, "Collect" hands it over (stock and
+  the shop's order happen then; points are earned then). Made-to-order pieces on a layby go
+  to the factory straight away.
+- On account: Take payment → "On account": the goods go now, the balance is on the
+  customer's invoice. "Account payment" on the Sales tab takes money from a customer who
+  owes, oldest sale first; "Pay" on one sale does the same for that sale.
 - Register tab (the cash-up): Open register with the cash float at the start of the day.
   It then shows the cash expected in the drawer (float + cash sales + cash in − cash refunds
   − cash out), card and EFT totals, the sales count and the takings per person. "Cash in" /
