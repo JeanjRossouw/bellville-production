@@ -8,7 +8,7 @@
 // products (one document each, carrying its bill of materials and selling
 // price) and the overheads + labour rate, which live in settings.
 import * as store from './store.js';
-import { esc, money, field, row, val, openModal, toast, empty, niceDate, today } from './ui.js';
+import { esc, money, field, row, val, openModal, toast, empty, niceDate, today, imgUrl, productImg } from './ui.js';
 import { nextShopCode, labelSheetHtml, encodable } from './barcode.js';
 
 export const UNITS = ['m', 'm²', 'sheet', 'each', 'kg', 'L', 'roll', 'pack'];
@@ -123,7 +123,7 @@ function productForm(p) {
   ) + row(
     field('In stock on the showroom floor', 'p-stock', { value: p.stock == null ? '' : p.stock, type: 'number', min: 0, placeholder: '0 = made to order only' }),
     field('Barcode', 'p-barcode', { value: p.barcode, placeholder: 'Scan it, or leave blank for a shop code' })
-  ) + `<div class="fld"><span>Bill of materials</span>
+  ) + `<div class="img-field">${field('Picture (web address)', 'p-img', { value: p.imageUrl, placeholder: 'https://… — comes from the online shop by itself' })}<span id="p-img-show">${productImg(p, 'prod-thumb lg', 300)}</span></div>` + `<div class="fld"><span>Bill of materials</span>
       <div id="bom">${(p.materials && p.materials.length ? p.materials : [{}]).map(bomRow).join('')}</div>
       <button type="button" class="btn ghost sm" id="bom-add" style="margin-top:.4rem">＋ Add a material</button>
       ${materials.length ? '' : '<p class="muted">No materials yet — add them under the Materials tab first.</p>'}
@@ -145,6 +145,7 @@ function readProduct(w) {
     sellingPrice: parseFloat(val(w, 'p-price')) || 0,
     stock: parseInt(val(w, 'p-stock'), 10) || 0,
     barcode: val(w, 'p-barcode').trim(),
+    imageUrl: imgUrl(val(w, 'p-img')),
     materials: lines, notes: val(w, 'p-notes')
   };
 }
@@ -164,6 +165,8 @@ function wireProductForm(wrap) {
       r.querySelector('.bom-line').textContent = m && q ? money(m.cost * q, cur) : '';
     });
     const c = costOf(d);
+    const show = w.querySelector('#p-img-show');
+    if (show && (show.dataset.url || '') !== d.imageUrl) { show.dataset.url = d.imageUrl; show.innerHTML = productImg(d, 'prod-thumb lg', 300); }
     out.innerHTML = `
       <div><span>Materials</span><strong>${esc(money(c.material, cur))}</strong></div>
       <div><span>Labour ${d.labourHours || 0}h × ${esc(money(labourRate(), cur))}</span><strong>${esc(money(c.labour, cur))}</strong></div>
@@ -275,7 +278,7 @@ function productsHtml(cur) {
       <table class="tbl cost">
         <thead><tr><th>Product</th><th class="r">Materials</th><th class="r">Labour</th><th class="r">Overhead</th><th class="r">Cost</th><th class="r">Price</th><th class="r">Margin</th><th></th></tr></thead>
         <tbody>${cats[cat].map(p => { const c = costOf(p); const missing = c.lines.some(l => l.missing); return `<tr>
-          <td><strong>${esc(p.name)}</strong>${missing ? ' <span class="chip late">material missing</span>' : ''}<div class="muted">${c.lines.length} material${c.lines.length === 1 ? '' : 's'} · ${p.labourHours || 0}h${Number(p.stock) > 0 ? ' · ' + Number(p.stock) + ' in stock' : ''}${p.barcode ? ' · ▮▯▮ ' + esc(p.barcode) : ''}</div></td>
+          <td>${productImg(p, 'prod-thumb', 120)}<strong>${esc(p.name)}</strong>${missing ? ' <span class="chip late">material missing</span>' : ''}<div class="muted">${c.lines.length} material${c.lines.length === 1 ? '' : 's'} · ${p.labourHours || 0}h${Number(p.stock) > 0 ? ' · ' + Number(p.stock) + ' in stock' : ''}${p.barcode ? ' · ▮▯▮ ' + esc(p.barcode) : ''}</div></td>
           <td class="r">${esc(money(c.material, cur))}</td>
           <td class="r">${esc(money(c.labour, cur))}</td>
           <td class="r">${esc(money(c.overhead, cur))}</td>

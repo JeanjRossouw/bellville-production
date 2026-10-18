@@ -87,12 +87,15 @@ export async function listProducts(cfg) {
     const { json, next } = await api(cfg, url);
     for (const p of json.products || []) {
       const variants = p.variants || [];
+      const images = p.images || [];
       for (const v of variants) {
+        // the variant's own picture, else the product's first
+        const img = (v.image_id && images.find(i => String(i.id) === String(v.image_id))) || p.image || images[0];
         const named = variants.length > 1 && v.title && v.title !== 'Default Title';
         out.push({
           shopifyProductId: String(p.id), shopifyVariantId: String(v.id), shopifyInventoryItemId: String(v.inventory_item_id || ''),
           title: named ? `${p.title} — ${v.title}` : p.title, sku: v.sku || '', price: Number(v.price) || 0,
-          tracked: v.inventory_management === 'shopify', qoh: Number(v.inventory_quantity) || 0, category: p.product_type || ''
+          tracked: v.inventory_management === 'shopify', qoh: Number(v.inventory_quantity) || 0, category: p.product_type || '', image: (img && img.src) || ''
         });
       }
     }

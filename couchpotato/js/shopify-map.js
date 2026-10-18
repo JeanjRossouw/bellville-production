@@ -136,6 +136,7 @@ export function mapProduct(v, { taxesIncluded, vatRate }) {
   return {
     name: v.title, category: v.category || '', sellingPrice: price,
     ...(v.tracked ? { stock: Math.max(0, Math.round(v.qoh) || 0) } : {}),
+    ...(v.image ? { imageUrl: v.image } : {}),    // a picture added in the app stays when the shop has none
     shopifyProductId: v.shopifyProductId, shopifyVariantId: v.shopifyVariantId, shopifyInventoryItemId: v.shopifyInventoryItemId
   };
 }

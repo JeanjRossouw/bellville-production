@@ -29,6 +29,9 @@ kept on the server.
   prices with VAT) and shelf counts (where Shopify keeps count) come from the
   shop. The factory's own names, recipes and costs are never touched. New
   ones are added.
+  Each product's **picture** comes too (the variant's own, else the product's
+  first), shown on the till, in Costing and when editing a product. A picture
+  typed into the app stays when the shop has none.
 - **Till → shop stock.** A sale at the till of a linked product "from stock"
   takes the same number off Shopify's count. It is sent as "take 2 off", never
   as a total, so an online sale at the same moment is not written over. If the

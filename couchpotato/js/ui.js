@@ -4,6 +4,16 @@ export const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
+// A product's picture: a web address only (the shop's, or one typed in). Shopify's
+// own pictures are asked for small, so a till full of them stays quick.
+export const imgUrl = (u) => { u = String(u || '').trim(); return /^https?:\/\/[^\s"'<>]+$/i.test(u) ? u : ''; };
+export function productImg(p, cls, width) {
+  let u = imgUrl(p && p.imageUrl);
+  if (!u) return '';
+  if (width && /^https:\/\/cdn\.shopify\.com\//i.test(u)) u += (u.includes('?') ? '&' : '?') + 'width=' + width;
+  return `<img class="${cls}" src="${esc(u)}" alt="" loading="lazy" onerror="this.hidden=true">`;
+}
+
 export const money = (n, cur) => (cur || 'R') + ' ' + (Math.round((Number(n) || 0) * 100) / 100)
   .toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
