@@ -12,6 +12,7 @@ import * as auth from './auth.js';
 import { esc, toast, field, row, val, openModal, money } from './ui.js';
 import { lineTotals, vatIn, pctOf, rateOn, rateFor, centsOf, randsOf } from './money.js';
 import { icon } from './icons.js';
+import { openPay } from './pay.js';
 
 const ROLE_ORDER = ['cashier', 'supervisor', 'manager', 'owner'];
 let ctx = { repaint() {}, data: () => ({}) };     // set by app.js
@@ -181,7 +182,15 @@ export async function action(act, b) {
     case 'sl-recall': return recallSale();
     case 'sl-void': return voidSale();
     case 'sl-custom': return customItem();
-    case 'sl-pay': return ctx.onPay ? ctx.onPay(totals(), c) : toast('Payments come in the next step.');
+    case 'sl-pay': {
+      if (!c.lines.length) return;
+      const t = totals();
+      return openPay({ totals: t, cart: c, data: d(), onDone: (r) => {
+        sale.lastSale = r; sale.cart = freshCart(); persist(); ctx.repaint();
+        toast((r.again ? 'Already written as ' : 'Sale ') + r.sale.docNo + (r.sale.changeCents ? ' · change ' + money(r.sale.changeCents) : '') + (r.negativeStock ? ' · stock went negative' : ''));
+        if (ctx.onSold) ctx.onSold(r);
+      } });
+    }
   }
 }
 // typing in the search box; Enter with an exact code adds it straight away

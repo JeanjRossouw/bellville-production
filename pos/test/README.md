@@ -24,6 +24,13 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   wedge scanning, variants, discounts within and over the role limit (manager
   PIN), a price override, customers, park and recall, a reload, voids.
   `node pos/test/sell.test.mjs`
+- `sale-api.test.mjs` — step 6: the `pos-sale` function over HTTP: who may
+  sell, prices and discounts checked, totals to the cent, cash rounding and
+  change, split tenders, idempotency, stock movements and levels (a bundle
+  moves its parts), store credit, the account and its limit, vouchers sold and
+  used, the till's number block and numbers it chose. `node pos/test/sale-api.test.mjs`
+- `pay.test.mjs` — step 6 in the browser: the payment screen on a till.
+  `node pos/test/pay.test.mjs`
 - `money.test.mjs` — the shared cents and VAT maths; needs no emulator.
   `node pos/test/money.test.mjs`
   Set `FIREBASE_SDK_DIR` to a local copy of the `firebase` package's browser

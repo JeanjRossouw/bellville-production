@@ -52,11 +52,11 @@ async function idToken() {
   const u = fb.auth && fb.auth.currentUser;
   return u ? await u.getIdToken() : '';
 }
-export async function api(action, body = {}) {
+export async function api(action, body = {}, url = API.auth) {
   const token = await idToken();
   let r;
   try {
-    r = await fetch(API.auth, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: JSON.stringify({ appVersion: APP_VERSION, ...body, action }) });
+    r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: JSON.stringify({ appVersion: APP_VERSION, ...body, action }) });
   } catch (e) { const err = new Error('No connection to the server.'); err.offline = true; throw err; }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { const err = new Error(j.error || 'The server said no (' + r.status + ').'); err.status = r.status; throw err; }
@@ -71,6 +71,7 @@ function loadDevice() {
 function saveDevice(d, s) { try { localStorage.setItem(LS_DEVICE, JSON.stringify({ ...d, secret: s })); } catch (e) {} }
 export function forgetDevice() { try { localStorage.removeItem(LS_DEVICE); localStorage.removeItem(LS_CACHE); } catch (e) {} secret = ''; session.device = null; emit(); }
 const devBody = () => session.device ? { deviceId: session.device.deviceId, secret } : {};
+export const deviceBody = devBody;   // the till's identity for the other functions
 
 function loadCache() { try { return JSON.parse(localStorage.getItem(LS_CACHE) || 'null') || { at: '', staff: [] }; } catch (e) { return { at: '', staff: [] }; } }
 function saveCache(staff) { try { localStorage.setItem(LS_CACHE, JSON.stringify({ at: new Date().toISOString(), staff })); } catch (e) {} }

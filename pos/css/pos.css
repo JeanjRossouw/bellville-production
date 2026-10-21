@@ -205,6 +205,22 @@ small { font-size: 12px; }
   .pos-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: .5rem; }
 }
 
+/* -------------------------------------------------------------------- pay */
+.pay { display: grid; grid-template-columns: 1fr 260px; gap: 1rem; }
+.pay-methods { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: .5rem; margin-bottom: .8rem; }
+.pay-m { display: grid; justify-items: center; gap: .3rem; font-family: var(--font-ui); font-weight: 600; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; padding: .7rem .4rem; border: 1px solid var(--line-2); border-radius: 6px; background: #fff; color: var(--ink-2); cursor: pointer; }
+.pay-m .ico { width: 22px; height: 22px; } .pay-m.on { background: var(--ink); color: #fff; border-color: var(--ink); } .pay-m:disabled { opacity: .35; cursor: default; }
+.pay-form .btn.primary { width: 100%; margin-top: .3rem; }
+.pay-quick { display: flex; flex-wrap: wrap; gap: .4rem; margin: .2rem 0 .6rem; }
+.pay-change-live { font-family: var(--font-ui); font-weight: 600; font-size: 15px; min-height: 1.4em; margin-bottom: .4rem; }
+.pay-sum { border: 1px solid var(--line); border-radius: 6px; padding: .6rem .8rem; font-size: 13px; }
+.pay-sum > div { display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding: .25rem 0; }
+.pay-tender { color: var(--ink-2); } .pay-tender strong { margin-left: auto; }
+.pay-due { border-top: 1px solid var(--ink); margin-top: .3rem; padding-top: .5rem !important; font-family: var(--font-ui); font-weight: 600; text-transform: uppercase; letter-spacing: .1em; font-size: 11px; } .pay-due strong { font-size: 20px; letter-spacing: 0; }
+.pay-change strong { color: var(--green); font-size: 16px; }
+.pay-done { text-align: center; padding: 2rem 1rem; color: var(--muted); } .pay-done .ico { width: 30px; height: 30px; }
+@media (max-width: 700px) { .pay { grid-template-columns: 1fr; } }
+
 /* ------------------------------------------------------------------ modal */
 .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); display: flex; align-items: center; justify-content: center; padding: 1rem; z-index: 50; }
 .modal-card { background: #fff; border-radius: 10px; width: 100%; max-width: 520px; max-height: 92vh; display: flex; flex-direction: column; }

@@ -226,12 +226,12 @@ R: members of the store. W: server only. Never updated or deleted.
 **`customers/{customerId}`** (`storeId` = '')
 ```
 entityId, name, contact, phone, email, vatNo, address {…},
-accountEnabled (bool), creditLimitCents, storeCreditCents (server moves this),
+accountEnabled (bool), creditLimitCents, storeCreditCents (server moves this), accountBalanceCents (server moves this: what they owe),
 notes, archived, + stamps, updatedBy, updatedAt
 ```
 R: members of the entity. W: any member of the entity may create and update,
-except `storeCreditCents`, `accountEnabled` and `creditLimitCents` (manager, or
-the server). Delete never.
+except `storeCreditCents` and `accountBalanceCents` (the server only) and
+`accountEnabled` and `creditLimitCents` (a manager). Delete never.
 
 ### Sales and money
 
@@ -244,7 +244,7 @@ series 'INV', seq (int), docNo, blockId,
 customerId ('' for walk-in), customerSnapshot { name, vatNo, address },
 lineCount, subtotalCents, lineDiscountCents, saleDiscountCents, saleDiscountPct,
 totalCents, vatCents, vatRateBp, vatRegistered (bool),
-tenderedCents, changeCents, paymentMethods [string],
+tenderedCents, changeCents, roundingCents (cash rounded to 10c: the difference, recorded, never hidden), paymentMethods [string],
 cashierUid, cashierName, overrideUid, overrideName, overrideReason,
 note, source ('till'|'online'|'import'), clientCreatedAt, serverReceivedAt, verified: true,
 + stamps
@@ -270,6 +270,14 @@ amountCents (int; a refund is negative), ref (card slip no., EFT ref, voucher co
 + stamps, serverReceivedAt
 ```
 R: members of the store. W: server only.
+
+**`vouchers/{code}`** — a gift voucher, keyed by its code
+```
+entityId, storeId (where sold), amountCents, balanceCents, status ('open'|'used'|'void'),
+soldSaleId, soldDocNo, soldAt, expiresAt, customerId, uses [ { saleId, docNo, amountCents, at } ], + stamps
+```
+R: members of the entity (the till checks a code). W: server only: created
+when a voucher product is sold, reduced when one pays for a sale.
 
 **`creditNotes/{id}`** — immutable, series `CN`
 ```
@@ -423,6 +431,27 @@ prove the reader is allowed each row. Composite indexes needed
 
 Single-field lookups (`barcodes array-contains`, `sku ==`, `docNo ==`) use the
 automatic indexes.
+
+## How a sale is written (the `pos-sale` function, `commit`)
+
+The till sends the cart and the tenders. The server, in one transaction:
+
+1. checks who is asking (the signed-in cashier, and the till by its secret)
+   and that the store, register and entity are theirs;
+2. prices every line itself from the catalogue (the store's price, or the
+   approved override), checks each discount against the cashier's limit or
+   its approval token, recomputes the totals at the VAT rate in force on the
+   sale date, and refuses the sale if the till's totals differ by a cent;
+3. checks the tenders cover the total (change only on cash; cash may be
+   rounded to 10c, the difference recorded), the customer's store credit or
+   account, and any voucher's balance;
+4. takes the next number from the till's block (issuing a block first when it
+   has none; a number the till chose offline must be inside its block and
+   unused), and writes the sale, its lines, the payments, a stock movement
+   and level change per tracked item, the customer's credit or balance, any
+   voucher sold or used, the block's `usedUpTo`, and an audit row;
+5. answers with the sale as written. The same `saleId` sent again returns the
+   same answer and writes nothing.
 
 ## Offline
 

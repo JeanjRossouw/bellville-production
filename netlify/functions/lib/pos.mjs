@@ -105,7 +105,15 @@ async function call(method, url, body) {
 }
 
 export async function getDoc(coll, id, tx) {
-  const res = await call('GET', `${root()}/${enc(docPath(coll, id))}${tx ? '?transaction=' + encodeURIComponent(tx) : ''}`);
+  if (tx) {
+    // inside a transaction the read goes through batchGet, the way the SDKs do it
+    const res = await call('POST', `${root().replace(/\/documents$/, '')}/documents:batchGet`, { documents: [docName(coll, id)], transaction: tx });
+    if (!res.ok) throw new Error(`Firestore get ${coll}/${id} in transaction failed: ${await res.text()}`);
+    const rows = await res.json();
+    const hit = rows.find(r => r.found);
+    return hit ? docOf(hit.found) : null;
+  }
+  const res = await call('GET', `${root()}/${enc(docPath(coll, id))}`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Firestore get ${coll}/${id} failed: ${await res.text()}`);
   return docOf(await res.json());
@@ -167,6 +175,11 @@ export async function commit(writes, tx) {
     throw new Error(`Firestore commit failed: ${t}`);
   }
   return (await res.json()).writeResults || [];
+}
+// let a transaction go without writing, so its locks are freed at once
+export async function rollback(tx) {
+  if (!tx) return;
+  try { await call('POST', `${root().replace(/\/documents$/, '')}/documents:rollback`, { transaction: tx }); } catch (e) { /* it expires on its own */ }
 }
 export async function beginTransaction() {
   const res = await call('POST', `${root().replace(/\/documents$/, '')}/documents:beginTransaction`, { options: { readWrite: {} } });
