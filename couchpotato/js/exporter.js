@@ -55,6 +55,46 @@ export function toXlsx(rows, sheetName) {
   return new Blob([zip(files)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }
 
+// A workbook of several sheets. Each sheet: { name, rows, widths?, lists?,
+// head? }. A cell is a number, text, or { f: 'formula' }. lists are drop-downs:
+// { range: 'A2:A500', source: "'Suppliers'!$A$2:$A$500" } (or a short list of
+// words: { range, values: ['Yes', 'No'] }). The first row of every sheet is
+// bold and frozen, unless head is false.
+export function toXlsxBook(sheets) {
+  const clean = (n) => xmlEsc(String(n || 'Sheet').replace(/[\\/?*[\]:]/g, ' ').slice(0, 31));
+  const cellXml = (v, ref, style) => {
+    if (v && typeof v === 'object' && v.f) return `<c r="${ref}"${style}><f>${xmlEsc(v.f)}</f></c>`;
+    if (typeof v === 'number' && Number.isFinite(v)) return `<c r="${ref}"${style}><v>${v}</v></c>`;
+    if (v == null || v === '') return '';
+    return `<c r="${ref}" t="inlineStr"${style}><is><t xml:space="preserve">${xmlEsc(v)}</t></is></c>`;
+  };
+  const sheetBody = (sh) => {
+    const rows = sh.rows || [];
+    const head = sh.head !== false;
+    const widths = sh.widths || (rows[0] || []).map((_, ci) => Math.min(50, Math.max(10, ...rows.map(r => { const v = r[ci]; return String(v == null || typeof v === 'object' ? '' : v).length + 2; }))));
+    const body = rows.map((r, ri) => `<row r="${ri + 1}">${r.map((v, ci) => cellXml(v, colName(ci) + (ri + 1), head && ri === 0 ? ' s="1"' : '')).join('')}</row>`).join('');
+    const cols = widths.length ? `<cols>${widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>` : '';
+    const lists = (sh.lists || []).map(l => `<dataValidation type="list" allowBlank="1" showErrorMessage="${l.strict ? 1 : 0}" showInputMessage="1"${l.prompt ? ` promptTitle="${xmlEsc(l.promptTitle || 'Choose')}" prompt="${xmlEsc(l.prompt)}"` : ''} sqref="${l.range}"><formula1>${xmlEsc(l.values ? '"' + l.values.join(',') + '"' : l.source)}</formula1></dataValidation>`).join('');
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0">${head ? '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>' : ''}</sheetView></sheetViews>${cols}<sheetData>${body}</sheetData>${lists ? `<dataValidations count="${(sh.lists || []).length}">${lists}</dataValidations>` : ''}</worksheet>`;
+  };
+  const n = sheets.length;
+  const files = [
+    ['[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`],
+    ['_rels/.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`],
+    ['xl/workbook.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((sh, i) => `<sheet name="${clean(sh.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>`],
+    ['xl/_rels/workbook.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rId${n + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`],
+    ['xl/styles.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`],
+    ...sheets.map((sh, i) => ['xl/worksheets/sheet' + (i + 1) + '.xml', sheetBody(sh)])
+  ];
+  return new Blob([zip(files)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+
 // A zip with the files stored as they are (no compression: small files, and
 // Excel reads it the same).
 let CRC = null;
