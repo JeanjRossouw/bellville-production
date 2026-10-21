@@ -89,7 +89,7 @@ function card(o, opts) {
       <div class="dl-prod">${esc(o.product || '')}${Number(o.qty) > 1 ? ' × ' + esc(o.qty) : ''}${o.fabric ? ' <span class="muted">· ' + esc(o.fabric) + '</span>' : ''}</div>
       <div class="muted">${esc(o.deliveryContact || o.customerName || '')}${phoneOf(o) ? ' · ' + esc(phoneOf(o)) : ''}</div>
       <div class="muted">${addr ? esc(addr) : '<span style="color:#b91c1c">no delivery address yet</span>'}</div>
-      ${o.deliveryDate && !opts.noWhen ? `<div class="dl-when">${esc(niceDate(o.deliveryDate))}${o.deliverySlot ? ' · ' + esc(o.deliverySlot) : ''}${dn ? ' · ' + esc(dn) : ' · <span style="color:#b91c1c">no driver</span>'}</div>` : ''}
+      ${o.deliveryDate && !opts.noWhen ? `<div class="dl-when">${esc(niceDate(o.deliveryDate))}${o.deliverySlot ? ' · ' + esc(o.deliverySlot) : ''}${dn ? ' · ' + esc(dn) : ' · <span style="color:#b91c1c">no driver</span>'}${o.deliveryNoteNo ? ' · ' + esc(o.deliveryNoteNo) : ''}</div>` : ''}
       ${o.deliveryInstructions ? `<div class="muted">Note: ${esc(o.deliveryInstructions)}</div>` : ''}
     </div>
     <div class="dl-acts">
@@ -134,7 +134,7 @@ function renderPlan(open, unscheduled, overdue, days, count, collections) {
     const name = k ? driverNameOf(groups[k][0]) : '';
     return `<div class="card dl-run">
       <div class="dl-run-head"><h2>${name ? esc(name) : 'No driver yet'} <span class="muted">· ${groups[k].length} stop${groups[k].length === 1 ? '' : 's'}</span></h2>
-        ${d ? `<div class="btn-row"><button class="btn primary sm" data-act="dl-send-run" data-id="${esc(k)}">Send run on WhatsApp</button><button class="btn ghost sm" data-act="dl-print-run" data-id="${esc(k)}">Print run sheet</button></div>` : ''}</div>
+        <div class="btn-row">${d ? `<button class="btn primary sm" data-act="dl-send-run" data-id="${esc(k)}">Send run on WhatsApp</button><button class="btn ghost sm" data-act="dl-print-run" data-id="${esc(k)}">Print run sheet</button>` : ''}<button class="btn ghost sm" data-act="dn-print" data-id="${esc(k)}" title="The run sheet and a page per stop for the client to sign">Delivery note${[...new Set(groups[k].map(o => o.deliveryNoteNo).filter(Boolean))].length ? ' ' + esc([...new Set(groups[k].map(o => o.deliveryNoteNo).filter(Boolean))].sort().join(', ')) : ''}</button></div></div>
       ${groups[k].map(o => card(o, { noWhen: false })).join('')}
     </div>`;
   }).join('');
@@ -257,12 +257,14 @@ export function confirmToClient(id, orders) {
       + (o.status === 'ready' ? 'is ready for collection' : 'will be ready for collection' + (o.deliveryDate ? ' on ' + niceDate(o.deliveryDate) : ' soon')) + '.'
       + (where ? ' Collect from ' + where + '.' : '') + ' Reply here to say when you are coming.';
     window.open('https://wa.me/' + waDigits(phoneOf(o)) + '?text=' + encodeURIComponent(msg), '_blank');
+    if (o.status === 'ready') store.update('orders', o.id, { clientToldAt: store.nowIso() }, 'Client told it is ready for collection').catch(() => {});
     return;
   }
   const msg = 'Hi ' + who + ', ' + (settings.name || '') + ' here. Your ' + (o.product || 'order') + ' (' + (o.orderNo || '') + ') will be delivered on '
     + niceDate(o.deliveryDate) + (o.deliverySlot ? ' between ' + o.deliverySlot.replace(' - ', ' and ') : '') + '.'
     + (addressOf(o) ? ' To: ' + addressOf(o) + '.' : '') + ' The driver will WhatsApp you when on the way. Reply here if that time does not suit.';
   window.open('https://wa.me/' + waDigits(phoneOf(o)) + '?text=' + encodeURIComponent(msg), '_blank');
+  if (o.status === 'ready') store.update('orders', o.id, { clientToldAt: store.nowIso() }, 'Client told the delivery day').catch(() => {});
 }
 
 function runText(d, list) {
@@ -292,7 +294,7 @@ export async function markDelivered(id, orders) {
   if (!confirm('Mark ' + (o.orderNo || 'this order') + ' as ' + word + ', without a signature?')) return;
   const now = store.nowIso(); const who = (store.getUser() || {}).name || 'office';
   const patch = { driverStatus: 'delivered', driverStatusAt: now, deliveredAt: now, deliveredBy: who, hasDeliveryNote: false };
-  if (['new', 'in-production', 'ready'].includes(o.status)) Object.assign(patch, { status: 'dispatched', dispatchedAt: o.dispatchedAt || now, dispatchedBy: who });
+  if (['new', 'in-production', 'ready'].includes(o.status)) Object.assign(patch, { status: o.invoiceId ? 'invoiced' : 'dispatched', dispatchedAt: o.dispatchedAt || now, dispatchedBy: who });
   await store.update('orders', id, patch, (isCollect(o) ? 'Collected' : 'Delivered') + ' (marked by the office)');
   toast((o.orderNo || 'Order') + ' ' + word);
 }
@@ -309,7 +311,7 @@ export function clientSigns(id, orders) {
     try {
       if (dataUrl) await store.saveDeliveryNote(id, { orderId: id, orderNo: o.orderNo || '', dataUrl, signedBy, at: now, driver: me });
       const patch = { driverStatus: 'delivered', driverStatusAt: now, deliveredAt: o.deliveredAt || now, deliveredBy: o.deliveredBy || me, signedBy: signedBy || o.signedBy || '', hasDeliveryNote: !!dataUrl || !!o.hasDeliveryNote };
-      if (['new', 'in-production', 'ready'].includes(o.status)) Object.assign(patch, { status: 'dispatched', dispatchedAt: o.dispatchedAt || now, dispatchedBy: me });
+      if (['new', 'in-production', 'ready'].includes(o.status)) Object.assign(patch, { status: o.invoiceId ? 'invoiced' : 'dispatched', dispatchedAt: o.dispatchedAt || now, dispatchedBy: me });
       await store.update('orders', id, patch, dataUrl ? (isCollect(o) ? 'Collected, signed for by ' : 'Delivery note signed by ') + signedBy : (isCollect(o) ? 'Collected' : 'Handed over') + ' without a signature');
       toast((o.orderNo || 'Order') + (dataUrl ? ' signed for by ' + signedBy : ' marked delivered'));
     } catch (e) { toast('Could not save: ' + e.message, 'warn'); }
@@ -320,7 +322,7 @@ export async function undoDelivered(id, orders) {
   const o = orders.find(x => x.id === id); if (!o) return;
   if (!confirm('Put ' + (o.orderNo || 'this order') + ' back on the ' + (isCollect(o) ? 'collections' : 'delivery') + ' list' + (o.hasDeliveryNote ? ' and remove its signed note' : '') + '?')) return;
   const patch = { driverStatus: 'scheduled', driverStatusAt: store.nowIso(), deliveredAt: null, deliveredBy: null, signedBy: null, hasDeliveryNote: false };
-  if (o.status === 'dispatched' && !o.invoiceId) Object.assign(patch, { status: 'ready', dispatchedAt: null, dispatchedBy: null });
+  if ((o.status === 'dispatched' && !o.invoiceId) || (o.status === 'invoiced' && o.invoicedEarly)) Object.assign(patch, { status: 'ready', dispatchedAt: null, dispatchedBy: null });
   await store.update('orders', id, patch, 'Delivery undone');
   if (o.hasDeliveryNote) { try { await store.remove('deliveryNotes', id); } catch (e) { /* already gone */ } }
   view = 'plan';
@@ -378,4 +380,119 @@ export async function removeDriver(id, orders) {
   if (!confirm('Remove ' + d.name + '? Their link stops working.' + (booked ? ' ' + booked + ' booked deliver' + (booked === 1 ? 'y needs' : 'ies need') + ' another driver.' : ''))) return;
   await store.update('drivers', id, { removed: true, disabled: true, token: newCode() });
   toast(d.name + ' removed');
+}
+
+// ------------------------------------------------------- delivery notes ----
+// Tick the finished pieces (Factory floor → Done, or Orders → Done) and make
+// one delivery note for the driver: every ticked order is booked on that
+// driver's run for the day, the note gets a number (DN-0001), and it prints
+// as a run sheet plus one page per stop for the client to sign.
+//   orders: deliveryNoteNo, deliveryDate, driverId, driverName, deliveryMethod 'delivery'
+const picks = new Set();
+export const isPicked = (id) => picks.has(id);
+export const pickedCount = () => picks.size;
+export const clearPicks = () => picks.clear();
+export const notePicks = () => [...picks];
+export function togglePick(id) { if (picks.has(id)) picks.delete(id); else picks.add(id); }
+// What can go on a note: done and not yet delivered.
+export const notable = (o) => o.status === 'ready' && !o.deliveredAt;
+export const mayBook = () => store.can('deliveries', 'edit') || store.can('factory', 'edit') || store.can('orders', 'edit');
+export function pickAll(ids) { const all = ids.every(id => picks.has(id)); ids.forEach(id => { if (all) picks.delete(id); else picks.add(id); }); }
+// the tick box on a card or a row
+export const pickBox = (o) => mayBook() && notable(o) ? `<label class="dn-pick" title="Put it on a delivery note"><input type="checkbox" data-act="dn-pick" data-id="${esc(o.id)}"${picks.has(o.id) ? ' checked' : ''}><span>Delivery note</span></label>` : '';
+// the bar above a list of done pieces
+export function pickBarHtml(list) {
+  if (!mayBook()) return '';
+  const ids = list.filter(notable).map(o => o.id);
+  [...picks].forEach(id => { if (!ids.includes(id)) picks.delete(id); });     // gone from the list: no longer ticked
+  if (!ids.length) return '';
+  const n = ids.filter(id => picks.has(id)).length;
+  return `<div class="dn-bar">
+    <label class="dn-all"><input type="checkbox" data-act="dn-all" data-ids="${esc(ids.join(','))}"${n && n === ids.length ? ' checked' : ''}> Select all ${ids.length}</label>
+    <span class="dn-count">${n ? n + ' ticked' : 'Tick the pieces going out together'}</span>
+    ${store.can('invoices', 'edit') ? `<button class="btn ghost" data-act="dn-invoice"${n ? '' : ' disabled'} title="Invoice the ticked pieces before they go out (one customer at a time)">🧾 Invoice ticked</button>` : ''}
+    <button class="btn primary" data-act="dn-make"${n ? '' : ' disabled'}>🚚 Make delivery note${n ? ' (' + n + ')' : ''}</button>
+  </div>`;
+}
+
+export function makeDeliveryNote(orders) {
+  const list = orders.filter(o => picks.has(o.id) && notable(o)).sort((a, b) => String(a.orderNo || '').localeCompare(String(b.orderNo || ''), undefined, { numeric: true }));
+  if (!list.length) { toast('Tick the pieces to put on the note first', 'warn'); return; }
+  const known = drivers.length ? drivers : [];
+  const names = [...new Set(orders.map(o => o.driverName).filter(Boolean))];
+  const noAddr = list.filter(o => !addressOf(o));
+  const notInvoiced = list.filter(o => !o.invoiceId);
+  if (settings.invoiceBeforeNote && notInvoiced.length) {
+    toast(notInvoiced.map(o => o.orderNo).join(', ') + (notInvoiced.length === 1 ? ' is' : ' are') + ' not invoiced yet: invoice first (🧾 Invoice ticked), then make the delivery note', 'warn');
+    return;
+  }
+  const collect = list.filter(isCollect);
+  const firstDriver = list.find(o => o.driverId) || {};
+  const { wrap } = openModal('Delivery note · ' + list.length + ' piece' + (list.length === 1 ? '' : 's'), `
+    <div class="pk-list" style="max-height:30vh; margin-bottom:.7rem">${list.map((o, i) => `<div class="pk-row" style="cursor:default"><strong>${i + 1}. ${esc(o.orderNo || '')} · ${esc(o.product || '')}${Number(o.qty) > 1 ? ' × ' + esc(o.qty) : ''}</strong><span>${esc(o.deliveryContact || o.customerName || '')} · ${addressOf(o) ? esc(addressOf(o)) : '<b style="color:#b91c1c">no address</b>'}${o.invoiceNo ? ' · ' + esc(o.invoiceNo) : ''}</span></div>`).join('')}</div>
+    ${row(field('Delivery date', 'dn-date', { type: 'date', value: list.find(o => o.deliveryDate >= today()) ? list.find(o => o.deliveryDate >= today()).deliveryDate : today() }),
+      known.length ? field('Driver', 'dn-driver', { type: 'select', value: firstDriver.driverId || (known.length === 1 ? known[0].id : ''), options: [{ value: '', label: 'Choose a driver…' }].concat(known.map(d => ({ value: d.id, label: d.name }))) })
+        : field('Driver', 'dn-driver-name', { value: firstDriver.driverName || names[0] || '', placeholder: 'The driver’s name' }))}
+    <label class="check"><input type="checkbox" id="dn-pages" checked> A page per stop for the client to sign</label>
+    ${known.length ? '<label class="check"><input type="checkbox" id="dn-wa" checked> Send the run to the driver on WhatsApp</label>' : '<p class="muted">The driver’s private link is set under Deliveries (office).</p>'}
+    ${noAddr.length ? `<p class="notice-inline">${noAddr.map(o => esc(o.orderNo)).join(', ')} ${noAddr.length === 1 ? 'has' : 'have'} no delivery address yet: add it under Deliveries → Change, or write it on the note.</p>` : ''}
+    ${collect.length ? `<p class="notice-inline">${collect.map(o => esc(o.orderNo)).join(', ')} ${collect.length === 1 ? 'was' : 'were'} for collection and become${collect.length === 1 ? 's' : ''} a delivery.</p>` : ''}
+    ${notInvoiced.length ? `<p class="muted">Not invoiced yet: ${notInvoiced.map(o => esc(o.orderNo)).join(', ')}.</p>` : ''}`, {
+    okLabel: 'Book and print',
+    onOk: async (w) => {
+      const date = val(w, 'dn-date');
+      if (!date) { toast('Pick the delivery date', 'warn'); return false; }
+      const dId = known.length ? val(w, 'dn-driver') : '';
+      const d = dId ? driverById(dId) : null;
+      const dName = d ? d.name : (val(w, 'dn-driver-name') || '').trim();
+      if (!dName) { toast('Choose the driver', 'warn'); return false; }
+      const n = await store.nextNumber('deliveryNoteNo', 1);
+      const no = (settings.deliveryNotePrefix || 'DN-') + String(n).padStart(4, '0');
+      picks.clear();            // before the saves repaint the list
+      for (const o of list) {
+        const c = customerById(o.customerId) || {};
+        await store.update('orders', o.id, {
+          deliveryMethod: 'delivery', deliveryDate: date, driverId: d ? d.id : (o.driverName === dName ? o.driverId || '' : ''), driverName: dName,
+          driverStatus: 'scheduled', driverNote: '', deliveryNoteNo: no,
+          deliveryContact: o.deliveryContact || c.contact || o.customerName || '', deliveryPhone: o.deliveryPhone || c.phone || '', deliveryAddress: o.deliveryAddress || [c.address, c.area].filter(Boolean).join(', ')
+        }, 'On delivery note ' + no + ' for ' + date + ' with ' + dName);
+      }
+      const booked = list.map(o => ({ ...o, deliveryDate: date, driverName: dName, deliveryNoteNo: no }));
+      printDeliveryNote(no, date, dName, booked, w.querySelector('#dn-pages').checked);
+      const wa = w.querySelector('#dn-wa');
+      if (d && wa && wa.checked) { if (d.phone) window.open('https://wa.me/' + waDigits(d.phone) + '?text=' + encodeURIComponent('Delivery note ' + no + '. ' + runText(d, booked)), '_blank'); else toast('Add ' + d.name + '’s cell number to WhatsApp the run', 'warn'); }
+      day = date;
+      toast(no + ': ' + list.length + ' piece' + (list.length === 1 ? '' : 's') + ' booked for ' + niceDate(date) + ' with ' + dName);
+    }
+  });
+  wrap.querySelector('.modal-card').classList.add('wide');
+}
+
+// The note itself: the driver's list, then a page per stop to sign.
+export function printDeliveryNote(no, date, driverName, list, pages) {
+  const head = (title, sub) => docHeader(settings, title, no, [niceDate(date), 'Driver ' + driverName].concat(sub || []));
+  const items = (o) => `${esc(o.product || '')}${Number(o.qty) > 1 ? ' × ' + esc(o.qty) : ''}${o.fabric ? '<br><small>' + esc(o.fabric) + '</small>' : ''}`;
+  const sheet = `<div class="dn-page">${head('DELIVERY NOTE', [list.length + ' stop' + (list.length === 1 ? '' : 's')])}
+    <table><tr><th>#</th><th>Order</th><th>Item</th><th>Deliver to</th><th>Phone</th><th>Received by (name &amp; signature)</th></tr>
+    ${list.map((o, i) => `<tr><td>${i + 1}</td><td><strong>${esc(o.orderNo || '')}</strong>${o.invoiceNo ? '<br><small>Invoice ' + esc(o.invoiceNo) + '</small>' : ''}${o.externalRef ? '<br><small>ref ' + esc(o.externalRef) + '</small>' : ''}</td><td>${items(o)}</td>
+      <td>${esc(o.deliveryContact || o.customerName || '')}<br>${esc(addressOf(o))}${o.deliveryInstructions ? '<br><small>' + esc(o.deliveryInstructions) + '</small>' : ''}</td><td>${esc(phoneOf(o))}</td><td style="width:24%; height:46px"></td></tr>`).join('')}
+    </table>
+    <table style="margin-top:14px"><tr><td style="width:50%; height:50px">Loaded by<br><br>______________________ &nbsp; date ________</td><td>Driver<br><br>______________________ &nbsp; date ________</td></tr></table></div>`;
+  const stop = (o, i) => `<div class="dn-page">${head('DELIVERY NOTE', ['Stop ' + (i + 1) + ' of ' + list.length])}
+    <table><tr><th style="width:30%">Order</th><td><strong>${esc(o.orderNo || '')}</strong>${o.invoiceNo ? ' · Invoice ' + esc(o.invoiceNo) : ''}${o.externalRef ? ' · your ref ' + esc(o.externalRef) : ''}</td></tr>
+      <tr><th>Deliver to</th><td>${esc(o.deliveryContact || o.customerName || '')}<br>${esc(addressOf(o))}<br>${esc(phoneOf(o))}</td></tr>
+      <tr><th>Item</th><td>${items(o)}</td></tr>
+      ${o.deliveryInstructions ? `<tr><th>Note</th><td>${esc(o.deliveryInstructions)}</td></tr>` : ''}</table>
+    <p style="margin:14px 0 6px">Received in good order and condition.</p>
+    <table><tr><td style="height:60px; width:40%">Name<br><br></td><td style="width:40%">Signature<br><br></td><td>Date<br><br></td></tr></table>
+    <p style="font-size:11px; color:#444; margin-top:10px">Driver: bring this page back signed.</p></div>`;
+  openPrint('Delivery note ' + no, `<style>.dn-page{page-break-after:always} .dn-page:last-child{page-break-after:auto}</style>${sheet}${pages ? list.map(stop).join('') : ''}`);
+}
+// Reprint from the Deliveries screen: the driver's run for the day.
+export function printRunNote(driverId, orders) {
+  const list = toDeliver(orders).filter(o => o.deliveryDate === day && (o.driverId || '') === (driverId || '') && !isCollect(o))
+    .sort((a, b) => String(a.deliverySlot || '~').localeCompare(String(b.deliverySlot || '~')) || String(a.orderNo || '').localeCompare(String(b.orderNo || ''), undefined, { numeric: true }));
+  if (!list.length) return;
+  const nos = [...new Set(list.map(o => o.deliveryNoteNo).filter(Boolean))].sort();
+  printDeliveryNote(nos.join(', ') || 'Run ' + niceDate(day), day, driverNameOf(list[0]) || 'not set', list, true);
 }

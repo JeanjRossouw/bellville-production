@@ -62,7 +62,7 @@ export const WRITE_AREAS = {
   invoices: ['invoices', 'pos'],
   sales: ['pos'],
   quotes: ['quotes'],
-  counters: ['orders', 'pos', 'quotes', 'invoices', 'stock', 'factory', 'scan', 'costing'],
+  counters: ['orders', 'pos', 'quotes', 'invoices', 'stock', 'factory', 'scan', 'costing', 'deliveries'],
   drivers: ['deliveries'],
   deliveryNotes: ['deliveries'],
   staff: ['wages'],
@@ -75,6 +75,7 @@ export const WRITE_AREAS = {
   shopPos: ['pos', 'stock', 'storeroom'],
   stockTakes: ['pos', 'stock', 'storeroom'],
   shopProducts: ['pos', 'stock', 'costing'],
+  attendance: ['factory', 'wages'],     // the clock-in register (attendance/roster: wages only, see the rules)
   settings: ['settings']
 };
 
@@ -100,7 +101,8 @@ export const READ_AREAS = {
   suppliers: ['pos', 'stock', 'storeroom'],
   shopPos: ['pos', 'stock', 'storeroom'],
   stockTakes: ['pos', 'stock', 'storeroom'],
-  shopProducts: ['pos', 'stock', 'costing', 'profit']
+  shopProducts: ['pos', 'stock', 'costing', 'profit'],
+  attendance: ['factory', 'wages']
 };
 
 export const levelOf = (perms, area) => (perms && perms[area]) || 'none';

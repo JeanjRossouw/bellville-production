@@ -203,7 +203,7 @@ service cloud.firestore {
       }
       match /counters/{id} {
         allow read: if isMember(cid);
-        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'orders') || ed(cid, 'pos') || ed(cid, 'quotes') || ed(cid, 'invoices') || ed(cid, 'stock') || ed(cid, 'factory') || ed(cid, 'scan') || ed(cid, 'costing'));
+        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'orders') || ed(cid, 'pos') || ed(cid, 'quotes') || ed(cid, 'invoices') || ed(cid, 'stock') || ed(cid, 'factory') || ed(cid, 'scan') || ed(cid, 'costing') || ed(cid, 'deliveries'));
       }
       // Pay: the staff list and the wage runs. Only the Wages area sees them.
       match /staff/{id} {
@@ -249,6 +249,12 @@ service cloud.firestore {
         allow read: if isMember(cid) && (sees(cid, 'pos') || sees(cid, 'settings'));
         allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'settings');
       }
+      // the clock-in register: names and times only, no pay. The roster comes from Wages.
+      match /attendance/{id} {
+        allow read: if isMember(cid) && (sees(cid, 'factory') || sees(cid, 'wages'));
+        allow write: if isMember(cid) && companyActive(cid)
+                     && (id == 'roster' ? ed(cid, 'wages') : (ed(cid, 'factory') || ed(cid, 'wages')));
+      }
       match /wageRuns/{id} {
         allow read: if isMember(cid) && sees(cid, 'wages');
         allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'wages');
@@ -275,9 +281,9 @@ service cloud.firestore {
 
       // Anything else a future version keeps: the settings screen decides.
       match /{coll}/{id} {
-        allow read: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'xeroPushes', 'staff', 'wageRuns', 'tillStaff', 'tillShifts', 'giftCards', 'grvs', 'stockTakes', 'shopProducts', 'suppliers', 'shopPos']);
+        allow read: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'xeroPushes', 'attendance', 'staff', 'wageRuns', 'tillStaff', 'tillShifts', 'giftCards', 'grvs', 'stockTakes', 'shopProducts', 'suppliers', 'shopPos']);
         allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'settings')
-                     && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'xeroPushes', 'staff', 'wageRuns', 'tillStaff', 'tillShifts', 'giftCards', 'grvs', 'stockTakes', 'shopProducts', 'suppliers', 'shopPos']);
+                     && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'xeroPushes', 'attendance', 'staff', 'wageRuns', 'tillStaff', 'tillShifts', 'giftCards', 'grvs', 'stockTakes', 'shopProducts', 'suppliers', 'shopPos']);
       }
     }
   }

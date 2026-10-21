@@ -8,6 +8,7 @@ import { allCustomers, customerById } from './customers.js';
 import { allProducts, productByName } from './costing.js';
 import { consumeForOrder, returnForOrder } from './stock.js';
 import { toXlsx, toCsv, download } from './exporter.js';
+import { pickBox, pickBarHtml } from './deliveries.js';
 import {
   esc, money, field, row, val, openModal, toast, empty, today, addDays,
   niceDate, daysUntil, statusChip, statusMeta, STATUSES, fabricChip, FABRIC_STATES, inclLabel
@@ -183,7 +184,7 @@ export async function setStatus(id, status) {
     if (o.status === 'new' && status !== 'new' && !o.materialsUsed) await consumeForOrder(o);
     if (status === 'new' && o.materialsUsed) await returnForOrder(o);
   } catch (e) { console.error('stock update failed:', e); toast('Status saved, but stock could not be updated: ' + e.message, 'warn'); }
-  toast((o.orderNo || 'Order') + ' → ' + meta.label);
+  toast((o.orderNo || 'Order') + ' → ' + meta.label + (status === 'ready' && !o.deliveryDate ? '. Tick it under Done to put it on a delivery note.' : ''));
 }
 
 export async function setFabric(id, fabricStatus) {
@@ -290,6 +291,7 @@ function orderCard(o) {
           </div>
         </div>
         <div class="order-chips">
+          ${filter.status === 'ready' ? pickBox(o) : ''}
           ${statusChip(o.status)}${o.invoiceNo ? ' <span class="chip st-inv">' + esc(o.invoiceNo) + '</span>' : ''}
           ${dueBadge(o)}
           ${o.deliveryMethod === 'collect' && o.status !== 'invoiced' ? '<span class="chip calm" title="The customer collects it from the factory">Collection</span>' : ''}
@@ -309,7 +311,7 @@ function orderCard(o) {
       </div>
       <div class="card-actions">
         ${next && next.key !== 'invoiced' ? `<button class="btn primary sm" data-act="status" data-id="${esc(o.id)}" data-to="${next.key}">${esc(next.label)}</button>` : ''}
-        ${o.status === 'dispatched' && !o.invoiceId && store.can('invoices', 'edit') ? `<button class="btn primary sm" data-act="inv-order" data-id="${esc(o.id)}" title="Raise the invoice for this order">Invoice it</button>` : ''}
+        ${(o.status === 'dispatched' || o.status === 'ready') && !o.invoiceId && store.can('invoices', 'edit') ? `<button class="btn ${o.status === 'ready' ? 'ghost' : 'primary'} sm" data-act="inv-order" data-id="${esc(o.id)}" title="${o.status === 'ready' ? 'Invoice it now, before it goes out' : 'Raise the invoice for this order'}">Invoice it</button>` : ''}
         ${o.status === 'invoiced' && !o.invoiceId ? `<button class="btn ghost sm" data-act="status" data-id="${esc(o.id)}" data-to="dispatched" title="Marked invoiced without an invoice: put it back in the To invoice list">Back to Dispatched</button>` : ''}
         <button class="btn ghost sm" data-act="edit-order" data-id="${esc(o.id)}">Edit</button>
         ${['new', 'in-production', 'ready'].includes(o.status) ? `<button class="btn danger sm" data-act="cancel-order" data-id="${esc(o.id)}" title="Call it off. It stays on record">Cancel order</button>` : ''}
@@ -361,6 +363,7 @@ export function renderOrders(host) {
       </select>
     </div>
 
+    ${filter.status === 'ready' ? pickBarHtml(rows) : ''}
     ${rows.length ? `<div class="grid cards">${rows.map(orderCard).join('')}</div>`
       : empty('', 'Nothing here', orders.length ? 'No orders match this filter.' : 'Capture the factory’s first order to get going.')}
   `;

@@ -51,6 +51,7 @@ export const FACTORY_DEFAULTS = {
   weeklyTarget: 0,            // the week's production target, rands at selling prices, incl. VAT (0 = none)
   paymentTermsDays: 30,
   leadDays: 28,
+  invoiceBeforeNote: false,   // a delivery note only for pieces already invoiced (invoice first, then deliver)
   loyaltyPct: 5,              // loyalty points earned at the till: % of the sale, 1 point = R1 (0 = off)
   bankDetails: ''
 };

@@ -53,9 +53,11 @@ function totalsFor(lines) {
 
 export const queue = () => allOrders().filter(o => o.status === 'dispatched' && !o.invoiceId);
 
-// Raise one invoice for a set of dispatched orders belonging to one customer.
+// Raise one invoice for a set of orders belonging to one customer: dispatched
+// ones, or Done ones not yet out of the door (invoice first, then the delivery
+// note): those stay Done, with the invoice on them, until they go out.
 export function newInvoiceFor(orderIds) {
-  const orders = orderIds.map(orderById).filter(Boolean).filter(o => o.status === 'dispatched');
+  const orders = orderIds.map(orderById).filter(Boolean).filter(o => !o.invoiceId && (o.status === 'dispatched' || o.status === 'ready'));
   if (!orders.length) { toast('Nothing to invoice', 'warn'); return; }
   const custId = orders[0].customerId;
   if (orders.some(o => o.customerId !== custId)) { toast('One invoice per customer — pick orders for one customer at a time', 'warn'); return; }
@@ -98,7 +100,10 @@ export function newInvoiceFor(orderIds) {
           status: 'issued', payments: [], note: val(w, 'iv-note'),
           events: [{ at: store.nowIso(), by: (store.getUser() || {}).name || 'system', what: 'Invoice issued' }]
         });
-        for (const o of orders) await store.update('orders', o.id, { status: 'invoiced', invoiceId: id, invoiceNo }, 'Invoiced on ' + invoiceNo);
+        for (const o of orders) {
+          if (o.status === 'ready') await store.update('orders', o.id, { invoiceId: id, invoiceNo, invoicedEarly: true }, 'Invoiced on ' + invoiceNo + ' before it went out');
+          else await store.update('orders', o.id, { status: 'invoiced', invoiceId: id, invoiceNo }, 'Invoiced on ' + invoiceNo);
+        }
         toast(invoiceNo + ' issued for ' + money(t.total, cur));
         setTimeout(() => printInvoice(id), 150);
       }
