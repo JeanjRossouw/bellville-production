@@ -677,11 +677,14 @@ function moveImport() {
     if (!b || b.app !== 'factory-manager' || !b.collections) { toast('This is not a Factory Manager data file. Download it in the demo: Settings → Move to the real system.', 'warn'); return; }
     const rows = Object.entries(b.collections).filter(([c]) => !store.MOVE_SKIP.includes(c)).map(([c, m]) => ({ c, n: Object.keys(m || {}).length, samples: Object.entries(m || {}).filter(([id, d]) => store.isSampleRecord(c, id, d, b.company && b.company.id)).length })).filter(r => r.n).sort((x, y) => y.n - x.n);
     const samples = rows.filter(r => r.c !== 'settings' && r.c !== 'counters').reduce((t, r) => t + r.samples, 0);
+    // nothing of the user's own besides the samples: they worked in the sample company, so keep it all by default
+    const own = rows.filter(r => r.c !== 'settings' && r.c !== 'counters').reduce((t, r) => t + r.n - r.samples, 0);
     const already = allOrders().length + allCustomers().length;
     openModal('Bring in data from the demo', `
       <p>From <strong>${esc(b.company && b.company.name || 'the demo')}</strong>, downloaded ${esc(niceDate(String(b.exportedAt || '').slice(0, 10)))}.</p>
       <div class="pk-list" style="max-height:34vh">${rows.map(r => `<div class="pk-row" style="cursor:default; grid-template-columns:1fr auto; display:grid"><strong>${esc(MOVE_LABELS[r.c] || r.c)}</strong><span>${r.n}${r.samples && r.c !== 'settings' && r.c !== 'counters' ? ' (' + r.samples + ' demo samples)' : ''}</span></div>`).join('')}</div>
-      ${samples ? `<label class="check"><input type="checkbox" id="mv-samples" checked> Leave out the demo’s own sample records (${samples})</label>` : ''}
+      ${samples ? `<label class="check"><input type="checkbox" id="mv-samples"${own ? ' checked' : ''}> Leave out the demo’s own sample records (${samples})</label>
+        <p class="muted">${own ? 'Ticked: only the ' + own + ' records you added come across. Untick it to bring the demo’s example orders and customers too (for instance if you worked with them).' : 'Everything in this file is the demo company’s data, so it all comes across. Tick this only if you want none of it.'}</p>` : ''}
       ${b.collections.settings ? '<label class="check"><input type="checkbox" id="mv-settings" checked> Also bring in the business settings (name, address, VAT, numbering, prefixes)</label>' : ''}
       ${already ? `<p class="notice-inline">This company already has ${already} orders and customers. They stay; what comes in is added (a record with the same id is replaced).</p>` : ''}`, {
       okLabel: 'Bring it in',
