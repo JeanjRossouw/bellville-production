@@ -5,16 +5,20 @@ import { initFirebase, watch, getOne, patchOne } from './db.js';
 import * as auth from './auth.js';
 import { esc, toast, openModal, field, row, val, checks, empty, niceDate, niceTime } from './ui.js';
 import * as admin from './admin.js';
+import { icon } from './icons.js';
 import * as products from './products.js';
+import * as sell from './sell.js';
 
 const $ = (id) => document.getElementById(id);
-let view = 'home';
+let view = '';                       // the tab on screen; a till starts on Sell, the office on Home
 let adminSub = 'companies';          // the Admin tab's sub-screen
 let editId = '', settingsEntity = '';  // what the admin forms are on
 let entities = [], stores = [], registers = [], users = [], devices = [], settings = {};
-let catalogue = [], variants = [];
+let catalogue = [], variants = [], stockLevels = [], customers = [];
+let sellStore = '';                 // the store being sold from: the till's, else chosen
 let prEntity = '', prFilter = { q: '', category: '', brand: '', type: '', archived: false };
 const unwatch = [];
+let unwatchStore = null, watchedStore = '';   // the sell screen's own stock watch, by store
 
 // ------------------------------------------------------------------ boot --
 async function main() {
@@ -44,9 +48,9 @@ function startData() {
   const ents = u.entityIds || [], sts = u.storeIds || [];
   const w = (name, wheres, set) => unwatch.push(watch(name, wheres, rows => { set(rows); paint(); }));
   const bySettings = (rows) => { settings = Object.fromEntries(rows.map(r => [r.id, r])); };
-  if (owner) { w('entities', [], r => { entities = r; }); w('stores', [], r => { stores = r; }); w('registers', [], r => { registers = r; }); w('settings', [], bySettings); w('products', [], r => { catalogue = r; }); w('variants', [], r => { variants = r; }); }
+  if (owner) { w('entities', [], r => { entities = r; }); w('stores', [], r => { stores = r; }); w('registers', [], r => { registers = r; }); w('settings', [], bySettings); w('products', [], r => { catalogue = r; }); w('variants', [], r => { variants = r; }); w('customers', [], r => { customers = r; }); }
   else {
-    if (ents.length) { w('entities', [['entityId', 'in', ents.slice(0, 30)]], r => { entities = r; }); w('settings', [['entityId', 'in', ents.slice(0, 30)]], bySettings); w('products', [['entityId', 'in', ents.slice(0, 30)]], r => { catalogue = r; }); w('variants', [['entityId', 'in', ents.slice(0, 30)]], r => { variants = r; }); }
+    if (ents.length) { w('entities', [['entityId', 'in', ents.slice(0, 30)]], r => { entities = r; }); w('settings', [['entityId', 'in', ents.slice(0, 30)]], bySettings); w('products', [['entityId', 'in', ents.slice(0, 30)]], r => { catalogue = r; }); w('variants', [['entityId', 'in', ents.slice(0, 30)]], r => { variants = r; }); w('customers', [['entityId', 'in', ents.slice(0, 30)]], r => { customers = r; }); }
     // a store-scoped query must name both the entity and the store for the rules to allow it
     if (ents.length && sts.length) { w('stores', [['entityId', 'in', ents.slice(0, 10)], ['storeId', 'in', sts.slice(0, 10)]], r => { stores = r; }); w('registers', [['entityId', 'in', ents.slice(0, 10)], ['storeId', 'in', sts.slice(0, 10)]], r => { registers = r; }); }
   }
@@ -55,11 +59,38 @@ function startData() {
     if (owner) w('devices', [], r => { devices = r; });
     else if (ents.length && sts.length) w('devices', [['entityId', 'in', ents.slice(0, 10)], ['storeId', 'in', sts.slice(0, 10)]], r => { devices = r; });
   }
+  startStoreData();
   // the idle time comes from the entity's settings (the till's entity, else the person's first)
   const eid = (auth.session.device && auth.session.device.entityId) || ents[0] || (owner ? '' : '');
   if (eid) getOne('settings', eid).then(s => auth.setIdleMinutes((s && s.session && s.session.idleLogoutMinutes) || DEFAULTS.idleLogoutMinutes)).catch(() => {});
 }
-function stopData() { while (unwatch.length) { try { unwatch.pop()(); } catch (e) {} } entities = []; stores = []; registers = []; users = []; devices = []; settings = {}; catalogue = []; variants = []; }
+function stopData() {
+  while (unwatch.length) { try { unwatch.pop()(); } catch (e) {} }
+  if (unwatchStore) { try { unwatchStore(); } catch (e) {} unwatchStore = null; } watchedStore = '';   // or it would go on listening as the next person
+  entities = []; stores = []; registers = []; users = []; devices = []; settings = {}; catalogue = []; variants = []; stockLevels = []; customers = [];
+}
+// the store sold from: the till's own, else the person's default, else their first
+function sellStoreId() {
+  const u = auth.session.user; if (!u) return '';
+  const d = auth.session.device;
+  if (d && d.storeId) return d.storeId;
+  if (sellStore && auth.inStore(sellStore)) return sellStore;
+  if (u.defaultStoreId && auth.inStore(u.defaultStoreId)) return u.defaultStoreId;
+  return u.role === 'owner' ? (stores[0] || {}).id || '' : (u.storeIds || [])[0] || '';
+}
+function startStoreData() {
+  const sid = sellStoreId();
+  if (sid === watchedStore) return;
+  if (unwatchStore) { try { unwatchStore(); } catch (e) {} unwatchStore = null; }
+  watchedStore = sid; stockLevels = [];
+  if (!sid) return;
+  const st = stores.find(x => x.id === sid);
+  const eid = st ? st.entityId : (auth.session.device && auth.session.device.entityId) || '';
+  if (!eid) return;
+  unwatchStore = watch('stockLevels', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { stockLevels = rows; if (view === 'sell') paint(); });
+  sell.loadCart(sid);
+}
+const sellData = () => { const sid = sellStoreId(); const st = stores.find(x => x.id === sid) || null; const ent = st ? entities.find(e => e.id === st.entityId) || null : null; return { store: st, entity: ent, settings: ent ? settings[ent.id] || {} : {}, products: catalogue, variants, stockLevels, customers }; };
 
 // --------------------------------------------------------------- login --
 function wireLogin() {
@@ -118,14 +149,16 @@ function showApp() {
   $('who').innerHTML = `<strong>${esc(u.name)}</strong><small>${esc(roleLabel(u.role))}${auth.session.mode === 'pin-offline' ? ' · offline' : ''}</small>`;
   $('lock').hidden = auth.session.mode === 'email';
   $('brand-sub').textContent = auth.session.device ? (storeName(auth.session.device.storeId) || auth.session.device.label) : 'Office';
-  if (!navItems().some(n => n.key === view)) view = 'home';
+  if (!view || !navItems().some(n => n.key === view)) view = sellStoreId() && auth.session.mode !== 'email' ? 'sell' : 'home';
   paint();
 }
 const roleLabel = (k) => (ROLES.find(r => r.key === k) || { label: k }).label;
 const storeName = (id) => (stores.find(s => s.id === id) || {}).name || '';
 const entityName = (id) => { const e = entities.find(x => x.id === id); return e ? (e.tradingName || e.legalName) : id; };
 function navItems() {
-  const out = [{ key: 'home', label: 'Home' }, { key: 'products', label: 'Products' }];
+  const out = [];
+  if (sellStoreId()) out.push({ key: 'sell', label: 'Sell' });
+  out.push({ key: 'home', label: 'Home' }, { key: 'products', label: 'Products' });
   if (auth.atLeast('manager')) out.push({ key: 'admin', label: 'Admin' });
   out.push({ key: 'me', label: 'My PIN' });
   return out;
@@ -147,6 +180,13 @@ function paint() {
   if (!auth.session.user) return;
   $('nav').innerHTML = navItems().map(n => `<button class="tab${n.key === view ? ' on' : ''}" data-view="${n.key}">${esc(n.label)}</button>`).join('');
   const screen = $('screen');
+  if (view === 'sell') {
+    startStoreData();
+    const mine = stores.filter(s => auth.inStore(s.id));
+    const pick = !auth.session.device && mine.length > 1 ? `<div class="sell-store">${icon('shop')} <select id="sl-store">${mine.map(s => `<option value="${esc(s.id)}"${s.id === sellStoreId() ? ' selected' : ''}>${esc(s.name)}</option>`).join('')}</select></div>` : '';
+    screen.innerHTML = pick + sell.sellHtml();
+    return;
+  }
   if (view === 'admin') {
     const subs = adminSubs();
     if (!subs.some(x => x.key === adminSub)) adminSub = subs[0].key;
@@ -283,6 +323,7 @@ async function onAction(e) {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const id = b.dataset.id;
   const w = $('screen');
+  if (b.dataset.act.startsWith('sl-')) return sell.action(b.dataset.act, b);
   switch (b.dataset.act) {
     case 'entity-edit': editId = id; paint(); return;
     case 'entity-cancel': editId = ''; paint(); return;
@@ -325,7 +366,11 @@ $('screen').addEventListener('change', (e) => {
   }
 });
 
-$('screen').addEventListener('input', (e) => { if (e.target.id === 'pr-q') { prFilter.q = e.target.value; paint(); } });
+$('screen').addEventListener('input', (e) => { if (e.target.id === 'pr-q') { prFilter.q = e.target.value; paint(); } if (e.target.id === 'sl-q') sell.onSearchInput(e.target.value); });
+$('screen').addEventListener('keydown', (e) => { if (e.target.id === 'sl-q' && e.key === 'Enter') { e.preventDefault(); sell.onSearchEnter(e.target.value); } });
+document.addEventListener('keydown', (e) => { if (view === 'sell' && auth.session.user) sell.onDocumentKey(e); }, true);
+$('screen').addEventListener('change', (e) => { if (e.target.id === 'sl-store') { sellStore = e.target.value; startStoreData(); paint(); } });
+sell.setContext({ repaint: () => { if (view === 'sell') paint(); }, data: sellData });
 import * as __ui from './ui.js';
 window.__ui = __ui;
 main().catch(e => { console.error(e); document.body.insertAdjacentHTML('beforeend', `<p class="boot-fail">The till could not start: ${esc(e.message)}</p>`); });

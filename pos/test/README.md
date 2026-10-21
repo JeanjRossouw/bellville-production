@@ -20,6 +20,10 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
 - `products.test.mjs` — step 4: products, variants, barcodes, per-store
   prices, the price audit, Shopify CSV out and in, labels, archiving.
   `node pos/test/products.test.mjs`
+- `sell.test.mjs` — step 5: the sale screen on an enrolled till as a cashier:
+  wedge scanning, variants, discounts within and over the role limit (manager
+  PIN), a price override, customers, park and recall, a reload, voids.
+  `node pos/test/sell.test.mjs`
 - `money.test.mjs` — the shared cents and VAT maths; needs no emulator.
   `node pos/test/money.test.mjs`
   Set `FIREBASE_SDK_DIR` to a local copy of the `firebase` package's browser

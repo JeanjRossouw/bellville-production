@@ -71,7 +71,7 @@ export function productsHtml(d) {
       <thead><tr><th><input type="checkbox" id="pr-all" title="Tick all for labels"></th><th></th><th>Product</th><th>SKU · barcodes</th><th>Category · brand</th><th>Type</th><th>VAT</th><th class="r">Cost</th><th class="r">Price</th><th class="r">Margin</th><th></th></tr></thead>
       <tbody>${list.map(p => { const vs = itemVariants(d, p.id).filter(v => !v.archived); const m = margin(d, p); return `<tr class="${p.archived ? 'off' : ''}">
         <td><input type="checkbox" data-lbl="${esc(p.id)}"></td><td>${thumb(p)}</td>
-        <td><strong>${esc(p.name)}</strong>${p.archived ? ' <span class="chip">archived</span>' : ''}${vs.length ? `<div class="muted">${vs.length} variant${vs.length === 1 ? '' : 's'}: ${esc(vs.slice(0, 4).map(v => v.name).join(', '))}${vs.length > 4 ? '…' : ''}</div>` : ''}${p.trackStock === false && p.type === 'stock' ? '<div class="muted">stock not tracked</div>' : ''}</td>
+        <td><strong>${esc(p.name)}</strong>${p.archived ? ' <span class="chip">archived</span>' : ''}${vs.length ? `<div class="muted">${vs.length} variant${vs.length === 1 ? '' : 's'}: ${esc(vs.slice(0, 4).map(v => v.name).join(', '))}${vs.length > 4 ? '…' : ''}</div>` : ''}${p.trackStock === false && p.type === 'stock' ? '<div class="muted">stock not tracked</div>' : ''}${p.favourite ? ' <span class="chip">favourite</span>' : ''}</td>
         <td class="muted">${esc(p.sku || '')}${(p.barcodes || []).length ? '<br>' + esc((p.barcodes || []).join(', ')) : ''}</td>
         <td class="muted">${esc(p.category || '')}${p.brand ? '<br>' + esc(p.brand) : ''}</td>
         <td class="muted">${esc(typeLabel(p.type))}</td><td class="muted">${esc(p.vatClass || 'standard')}</td>
@@ -98,7 +98,7 @@ export function openProductForm(d, productId, entityId) {
     ${row(field('Barcodes (scan or type; several, separated by spaces)', 'pf-barcodes', { value: (x.barcodes || []).join(' '), placeholder: 'scan here' }), field('Category', 'pf-cat', { value: x.category, list: 'pf-cats' }))}
     <datalist id="pf-cats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist><datalist id="pf-brands">${brands.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     ${row(field('Brand', 'pf-brand', { value: x.brand, list: 'pf-brands' }), field('Type', 'pf-type', { type: 'select', value: x.type, options: TYPES.map(t => ({ value: t.key, label: t.label })) }))}
-    <div class="fld-row">${field('VAT class', 'pf-vat', { type: 'select', value: x.vatClass || 'standard', options: VAT_CLASSES.map(v => ({ value: v.key, label: v.label })) })}<div class="fld"><span>Stock</span><label class="chk"><input type="checkbox" id="pf-track"${x.trackStock !== false ? ' checked' : ''}> Track stock on hand</label></div></div>
+    <div class="fld-row">${field('VAT class', 'pf-vat', { type: 'select', value: x.vatClass || 'standard', options: VAT_CLASSES.map(v => ({ value: v.key, label: v.label })) })}<div class="fld"><span>Stock and the till</span><label class="chk"><input type="checkbox" id="pf-track"${x.trackStock !== false ? ' checked' : ''}> Track stock on hand</label><label class="chk"><input type="checkbox" id="pf-fav"${x.favourite ? ' checked' : ''}> Show on the till’s favourites</label></div></div>
     <div class="grid three">${field('Cost (R, excl. VAT)', 'pf-cost', { value: randsOf(x.costCents), inputmode: 'decimal' })}${field('Selling price (R, incl. VAT)', 'pf-price', { value: randsOf(x.priceCents), inputmode: 'decimal' })}<div class="fld"><span>Margin</span><div class="pf-margin" id="pf-margin">–</div></div></div>
     ${row(field('Reorder when stock falls to', 'pf-reorder', { value: x.reorderLevel == null ? '' : x.reorderLevel, type: 'number', min: 0 }), field('Reorder quantity', 'pf-reorderqty', { value: x.reorderQty == null ? '' : x.reorderQty, type: 'number', min: 0 }))}
     ${field('Pictures (web addresses, one per line)', 'pf-images', { type: 'textarea', value: (x.images || []).join('\n'), rows: 2 })}
@@ -181,7 +181,7 @@ async function saveProduct(w, d, p, existing) {
   const eid = w.querySelector('.pf').dataset.entity;
   const data = {
     name: val(w, 'pf-name'), sku: val(w, 'pf-sku'), barcodes: codes(val(w, 'pf-barcodes')), category: val(w, 'pf-cat'), brand: val(w, 'pf-brand'),
-    type: val(w, 'pf-type'), vatClass: val(w, 'pf-vat'), trackStock: !!w.querySelector('#pf-track').checked,
+    type: val(w, 'pf-type'), vatClass: val(w, 'pf-vat'), trackStock: !!w.querySelector('#pf-track').checked, favourite: !!w.querySelector('#pf-fav').checked,
     costCents: centsOf(val(w, 'pf-cost')), priceCents: centsOf(val(w, 'pf-price')),
     reorderLevel: val(w, 'pf-reorder') === '' ? null : Number(val(w, 'pf-reorder')), reorderQty: val(w, 'pf-reorderqty') === '' ? null : Number(val(w, 'pf-reorderqty')),
     images: val(w, 'pf-images').split(/\n+/).map(s => s.trim()).filter(s => /^https?:\/\//.test(s)), description: val(w, 'pf-desc'),

@@ -20,6 +20,7 @@ import { openModal, closeModal, pinPadHtml, wirePinPad, toast, esc } from './ui.
 const LS_DEVICE = 'pos-device';
 const LS_CACHE = 'pos-pincache';
 const LS_LAST = 'pos-last-user';
+const LS_MODE = 'pos-mode';          // how the last sign-in was made, so a reload keeps it
 
 // what the rest of the app reads
 export const session = {
@@ -114,18 +115,27 @@ async function adoptLogin(u) {
     const r = await api('me', devBody());
     session.nobodyYet = !!r.nobodyYet;
     if (r.device) session.device = r.device;
-    if (r.user) { session.user = r.user; session.uid = r.user.uid; session.mode = session.mode === 'pin' || session.mode === 'pin-offline' ? session.mode : (r.user.email && !session.device ? 'email' : session.mode || 'email'); try { localStorage.setItem(LS_LAST, JSON.stringify(r.user)); } catch (e) {} }
+    if (r.user) { session.user = r.user; session.uid = r.user.uid; session.mode = session.mode || rememberedMode(r.user); try { localStorage.setItem(LS_LAST, JSON.stringify(r.user)); } catch (e) {} }
     else { session.user = null; session.uid = u.uid; session.mode = 'email'; }
   } catch (e) {
     // offline: the last answer stands
     let last = null; try { last = JSON.parse(localStorage.getItem(LS_LAST) || 'null'); } catch (x) {}
-    if (last && last.uid === u.uid) { session.user = last; session.uid = u.uid; session.mode = session.mode || 'email'; }
+    if (last && last.uid === u.uid) { session.user = last; session.uid = u.uid; session.mode = session.mode || rememberedMode(last); }
     else { session.user = null; session.uid = u.uid; session.mode = 'email'; }
   }
 }
 
+// the mode a reload comes back in: what was remembered, else PIN on a till for someone without an email
+function rememberedMode(user) {
+  let m = ''; try { m = localStorage.getItem(LS_MODE) || ''; } catch (e) {}
+  if (m === 'pin' || m === 'email') return m;
+  return session.device && !(user && user.email) ? 'pin' : 'email';
+}
+const rememberMode = (m) => { try { localStorage.setItem(LS_MODE, m); } catch (e) {} };
+
 // ------------------------------------------------------------- sign in --
 export async function signInEmail(email, password) {
+  rememberMode('email');
   await fb.fns.signInWithEmailAndPassword(fb.auth, String(email || '').trim(), password);
   session.mode = 'email';
 }
@@ -139,6 +149,7 @@ export async function signInPin(pin) {
   try {
     const r = await api('pinLogin', { ...devBody(), pin });
     saveCache(r.staff || []);
+    rememberMode('pin');
     session.mode = 'pin';
     session.user = r.user; session.uid = r.user.uid; session.device = r.device;
     try { localStorage.setItem(LS_LAST, JSON.stringify(r.user)); } catch (e) {}
@@ -167,7 +178,7 @@ export function lock() {
 export async function signOut() {
   closeModal();
   session.mode = ''; session.uid = ''; session.user = null;
-  try { localStorage.removeItem(LS_LAST); } catch (e) {}
+  try { localStorage.removeItem(LS_LAST); localStorage.removeItem(LS_MODE); } catch (e) {}
   await fb.fns.signOut(fb.auth);
   emit();
 }

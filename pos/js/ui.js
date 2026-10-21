@@ -8,7 +8,7 @@ export function money(cents, symbol = 'R') {
   const n = Math.round(Number(cents) || 0);
   const sign = n < 0 ? '−' : '';
   const abs = Math.abs(n);
-  const rand = Math.floor(abs / 100).toLocaleString('en-ZA');
+  const rand = String(Math.floor(abs / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');   // the same on every device, whatever its locale
   return `${sign}${symbol} ${rand}.${String(abs % 100).padStart(2, '0')}`;
 }
 export const niceDate = (iso) => iso ? new Date(iso).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
