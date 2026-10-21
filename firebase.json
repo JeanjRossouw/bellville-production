@@ -1,0 +1,10 @@
+{
+  "firestore": {
+    "rules": "couchpotato/firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "emulators": {
+    "firestore": { "port": 8085 },
+    "auth": { "port": 9099 }
+  }
+}
