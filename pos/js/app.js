@@ -11,6 +11,7 @@ import * as sell from './sell.js';
 import * as salesTab from './sales.js';
 import * as register from './register.js';
 import * as sync from './sync.js';
+import * as returns from './returns.js';
 import { EMULATOR } from './db.js';
 
 const $ = (id) => document.getElementById(id);
@@ -169,7 +170,7 @@ const storeName = (id) => (stores.find(s => s.id === id) || {}).name || '';
 const entityName = (id) => { const e = entities.find(x => x.id === id); return e ? (e.tradingName || e.legalName) : id; };
 function navItems() {
   const out = [];
-  if (sellStoreId()) out.push({ key: 'sell', label: 'Sell' }, { key: 'sales', label: 'Sales' });
+  if (sellStoreId()) out.push({ key: 'sell', label: 'Sell' }, { key: 'sales', label: 'Sales' }, { key: 'returns', label: 'Returns' });
   if (register.registerId()) out.push({ key: 'register', label: 'Register' });
   out.push({ key: 'home', label: 'Home' }, { key: 'products', label: 'Products' });
   if (auth.atLeast('manager')) out.push({ key: 'admin', label: 'Admin' });
@@ -202,6 +203,7 @@ function paint() {
   }
   if (view === 'sales') { startStoreData(); screen.innerHTML = salesTab.salesHtml({ ...sellData(), sales: storeSales }); return; }
   if (view === 'register') { startStoreData(); screen.innerHTML = register.registerHtml(); return; }
+  if (view === 'returns') { startStoreData(); screen.innerHTML = returns.returnsHtml(); const q = $('rt-q'); if (q && !document.activeElement.closest('#screen')) q.focus(); return; }
   if (view === 'admin') {
     const subs = adminSubs();
     if (!subs.some(x => x.key === adminSub)) adminSub = subs[0].key;
@@ -348,6 +350,7 @@ async function onAction(e) {
   if (b.dataset.act.startsWith('sl-')) return sell.action(b.dataset.act, b);
   if (b.dataset.act === 'sa-open') return salesTab.openSale(id, { ...sellData(), sales: storeSales });
   if (b.dataset.act.startsWith('rg-')) return register.action(b.dataset.act, b);
+  if (b.dataset.act.startsWith('rt-')) return returns.action(b.dataset.act, b);
   if (b.dataset.act === 'sync-now') return sync.syncNow().then(reloadOffsets);
   if (b.dataset.act === 'sync-failed') return showFailed();
   if (b.dataset.act === 'sync-drop') { if (confirm('Drop this refused sale from the till? It was never written; ring it up again if it should be.')) sync.dropFailed(id).then(showFailed); return; }
@@ -396,7 +399,10 @@ $('screen').addEventListener('change', (e) => {
 });
 
 $('screen').addEventListener('input', (e) => { if (e.target.id === 'pr-q') { prFilter.q = e.target.value; paint(); } if (e.target.id === 'sl-q') sell.onSearchInput(e.target.value); if (e.target.id === 'sa-q') { salesTab.view.q = e.target.value; paint(); const q = $('sa-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } } });
-$('screen').addEventListener('keydown', (e) => { if (e.target.id === 'sl-q' && e.key === 'Enter') { e.preventDefault(); sell.onSearchEnter(e.target.value); } });
+$('screen').addEventListener('keydown', (e) => { if (e.target.id === 'sl-q' && e.key === 'Enter') { e.preventDefault(); sell.onSearchEnter(e.target.value); } if (e.key === 'Enter' && returns.onEnter(e.target.id, e.target.value)) e.preventDefault(); });
+$('screen').addEventListener('change', (e) => { if (view === 'returns') returns.onChange(e); });
+$('screen').addEventListener('input', (e) => { if (view === 'returns') returns.onInput(e.target.id, e.target.value); });
+returns.setContext({ repaint: () => { if (view === 'returns') paint(); }, data: sellData, onDone: () => { register.reg.stale = true; } });
 document.addEventListener('keydown', (e) => { if (view === 'sell' && auth.session.user) sell.onDocumentKey(e); }, true);
 $('screen').addEventListener('change', (e) => { if (e.target.id === 'sl-store') { sellStore = e.target.value; startStoreData(); paint(); } });
 sell.setContext({ repaint: () => { if (view === 'sell') paint(); }, data: sellData, onSold: (r) => { register.reg.stale = true; reloadOffsets(); if (!r.offline) sync.refreshBlocks(); } });

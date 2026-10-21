@@ -23,7 +23,8 @@ export const defaultSettings = () => ({
   layby: { minDepositPct: 20, termDays: 90, penaltyPct: 10 },
   session: { idleLogoutMinutes: 10, pinLength: 6 },
   numbering: { blockSize: 50, refillBelow: 10 },
-  reports: { phone: '', email: '' }
+  reports: { phone: '', email: '' },
+  returns: { windowDays: 7, reasons: ['Changed mind', 'Faulty', 'Wrong item', 'Damaged', 'Other'] }
 });
 
 // rands typed on a screen → whole cents; never a float kept
@@ -212,6 +213,10 @@ export function settingsHtml(d) {
       <div class="card"><h2>Lay-bys</h2>
         <div class="grid three">${field('Minimum deposit %', 'se-lb-dep', { value: s.layby.minDepositPct, type: 'number', min: 0, max: 100 })}${field('Term (days)', 'se-lb-term', { value: s.layby.termDays, type: 'number', min: 1 })}${field('Cancellation penalty %', 'se-lb-pen', { value: s.layby.penaltyPct, type: 'number', min: 0, max: 100 })}</div>
       </div>
+      <div class="card"><h2>Returns</h2>
+        <div class="grid two">${field('Return window (days)', 'se-ret-days', { value: (s.returns || {}).windowDays, type: 'number', min: 0 })}${field('Reason codes (comma separated)', 'se-ret-reasons', { value: ((s.returns || {}).reasons || []).join(', ') })}</div>
+        <p class="muted">After the window a manager’s PIN is needed. A return without a receipt is store credit only, with a manager’s PIN. A made-to-order item always needs a manager.</p>
+      </div>
       <div class="card"><h2>Daily summary to the owner</h2>
         <div class="grid two">${field('WhatsApp number', 'se-rep-phone', { value: (s.reports || {}).phone, inputmode: 'tel', placeholder: '082 123 4567' })}${field('Email', 'se-rep-email', { value: (s.reports || {}).email, type: 'email' })}</div>
         <p class="muted">When a register closes, the Z-report summary is offered to send here.</p>
@@ -237,7 +242,8 @@ export function settingsRead(w) {
     layby: { minDepositPct: num('se-lb-dep', 0, 100, 20), termDays: num('se-lb-term', 1, 3650, 90), penaltyPct: num('se-lb-pen', 0, 100, 10) },
     session: { idleLogoutMinutes: num('se-idle', 1, 1440, 10), pinLength: num('se-pinlen', 4, 6, 6) },
     numbering: { blockSize: num('se-block', 10, 500, 50), refillBelow: 10 },
-    reports: { phone: val(w, 'se-rep-phone'), email: val(w, 'se-rep-email') }
+    reports: { phone: val(w, 'se-rep-phone'), email: val(w, 'se-rep-email') },
+    returns: { windowDays: num('se-ret-days', 0, 3650, 7), reasons: val(w, 'se-ret-reasons').split(',').map(x => x.trim()).filter(Boolean) }
   };
 }
 export async function settingsSave(w, d) {

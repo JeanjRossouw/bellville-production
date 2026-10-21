@@ -20,7 +20,8 @@ export const API = {
   auth: '/.netlify/functions/pos-auth',
   sale: '/.netlify/functions/pos-sale',
   doc: '/.netlify/functions/pos-doc',
-  shift: '/.netlify/functions/pos-shift'
+  shift: '/.netlify/functions/pos-shift',
+  return: '/.netlify/functions/pos-return'
 };
 export const ROLES = [
   { key: 'cashier', label: 'Cashier' },

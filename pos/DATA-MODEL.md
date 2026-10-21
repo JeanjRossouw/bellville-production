@@ -173,6 +173,7 @@ layby { minDepositPct, termDays, penaltyPct }
 session { idleLogoutMinutes, pinLength (4..6) }
 numbering { blockSize, refillBelow }
 reports { phone, email }                                               // where the daily summary goes (the owner)
+returns { windowDays, reasons [string] }
 + stamps
 ```
 R: members of the entity. W: manager or owner of the entity.
@@ -209,6 +210,7 @@ variants, else the product. `itemId` = `variantId || productId`.
 **`stockLevels/{storeId}_{itemId}`**
 ```
 entityId, storeId, productId, variantId ('' when none), onHandQty (int),
+quarantineQty (int: returns kept apart until inspected; its own movement bucket),
 reservedQty (int: open lay-bys and special orders holding stock),
 lastMovementAt, lastCountedAt, rebuiltAt, + stamps (createdBy 'server')
 ```
@@ -281,18 +283,25 @@ soldSaleId, soldDocNo, soldAt, expiresAt, customerId, uses [ { saleId, docNo, am
 R: members of the entity (the till checks a code). W: server only: created
 when a voucher product is sold, reduced when one pays for a sale.
 
-**`creditNotes/{id}`** — immutable, series `CN`
+**`creditNotes/{id}`** — immutable, series `CN` (the `pos-return` function; numbered straight from the entity's counter inside the transaction, since returns need the office line)
 ```
-entityId, storeId, registerId, shiftId, seq, docNo, blockId,
-saleId, saleDocNo, customerId, reason, restock (bool),
-lines [ { saleLineNo, productId, variantId, itemId, name, qty, unitPriceCents, lineTotalCents, vatRateBp, vatCents } ],
-totalCents, vatCents, cashierUid, overrideUid, overrideReason,
-clientCreatedAt, serverReceivedAt, + stamps
+entityId, storeId, registerId, shiftId, seq, docNo,
+saleId, saleDocNo ('' for a return without a receipt), noReceipt (bool), customerId, customerSnapshot,
+lines [ { saleLineNo, productId, variantId, itemId, name, qty, soldQty, unitPaidCents (the price actually paid, after line and sale discounts),
+          lineTotalCents, vatRateBp, vatCents (the VAT reversed), reason, disposition ('restock'|'quarantine'|'writeoff'), type, fulfilment } ],
+lineCount, totalCents, vatCents, vatRateBp (the sale’s rate, or today’s without a receipt), vatRegistered, refunds [ { method, amountCents, ref } ], refundedCents,
+exchangeSaleId, exchangeUsedCents (the credit spent on the new sale, written in the same transaction),
+cashierUid, cashierName, approvers [ { uid, name } ], reasonSummary, clientCreatedAt, serverReceivedAt, + stamps
 ```
-R: members of the store. W: server only. Stock returned comes back through
-`stockMovements` (`reason: 'creditNote'`).
+R: members of the store. W: server only. Restocked goods come back through
+`stockMovements` (`reason: 'creditNote'`, bucket `onHand`); quarantined ones
+go to the level's `quarantineQty` (bucket `quarantine`), not sellable; a
+write-off moves nothing. Never more than was sold on a line (earlier credit
+notes on the sale are summed). Outside the entity's return window, or a
+made-to-order item, or a return without a receipt, needs a manager's PIN; a
+return without a receipt is store credit only and needs the customer.
 
-**`refunds/{id}`** — immutable. The money going back for a credit note.
+**`refunds/{id}`** — immutable. The money going back for a credit note (a negative `payments` row is written alongside, so the shift's cash-up stays right; `storeCredit` moves the customer's `storeCreditCents` up).
 ```
 entityId, storeId, registerId, shiftId, creditNoteId, creditNoteDocNo,
 method ('cash'|'card'|'eft'|'storeCredit'), amountCents (positive), ref,

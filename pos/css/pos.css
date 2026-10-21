@@ -247,6 +247,13 @@ small { font-size: 12px; }
 .offline-bar { display: flex; align-items: center; justify-content: center; gap: .8rem; flex-wrap: wrap; background: #7c2d12; color: #fff; font-size: 13px; padding: .5rem 1rem; }
 .offline-bar.ok { background: #1f5f2f; } .offline-bar .btn { color: #fff; border-color: rgba(255,255,255,.5); background: transparent; }
 
+/* ---------------------------------------------------------------- returns */
+.rt-tbl td { vertical-align: middle; } .rt-tbl select { font: inherit; font-size: 13px; padding: .35rem .4rem; border: 1px solid var(--line-2); border-radius: 4px; max-width: 180px; }
+.rt-tbl .qty { display: inline-flex; align-items: center; gap: .35rem; } .rt-tbl .qty b { min-width: 1.4em; text-align: center; }
+.rt-sum .tot { border-top: 1px solid var(--ink); margin-top: .4rem; padding-top: .5rem; font-family: var(--font-ui); font-weight: 600; text-transform: uppercase; letter-spacing: .1em; font-size: 11px; } .rt-sum .tot strong { font-size: 20px; letter-spacing: 0; }
+#rt-q { width: 100%; height: 44px; font: inherit; font-size: 15px; padding: 0 1rem 0 2.6rem; border: 1px solid var(--line-2); border-radius: 6px; }
+#rt-nr-q { width: 100%; height: 42px; font: inherit; font-size: 14px; padding: 0 1rem 0 2.6rem; border: 1px solid var(--line-2); border-radius: 6px; }
+
 /* ------------------------------------------------------------------ modal */
 .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); display: flex; align-items: center; justify-content: center; padding: 1rem; z-index: 50; }
 .modal-card { background: #fff; border-radius: 10px; width: 100%; max-width: 520px; max-height: 92vh; display: flex; flex-direction: column; }

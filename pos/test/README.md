@@ -48,6 +48,15 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   order; a queued sale whose price changed is refused, kept for a manager
   and its number voided; the next block comes early when few numbers remain.
   `node pos/test/offline.test.mjs`
+- `return-api.test.mjs` — step 10: the `pos-return` function over HTTP: finding
+  a sale by number, customer or date; a part return at the price actually
+  paid with the VAT reversed; never more than was sold; restock, quarantine
+  and write-off; cash, card, EFT and store credit; the return window (manager
+  PIN outside it); made-to-order needs a manager; no-receipt returns as store
+  credit only, with a customer; an exchange written with its new sale in one
+  transaction; credit notes numbered without a gap. `node pos/test/return-api.test.mjs`
+- `returns.test.mjs` — step 10 in the browser: the Returns tab on a till.
+  `node pos/test/returns.test.mjs`
 - `money.test.mjs` — the shared cents and VAT maths; needs no emulator.
   `node pos/test/money.test.mjs`
   Set `FIREBASE_SDK_DIR` to a local copy of the `firebase` package's browser

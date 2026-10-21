@@ -16,12 +16,13 @@ import { barcodeSvg, code128Widths, encodable } from './barcode.js';
 
 export const SLIP_MAX = 5000, ABRIDGED_MAX = 500000;
 export function receiptKind(sale, entity) {
+  if (sale.series === 'CN') return 'creditnote';
   if (!entity.vatRegistered) return 'invoice';
   if (sale.totalCents <= SLIP_MAX) return 'slip';
   if (sale.totalCents <= ABRIDGED_MAX) return 'abridged';
   return 'full';
 }
-export const kindTitle = (kind) => kind === 'slip' ? 'Till slip' : kind === 'abridged' ? 'Tax invoice' : kind === 'full' ? 'Tax invoice' : 'Invoice';
+export const kindTitle = (kind) => kind === 'slip' ? 'Till slip' : kind === 'abridged' ? 'Tax invoice' : kind === 'full' ? 'Tax invoice' : kind === 'creditnote' ? 'Credit note' : 'Invoice';
 // what a full tax invoice needs from the customer; '' when all is there
 export function fullInvoiceGap(customer) {
   if (!customer || !String(customer.name || '').trim()) return 'the customer’s name';
@@ -47,10 +48,11 @@ export function receiptModel({ sale, lines, payments, entity, store, settings, c
     header, footer, policy,
     docNo: sale.docNo, date: sale.clientCreatedAt || sale.createdAt, cashier: sale.cashierName || '', register: sale.registerId || '',
     customer: cust ? { name: cust.name, vatNo: cust.vatNo || '', address: addr(cust.address), phone: cust.phone || '' } : null,
-    lines: (lines || []).map(l => ({ name: l.name, qty: l.qty, unitPriceCents: l.unitPriceCents, discountCents: (l.discountCents || 0) + (l.saleDiscountCents || 0), lineTotalCents: l.netCents != null ? l.netCents : l.lineTotalCents, vatCents: l.vatCents || 0, vatRateBp: l.vatRateBp || 0, zero: !l.vatRateBp, note: l.note || '' })),
+    lines: (lines || []).map(l => ({ name: l.name, qty: l.qty, unitPriceCents: l.unitPaidCents != null ? l.unitPaidCents : l.unitPriceCents, discountCents: l.unitPaidCents != null ? 0 : (l.discountCents || 0) + (l.saleDiscountCents || 0), lineTotalCents: l.netCents != null ? l.netCents : l.lineTotalCents, vatCents: l.vatCents || 0, vatRateBp: l.vatRateBp || 0, zero: !l.vatRateBp, note: l.note || (l.reason ? l.reason + (l.disposition ? ' · ' + l.disposition : '') : '') })),
+    creditNote: sale.series === 'CN' ? { saleDocNo: sale.saleDocNo || '', noReceipt: !!sale.noReceipt, exchangeSaleId: sale.exchangeSaleId || '', exchangeUsedCents: sale.exchangeUsedCents || 0 } : null,
     subtotalCents: sale.subtotalCents, discountCents: (sale.lineDiscountCents || 0) + (sale.saleDiscountCents || 0), totalCents: sale.totalCents, vatCents: sale.vatCents, vatRateBp: sale.vatRateBp,
     exVatCents: sale.totalCents - sale.vatCents, roundingCents: sale.roundingCents || 0, changeCents: sale.changeCents || 0,
-    payments: (payments || []).map(p => ({ label: methodLabel(p.method) + (p.cardLast4 ? ' ••' + p.cardLast4 : '') + (p.status === 'awaiting' ? ' (awaiting)' : ''), amountCents: p.amountCents, tenderedCents: p.tenderedCents, ref: p.ref || p.approvalCode || '' })),
+    payments: (payments || []).map(p => ({ label: (sale.series === 'CN' ? 'Refund: ' : '') + (p.method === 'creditNote' ? 'Credit note' : methodLabel(p.method)) + (p.cardLast4 ? ' ••' + p.cardLast4 : '') + (p.status === 'awaiting' ? ' (awaiting)' : ''), amountCents: Math.abs(p.amountCents), tenderedCents: p.tenderedCents, ref: p.ref || p.approvalCode || '' })),
     awaiting: sale.paidStatus === 'awaiting', vouchers: sale.vouchersSold || [], pending: !!sale.pending
   };
 }
@@ -62,6 +64,7 @@ export function slipHtml(m) {
     <div class="c"><div class="co">${esc(m.company.name)}</div>${m.store ? `<div>${esc(m.store.name)}</div>` : ''}${m.header ? `<div class="s">${esc(m.header).replace(/\n/g, '<br>')}</div>` : ''}${m.company.vatNo ? `<div class="s">VAT no ${esc(m.company.vatNo)}</div>` : ''}${m.company.regNo && m.kind === 'full' ? `<div class="s">Reg no ${esc(m.company.regNo)}</div>` : ''}</div>
     <div class="c t">${esc(m.title)}</div>
     ${row('No', '<b>' + esc(m.docNo) + '</b>')}${row('Date', esc(niceDate(m.date) + ' ' + niceTime(m.date)))}${m.cashier ? row('Served by', esc(m.cashier)) : ''}
+    ${m.creditNote ? `<div class="s c">${m.creditNote.noReceipt ? 'Returned without a receipt · store credit' : 'Against ' + esc(m.creditNote.saleDocNo)}${m.creditNote.exchangeSaleId ? ' · exchanged' : ''}</div>` : ''}
     ${m.customer ? `<div class="box"><div>${esc(m.customer.name)}</div>${m.kind === 'full' && m.customer.address ? `<div class="s">${esc(m.customer.address)}</div>` : ''}${m.customer.vatNo ? `<div class="s">VAT no ${esc(m.customer.vatNo)}</div>` : ''}</div>` : ''}
     <div class="hr"></div>
     ${m.lines.map(l => `<div class="ln"><div>${esc(l.name)}${m.vat && l.zero ? ' <i>*</i>' : ''}</div><div class="r"><span>${l.qty} × ${esc(money(l.unitPriceCents))}${l.discountCents ? ' − ' + esc(money(l.discountCents)) : ''}</span><span>${esc(money(l.lineTotalCents))}</span></div>${l.note ? `<div class="s">${esc(l.note)}</div>` : ''}</div>`).join('')}
