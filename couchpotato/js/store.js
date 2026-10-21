@@ -1071,6 +1071,88 @@ export async function batchWrite(ops) {
   await b.commit();
 }
 
+// ---- moving from the demo to the real system ----
+// The demo keeps a company's records in this browser (localStorage). The
+// owner downloads them as one file here, signs in to the real system and
+// brings the file in there: the same ids, so orders still point at their
+// customers, invoices at their orders, and so on. Logins, the team, roles and
+// the shop and Xero connections are not moved: they are set up again.
+export const MOVE_SKIP = ['members', 'invites', 'roles', 'integrations', 'shopifyPushes', 'shopifyOrders', 'xeroPushes', 'assistantUse', 'secrets', 'payments'];
+// A record the demo put in by itself. Only the built-in demo company (id
+// 'demo') has them; they carry short made-up ids (d1, h27, m-pine, hsl12…),
+// where everything a person adds gets a long generated one ('d' + 12 or so
+// letters and digits). Numbering, settings, the register and wage runs are
+// never counted as samples, except wage runs the demo made.
+const GENERATED = /^d(?=[0-9a-z]*[a-z])[0-9a-z]{10,}$/;
+export function isSampleRecord(coll, id, doc, companyId) {
+  if (companyId !== 'demo' || !doc) return false;
+  if (coll === 'counters') return id === 'demoHistory';
+  if (['settings', 'shopProducts'].includes(coll)) return false;
+  // a wage run or the register that only has the demo's own staff on it
+  const people = coll === 'wageRuns' ? (doc.lines || []).map(l => l.staffId) : coll === 'attendance' ? (id === 'roster' ? (doc.people || []).map(x => x.id) : Object.keys({ ...(doc.in || {}), ...(doc.out || {}) })) : null;
+  if (people) return people.length > 0 && people.every(x => !GENERATED.test(String(x || '')));
+  if (coll === 'deliveryNotes') return !GENERATED.test(String(id));     // a note is kept under its order's id
+  return !GENERATED.test(String(id));
+}
+export function exportDemoBundle() {
+  if (mode !== 'demo') throw new Error('Only the demo keeps its data in this browser');
+  if (!currentUser || !currentUser.companyId) throw new Error('Sign in to the demo company first');
+  const cid = currentUser.companyId, prefix = demoPrefix(cid);
+  const reserved = new Set(['user', 'accounts', 'companies', 'invites']);
+  const collections = {};
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (!k || !k.startsWith(prefix)) continue;
+    const coll = k.slice(prefix.length);
+    if (!/^[A-Za-z]+$/.test(coll) || reserved.has(coll) || MOVE_SKIP.includes(coll)) continue;   // another company's keys carry its id and a dash
+    const map = jget(k);
+    if (map && typeof map === 'object' && Object.keys(map).length) collections[coll] = map;
+  }
+  const co = demoCompanies()[cid] || {};
+  return { app: 'factory-manager', kind: 'demo-export', version: 1, exportedAt: nowIso(), company: { id: cid, name: co.name || (company && company.name) || '' }, collections };
+}
+// Write a bundle into the signed-in owner's company. Records keep their ids;
+// one already there with the same id is replaced. Counters move to the higher
+// number so nothing is numbered twice. Settings are merged when asked.
+export async function importBundle(bundle, opts) {
+  opts = opts || {};
+  if (mode !== 'cloud') throw new Error('Open the real system (not the demo) to bring the data in');
+  if (!currentUser || currentUser.role !== 'owner') throw new Error('Only the owner can bring data in');
+  if (!bundle || bundle.app !== 'factory-manager' || !bundle.collections) throw new Error('This is not a Factory Manager data file');
+  const done = {};
+  const writes = [];
+  for (const [coll, map] of Object.entries(bundle.collections)) {
+    if (MOVE_SKIP.includes(coll) || !/^[A-Za-z]+$/.test(coll)) continue;
+    if (coll === 'settings' && !opts.settings) continue;
+    for (const [id, doc] of Object.entries(map || {})) {
+      if (!id || /[\/]/.test(id) || !doc || typeof doc !== 'object') continue;
+      if (opts.skipSamples && isSampleRecord(coll, id, doc, bundle.company && bundle.company.id)) continue;
+      writes.push({ coll, id, doc });
+      done[coll] = (done[coll] || 0) + 1;
+    }
+  }
+  // counters: never go backwards
+  const counters = writes.filter(w => w.coll === 'counters');
+  for (const w of counters) {
+    const snap = await cloud.fns.getDoc(docRef('counters', w.id));
+    const have = snap.exists() ? Number(snap.data().value) || 0 : 0;
+    w.doc = { value: Math.max(have, Number(w.doc.value) || 0) };
+  }
+  const who = currentUser.name || currentUser.email || 'owner';
+  for (let i = 0; i < writes.length; i += 400) {
+    const b = cloud.fns.writeBatch(cloud.db);
+    writes.slice(i, i + 400).forEach(w => {
+      const data = { ...w.doc };
+      if (w.coll !== 'counters' && w.coll !== 'settings') { data.movedFromDemoAt = nowIso(); data.movedBy = who; }
+      if (w.coll === 'settings' || w.coll === 'counters') b.set(docRef(w.coll, w.id), data, { merge: true });
+      else b.set(docRef(w.coll, w.id), data);
+    });
+    await b.commit();
+    if (opts.progress) opts.progress(Math.min(writes.length, i + 400), writes.length);
+  }
+  return done;
+}
+
 // Add to (or take from) a number without reading it first, so two people
 // receiving and using stock at the same moment never lose each other's change:
 //   update('materials', id, { onHand: inc(-3) })
