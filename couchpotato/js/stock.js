@@ -19,6 +19,7 @@
 import * as store from './store.js';
 import { allMaterials, materialById, productByName, isFabric } from './costing.js';
 import { allOrders } from './orders.js';
+import { suppliersTabHtml, supplierByName, allSuppliers } from './suppliers.js';
 import { esc, money, field, row, val, openModal, toast, empty, today, niceDate, addDays, openPrint, docHeader, waDigits } from './ui.js';
 
 let pos = [];
@@ -142,6 +143,7 @@ export function renderStock(host, orders) {
   let body;
   if (view === 'orders') body = renderPOs();
   else if (view === 'moves') body = renderMoves();
+  else if (view === 'suppliers') body = suppliersTabHtml();
   else body = renderLevels(rows, shorts, unknown);
   host.innerHTML = `
     <div class="page-head"><div><h1>Stock</h1><p class="sub">Materials on the shelf, what the orders still need, and what to order.</p></div>
@@ -152,7 +154,7 @@ export function renderStock(host, orders) {
       ${tile(open.length, 'Purchase orders out', open.length ? 'amber' : '')}
       <div class="tile wide"><div class="tile-n">${esc(money(rows.reduce((s, r) => s + Math.max(0, r.onHand) * (Number(r.m.cost) || 0), 0), cur()))}</div><div class="tile-l">Value on the shelf</div></div>
     </div>
-    <div class="btn-row" style="margin:.2rem 0 .9rem">${tab('materials', 'Materials')}${tab('orders', 'Purchase orders' + (pos.length ? ' (' + pos.length + ')' : ''))}${tab('moves', 'Movements')}</div>
+    <div class="btn-row" style="margin:.2rem 0 .9rem">${tab('materials', 'Materials')}${tab('orders', 'Purchase orders' + (pos.length ? ' (' + pos.length + ')' : ''))}${tab('moves', 'Movements')}${tab('suppliers', 'Suppliers' + (allSuppliers().length ? ' (' + allSuppliers().length + ')' : ''))}</div>
     ${body}`;
 }
 
@@ -278,12 +280,14 @@ function openForFabric(keepId) {
 
 // The most recent contact details used for a supplier, so they are typed once.
 function lastContact(supplier) {
+  const sp = supplierByName(supplier);
+  if (sp && (sp.phone || sp.email)) return { phone: sp.phone || '', email: sp.email || '' };
   const p = pos.find(x => String(x.supplier || '').toLowerCase() === String(supplier || '').toLowerCase() && (x.supplierPhone || x.supplierEmail));
   return p ? { phone: p.supplierPhone || '', email: p.supplierEmail || '' } : { phone: '', email: '' };
 }
 
 function poForm(p) {
-  const suppliers = [...new Set(allMaterials().map(m => m.supplier).filter(Boolean))].sort();
+  const suppliers = [...new Set(allMaterials().map(m => m.supplier).filter(Boolean).concat(allSuppliers().map(s => s.name)))].sort();
   const c = p.supplierPhone || p.supplierEmail ? { phone: p.supplierPhone, email: p.supplierEmail } : lastContact(p.supplier);
   return row(
     field('Supplier', 'po-sup', { value: p.supplier, placeholder: 'Who you are ordering from', list: 'po-sup-list' }),

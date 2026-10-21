@@ -29,6 +29,7 @@
 //   Dashboard today / this week / this month from the till's own sales: money
 //             taken, sales, average, top products, by hour.
 import * as store from './store.js';
+import { editSupplier as editSharedSupplier } from './suppliers.js';
 import * as till from './till.js';
 import { readFile } from './importer.js';
 import { labelSheetHtml, openBarcodeCamera } from './barcode.js';
@@ -349,18 +350,7 @@ function takeHtml() {
 
 export const allSuppliers = () => suppliers;
 function supplierByName(name) { const n = String(name || '').trim().toLowerCase(); return suppliers.find(s => String(s.name || '').trim().toLowerCase() === n) || null; }
-function editSupplier(id) {
-  const sp = suppliers.find(x => x.id === id) || {};
-  openModal(id ? 'Edit ' + sp.name : 'New supplier', row(field('Name', 'sp-name', { value: sp.name }), field('WhatsApp / cell', 'sp-phone', { value: sp.phone })) + row(field('Email', 'sp-email', { type: 'email', value: sp.email }), field('Account no. with them', 'sp-acc', { value: sp.account })) + field('Notes', 'sp-notes', { type: 'textarea', value: sp.notes, placeholder: 'Order days, minimums, rep’s name…' }), {
-    okLabel: id ? 'Save' : 'Add',
-    onOk: async (w) => {
-      const name = val(w, 'sp-name'); if (!name) { toast('Give the supplier a name', 'warn'); return false; }
-      const d = { name, phone: val(w, 'sp-phone'), email: val(w, 'sp-email'), account: val(w, 'sp-acc'), notes: val(w, 'sp-notes') };
-      if (id) await store.update('suppliers', id, d); else await store.create('suppliers', d);
-      toast(name + (id ? ' saved' : ' added'));
-    }
-  });
-}
+const editSupplier = (id) => editSharedSupplier(id);
 // The shop's product vendors become suppliers (the ones not here yet).
 async function loadSuppliersFromShop() {
   const names = [...new Set(till.shopItems().map(i => String(i.vendor || '').trim()).filter(Boolean))];
@@ -372,8 +362,8 @@ async function loadSuppliersFromShop() {
 function suppliersHtml() {
   const bought = {}; grvs.forEach(g => { bought[g.supplier] = (bought[g.supplier] || 0) + 1; });
   return `<div class="card"><div class="page-head" style="margin:0 0 .5rem"><div><h2>Suppliers</h2><p class="sub">Who the shop buys from. Purchase orders go to them by WhatsApp or email.</p></div>
-      <div class="btn-row"><button class="btn ghost" data-act="ss-sup-load" title="Add the vendors on the shop’s products as suppliers">Load from Shopify</button><button class="btn primary" data-act="ss-sup-new">＋ Supplier</button></div></div>
-    ${suppliers.length ? `<table class="tbl"><thead><tr><th>Supplier</th><th>Contact</th><th class="r">Deliveries</th><th></th></tr></thead><tbody>${suppliers.map(sp => `<tr><td><strong>${esc(sp.name)}</strong>${sp.notes ? '<div class="muted">' + esc(sp.notes) + '</div>' : ''}</td><td>${esc([sp.phone, sp.email, sp.account ? 'acc ' + sp.account : ''].filter(Boolean).join(' · '))}</td><td class="r">${bought[sp.name] || 0}</td><td class="r nowrap"><button class="btn ghost sm" data-act="ss-sup-edit" data-id="${esc(sp.id)}">Edit</button> <button class="btn ghost sm" data-act="ss-po-for" data-supplier="${esc(sp.name)}">Order stock</button></td></tr>`).join('')}</tbody></table>` : '<p class="muted">No suppliers yet. Add one, or load them from the shop’s products.</p>'}
+      <div class="btn-row"><button class="btn ghost" data-act="sup-sheet-dl" title="An Excel sheet with your suppliers and what you buy from them, to fill in">⬇ Supplier sheet</button><button class="btn ghost" data-act="sup-sheet-im" title="Bring the filled-in supplier sheet back in">⬆ Import supplier sheet</button><button class="btn ghost" data-act="ss-sup-load" title="Add the vendors on the shop’s products as suppliers">Load from Shopify</button><button class="btn primary" data-act="ss-sup-new">＋ Supplier</button></div></div>
+    ${suppliers.length ? `<table class="tbl"><thead><tr><th>Supplier</th><th>Contact</th><th class="r">Deliveries</th><th></th></tr></thead><tbody>${suppliers.map(sp => `<tr><td><strong>${esc(sp.name)}</strong>${sp.notes ? '<div class="muted">' + esc(sp.notes) + '</div>' : ''}</td><td>${esc([sp.contact, sp.phone, sp.email, sp.account ? 'acc ' + sp.account : ''].filter(Boolean).join(' · '))}</td><td class="r">${bought[sp.name] || 0}</td><td class="r nowrap"><button class="btn ghost sm" data-act="ss-sup-edit" data-id="${esc(sp.id)}">Edit</button> <button class="btn ghost sm" data-act="ss-po-for" data-supplier="${esc(sp.name)}">Order stock</button></td></tr>`).join('')}</tbody></table>` : '<p class="muted">No suppliers yet. Add one, or load them from the shop’s products.</p>'}
   </div>`;
 }
 
@@ -402,7 +392,7 @@ export function suggestions() {
   const demand = openDemand(), ordered = onOrder();
   return till.shopItems().filter(i => i.tracked).map(i => {
     const level = reorderLevel(i.variantId), need = demand[i.variantId] || 0, coming = ordered[i.variantId] || 0, onHand = Number(i.qty) || 0;
-    return { i, level, need, coming, onHand, rec: Math.max(0, level + need - onHand - coming), supplier: i.vendor || '(no supplier)' };
+    return { i, level, need, coming, onHand, rec: Math.max(0, level + need - onHand - coming), supplier: (shopProds[i.variantId] || {}).supplier || i.vendor || '(no supplier)' };
   }).filter(r => r.rec > 0 || r.need > 0);
 }
 async function setLevel(variantId, level, name) {

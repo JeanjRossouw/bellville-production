@@ -47,6 +47,21 @@ password; the owner invites the team under Settings and gives each person a role
   shows no pay. Factory-floor and wages roles may clock people in.
 - Each part shows only to a role that may see what it is about.
 
+## Suppliers and the supplier sheet
+- Buying → Stock → Suppliers (and on the till: Stock → Suppliers) lists every supplier with
+  the contact person, WhatsApp, email, office phone, account no. and what you buy from them
+  with the price ("2nd" marks a supplier that is not the main one). ＋ Supplier / Edit.
+- "⬇ Supplier sheet" downloads an Excel workbook: Suppliers (one row per supplier, add new
+  ones at the bottom), What I buy (pick the supplier and the item from the drop-downs, type
+  the price excl. VAT for a VAT-registered company, their item code, Main supplier Yes/No; one
+  row per supplier an item is bought from), and Stock list (everything in stock on the system:
+  the materials, and the online shop's products when it is connected; it is the drop-down).
+- "⬆ Import supplier sheet" brings it back: new suppliers are added, existing ones brought up
+  to date (a blank cell keeps what is there), and every item gets its suppliers and prices. The
+  main supplier becomes the item's supplier and, if ticked, its price the item's cost price
+  (product costs follow). Items not in the stock list are skipped and named.
+- Purchase orders fill in the supplier's WhatsApp and email from the list.
+
 ## Delivery notes (from Done)
 - When a piece is marked Done it waits on Factory floor → Done (and Orders → Done). Tick the
   pieces going on the same truck (or "Select all"), then "🚚 Make delivery note": pick the

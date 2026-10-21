@@ -20,6 +20,8 @@ import { staffCardHtml } from './till.js';
 import { startQuotes, renderQuotes, setQuoteSettings, setQuoteFilter, newQuote, editQuote, copyQuote, sendQuote, printQuote, acceptQuote, declineQuote } from './quotes.js';
 import { renderProfit, setProfitSettings, setProfitMonth } from './profit.js';
 import { startToday, renderToday, setTodaySettings, todayAction, syncRoster } from './today.js';
+import { startSuppliers, setSupplierSettings, editSupplier } from './suppliers.js';
+import { downloadSupplierSheet, importSupplierSheet, setSupplierSheetSettings } from './suppliersheet.js';
 import { startWages, renderWages, setWagesSettings, setWageView, setWagePeriod, wageInput, newStaff, editStaff, toggleStaff, addPiece, removePiece, addDeduction, removeDeduction, saveRun, markPaid, reopenRun, printWageSheet, printPayslips, exportRun } from './wages.js';
 import {
   startDeliveries, renderDeliveries, setDeliverySettings, setDeliveryView, setDeliveryDay, scheduleDelivery, markForCollection, deliverInstead, confirmToClient,
@@ -88,7 +90,7 @@ const allowedViews = (user) => !user ? [] : NAV.map(n => n.key).filter(k =>
 // A screen the role may only look at: nothing on it may change data.
 const viewOnly = (k) => store.getUser() && store.getUser().role !== 'owner' && k !== 'clients' && levelOf(store.myPerms(), k) === 'view';
 // Actions that only look, print or switch what is shown — allowed on a view-only screen.
-const LOOK_ONLY = new Set(['filter-status', 'floor-view', 'cost-view', 'stock-view', 'quote-filter', 'profit-month', 'inv-view',
+const LOOK_ONLY = new Set(['filter-status', 'floor-view', 'cost-view', 'stock-view', 'sup-sheet-dl', 'quote-filter', 'profit-month', 'inv-view',
   'print-job', 'print-week-jobs', 'print-week-report', 'wg-view', 'wg-period', 'wg-print-sheet', 'wg-print-slips', 'wg-export', 'wg-open', 'print-planner', 'print-pricesheet', 'print-costsheet', 'inv-print', 'stmt-print', 'inv-export',
   'po-print', 'quote-print', 'scan-start', 'scan-stop', 'scan-find', 'notify',
   'sr-view', 'sr-asset-history',
@@ -157,7 +159,7 @@ async function boot() {
       setProfitSettings(settings);
   setWagesSettings(settings);
       setWagesSettings(settings);
-      setTodaySettings(settings);
+      setTodaySettings(settings); setSupplierSettings(settings); setSupplierSheetSettings(settings);
       setDeliverySettings(settings);
       setStoreroomSettings(settings);
       // only what this person's role may see is loaded at all
@@ -167,6 +169,7 @@ async function boot() {
       if (store.can('factory') || store.can('wages')) startToday(() => { if (view === 'home') paint(); }, settings);
       if (store.can('storeroom')) startStoreroom(() => { if (view === 'storeroom') paint(); }, settings);
       if (store.can('stock') || store.can('storeroom')) startStock(() => { if (view === 'stock' || view === 'storeroom' || view === 'home') paint(); }, settings);
+      startSuppliers(() => { if (view === 'stock' || view === 'pos') paint(); }, settings);
       if (store.can('pos') || store.can('profit')) startPos(() => { if (view === 'pos' || view === 'profit') paint(); }, settings);
       if (store.can('invoices') || store.can('pos') || store.can('profit')) startInvoices(() => { if (view === 'invoices' || view === 'orders' || view === 'home') paint(); }, settings);
       startCosting(() => { if (view === 'costing' || view === 'orders' || view === 'pos' || view === 'stock') paint(); }, settings);
@@ -929,7 +932,7 @@ async function saveSettings() {
   setQuoteSettings(settings);
   setProfitSettings(settings);
   setWagesSettings(settings);
-  setTodaySettings(settings);
+  setTodaySettings(settings); setSupplierSettings(settings); setSupplierSheetSettings(settings);
   setDeliverySettings(settings);
   setStoreroomSettings(settings);
   const bn = document.querySelector('.brand-name');
@@ -1035,6 +1038,10 @@ async function onAction(e) {
     case 'profit-month': setProfitMonth(b.dataset.to); return paint();
     case 'stock-count': return countMaterial(id);
     case 'po-new': return newPurchaseOrder();
+    case 'sup-sheet-dl': return downloadSupplierSheet();
+    case 'sup-sheet-im': return importSupplierSheet();
+    case 'sup-new': return editSupplier('');
+    case 'sup-edit': return editSupplier(id);
     case 'po-draft': return draftForSupplier(b.dataset.supplier, allOrders());
     case 'po-edit': return editPurchaseOrder(id);
     case 'po-send': return sendPurchaseOrder(id);
