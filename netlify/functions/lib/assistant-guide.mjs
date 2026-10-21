@@ -58,6 +58,11 @@ password; the owner invites the team under Settings and gives each person a role
   same links (orders to customers, invoices to orders) and the numbering carries on.
 - Logins, the team, roles and the shop and Xero connections are not moved: invite the team
   and connect the shop and Xero again in the real system. Each demo company is its own file.
+- Copying a whole company (for instance work done in the wrong company): sign in to it as the
+  owner, Settings → "⬇ Download all my data", then sign in to the other company and bring the
+  file in (leave "business settings" unticked to keep that company's own name and details).
+- "Remove what came in from a file" (Settings, owner) takes out every record a file brought in,
+  for instance the demo's example orders, and keeps what the team added itself.
 
 ## Suppliers and the supplier sheet
 - Buying → Stock → Suppliers (and on the till: Stock → Suppliers) lists every supplier with

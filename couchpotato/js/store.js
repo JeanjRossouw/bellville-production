@@ -1120,6 +1120,41 @@ export function isSampleRecord(coll, id, doc, companyId) {
   if (coll === 'deliveryNotes') return !GENERATED.test(String(id));     // a note is kept under its order's id
   return !GENERATED.test(String(id));
 }
+// Every collection a company keeps (for copying a whole company).
+const COMPANY_COLLS = () => [...new Set([...Object.keys(WRITE_AREAS), 'settings', 'counters', 'deliveryNotes', 'attendance', 'sales', 'invoices', 'quotes',
+  'purchaseOrders', 'stockMoves', 'assets', 'storeStaff', 'drivers', 'staff', 'wageRuns', 'tillStaff', 'tillShifts', 'giftCards', 'grvs', 'stockTakes', 'shopProducts', 'suppliers', 'shopPos'])].filter(c => !MOVE_SKIP.includes(c));
+// Download a company: the demo's from this browser, the real system's from the database (the owner's).
+export async function exportCompanyBundle() {
+  if (mode === 'demo') return exportDemoBundle();
+  if (!currentUser || currentUser.role !== 'owner') throw new Error('Only the owner can download all the data');
+  const collections = {};
+  for (const coll of COMPANY_COLLS()) {
+    try {
+      const snap = await cloud.fns.getDocs(collRef(coll));
+      const map = {}; snap.forEach(d => { map[d.id] = d.data(); });
+      if (Object.keys(map).length) collections[coll] = map;
+    } catch (e) { /* a collection this role cannot read: left out */ }
+  }
+  return { app: 'factory-manager', kind: 'company-export', version: 1, exportedAt: nowIso(), company: { id: currentUser.companyId, name: (company && company.name) || '' }, collections };
+}
+// Take out everything a bring-in put here (records carry movedFromDemoAt);
+// what the team added since stays. Numbering and settings are left alone.
+export async function removeMovedIn(dryRun) {
+  if (mode !== 'cloud' || !currentUser || currentUser.role !== 'owner') throw new Error('Only the owner can do this, in the real system');
+  const found = [];
+  for (const coll of COMPANY_COLLS()) {
+    if (coll === 'settings' || coll === 'counters') continue;
+    try { const snap = await cloud.fns.getDocs(collRef(coll)); snap.forEach(d => { if (d.data().movedFromDemoAt) found.push({ coll, id: d.id }); }); } catch (e) { /* not readable */ }
+  }
+  const counts = {}; found.forEach(f => { counts[f.coll] = (counts[f.coll] || 0) + 1; });
+  if (dryRun) return counts;
+  for (let i = 0; i < found.length; i += 400) {
+    const b = cloud.fns.writeBatch(cloud.db);
+    found.slice(i, i + 400).forEach(f => b.delete(docRef(f.coll, f.id)));
+    await b.commit();
+  }
+  return counts;
+}
 export function exportDemoBundle() {
   if (mode !== 'demo') throw new Error('Only the demo keeps its data in this browser');
   if (!currentUser || !currentUser.companyId) throw new Error('Sign in to the demo company first');
@@ -1165,17 +1200,38 @@ export async function importBundle(bundle, opts) {
     w.doc = { value: Math.max(have, Number(w.doc.value) || 0) };
   }
   const who = currentUser.name || currentUser.email || 'owner';
-  for (let i = 0; i < writes.length; i += 400) {
-    const b = cloud.fns.writeBatch(cloud.db);
-    writes.slice(i, i + 400).forEach(w => {
-      const data = { ...w.doc };
-      if (w.coll !== 'counters' && w.coll !== 'settings') { data.movedFromDemoAt = nowIso(); data.movedBy = who; }
-      if (w.coll === 'settings' || w.coll === 'counters') b.set(docRef(w.coll, w.id), data, { merge: true });
-      else b.set(docRef(w.coll, w.id), data);
-    });
-    await b.commit();
-    if (opts.progress) opts.progress(Math.min(writes.length, i + 400), writes.length);
+  const prep = (w) => {
+    const data = { ...w.doc };
+    if (w.coll !== 'counters' && w.coll !== 'settings') { data.movedFromDemoAt = nowIso(); data.movedBy = who; }
+    return data;
+  };
+  const put = (b, w) => { if (w.coll === 'settings' || w.coll === 'counters') b.set(docRef(w.coll, w.id), prep(w), { merge: true }); else b.set(docRef(w.coll, w.id), prep(w)); };
+  // batches of at most 400 records and about 2 MB (signed notes are pictures;
+  // Firebase takes up to 10 MB a batch and 1 MB a record)
+  const groups = [];
+  let cur = [], size = 0;
+  for (const w of writes) {
+    const n = JSON.stringify(w.doc).length;
+    if (cur.length && (cur.length >= 400 || size + n > 2000000)) { groups.push(cur); cur = []; size = 0; }
+    cur.push(w); size += n;
   }
+  if (cur.length) groups.push(cur);
+  const failed = [];
+  let written = 0;
+  for (const g of groups) {
+    try {
+      const b = cloud.fns.writeBatch(cloud.db); g.forEach(w => put(b, w)); await b.commit();
+    } catch (e) {
+      // one bad record must not stop the rest: write this batch one by one
+      for (const w of g) {
+        try { const b = cloud.fns.writeBatch(cloud.db); put(b, w); await b.commit(); }
+        catch (err) { failed.push({ coll: w.coll, id: w.id, error: String((err && (err.code || err.message)) || err) }); done[w.coll] = Math.max(0, (done[w.coll] || 1) - 1); }
+      }
+    }
+    written += g.length;
+    if (opts.progress) opts.progress(written, writes.length);
+  }
+  Object.defineProperty(done, 'failed', { value: failed, enumerable: false });
   return done;
 }
 
