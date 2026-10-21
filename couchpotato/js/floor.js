@@ -6,6 +6,7 @@ import { allOrders, orderById, setStatus } from './orders.js';
 import { esc, money, today, isoLocal, niceDate, daysUntil, statusChip, statusMeta, fabricChip, FABRIC_STATES, openModal, toast, empty, field, val, docHeader } from './ui.js';
 import { qrSvg, scanUrl } from './qr.js';
 import { notable, isPicked, mayBook, pickBarHtml } from './deliveries.js';
+import { nameOf } from './clientgroups.js';
 
 let settings = {};
 export const setFloorSettings = (cfg) => { settings = cfg || {}; };
@@ -98,7 +99,7 @@ function planCard(o) {
         ${dueBadge(o)}
       </div>
       <div class="pcard-prod">${esc(o.product || '')}${(o.qty || 1) > 1 ? ' × ' + esc(o.qty) : ''}</div>
-      <div class="pcard-meta">${esc(o.customerName || '')}${o.fabric ? ' · ' + esc(o.fabric) : ''}</div>
+      <div class="pcard-meta">${esc(nameOf(o))}${o.fabric ? ' · ' + esc(o.fabric) : ''}</div>
       <div class="pcard-chips">
         ${o.fabric ? fabricChip(o.fabricStatus) : ''}
         ${o.status === 'ready' ? statusChip('ready') : ''}
@@ -180,7 +181,7 @@ function doneHtml(done) {
         <td>${mayBook() ? `<input type="checkbox" data-act="dn-pick" data-id="${esc(o.id)}"${isPicked(o.id) ? ' checked' : ''} aria-label="Put ${esc(o.orderNo || '')} on a delivery note">` : ''}</td>
         <td><strong>${esc(o.orderNo || '')}</strong></td>
         <td>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' × ' + esc(o.qty) : ''}${o.fabric ? '<div class="muted">' + esc(o.fabric) + '</div>' : ''}</td>
-        <td>${esc(o.customerName || '')}</td>
+        <td>${esc(nameOf(o))}</td>
         <td>${esc(niceDate(finishedOn(o)) || '')}</td>
         <td>${o.invoiceNo ? '<span class="chip st-inv">' + esc(o.invoiceNo) + '</span>' : '<span class="muted">not yet</span>'}</td>
         <td>${o.deliveryDate ? '<span class="chip ' + (o.deliveryMethod === 'collect' ? 'calm">Collection ' : 'st-new">') + esc(niceDate(o.deliveryDate)) + (o.driverName ? ' · ' + esc(o.driverName) : '') + (o.deliveryNoteNo ? ' · ' + esc(o.deliveryNoteNo) : '') + '</span>' : o.deliveryMethod === 'collect' ? '<span class="chip calm">Collection</span>' : '<span class="muted">not booked</span>'}</td>
@@ -199,7 +200,7 @@ function fabricHtml(rows) {
         <tbody>${waiting.map(o => `<tr>
           <td><strong>${esc(o.orderNo || '')}</strong></td>
           <td>${esc(o.product || '')}</td>
-          <td>${esc(o.customerName || '')}</td>
+          <td>${esc(nameOf(o))}</td>
           <td>${esc(o.fabric || '')}</td>
           <td>${dueBadge(o)}</td>
           <td><select data-act="fabric" data-id="${esc(o.id)}">${FABRIC_STATES.map(f => `<option value="${f.key}"${f.key === (o.fabricStatus || 'none') ? ' selected' : ''}>${esc(f.label)}</option>`).join('')}</select></td>
@@ -274,7 +275,7 @@ function jobCardHtml(o) {
     </div>
     <table>
       <tr><th>Product</th><td class="big">${esc(o.product || '')}${(o.qty || 1) > 1 ? ' × ' + esc(o.qty) : ''}</td></tr>
-      <tr><th>Customer</th><td>${esc(o.customerName || '')}${o.externalRef ? ' &nbsp;·&nbsp; their ref <b>' + esc(o.externalRef) + '</b>' : ''}</td></tr>
+      <tr><th>Customer</th><td>${esc(nameOf(o))}${o.externalRef ? ' &nbsp;·&nbsp; their ref <b>' + esc(o.externalRef) + '</b>' : ''}</td></tr>
       <tr><th>Fabric</th><td>${o.fabric ? '<b>' + esc(o.fabric) + '</b> &nbsp;·&nbsp; ' + esc(fab) : '<i>none</i>'}</td></tr>
       <tr><th>Due out</th><td class="big">${esc(niceDate(o.dueDate) || '—')}</td></tr>
       <tr><th>Planned week</th><td>${o.planWeek ? 'Week of ' + esc(niceDate(o.planWeek)) : '<i>not planned</i>'}</td></tr>
@@ -344,7 +345,7 @@ export function printWeekReport(mon) {
   const f = weekFigures(mon);
   const cur = settings.currency || 'R';
   const range = niceDate(mon) + ' – ' + niceDate(f.sun);
-  const line = (o, extra) => `<tr><td><b>${esc(o.orderNo || '')}</b></td><td>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' × ' + esc(o.qty) : ''}</td><td>${esc(o.customerName || '')}</td><td>${extra}</td><td style="text-align:right">${esc(money(valueOf(o), cur))}</td></tr>`;
+  const line = (o, extra) => `<tr><td><b>${esc(o.orderNo || '')}</b></td><td>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' × ' + esc(o.qty) : ''}</td><td>${esc(nameOf(o))}</td><td>${extra}</td><td style="text-align:right">${esc(money(valueOf(o), cur))}</td></tr>`;
   const table = (items, col, extra, total) => items.length
     ? `<table class="pl"><tr><th>Order</th><th>Product</th><th>Customer</th><th>${col}</th><th style="text-align:right">Value</th></tr>${items.map(o => line(o, extra(o))).join('')}
        <tr><td colspan="4" style="text-align:right"><b>Total</b></td><td style="text-align:right"><b>${esc(money(total, cur))}</b></td></tr></table>`
@@ -384,7 +385,7 @@ export function printPlanner() {
   rows.forEach(o => { const b = bucketOf(o, wks); (by[b] = by[b] || []).push(o); });
   const table = (items) => items.length
     ? `<table class="pl"><tr><th>Order</th><th>Product</th><th>Customer</th><th>Fabric</th><th>Due</th></tr>
-       ${items.map(o => `<tr><td><b>${esc(o.orderNo || '')}</b></td><td>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' × ' + esc(o.qty) : ''}</td><td>${esc(o.customerName || '')}</td>
+       ${items.map(o => `<tr><td><b>${esc(o.orderNo || '')}</b></td><td>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' × ' + esc(o.qty) : ''}</td><td>${esc(nameOf(o))}</td>
          <td>${esc(o.fabric || '')}${o.fabric && o.fabricStatus !== 'received' ? ' <b>(' + esc((FABRIC_STATES.find(f => f.key === o.fabricStatus) || FABRIC_STATES[0]).label) + ')</b>' : ''}</td>
          <td>${esc(niceDate(o.dueDate))}</td></tr>`).join('')}</table>`
     : '<p><i>Nothing planned</i></p>';

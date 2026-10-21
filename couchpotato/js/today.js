@@ -27,6 +27,7 @@ import { allInvoices, isOverdue, balance } from './invoices.js';
 import { allStaff } from './wages.js';
 import { customerById } from './customers.js';
 import { esc, money, today, addDays, niceDate, daysUntil, openModal, toast, waDigits, statusChip } from './ui.js';
+import { nameOf, detail, seesClient } from './clientgroups.js';
 
 let settings = {};
 let att = {};               // attendance docs by id
@@ -44,8 +45,9 @@ const isOpen = (o) => o.status !== 'invoiced' && o.status !== 'cancelled' && o.s
 const building = (o) => o.status === 'new' || o.status === 'in-production';
 const nowHm = () => new Date().toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit', hour12: false });
 const first = (s) => String(s || '').trim().split(/\s+/)[0] || 'there';
-const phoneOf = (o) => o.deliveryPhone || (customerById(o.customerId) || {}).phone || '';
-const custName = (o) => o.customerName || (customerById(o.customerId) || {}).name || '';
+// a client this role sees by group only: no phone, so no message to send
+const phoneOf = (o) => detail(o, o.deliveryPhone || (customerById(o.customerId) || {}).phone || '');
+const custName = (o) => nameOf(o);
 const plural = (n, one, many) => n + ' ' + (n === 1 ? one : (many || one + 's'));
 const sees = (...areas) => areas.some(a => store.can(a));
 const edits = (...areas) => areas.some(a => store.can(a, 'edit'));
@@ -138,7 +140,7 @@ function openRegister() {
 function nudges(f) {
   const out = [];
   if (sees('orders', 'factory')) {
-    f.late.filter(o => !(o.lateNoticeAt && daysUntil(String(o.lateNoticeAt).slice(0, 10)) > -7))
+    f.late.filter(o => seesClient(o) && !(o.lateNoticeAt && daysUntil(String(o.lateNoticeAt).slice(0, 10)) > -7))
       .sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)))
       .forEach(o => { const d = -daysUntil(o.dueDate);
         out.push({ key: 'late-' + o.id, tone: 'red', text: `Order ${esc(o.orderNo || '')}${custName(o) ? ' for ' + esc(custName(o)) : ''} is running ${plural(d, 'day')} behind. Let the client know?`,

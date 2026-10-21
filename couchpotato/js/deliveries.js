@@ -13,6 +13,7 @@ import * as store from './store.js';
 import { customerById, allCustomers } from './customers.js';
 import { esc, field, row, val, openModal, toast, empty, today, addDays, niceDate, waDigits, openPrint, docHeader } from './ui.js';
 import { openSignScreen } from './sign.js';
+import { contactOf, detail, seesClient } from './clientgroups.js';
 
 export const SLOTS = ['08:00 - 10:00', '10:00 - 12:00', '12:00 - 14:00', '14:00 - 16:00', '16:00 - 18:00', '18:00 - 20:00'];
 const STATUS = {
@@ -57,6 +58,9 @@ const toDeliver = (orders) => orders.filter(o => !o.deliveredAt && (o.status ===
 const custOf = (o) => customerById(o.customerId) || (o.customerName ? allCustomers().find(c => String(c.name || '').trim().toLowerCase() === String(o.customerName).trim().toLowerCase()) : null) || {};
 const addressOf = (o) => { const c = custOf(o); return o.deliveryAddress || [c.address, c.area].filter(Boolean).join(', '); };
 const phoneOf = (o) => o.deliveryPhone || custOf(o).phone || '';
+// on screen, a client this role sees by group only shows its group and area, nothing more
+const shownPhone = (o) => detail(o, phoneOf(o));
+const shownAddress = (o) => seesClient(o) ? addressOf(o) : (custOf(o).area || 'address with the office');
 
 // ---------------------------------------------------------------- render ----
 
@@ -84,12 +88,12 @@ export function renderDeliveries(host, orders) {
 
 function card(o, opts) {
   const dn = driverNameOf(o);
-  const addr = addressOf(o);
+  const addr = shownAddress(o);
   return `<div class="dl-card ${o.driverStatus === 'issue' ? 'issue' : ''}">
     <div class="dl-main">
       <div class="dl-top"><strong>${esc(o.orderNo || '')}</strong> ${o.deliveryDate ? chip(o) : ''} ${o.status === 'in-production' ? '<span class="chip st-prod">still on the floor</span>' : ''}</div>
       <div class="dl-prod">${esc(o.product || '')}${Number(o.qty) > 1 ? ' × ' + esc(o.qty) : ''}${o.fabric ? ' <span class="muted">· ' + esc(o.fabric) + '</span>' : ''}</div>
-      <div class="muted">${esc(o.deliveryContact || o.customerName || '')}${phoneOf(o) ? ' · ' + esc(phoneOf(o)) : ''}</div>
+      <div class="muted">${esc(contactOf(o))}${shownPhone(o) ? ' · ' + esc(shownPhone(o)) : ''}</div>
       <div class="muted">${addr ? esc(addr) : '<span style="color:#b91c1c">no delivery address yet</span>'}</div>
       ${o.deliveryDate && !opts.noWhen ? `<div class="dl-when">${esc(niceDate(o.deliveryDate))}${o.deliverySlot ? ' · ' + esc(o.deliverySlot) : ''}${dn ? ' · ' + esc(dn) : ' · <span style="color:#b91c1c">no driver</span>'}${o.deliveryNoteNo ? ' · ' + esc(o.deliveryNoteNo) : ''}</div>` : ''}
       ${o.deliveryInstructions ? `<div class="muted">Note: ${esc(o.deliveryInstructions)}</div>` : ''}
@@ -97,7 +101,7 @@ function card(o, opts) {
     <div class="dl-acts">
       <button class="btn ${o.deliveryDate ? 'ghost' : 'primary'} sm" data-act="dl-schedule" data-id="${esc(o.id)}">${o.deliveryDate ? 'Change' : 'Schedule'}</button>
       ${!o.deliveryDate ? `<button class="btn ghost sm" data-act="dl-collect" data-id="${esc(o.id)}" title="The customer fetches it from the factory">Collection</button>` : ''}
-      ${o.deliveryDate && phoneOf(o) ? `<button class="btn ghost sm" data-act="dl-confirm" data-id="${esc(o.id)}">WhatsApp client</button>` : ''}
+      ${o.deliveryDate && shownPhone(o) ? `<button class="btn ghost sm" data-act="dl-confirm" data-id="${esc(o.id)}">WhatsApp client</button>` : ''}
       <button class="btn ghost sm" data-act="dl-sign" data-id="${esc(o.id)}" title="The client signs the delivery note here, on this screen">Client signs</button>
       ${o.deliveryDate ? `<button class="btn ghost sm" data-act="dl-delivered" data-id="${esc(o.id)}">Delivered</button>` : ''}
     </div>
@@ -112,13 +116,13 @@ function collectCard(o) {
     <div class="dl-main">
       <div class="dl-top"><strong>${esc(o.orderNo || '')}</strong> ${chip(o)} ${o.status === 'in-production' ? '<span class="chip st-prod">still on the floor</span>' : o.status === 'ready' ? '<span class="chip st-ready">ready to collect</span>' : ''}</div>
       <div class="dl-prod">${esc(o.product || '')}${Number(o.qty) > 1 ? ' × ' + esc(o.qty) : ''}${o.fabric ? ' <span class="muted">· ' + esc(o.fabric) + '</span>' : ''}</div>
-      <div class="muted">${esc(o.deliveryContact || o.customerName || '')}${phoneOf(o) ? ' · ' + esc(phoneOf(o)) : ''}</div>
+      <div class="muted">${esc(contactOf(o))}${shownPhone(o) ? ' · ' + esc(shownPhone(o)) : ''}</div>
       <div class="dl-when" ${late ? 'style="color:#b91c1c"' : ''}>${o.deliveryDate ? 'Expected ' + esc(niceDate(o.deliveryDate)) + (late ? ' · not collected yet' : '') : 'No date yet'}</div>
       ${o.deliveryInstructions ? `<div class="muted">Note: ${esc(o.deliveryInstructions)}</div>` : ''}
     </div>
     <div class="dl-acts">
       <button class="btn ghost sm" data-act="dl-schedule" data-id="${esc(o.id)}">Change</button>
-      ${phoneOf(o) ? `<button class="btn ${o.status === 'ready' ? 'primary' : 'ghost'} sm" data-act="dl-confirm" data-id="${esc(o.id)}">WhatsApp: ready</button>` : ''}
+      ${shownPhone(o) ? `<button class="btn ${o.status === 'ready' ? 'primary' : 'ghost'} sm" data-act="dl-confirm" data-id="${esc(o.id)}">WhatsApp: ready</button>` : ''}
       <button class="btn ghost sm" data-act="dl-sign" data-id="${esc(o.id)}" title="The client signs for it here, on this screen">Client signs</button>
       <button class="btn ghost sm" data-act="dl-delivered" data-id="${esc(o.id)}">Collected</button>
       <button class="btn ghost sm" data-act="dl-deliver-instead" data-id="${esc(o.id)}" title="A driver takes it after all">Deliver instead</button>
@@ -175,7 +179,7 @@ function renderDone(orders) {
     <tbody>${done.map(o => `<tr>
       <td class="nowrap">${esc(String(o.deliveredAt).slice(0, 16).replace('T', ' '))}</td>
       <td><strong>${esc(o.orderNo)}</strong>${isCollect(o) ? ' <span class="chip calm">collected</span>' : ''}<div class="muted">${esc(o.product || '')}</div></td>
-      <td>${esc(o.deliveryContact || o.customerName || '')}<div class="muted">${isCollect(o) ? 'Collected at the factory' : esc(addressOf(o))}</div></td>
+      <td>${esc(contactOf(o))}<div class="muted">${isCollect(o) ? 'Collected at the factory' : esc(shownAddress(o))}</div></td>
       <td>${esc(o.deliveredBy || '')}</td>
       <td>${o.hasDeliveryNote ? esc(o.signedBy || 'signed') : '<span class="muted">no signature</span>'}</td>
       <td class="r nowrap">${o.hasDeliveryNote ? `<button class="btn ghost sm" data-act="dl-note" data-id="${esc(o.id)}">Signed note</button>` : `<button class="btn ghost sm" data-act="dl-sign" data-id="${esc(o.id)}">Client signs</button>`}
@@ -187,6 +191,7 @@ function renderDone(orders) {
 
 export function scheduleDelivery(id, orders) {
   const o = orders.find(x => x.id === id); if (!o) return;
+  if (!seesClient(o)) { toast('The office books this delivery: your role sees this client by group only.', 'warn'); return; }
   const c = customerById(o.customerId) || {};
   const opts = (list, cur, blank) => [{ value: '', label: blank }].concat(list).map(x => ({ ...x, selected: x.value === cur }));
   const collect = isCollect(o);
@@ -431,7 +436,7 @@ export function makeDeliveryNote(orders) {
   const collect = list.filter(isCollect);
   const firstDriver = list.find(o => o.driverId) || {};
   const { wrap } = openModal('Delivery note · ' + list.length + ' piece' + (list.length === 1 ? '' : 's'), `
-    <div class="pk-list" style="max-height:30vh; margin-bottom:.7rem">${list.map((o, i) => `<div class="pk-row" style="cursor:default"><strong>${i + 1}. ${esc(o.orderNo || '')} · ${esc(o.product || '')}${Number(o.qty) > 1 ? ' × ' + esc(o.qty) : ''}</strong><span>${esc(o.deliveryContact || o.customerName || '')} · ${addressOf(o) ? esc(addressOf(o)) : '<b style="color:#b91c1c">no address</b>'}${o.invoiceNo ? ' · ' + esc(o.invoiceNo) : ''}</span></div>`).join('')}</div>
+    <div class="pk-list" style="max-height:30vh; margin-bottom:.7rem">${list.map((o, i) => `<div class="pk-row" style="cursor:default"><strong>${i + 1}. ${esc(o.orderNo || '')} · ${esc(o.product || '')}${Number(o.qty) > 1 ? ' × ' + esc(o.qty) : ''}</strong><span>${esc(contactOf(o))} · ${addressOf(o) ? esc(shownAddress(o)) : '<b style="color:#b91c1c">no address</b>'}${o.invoiceNo ? ' · ' + esc(o.invoiceNo) : ''}</span></div>`).join('')}</div>
     ${row(field('Delivery date', 'dn-date', { type: 'date', value: list.find(o => o.deliveryDate >= today()) ? list.find(o => o.deliveryDate >= today()).deliveryDate : today() }),
       known.length ? field('Driver', 'dn-driver', { type: 'select', value: firstDriver.driverId || (known.length === 1 ? known[0].id : ''), options: [{ value: '', label: 'Choose a driver…' }].concat(known.map(d => ({ value: d.id, label: d.name }))) })
         : field('Driver', 'dn-driver-name', { value: firstDriver.driverName || names[0] || '', placeholder: 'The driver’s name' }))}

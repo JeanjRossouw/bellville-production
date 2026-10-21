@@ -223,6 +223,7 @@ code { background: var(--line); padding: 1px 5px; border-radius: 4px; font-size:
 }
 
 .cust-top { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; }
+.cust-group { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em; color: var(--ink-2); border: 1px solid var(--line); border-radius: 999px; padding: .05rem .5rem; margin: .1rem 0 .3rem; }
 .count { font-size: 11px; font-weight: 800; color: var(--brand-dark); background: var(--brand-soft); padding: .1rem .5rem; border-radius: 999px; }
 
 /* ------------------------------------------------------------------ chips */

@@ -42,7 +42,8 @@ const all = (level) => Object.fromEntries(AREAS.map(a => [a.key, level]));
 export const DEFAULT_ROLES = {
   office: { name: 'Office', perms: { ...all('edit'), wages: 'none' } },      // pay is the owner's unless granted
   sales: { name: 'Sales / till', perms: { ...all('none'), pos: 'edit', quotes: 'edit', orders: 'edit', customers: 'edit' } },
-  factory: { name: 'Factory floor', perms: { ...all('none'), factory: 'edit', scan: 'edit', stock: 'edit', orders: 'view', deliveries: 'view' } },
+  // sees clients by group only (Settings → Roles → Clients they see)
+  factory: { name: 'Factory floor', perms: { ...all('none'), factory: 'edit', scan: 'edit', stock: 'edit', orders: 'view', deliveries: 'view' }, clientMode: 'groups', clientGroups: [] },
   // receives, counts and gives out; cannot change prices, materials or orders
   storeroom: { name: 'Stock room', perms: { ...all('none'), storeroom: 'edit', stock: 'view', orders: 'view' } }
 };
