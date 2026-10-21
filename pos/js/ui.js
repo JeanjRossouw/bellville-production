@@ -28,7 +28,7 @@ export function field(label, id, o = {}) {
     return `<label class="fld"><span>${esc(label)}</span><select id="${id}"${o.disabled ? ' disabled' : ''}>${(o.options || []).map(op => `<option value="${esc(op.value)}"${String(op.value) === String(o.value) ? ' selected' : ''}>${esc(op.label)}</option>`).join('')}</select></label>`;
   }
   if (type === 'textarea') return `<label class="fld"><span>${esc(label)}</span><textarea id="${id}" rows="${o.rows || 2}" placeholder="${esc(o.placeholder || '')}">${esc(o.value || '')}</textarea></label>`;
-  return `<label class="fld"><span>${esc(label)}</span><input id="${id}" type="${type}" value="${esc(o.value == null ? '' : o.value)}" placeholder="${esc(o.placeholder || '')}"${o.min != null ? ` min="${o.min}"` : ''}${o.max != null ? ` max="${o.max}"` : ''}${o.step ? ` step="${o.step}"` : ''}${o.inputmode ? ` inputmode="${o.inputmode}"` : ''}${o.autocomplete ? ` autocomplete="${o.autocomplete}"` : ''}${o.disabled ? ' disabled' : ''}></label>`;
+  return `<label class="fld"><span>${esc(label)}</span><input id="${id}" type="${type}" value="${esc(o.value == null ? '' : o.value)}" placeholder="${esc(o.placeholder || '')}"${o.min != null ? ` min="${o.min}"` : ''}${o.max != null ? ` max="${o.max}"` : ''}${o.step ? ` step="${o.step}"` : ''}${o.inputmode ? ` inputmode="${o.inputmode}"` : ''}${o.autocomplete ? ` autocomplete="${o.autocomplete}"` : ''}${o.list ? ` list="${o.list}" autocomplete="off"` : ''}${o.disabled ? ' disabled' : ''}></label>`;
 }
 export const row = (...cells) => `<div class="fld-row">${cells.join('')}</div>`;
 export const val = (wrap, id) => { const e = wrap.querySelector('#' + id); return e ? String(e.value || '').trim() : ''; };
@@ -60,6 +60,15 @@ export function openModal(title, html, o = {}) {
   return { close, wrap };
 }
 export function closeModal() { const m = document.getElementById('modal'); if (m) m.remove(); }
+
+// A document in its own tab, ready to print. `css` is the page's own styling.
+export function openPrint(title, body, css = '') {
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>body{margin:0;font-family:Arial,sans-serif;color:#000;background:#fff}.no-print{padding:8px;background:#eee}@media print{.no-print{display:none}}${css}</style></head><body>
+    <div class="no-print"><button onclick="window.print()" style="padding:8px 16px;font-weight:800;background:#000;color:#fff;border:0;cursor:pointer">PRINT</button> <button onclick="window.close()" style="padding:8px 16px;cursor:pointer">CLOSE</button></div>${body}</body></html>`;
+  const win = window.open('', '_blank');
+  if (!win) { toast('Pop-up blocked: allow pop-ups for this site, then try again.', 'warn'); return; }
+  win.document.write(html); win.document.close();
+}
 
 export const empty = (title, note) => `<div class="empty"><div class="empty-title">${esc(title)}</div>${note ? `<div class="empty-note">${esc(note)}</div>` : ''}</div>`;
 

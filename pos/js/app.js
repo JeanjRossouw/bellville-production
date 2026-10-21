@@ -5,12 +5,15 @@ import { initFirebase, watch, getOne, patchOne } from './db.js';
 import * as auth from './auth.js';
 import { esc, toast, openModal, field, row, val, checks, empty, niceDate, niceTime } from './ui.js';
 import * as admin from './admin.js';
+import * as products from './products.js';
 
 const $ = (id) => document.getElementById(id);
 let view = 'home';
 let adminSub = 'companies';          // the Admin tab's sub-screen
 let editId = '', settingsEntity = '';  // what the admin forms are on
 let entities = [], stores = [], registers = [], users = [], devices = [], settings = {};
+let catalogue = [], variants = [];
+let prEntity = '', prFilter = { q: '', category: '', brand: '', type: '', archived: false };
 const unwatch = [];
 
 // ------------------------------------------------------------------ boot --
@@ -41,9 +44,9 @@ function startData() {
   const ents = u.entityIds || [], sts = u.storeIds || [];
   const w = (name, wheres, set) => unwatch.push(watch(name, wheres, rows => { set(rows); paint(); }));
   const bySettings = (rows) => { settings = Object.fromEntries(rows.map(r => [r.id, r])); };
-  if (owner) { w('entities', [], r => { entities = r; }); w('stores', [], r => { stores = r; }); w('registers', [], r => { registers = r; }); w('settings', [], bySettings); }
+  if (owner) { w('entities', [], r => { entities = r; }); w('stores', [], r => { stores = r; }); w('registers', [], r => { registers = r; }); w('settings', [], bySettings); w('products', [], r => { catalogue = r; }); w('variants', [], r => { variants = r; }); }
   else {
-    if (ents.length) { w('entities', [['entityId', 'in', ents.slice(0, 30)]], r => { entities = r; }); w('settings', [['entityId', 'in', ents.slice(0, 30)]], bySettings); }
+    if (ents.length) { w('entities', [['entityId', 'in', ents.slice(0, 30)]], r => { entities = r; }); w('settings', [['entityId', 'in', ents.slice(0, 30)]], bySettings); w('products', [['entityId', 'in', ents.slice(0, 30)]], r => { catalogue = r; }); w('variants', [['entityId', 'in', ents.slice(0, 30)]], r => { variants = r; }); }
     // a store-scoped query must name both the entity and the store for the rules to allow it
     if (ents.length && sts.length) { w('stores', [['entityId', 'in', ents.slice(0, 10)], ['storeId', 'in', sts.slice(0, 10)]], r => { stores = r; }); w('registers', [['entityId', 'in', ents.slice(0, 10)], ['storeId', 'in', sts.slice(0, 10)]], r => { registers = r; }); }
   }
@@ -56,7 +59,7 @@ function startData() {
   const eid = (auth.session.device && auth.session.device.entityId) || ents[0] || (owner ? '' : '');
   if (eid) getOne('settings', eid).then(s => auth.setIdleMinutes((s && s.session && s.session.idleLogoutMinutes) || DEFAULTS.idleLogoutMinutes)).catch(() => {});
 }
-function stopData() { while (unwatch.length) { try { unwatch.pop()(); } catch (e) {} } entities = []; stores = []; registers = []; users = []; devices = []; settings = {}; }
+function stopData() { while (unwatch.length) { try { unwatch.pop()(); } catch (e) {} } entities = []; stores = []; registers = []; users = []; devices = []; settings = {}; catalogue = []; variants = []; }
 
 // --------------------------------------------------------------- login --
 function wireLogin() {
@@ -122,7 +125,7 @@ const roleLabel = (k) => (ROLES.find(r => r.key === k) || { label: k }).label;
 const storeName = (id) => (stores.find(s => s.id === id) || {}).name || '';
 const entityName = (id) => { const e = entities.find(x => x.id === id); return e ? (e.tradingName || e.legalName) : id; };
 function navItems() {
-  const out = [{ key: 'home', label: 'Home' }];
+  const out = [{ key: 'home', label: 'Home' }, { key: 'products', label: 'Products' }];
   if (auth.atLeast('manager')) out.push({ key: 'admin', label: 'Admin' });
   out.push({ key: 'me', label: 'My PIN' });
   return out;
@@ -137,6 +140,9 @@ function adminSubs() {
   ].filter(x => x.show || owner);
 }
 const adminData = () => ({ entities, stores, registers, users, devices, settings, editId, settingsEntity });
+const prData = () => ({ entities, stores, settings, products: catalogue, variants, prEntity, prFilter });
+// the company whose products are on screen
+const prEntityId = () => { const t = document.querySelector('.pr-tbl'); if (t) return t.dataset.entity; const sel = document.getElementById('pr-entity'); if (sel) return sel.value; const mine = entities.filter(e => auth.inEntity(e.id)); return prEntity && mine.some(e => e.id === prEntity) ? prEntity : (mine[0] || {}).id || ''; };
 function paint() {
   if (!auth.session.user) return;
   $('nav').innerHTML = navItems().map(n => `<button class="tab${n.key === view ? ' on' : ''}" data-view="${n.key}">${esc(n.label)}</button>`).join('');
@@ -149,6 +155,7 @@ function paint() {
       : adminSub === 'staff' ? staffHtml() : devicesHtml();
     screen.innerHTML = `<div class="subnav">${subs.map(x => `<button class="subtab${x.key === adminSub ? ' on' : ''}" data-sub="${x.key}">${esc(x.label)}</button>`).join('')}</div>` + body;
   }
+  else if (view === 'products') { screen.innerHTML = products.productsHtml(prData()); const q = $('pr-q'); if (q && prFilter.q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
   else if (view === 'me') screen.innerHTML = meHtml();
   else screen.innerHTML = homeHtml();
 }
@@ -287,6 +294,10 @@ async function onAction(e) {
     case 'register-cancel': editId = ''; paint(); return;
     case 'register-save': if (await admin.registerSave(w, adminData())) { editId = ''; paint(); } return;
     case 'settings-save': return admin.settingsSave(w, adminData());
+    case 'pr-new': return products.openProductForm(prData(), '', prEntityId());
+    case 'pr-edit': return products.openProductForm(prData(), id, '');
+    case 'pr-export': { const n = products.exportCsv(prData(), prEntityId()); toast(n + ' rows exported'); return; }
+    case 'pr-labels': return products.printLabels(prData(), [...w.querySelectorAll('[data-lbl]:checked')].map(c => c.dataset.lbl), prEntityId());
     case 'rate-add': return admin.rateAdd(w);
     case 'rate-del': return admin.rateDel(w, b.dataset.i);
     case 'staff-add': return staffAdd();
@@ -300,6 +311,13 @@ async function onAction(e) {
 }
 $('screen').addEventListener('change', (e) => {
   if (e.target.id === 'se-entity') { settingsEntity = e.target.value; return paint(); }
+  if (e.target.id === 'pr-entity') { prEntity = e.target.value; return paint(); }
+  if (e.target.id === 'pr-cat') { prFilter.category = e.target.value; return paint(); }
+  if (e.target.id === 'pr-brand') { prFilter.brand = e.target.value; return paint(); }
+  if (e.target.id === 'pr-type') { prFilter.type = e.target.value; return paint(); }
+  if (e.target.id === 'pr-archived') { prFilter.archived = e.target.checked; return paint(); }
+  if (e.target.id === 'pr-all') { document.querySelectorAll('[data-lbl]').forEach(c => { c.checked = e.target.checked; }); return; }
+  if (e.target.id === 'pr-file') { const f = e.target.files && e.target.files[0]; if (f) products.openImport(f, prData(), prEntityId()); e.target.value = ''; return; }
   if (e.target.id === 'dv-store') {
     const sel = $('dv-register'); if (!sel) return;
     const regs = registers.filter(r => r.storeId === e.target.value);
@@ -307,6 +325,7 @@ $('screen').addEventListener('change', (e) => {
   }
 });
 
+$('screen').addEventListener('input', (e) => { if (e.target.id === 'pr-q') { prFilter.q = e.target.value; paint(); } });
 import * as __ui from './ui.js';
 window.__ui = __ui;
 main().catch(e => { console.error(e); document.body.insertAdjacentHTML('beforeend', `<p class="boot-fail">The till could not start: ${esc(e.message)}</p>`); });

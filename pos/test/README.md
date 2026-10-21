@@ -17,6 +17,11 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   `node pos/test/auth.test.mjs`
 - `admin.test.mjs` — step 3: companies, stores, registers and settings as the
   owner, then as a manager. `node pos/test/admin.test.mjs`
+- `products.test.mjs` — step 4: products, variants, barcodes, per-store
+  prices, the price audit, Shopify CSV out and in, labels, archiving.
+  `node pos/test/products.test.mjs`
+- `money.test.mjs` — the shared cents and VAT maths; needs no emulator.
+  `node pos/test/money.test.mjs`
   Set `FIREBASE_SDK_DIR` to a local copy of the `firebase` package's browser
   builds when www.gstatic.com is not reachable, and `CHROME` to a Chromium
   path when Playwright's own is not installed.

@@ -115,6 +115,25 @@ small { font-size: 12px; }
 .tbl tr.off td { color: var(--muted); }
 .tbl .r { text-align: right; } .tbl .nowrap { white-space: nowrap; }
 
+/* --------------------------------------------------------------- products */
+.toolbar { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-bottom: .6rem; }
+.toolbar .search { flex: 1 1 240px; font: inherit; font-size: 14px; padding: .6rem .8rem; border: 1px solid var(--line-2); border-radius: 4px; }
+.toolbar select { font: inherit; font-size: 13px; padding: .55rem .6rem; border: 1px solid var(--line-2); border-radius: 4px; background: #fff; }
+.pr-thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; border: 1px solid var(--line); display: block; }
+.pr-thumb.none { display: flex; align-items: center; justify-content: center; background: #efeeea; color: #8a8884; font-family: var(--font-ui); font-weight: 600; font-size: 12px; }
+.pr-tbl td { vertical-align: middle; } .pr-tbl .r { white-space: nowrap; }
+.pr-tbl input[type=checkbox] { width: 18px; height: 18px; }
+.modal-card.wide { max-width: 900px; }
+.pf-margin { font-family: var(--font-ui); font-weight: 600; font-size: 20px; padding: .4rem 0; } .pf-margin.warn { color: var(--red); }
+.sp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: .5rem .8rem; }
+.sp-grid label { display: grid; gap: .2rem; font-size: 12px; color: var(--muted); }
+.sp-grid input, .opt-row input, .var-tbl input:not([type=checkbox]), .bundle-row input, .bundle-row select { font: inherit; font-size: 13.5px; padding: .4rem .5rem; border: 1px solid var(--line-2); border-radius: 4px; width: 100%; min-width: 0; }
+.opt-row { display: grid; grid-template-columns: 1fr 2fr; gap: .5rem; margin-bottom: .4rem; }
+.var-tbl { font-size: 13px; } .var-tbl th, .var-tbl td { padding: .35rem .4rem; }
+.bundle-row { display: grid; grid-template-columns: 1fr 80px 32px; gap: .5rem; align-items: center; margin-bottom: .4rem; }
+.pk-list { max-height: 260px; overflow: auto; border: 1px solid var(--line); border-radius: 4px; }
+.pk-row { display: grid; padding: .5rem .7rem; border-bottom: 1px solid var(--line); } .pk-row span { font-size: 12px; color: var(--muted); }
+
 /* ------------------------------------------------------------------ modal */
 .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); display: flex; align-items: center; justify-content: center; padding: 1rem; z-index: 50; }
 .modal-card { background: #fff; border-radius: 10px; width: 100%; max-width: 520px; max-height: 92vh; display: flex; flex-direction: column; }
