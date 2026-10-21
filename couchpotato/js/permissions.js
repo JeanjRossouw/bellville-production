@@ -62,7 +62,7 @@ export const WRITE_AREAS = {
   invoices: ['invoices', 'pos'],
   sales: ['pos'],
   quotes: ['quotes'],
-  counters: ['orders', 'pos', 'quotes', 'invoices', 'stock', 'factory', 'scan', 'costing'],
+  counters: ['orders', 'pos', 'quotes', 'invoices', 'stock', 'factory', 'scan', 'costing', 'deliveries'],
   drivers: ['deliveries'],
   deliveryNotes: ['deliveries'],
   staff: ['wages'],

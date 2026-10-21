@@ -203,7 +203,7 @@ service cloud.firestore {
       }
       match /counters/{id} {
         allow read: if isMember(cid);
-        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'orders') || ed(cid, 'pos') || ed(cid, 'quotes') || ed(cid, 'invoices') || ed(cid, 'stock') || ed(cid, 'factory') || ed(cid, 'scan') || ed(cid, 'costing'));
+        allow write: if isMember(cid) && companyActive(cid) && (ed(cid, 'orders') || ed(cid, 'pos') || ed(cid, 'quotes') || ed(cid, 'invoices') || ed(cid, 'stock') || ed(cid, 'factory') || ed(cid, 'scan') || ed(cid, 'costing') || ed(cid, 'deliveries'));
       }
       // Pay: the staff list and the wage runs. Only the Wages area sees them.
       match /staff/{id} {

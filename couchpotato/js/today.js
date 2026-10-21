@@ -144,6 +144,11 @@ function nudges(f) {
         out.push({ key: 'late-' + o.id, tone: 'red', text: `Order ${esc(o.orderNo || '')}${custName(o) ? ' for ' + esc(custName(o)) : ''} is running ${plural(d, 'day')} behind. Let the client know?`,
           send: { act: 'late', id: o.id, label: 'Send' } }); });
   }
+  if (sees('factory', 'orders', 'deliveries') && edits('factory', 'orders', 'deliveries')) {
+    const loose = f.ready.filter(o => !o.deliveryDate && o.deliveryMethod !== 'collect').sort((a, b) => String(a.orderNo || '').localeCompare(String(b.orderNo || ''), undefined, { numeric: true }));
+    if (loose.length) out.push({ key: 'dn-' + loose.map(o => o.id).sort().join('.'), tone: 'amber', text: `${plural(loose.length, 'piece is', 'pieces are')} done and not booked to go out${loose.length > 1 ? ' (' + esc(loose.slice(0, 3).map(o => o.orderNo).join(', ')) + (loose.length > 3 ? '…' : '') + ')' : ' (' + esc(loose[0].orderNo || '') + ')'}. Make a delivery note?`,
+      send: { act: 'go', to: sees('factory') ? 'factory' : 'orders', sub: 'done', label: 'Delivery note' } });
+  }
   if (sees('orders', 'deliveries', 'scan')) {
     f.ready.filter(o => !(o.clientToldAt && (!o.readyAt || o.clientToldAt >= o.readyAt)) && phoneOf(o))
       .forEach(o => out.push({ key: 'ready-' + o.id, tone: 'green', text: `Order ${esc(o.orderNo || '')}${custName(o) ? ' for ' + esc(custName(o)) : ''} is done. Tell the client it is ready?`, send: { act: 'ready', id: o.id, label: 'Send' } }));

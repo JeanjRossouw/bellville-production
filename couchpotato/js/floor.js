@@ -5,6 +5,7 @@ import * as store from './store.js';
 import { allOrders, orderById, setStatus } from './orders.js';
 import { esc, money, today, isoLocal, niceDate, daysUntil, statusChip, statusMeta, fabricChip, FABRIC_STATES, openModal, toast, empty, field, val, docHeader } from './ui.js';
 import { qrSvg, scanUrl } from './qr.js';
+import { notable, isPicked, mayBook, pickBarHtml } from './deliveries.js';
 
 let settings = {};
 export const setFloorSettings = (cfg) => { settings = cfg || {}; };
@@ -121,7 +122,9 @@ export function renderFloor(host, overviewHtml) {
   const rows = allOrders().filter(onFloor);
   const tab = (key, label) => `<button class="btn ${floorView === key ? 'primary' : 'ghost'} sm" data-act="floor-view" data-to="${key}">${label}</button>`;
   let body = '';
+  const done = allOrders().filter(notable).sort((a, b) => String(finishedOn(a)).localeCompare(String(finishedOn(b))) || String(a.orderNo || '').localeCompare(String(b.orderNo || ''), undefined, { numeric: true }));
   if (floorView === 'planner') body = plannerHtml(rows);
+  else if (floorView === 'done') body = doneHtml(done);
   else body = fabricHtml(rows);
 
   host.innerHTML = `
@@ -135,7 +138,7 @@ export function renderFloor(host, overviewHtml) {
     </div>
     ${overviewHtml || ''}
     ${weekStrip()}
-    <div class="btn-row" style="margin-bottom:.9rem">${tab('planner', 'Planner')}${tab('fabric', 'Fabric')}</div>
+    <div class="btn-row" style="margin-bottom:.9rem">${tab('planner', 'Planner')}${tab('fabric', 'Fabric')}${tab('done', 'Done (' + done.length + ')')}</div>
     ${body}`;
   wireDragDrop(host);
 }
@@ -163,6 +166,25 @@ function plannerHtml(rows) {
       <p class="muted">Not yet given a week, or planned for a week that has passed.</p>
       <div class="ppool">${by.pool.map(planCard).join('') || '<div class="pcol-empty">Everything is planned</div>'}</div>
     </div>`;
+}
+
+// Finished and waiting to go out: tick the ones going together and make one
+// delivery note for the driver.
+function doneHtml(done) {
+  if (!done.length) return empty('', 'Nothing done and waiting', 'Pieces marked Done show here until they are delivered.');
+  return `<p class="muted" style="margin:-.3rem 0 .7rem">Finished pieces still to go out. Tick the ones going on the same truck and make one delivery note for the driver.</p>
+    ${pickBarHtml(done)}
+    <div class="card" style="padding:0; overflow:auto"><table class="tbl dn-tbl">
+      <thead><tr><th></th><th>Order</th><th>Product</th><th>Customer</th><th>Finished</th><th>Invoice</th><th>Delivery</th></tr></thead>
+      <tbody>${done.map(o => `<tr class="${isPicked(o.id) ? 'dn-on' : ''}">
+        <td>${mayBook() ? `<input type="checkbox" data-act="dn-pick" data-id="${esc(o.id)}"${isPicked(o.id) ? ' checked' : ''} aria-label="Put ${esc(o.orderNo || '')} on a delivery note">` : ''}</td>
+        <td><strong>${esc(o.orderNo || '')}</strong></td>
+        <td>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' × ' + esc(o.qty) : ''}${o.fabric ? '<div class="muted">' + esc(o.fabric) + '</div>' : ''}</td>
+        <td>${esc(o.customerName || '')}</td>
+        <td>${esc(niceDate(finishedOn(o)) || '')}</td>
+        <td>${o.invoiceNo ? '<span class="chip st-inv">' + esc(o.invoiceNo) + '</span>' : '<span class="muted">not yet</span>'}</td>
+        <td>${o.deliveryDate ? '<span class="chip ' + (o.deliveryMethod === 'collect' ? 'calm">Collection ' : 'st-new">') + esc(niceDate(o.deliveryDate)) + (o.driverName ? ' · ' + esc(o.driverName) : '') + (o.deliveryNoteNo ? ' · ' + esc(o.deliveryNoteNo) : '') + '</span>' : o.deliveryMethod === 'collect' ? '<span class="chip calm">Collection</span>' : '<span class="muted">not booked</span>'}</td>
+      </tr>`).join('')}</tbody></table></div>`;
 }
 
 function fabricHtml(rows) {

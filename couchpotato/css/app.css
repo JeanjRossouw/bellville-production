@@ -1089,3 +1089,12 @@ ol.steps code { font-size: 11.5px; background: var(--paper); border: 1px solid v
 .reg-row.gone { opacity: .7; } .reg-row:disabled { cursor: default; }
 @media (max-width: 900px) { .td-tiles { grid-template-columns: repeat(2, 1fr); } .td-mid { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .today { padding: 1rem .85rem; border-radius: 14px; margin: -.3rem -.2rem 1rem; } .td-n { font-size: 36px; } .today h1 { font-size: 22px; } .td-bars { height: 140px; gap: .45rem; } .td-nudge p { font-size: 15px; } }
+
+/* -------------------------------------------------- delivery notes ------ */
+.dn-bar { position: sticky; top: .5rem; z-index: 5; display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; background: #fff; border: 1px solid var(--line-2); border-radius: 10px; padding: .6rem .8rem; margin-bottom: .8rem; box-shadow: 0 4px 14px rgba(0,0,0,.06); }
+.dn-all { display: inline-flex; align-items: center; gap: .4rem; font-weight: 600; cursor: pointer; }
+.dn-count { color: var(--muted); flex: 1; }
+.dn-bar input[type=checkbox], .dn-tbl input[type=checkbox], .dn-pick input { width: 20px; height: 20px; accent-color: #16a34a; cursor: pointer; }
+.dn-pick { display: inline-flex; align-items: center; gap: .35rem; font-size: 12px; font-weight: 600; cursor: pointer; padding: .2rem .5rem; border: 1px solid var(--line-2); border-radius: 6px; background: #fff; }
+.dn-tbl tr.dn-on td { background: #f0fdf4; }
+@media (max-width: 560px) { .dn-bar .btn { width: 100%; } }

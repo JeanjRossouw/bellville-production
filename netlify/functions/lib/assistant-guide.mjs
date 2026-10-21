@@ -47,6 +47,21 @@ password; the owner invites the team under Settings and gives each person a role
   shows no pay. Factory-floor and wages roles may clock people in.
 - Each part shows only to a role that may see what it is about.
 
+## Delivery notes (from Done)
+- When a piece is marked Done it waits on Factory floor → Done (and Orders → Done). Tick the
+  pieces going on the same truck (or "Select all"), then "🚚 Make delivery note": pick the
+  delivery date and the driver, and tap "Book and print". Every ticked order is booked on
+  that driver's run for the day, the note gets a number (DN-0001), and it prints as the
+  driver's list (each stop with a "received by" box) plus a page per stop for the client to
+  sign. The run can go to the driver on WhatsApp at the same time.
+- A piece with no delivery address is flagged; a collection ticked onto a note becomes a
+  delivery. Reprint from Deliveries → the driver's day → "Delivery note".
+- Invoice first: "🧾 Invoice ticked" (or "Invoice it" on a Done order) invoices pieces before
+  they go out; they stay on Done with the invoice number, which prints on the delivery note.
+  When they are delivered they end as Invoiced (not back on the To invoice list). Settings →
+  "Delivery notes" → "Invoice first" means only invoiced pieces can go on a delivery note.
+- Today reminds you when finished pieces are not booked to go out ("Make a delivery note?").
+
 ## Point of sale (the showroom till)
 - Till staff and PINs: under Settings → Till staff the owner adds each person with a PIN
   (4–6 digits), as a Manager or a Cashier with a discount limit (%) and whether they may do

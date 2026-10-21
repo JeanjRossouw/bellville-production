@@ -95,7 +95,7 @@ export const handler = async (event) => {
       if (dataUrl) await patchDoc(`companies/${who.cid}/deliveryNotes/${orderId}`, { orderId, orderNo: order.orderNo || '', dataUrl, signedBy, at: now, driver: driver.name || '' });
       const patch = { driverStatus: 'delivered', driverStatusAt: now, deliveredAt: now, deliveredBy: driver.name || 'Driver', signedBy, hasDeliveryNote: !!dataUrl, updatedAt: now, updatedBy: driver.name || 'Driver' };
       // delivered means it has left the factory: into the invoice queue
-      if (order.status === 'ready' || order.status === 'in-production' || order.status === 'new') Object.assign(patch, { status: 'dispatched', dispatchedAt: order.dispatchedAt || now, dispatchedBy: driver.name || 'Driver' });
+      if (order.status === 'ready' || order.status === 'in-production' || order.status === 'new') Object.assign(patch, { status: order.invoiceId ? 'invoiced' : 'dispatched', dispatchedAt: order.dispatchedAt || now, dispatchedBy: driver.name || 'Driver' });
       await patchDoc(path, patch);
       return json(200, { ok: true });
     }

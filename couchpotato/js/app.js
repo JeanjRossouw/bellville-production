@@ -23,7 +23,8 @@ import { startToday, renderToday, setTodaySettings, todayAction, syncRoster } fr
 import { startWages, renderWages, setWagesSettings, setWageView, setWagePeriod, wageInput, newStaff, editStaff, toggleStaff, addPiece, removePiece, addDeduction, removeDeduction, saveRun, markPaid, reopenRun, printWageSheet, printPayslips, exportRun } from './wages.js';
 import {
   startDeliveries, renderDeliveries, setDeliverySettings, setDeliveryView, setDeliveryDay, scheduleDelivery, markForCollection, deliverInstead, confirmToClient,
-  sendRun, printRun, markDelivered, undoDelivered, viewNote, clientSigns, newDriver, editDriver, sendDriverLink, copyDriverLink, relinkDriver, removeDriver
+  sendRun, printRun, markDelivered, undoDelivered, viewNote, clientSigns, newDriver, editDriver, sendDriverLink, copyDriverLink, relinkDriver, removeDriver,
+  togglePick, pickAll, makeDeliveryNote, printRunNote, notePicks
 } from './deliveries.js';
 import {
   startStoreroom, renderStoreroom, setStoreroomSettings, setStoreroomView, receivePo, receiveDirect, fabricArrived, issueStock,
@@ -574,6 +575,7 @@ function renderSettings(host) {
       <h2>Numbering and terms</h2>
       ${row(field('Order number prefix', 's-oprefix', { value: s.orderPrefix }), field('Next order number', 's-ofirst', { value: s.firstOrderNo, type: 'number', min: 1 }))}
       ${row(field('Invoice prefix', 's-iprefix', { value: s.invoicePrefix }), field('Default payment terms (days)', 's-terms', { value: s.paymentTermsDays, type: 'number', min: 0 }))}
+      ${field('Delivery notes', 's-invfirst', { type: 'select', value: s.invoiceBeforeNote ? 'yes' : 'no', options: [{ value: 'no', label: 'Any finished piece can go on a delivery note' }, { value: 'yes', label: 'Invoice first: only invoiced pieces go on a delivery note' }] })}
       ${row(field('Loyalty points at the till (% of the sale, 1 point = R1; 0 = off)', 's-loyalty', { value: s.loyaltyPct == null ? 5 : s.loyaltyPct, type: 'number', min: 0, step: '0.5' }), field('Till cash float (R)', 's-float', { value: s.tillFloat || '', type: 'number', min: 0, step: '1', placeholder: 'Offered when the register opens' }))}
       ${row(field('Made-to-order lead time (days)', 's-lead', { value: s.leadDays == null ? 28 : s.leadDays, type: 'number', min: 1 }),
         field('Weekly production target (R' + (s.vatRegistered ? ', incl. VAT' : '') + ')', 's-target', { value: s.weeklyTarget || '', type: 'number', min: 0, step: '1', placeholder: 'e.g. 150000 — the Factory floor shows progress against it' }))}
@@ -911,6 +913,7 @@ async function saveSettings() {
     loyaltyPct: Math.max(0, parseFloat(g('s-loyalty')) || 0),
     tillFloat: Math.max(0, parseFloat(g('s-float')) || 0),
     weeklyTarget: parseFloat(g('s-target')) || 0,
+    invoiceBeforeNote: g('s-invfirst') === 'yes',
     vatRegistered: g('s-vatreg') === 'yes',
     vatRate: (parseFloat(g('s-vatrate')) || 0) / 100
   };
@@ -946,6 +949,8 @@ async function onAction(e) {
     if (!allowedViews(store.getUser()).includes(to)) { toast('Your role does not open that screen', 'warn'); return; }
     if (to === 'invoices' && sub) setInvView(sub);
     if (to === 'stock') setStockView('materials');
+    if (to === 'factory' && sub) setFloorView(sub);
+    if (to === 'orders' && sub === 'done') setFilter({ status: 'ready' });
     view = to; paint(); window.scrollTo(0, 0);
   });
   switch (b.dataset.act) {
@@ -1005,6 +1010,11 @@ async function onAction(e) {
     case 'dl-note': return viewNote(id);
     case 'dl-send-run': return sendRun(id, allOrders());
     case 'dl-print-run': return printRun(id, allOrders());
+    case 'dn-pick': togglePick(id); return paint();
+    case 'dn-all': pickAll(String(b.dataset.ids || '').split(',').filter(Boolean)); return paint();
+    case 'dn-make': return makeDeliveryNote(allOrders());
+    case 'dn-invoice': return newInvoiceFor(notePicks());
+    case 'dn-print': return printRunNote(id, allOrders());
     case 'dl-driver-new': return newDriver();
     case 'dl-driver-edit': return editDriver(id);
     case 'dl-driver-send': return sendDriverLink(id);
