@@ -8,6 +8,7 @@ import * as store from './store.js';
 import { allOrders, orderById } from './orders.js';
 import { allCustomers, customerById } from './customers.js';
 import { esc, money, field, row, val, openModal, toast, empty, niceDate, today, addDays, openPrint, docHeader, vatSplit, inclLabel } from './ui.js';
+import { invPickBox, invPickBarHtml, invDeliverable } from './deliveries.js';
 
 let invoices = [];
 let unwatch = null;
@@ -236,14 +237,16 @@ function statusChipInv(inv) {
 }
 
 function listHtml(cur) {
-  const rows = invoices.filter(i => invFilter === 'all' ? true : invFilter === 'paid' ? i.status === 'paid' : i.status === 'issued');
+  const all = allOrders();
+  const rows = invoices.filter(i => invFilter === 'all' ? true : invFilter === 'paid' ? i.status === 'paid' : invFilter === 'deliver' ? invDeliverable(i, all) && !i.deliveryNoteNo : i.status === 'issued');
   const sel = `<select id="inv-filter" style="font:inherit; font-size:13px; padding:.4rem .6rem; border:1px solid var(--line); border-radius:8px">
-    <option value="open"${invFilter === 'open' ? ' selected' : ''}>Unpaid</option><option value="paid"${invFilter === 'paid' ? ' selected' : ''}>Paid</option><option value="all"${invFilter === 'all' ? ' selected' : ''}>All (incl. void)</option></select>`;
-  if (!rows.length) return sel + empty('', 'No invoices here', invoices.length ? 'Try another filter.' : 'Issue the first one from the To invoice tab.');
-  return sel + `<div class="card" style="padding:0; overflow:auto; margin-top:.6rem"><table class="tbl">
-    <thead><tr><th>Invoice</th><th>Customer</th><th>Date</th><th>Due</th><th class="r">Total</th><th class="r">Owing</th><th>Status</th><th></th></tr></thead>
+    <option value="open"${invFilter === 'open' ? ' selected' : ''}>Unpaid</option><option value="paid"${invFilter === 'paid' ? ' selected' : ''}>Paid</option><option value="deliver"${invFilter === 'deliver' ? ' selected' : ''}>To deliver (no delivery note yet)</option><option value="all"${invFilter === 'all' ? ' selected' : ''}>All (incl. void)</option></select>`;
+  if (!rows.length) return sel + empty('', 'No invoices here', invoices.length ? (invFilter === 'deliver' ? 'Every invoice with goods is on a delivery note.' : 'Try another filter.') : 'Issue the first one from the To invoice tab.');
+  return sel + `<div style="margin-top:.6rem">${invPickBarHtml(rows, all)}</div><div class="card" style="padding:0; overflow:auto; margin-top:.6rem"><table class="tbl">
+    <thead><tr><th></th><th>Invoice</th><th>Customer</th><th>Date</th><th>Due</th><th class="r">Total</th><th class="r">Owing</th><th>Status</th><th></th></tr></thead>
     <tbody>${rows.map(i => `<tr${i.status === 'void' ? ' style="opacity:.5"' : ''}>
-      <td><strong>${esc(i.invoiceNo)}</strong><div class="muted">${esc([orderNosOf(i).join(', '), i.saleNo ? 'sale ' + i.saleNo : ''].filter(Boolean).join(' · '))}</div></td>
+      <td>${invPickBox(i, all)}</td>
+      <td><strong>${esc(i.invoiceNo)}</strong><div class="muted">${esc([orderNosOf(i).join(', '), i.saleNo ? 'sale ' + i.saleNo : ''].filter(Boolean).join(' · '))}</div>${i.deliveryNoteNo ? `<div><span class="chip st-new" title="On delivery note ${esc(i.deliveryNoteNo)}${i.deliveryDate ? ' for ' + esc(niceDate(i.deliveryDate)) : ''}${i.driverName ? ' with ' + esc(i.driverName) : ''}">${esc(i.deliveryNoteNo)}${i.deliveryDate ? ' · ' + esc(niceDate(i.deliveryDate)) : ''}</span></div>` : ''}</td>
       <td>${esc(i.customerName)}</td><td>${esc(niceDate(i.date))}</td><td>${esc(niceDate(i.dueDate))}</td>
       <td class="r">${esc(money(i.total, cur))}</td><td class="r">${i.status === 'void' ? '—' : esc(money(balance(i), cur))}</td>
       <td>${statusChipInv(i)}</td>

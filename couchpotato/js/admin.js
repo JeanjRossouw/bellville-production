@@ -45,12 +45,18 @@ function showClients(user) {
     <header class="topbar">
       <div class="brand"><span class="brand-name">${esc(PRODUCT.name)}</span><span class="brand-sub">Owner</span></div>
       <div class="topbar-right">
-        <div class="who"><div class="who-n">${esc(user.name || user.email || '')}</div><div class="who-r">owner</div></div>
+        <div class="who"><div class="who-n">${esc(user.name || user.email || '')} <button class="who-edit" id="who-edit" type="button" title="Change the name this login shows">change</button></div><div class="who-r">${user.name && user.email && user.name !== user.email ? esc(user.email) + ' · ' : ''}owner</div></div>
         <button class="btn ghost sm" id="sign-out">Sign out</button>
       </div>
     </header>
     <main class="shell"><div id="screen"></div></main>`;
   app.querySelector('#sign-out').addEventListener('click', () => store.signOutNow());
+  // the name this login goes by (the same name the app shows on the team list)
+  app.querySelector('#who-edit').addEventListener('click', async () => {
+    const n = prompt('Your name, as this login shows it:', user.name && user.name !== user.email ? user.name : '');
+    if (n == null || !n.trim()) return;
+    try { await store.setMyName(n); toast('Name saved'); showClients({ ...user, name: n.trim() }); } catch (e) { toast(e.message, 'warn'); }
+  });
   const screen = app.querySelector('#screen');
   screen.addEventListener('click', (e) => {
     const b = e.target.closest('[data-act]'); if (!b) return;
