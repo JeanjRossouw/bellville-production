@@ -527,7 +527,8 @@ async function completeSale(pays, kind, extra) {
     invoiceNo, customerId: c ? c.id : '', customerName: c ? c.name : 'Walk-in customer', date: today(),
     dueDate: paid ? today() : due, lines: invLines, incl: true, subtotal: t.subtotal, vat: t.vat, vatRate: vatRate(), total: t.total,
     status: paid ? 'paid' : 'issued', paidAt: paid ? today() : '', payments, note: (kind === 'layby' ? 'Layby ' : kind === 'account' ? 'On account: till sale ' : 'Till sale ') + saleNo + (cart.note ? ' · ' + cart.note : ''),
-    saleNo, events: [{ at: now, by: who, what: 'Raised at the till (' + saleNo + ')' }]
+    saleNo, events: [{ at: now, by: who, what: 'Raised at the till (' + saleNo + ')' }],
+    ...(delivery ? { deliveryAddress: delivery.deliveryAddress, deliveryInstructions: delivery.note || '' } : {})
   });
   for (const l of lines) if (l.orderId) await store.update('orders', l.orderId, { invoiceId, invoiceNo });
 

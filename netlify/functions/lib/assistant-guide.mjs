@@ -60,6 +60,13 @@ password; the owner invites the team under Settings and gives each person a role
   they go out; they stay on Done with the invoice number, which prints on the delivery note.
   When they are delivered they end as Invoiced (not back on the To invoice list). Settings →
   "Delivery notes" → "Invoice first" means only invoiced pieces can go on a delivery note.
+- From the invoices (invoice first, then deliver): Money → Invoices → Invoices tab → filter
+  "To deliver (no delivery note yet)". Tick the invoices going out (or Select all) and
+  "🚚 Make delivery note": date and driver, then "Book and print". Each invoice is a stop
+  with its goods (discounts, delivery fees and gift cards left off) and its customer's
+  address (for a till sale with a delivery, the address typed at the till). The orders on
+  those invoices are booked on the driver's run, and each invoice shows its note number.
+  Till sales of shop stock have no order, so this is the way to send them with a driver.
 - Today reminds you when finished pieces are not booked to go out ("Make a delivery note?").
 
 ## Point of sale (the showroom till)

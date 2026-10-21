@@ -24,7 +24,7 @@ import { startWages, renderWages, setWagesSettings, setWageView, setWagePeriod, 
 import {
   startDeliveries, renderDeliveries, setDeliverySettings, setDeliveryView, setDeliveryDay, scheduleDelivery, markForCollection, deliverInstead, confirmToClient,
   sendRun, printRun, markDelivered, undoDelivered, viewNote, clientSigns, newDriver, editDriver, sendDriverLink, copyDriverLink, relinkDriver, removeDriver,
-  togglePick, pickAll, makeDeliveryNote, printRunNote, notePicks
+  togglePick, pickAll, makeDeliveryNote, printRunNote, notePicks, toggleInvPick, pickAllInv, makeNoteFromInvoices
 } from './deliveries.js';
 import {
   startStoreroom, renderStoreroom, setStoreroomSettings, setStoreroomView, receivePo, receiveDirect, fabricArrived, issueStock,
@@ -35,7 +35,7 @@ import {
   editPurchaseOrder, sendPurchaseOrder, printPurchaseOrder, receivePurchaseOrder, cancelPurchaseOrder
 } from './stock.js';
 import {
-  startInvoices, renderInvoices, setInvoiceSettings, setInvView, setInvFilter, setStmtCustomer, newInvoiceFor,
+  startInvoices, renderInvoices, setInvoiceSettings, setInvView, setInvFilter, setStmtCustomer, newInvoiceFor, allInvoices,
   invoiceCustomerQueue, pickedIds, recordPayment, voidInvoice, printInvoice, printStatement, exportCsv
 } from './invoices.js';
 import {
@@ -1014,6 +1014,9 @@ async function onAction(e) {
     case 'dn-all': pickAll(String(b.dataset.ids || '').split(',').filter(Boolean)); return paint();
     case 'dn-make': return makeDeliveryNote(allOrders());
     case 'dn-invoice': return newInvoiceFor(notePicks());
+    case 'dn-inv-pick': toggleInvPick(id); return paint();
+    case 'dn-inv-all': pickAllInv(String(b.dataset.ids || '').split(',').filter(Boolean)); return paint();
+    case 'dn-inv-make': return makeNoteFromInvoices(allInvoices(), allOrders());
     case 'dn-print': return printRunNote(id, allOrders());
     case 'dl-driver-new': return newDriver();
     case 'dl-driver-edit': return editDriver(id);

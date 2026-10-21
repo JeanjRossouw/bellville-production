@@ -10,7 +10,7 @@
 //   deliveredAt, deliveredBy, signedBy, hasDeliveryNote
 // The signed note itself (a picture) lives in deliveryNotes/<order id>.
 import * as store from './store.js';
-import { customerById } from './customers.js';
+import { customerById, allCustomers } from './customers.js';
 import { esc, field, row, val, openModal, toast, empty, today, addDays, niceDate, waDigits, openPrint, docHeader } from './ui.js';
 import { openSignScreen } from './sign.js';
 
@@ -53,8 +53,10 @@ export const driverLink = (d) => location.origin + location.pathname + '?driver=
 
 // Still to go out: finished, or being built and already planned.
 const toDeliver = (orders) => orders.filter(o => !o.deliveredAt && (o.status === 'ready' || o.status === 'in-production' || (o.status === 'dispatched' && o.deliveryDate) || o.deliveryDate));
-const addressOf = (o) => { const c = customerById(o.customerId) || {}; return o.deliveryAddress || [c.address, c.area].filter(Boolean).join(', '); };
-const phoneOf = (o) => o.deliveryPhone || (customerById(o.customerId) || {}).phone || '';
+// the order's own delivery details, else its customer's (found by name when it is not linked)
+const custOf = (o) => customerById(o.customerId) || (o.customerName ? allCustomers().find(c => String(c.name || '').trim().toLowerCase() === String(o.customerName).trim().toLowerCase()) : null) || {};
+const addressOf = (o) => { const c = custOf(o); return o.deliveryAddress || [c.address, c.area].filter(Boolean).join(', '); };
+const phoneOf = (o) => o.deliveryPhone || custOf(o).phone || '';
 
 // ---------------------------------------------------------------- render ----
 
@@ -396,7 +398,7 @@ export const notePicks = () => [...picks];
 export function togglePick(id) { if (picks.has(id)) picks.delete(id); else picks.add(id); }
 // What can go on a note: done and not yet delivered.
 export const notable = (o) => o.status === 'ready' && !o.deliveredAt;
-export const mayBook = () => store.can('deliveries', 'edit') || store.can('factory', 'edit') || store.can('orders', 'edit');
+export const mayBook = () => store.can('deliveries', 'edit') || store.can('factory', 'edit') || store.can('orders', 'edit') || store.can('invoices', 'edit');
 export function pickAll(ids) { const all = ids.every(id => picks.has(id)); ids.forEach(id => { if (all) picks.delete(id); else picks.add(id); }); }
 // the tick box on a card or a row
 export const pickBox = (o) => mayBook() && notable(o) ? `<label class="dn-pick" title="Put it on a delivery note"><input type="checkbox" data-act="dn-pick" data-id="${esc(o.id)}"${picks.has(o.id) ? ' checked' : ''}><span>Delivery note</span></label>` : '';
@@ -468,26 +470,132 @@ export function makeDeliveryNote(orders) {
   wrap.querySelector('.modal-card').classList.add('wide');
 }
 
-// The note itself: the driver's list, then a page per stop to sign.
+// The note itself: the driver's list, then a page per stop to sign. A stop
+// is an order, or an invoice (its goods, to its customer).
+const stopOfOrder = (o) => ({ ref: o.orderNo || '', invoiceNo: o.invoiceNo || '', externalRef: o.externalRef || '', items: [{ name: o.product || '', qty: Number(o.qty) || 1, fabric: o.fabric || '' }],
+  contact: o.deliveryContact || o.customerName || '', address: addressOf(o), phone: phoneOf(o), note: o.deliveryInstructions || '' });
 export function printDeliveryNote(no, date, driverName, list, pages) {
+  const stops = list.map(x => x.items ? x : stopOfOrder(x));
   const head = (title, sub) => docHeader(settings, title, no, [niceDate(date), 'Driver ' + driverName].concat(sub || []));
-  const items = (o) => `${esc(o.product || '')}${Number(o.qty) > 1 ? ' × ' + esc(o.qty) : ''}${o.fabric ? '<br><small>' + esc(o.fabric) + '</small>' : ''}`;
-  const sheet = `<div class="dn-page">${head('DELIVERY NOTE', [list.length + ' stop' + (list.length === 1 ? '' : 's')])}
-    <table><tr><th>#</th><th>Order</th><th>Item</th><th>Deliver to</th><th>Phone</th><th>Received by (name &amp; signature)</th></tr>
-    ${list.map((o, i) => `<tr><td>${i + 1}</td><td><strong>${esc(o.orderNo || '')}</strong>${o.invoiceNo ? '<br><small>Invoice ' + esc(o.invoiceNo) + '</small>' : ''}${o.externalRef ? '<br><small>ref ' + esc(o.externalRef) + '</small>' : ''}</td><td>${items(o)}</td>
-      <td>${esc(o.deliveryContact || o.customerName || '')}<br>${esc(addressOf(o))}${o.deliveryInstructions ? '<br><small>' + esc(o.deliveryInstructions) + '</small>' : ''}</td><td>${esc(phoneOf(o))}</td><td style="width:24%; height:46px"></td></tr>`).join('')}
+  const items = (st) => st.items.map(it => `${esc(it.name)}${Number(it.qty) > 1 ? ' × ' + esc(it.qty) : ''}${it.fabric ? '<br><small>' + esc(it.fabric) + '</small>' : ''}`).join('<br>');
+  const refs = (st, br) => `<strong>${esc(st.ref)}</strong>${st.invoiceNo && st.invoiceNo !== st.ref ? (br ? '<br><small>' : ' · ') + 'Invoice ' + esc(st.invoiceNo) + (br ? '</small>' : '') : ''}${st.externalRef ? (br ? '<br><small>ref ' : ' · your ref ') + esc(st.externalRef) + (br ? '</small>' : '') : ''}`;
+  const sheet = `<div class="dn-page">${head('DELIVERY NOTE', [stops.length + ' stop' + (stops.length === 1 ? '' : 's')])}
+    <table><tr><th>#</th><th>Order / invoice</th><th>Item</th><th>Deliver to</th><th>Phone</th><th>Received by (name &amp; signature)</th></tr>
+    ${stops.map((st, i) => `<tr><td>${i + 1}</td><td>${refs(st, true)}</td><td>${items(st)}</td>
+      <td>${esc(st.contact)}<br>${esc(st.address)}${st.note ? '<br><small>' + esc(st.note) + '</small>' : ''}</td><td>${esc(st.phone)}</td><td style="width:24%; height:46px"></td></tr>`).join('')}
     </table>
     <table style="margin-top:14px"><tr><td style="width:50%; height:50px">Loaded by<br><br>______________________ &nbsp; date ________</td><td>Driver<br><br>______________________ &nbsp; date ________</td></tr></table></div>`;
-  const stop = (o, i) => `<div class="dn-page">${head('DELIVERY NOTE', ['Stop ' + (i + 1) + ' of ' + list.length])}
-    <table><tr><th style="width:30%">Order</th><td><strong>${esc(o.orderNo || '')}</strong>${o.invoiceNo ? ' · Invoice ' + esc(o.invoiceNo) : ''}${o.externalRef ? ' · your ref ' + esc(o.externalRef) : ''}</td></tr>
-      <tr><th>Deliver to</th><td>${esc(o.deliveryContact || o.customerName || '')}<br>${esc(addressOf(o))}<br>${esc(phoneOf(o))}</td></tr>
-      <tr><th>Item</th><td>${items(o)}</td></tr>
-      ${o.deliveryInstructions ? `<tr><th>Note</th><td>${esc(o.deliveryInstructions)}</td></tr>` : ''}</table>
+  const stop = (st, i) => `<div class="dn-page">${head('DELIVERY NOTE', ['Stop ' + (i + 1) + ' of ' + stops.length])}
+    <table><tr><th style="width:30%">Order / invoice</th><td>${refs(st, false)}</td></tr>
+      <tr><th>Deliver to</th><td>${esc(st.contact)}<br>${esc(st.address)}<br>${esc(st.phone)}</td></tr>
+      <tr><th>Items</th><td>${items(st)}</td></tr>
+      ${st.note ? `<tr><th>Note</th><td>${esc(st.note)}</td></tr>` : ''}</table>
     <p style="margin:14px 0 6px">Received in good order and condition.</p>
     <table><tr><td style="height:60px; width:40%">Name<br><br></td><td style="width:40%">Signature<br><br></td><td>Date<br><br></td></tr></table>
     <p style="font-size:11px; color:#444; margin-top:10px">Driver: bring this page back signed.</p></div>`;
-  openPrint('Delivery note ' + no, `<style>.dn-page{page-break-after:always} .dn-page:last-child{page-break-after:auto}</style>${sheet}${pages ? list.map(stop).join('') : ''}`);
+  openPrint('Delivery note ' + no, `<style>.dn-page{page-break-after:always} .dn-page:last-child{page-break-after:auto}</style>${sheet}${pages ? stops.map(stop).join('') : ''}`);
 }
+
+// --------------------------------------------- delivery notes from invoices --
+// Invoice first, then deliver: tick the invoices going out (Money → Invoices,
+// "To deliver") and make one note. Each invoice is a stop with its goods; its
+// orders are booked on the driver's run, and the invoice carries the note no.
+const invPicks = new Set();
+export const invPicked = (id) => invPicks.has(id);
+export function toggleInvPick(id) { if (invPicks.has(id)) invPicks.delete(id); else invPicks.add(id); }
+export function pickAllInv(ids) { const all = ids.every(id => invPicks.has(id)); ids.forEach(id => { if (all) invPicks.delete(id); else invPicks.add(id); }); }
+// what goes on the truck: the invoice's lines less discounts, delivery fees and gift cards
+export const goodsOf = (inv) => (inv.lines || []).filter(l => Number(l.qty) > 0 && Number(l.unitPrice) >= 0 && !/^(Discount|Delivery to |Gift card)/i.test(String(l.description || '')));
+const deliveredOrder = (orders, id) => { const o = orders.find(x => x.id === id); return !!(o && o.deliveredAt); };
+// can still go out: not void, has goods, and not every order on it already delivered
+export function invDeliverable(inv, orders) {
+  if (inv.status === 'void' || inv.deliveredAt) return false;
+  const g = goodsOf(inv); if (!g.length) return false;
+  const ids = g.map(l => l.orderId).filter(Boolean);
+  return !(ids.length && ids.length === g.length && ids.every(id => deliveredOrder(orders, id)));
+}
+const invAddress = (inv, orders) => {
+  if (inv.deliveryAddress) return inv.deliveryAddress;
+  const fee = (inv.lines || []).find(l => /^Delivery to /i.test(String(l.description || '')));
+  if (fee) return String(fee.description).replace(/^Delivery to /i, '').replace(/\s*\(from stock\)$/, '');
+  const o = (inv.lines || []).map(l => orders.find(x => x.id === l.orderId)).find(x => x && addressOf(x));
+  if (o) return addressOf(o);
+  const c = customerById(inv.customerId) || {};
+  return [c.address, c.area].filter(Boolean).join(', ');
+};
+const stopOfInvoice = (inv, orders) => {
+  const c = customerById(inv.customerId) || {};
+  const o = (inv.lines || []).map(l => orders.find(x => x.id === l.orderId)).find(Boolean) || {};
+  return { ref: inv.invoiceNo || '', invoiceNo: inv.invoiceNo || '', externalRef: '', contact: inv.customerName || c.name || '',
+    items: goodsOf(inv).map(l => ({ name: String(l.description || '').replace(/\s*\((from stock|made to order[^)]*)\)$/, ''), qty: Number(l.qty) || 1, fabric: '' })),
+    address: invAddress(inv, orders), phone: o.deliveryPhone || c.phone || '', note: inv.deliveryInstructions || o.deliveryInstructions || '' };
+};
+export const invPickBox = (inv, orders) => mayBook() && invDeliverable(inv, orders) ? `<input type="checkbox" class="dn-inv-box" data-act="dn-inv-pick" data-id="${esc(inv.id)}"${invPicks.has(inv.id) ? ' checked' : ''} aria-label="Put ${esc(inv.invoiceNo || '')} on a delivery note">` : '';
+export function invPickBarHtml(rows, orders) {
+  if (!mayBook()) return '';
+  const ids = rows.filter(i => invDeliverable(i, orders)).map(i => i.id);
+  [...invPicks].forEach(id => { if (!ids.includes(id)) invPicks.delete(id); });
+  if (!ids.length) return '';
+  const n = ids.filter(id => invPicks.has(id)).length;
+  return `<div class="dn-bar">
+    <label class="dn-all"><input type="checkbox" data-act="dn-inv-all" data-ids="${esc(ids.join(','))}"${n && n === ids.length ? ' checked' : ''}> Select all ${ids.length}</label>
+    <span class="dn-count">${n ? n + ' invoice' + (n === 1 ? '' : 's') + ' ticked' : 'Tick the invoices going out together'}</span>
+    <button class="btn primary" data-act="dn-inv-make"${n ? '' : ' disabled'}>🚚 Make delivery note${n ? ' (' + n + ')' : ''}</button>
+  </div>`;
+}
+export function makeNoteFromInvoices(invoices, orders) {
+  const list = invoices.filter(i => invPicks.has(i.id) && invDeliverable(i, orders)).sort((a, b) => String(a.invoiceNo || '').localeCompare(String(b.invoiceNo || ''), undefined, { numeric: true }));
+  if (!list.length) { toast('Tick the invoices to put on the note first', 'warn'); return; }
+  const stops = list.map(i => stopOfInvoice(i, orders));
+  const known = drivers;
+  const names = [...new Set(orders.map(o => o.driverName).filter(Boolean))];
+  const noAddr = stops.filter(st => !st.address);
+  const { wrap } = openModal('Delivery note · ' + list.length + ' invoice' + (list.length === 1 ? '' : 's'), `
+    <div class="pk-list" style="max-height:30vh; margin-bottom:.7rem">${stops.map((st, i) => `<div class="pk-row" style="cursor:default"><strong>${i + 1}. ${esc(st.ref)} · ${esc(st.contact)}</strong><span>${esc(st.items.map(it => (it.qty > 1 ? it.qty + '× ' : '') + it.name).join(', '))} · ${st.address ? esc(st.address) : '<b style="color:#b91c1c">no address</b>'}</span></div>`).join('')}</div>
+    ${row(field('Delivery date', 'dn-date', { type: 'date', value: today() }),
+      known.length ? field('Driver', 'dn-driver', { type: 'select', value: known.length === 1 ? known[0].id : '', options: [{ value: '', label: 'Choose a driver…' }].concat(known.map(d => ({ value: d.id, label: d.name }))) })
+        : field('Driver', 'dn-driver-name', { value: names[0] || '', placeholder: 'The driver’s name' }))}
+    <label class="check"><input type="checkbox" id="dn-pages" checked> A page per stop for the client to sign</label>
+    ${known.length ? '<label class="check"><input type="checkbox" id="dn-wa" checked> Send the list to the driver on WhatsApp</label>' : ''}
+    ${noAddr.length ? `<p class="notice-inline">${noAddr.map(st => esc(st.ref)).join(', ')} ${noAddr.length === 1 ? 'has' : 'have'} no delivery address: add it to the customer, or write it on the note.</p>` : ''}`, {
+    okLabel: 'Book and print',
+    onOk: async (w) => {
+      const date = val(w, 'dn-date');
+      if (!date) { toast('Pick the delivery date', 'warn'); return false; }
+      const dId = known.length ? val(w, 'dn-driver') : '';
+      const d = dId ? driverById(dId) : null;
+      const dName = d ? d.name : (val(w, 'dn-driver-name') || '').trim();
+      if (!dName) { toast('Choose the driver', 'warn'); return false; }
+      const n = await store.nextNumber('deliveryNoteNo', 1);
+      const no = (settings.deliveryNotePrefix || 'DN-') + String(n).padStart(4, '0');
+      invPicks.clear();
+      for (const [i, inv] of list.entries()) {
+        const st = stops[i];
+        // the orders on the invoice go on the driver's run
+        for (const l of goodsOf(inv)) {
+          const o = l.orderId && orders.find(x => x.id === l.orderId);
+          if (!o || o.deliveredAt || o.status === 'cancelled') continue;
+          const c = customerById(o.customerId) || {};
+          await store.update('orders', o.id, {
+            deliveryMethod: 'delivery', deliveryDate: date, driverId: d ? d.id : (o.driverName === dName ? o.driverId || '' : ''), driverName: dName, driverStatus: 'scheduled', driverNote: '', deliveryNoteNo: no,
+            deliveryContact: o.deliveryContact || c.contact || o.customerName || '', deliveryPhone: o.deliveryPhone || c.phone || '', deliveryAddress: o.deliveryAddress || st.address || ''
+          }, 'On delivery note ' + no + ' (' + (inv.invoiceNo || '') + ') for ' + date + ' with ' + dName);
+        }
+        await store.update('invoices', inv.id, { deliveryNoteNo: no, deliveryDate: date, driverName: dName, deliveryAddress: inv.deliveryAddress || st.address || '' }, 'On delivery note ' + no + ' for ' + date + ' with ' + dName);
+      }
+      printDeliveryNote(no, date, dName, stops, w.querySelector('#dn-pages').checked);
+      const wa = w.querySelector('#dn-wa');
+      if (d && wa && wa.checked) {
+        if (d.phone) window.open('https://wa.me/' + waDigits(d.phone) + '?text=' + encodeURIComponent('Hi ' + d.name + ', delivery note ' + no + ' for ' + niceDate(date) + ' (' + stops.length + '):\n' + stops.map((st, i) => (i + 1) + '. ' + st.ref + ' · ' + st.contact + ', ' + (st.address || 'no address') + ' · ' + st.items.map(it => (it.qty > 1 ? it.qty + '× ' : '') + it.name).join(', ')).join('\n') + '\n\nYour list: ' + driverLink(d)), '_blank');
+        else toast('Add ' + d.name + '’s cell number to WhatsApp the list', 'warn');
+      }
+      day = date;
+      toast(no + ': ' + list.length + ' invoice' + (list.length === 1 ? '' : 's') + ' booked for ' + niceDate(date) + ' with ' + dName);
+    }
+  });
+  wrap.querySelector('.modal-card').classList.add('wide');
+}
+
 // Reprint from the Deliveries screen: the driver's run for the day.
 export function printRunNote(driverId, orders) {
   const list = toDeliver(orders).filter(o => o.deliveryDate === day && (o.driverId || '') === (driverId || '') && !isCollect(o))
