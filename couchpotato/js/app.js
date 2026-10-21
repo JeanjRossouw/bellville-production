@@ -1243,9 +1243,8 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('login-forgot').addEventListener('click', async () => {
     const email = document.getElementById('login-email').value.trim();
     const status = document.getElementById('login-status');
-    if (!email) { status.className = 'login-status'; status.textContent = 'Type your email address first.'; return; }
-    try { await store.resetPassword(email); status.className = 'login-status ok'; status.textContent = 'A reset link is on its way to ' + email + '.'; }
-    catch (err) { status.className = 'login-status'; status.textContent = 'Could not send the reset email: ' + err.message; }
+    const r = await store.forgotPassword(email);
+    status.className = 'login-status' + (r.ok ? ' ok' : ''); status.textContent = r.text;
   });
   document.getElementById('login-form').addEventListener('submit', async (e) => {
     e.preventDefault();

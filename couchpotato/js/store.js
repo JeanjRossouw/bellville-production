@@ -675,8 +675,34 @@ export async function createCompany(companyName, name) {
 }
 
 export async function resetPassword(email) {
-  if (mode === 'demo') return;
-  await cloud.fns.sendPasswordResetEmail(cloud.auth, lower(email));
+  if (mode === 'demo') { const e = new Error('The demo has no real logins'); e.code = 'demo'; throw e; }
+  // the link in the email brings them back here after the new password is set
+  const back = { url: location.origin + location.pathname.replace(/[^/]*$/, ''), handleCodeInApp: false };
+  try { await cloud.fns.sendPasswordResetEmail(cloud.auth, lower(email), back); }
+  catch (err) {
+    // this site not yet on Firebase's list of allowed sites: send the plain email instead
+    if (err && /continue-uri|unauthorized-domain/.test(String(err.code || ''))) await cloud.fns.sendPasswordResetEmail(cloud.auth, lower(email));
+    else throw err;
+  }
+}
+// "Forgot your password?": what to tell the person, whatever happened. Firebase
+// does not say whether a login exists for an email (so nobody can fish for
+// accounts): when there is none, nothing is sent, so the message says so.
+export async function forgotPassword(email) {
+  const e = lower(email || '').trim();
+  if (!e) return { ok: false, text: 'Type your email address first, then tap Forgot your password.' };
+  if (mode === 'demo') return { ok: false, text: 'This is the demo: it has no real logins, so no email is sent. To reset a real password, open the system without ?demo=1 (put ?demo=0 on the address once to leave the demo).' };
+  try {
+    await resetPassword(e);
+    return { ok: true, text: 'If there is a login for ' + e + ', a reset link is on its way. It comes from noreply@' + (FIREBASE_CONFIG.authDomain || 'firebaseapp.com') + ': check the spam or junk folder too. Nothing after a few minutes? Then there is no login for this email yet: sign up, or ask the owner to invite this address.' };
+  } catch (err) {
+    const c = String((err && err.code) || '');
+    return { ok: false, text: c === 'auth/invalid-email' ? 'That email address does not look right.'
+      : c === 'auth/user-not-found' ? 'There is no login for ' + e + '. Sign up, or ask the owner to invite this address.'
+      : c === 'auth/too-many-requests' ? 'Too many tries from this device. Wait a few minutes and try again.'
+      : c === 'auth/network-request-failed' ? 'No internet connection. Try again when you are online.'
+      : 'Could not send the reset email: ' + ((err && err.message) || 'unknown error') };
+  }
 }
 
 export async function signOutNow() {
