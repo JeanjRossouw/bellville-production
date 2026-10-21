@@ -31,6 +31,7 @@
 import * as store from './store.js';
 import { editSupplier as editSharedSupplier } from './suppliers.js';
 import * as till from './till.js';
+import { icon } from './icons.js';
 import { readFile } from './importer.js';
 import { labelSheetHtml, openBarcodeCamera } from './barcode.js';
 import { esc, money, field, row, val, openModal, toast, empty, today, niceDate, openPrint, isoLocal, docHeader, waDigits, addDays } from './ui.js';
@@ -260,8 +261,8 @@ function receiveHtml() {
     <datalist id="gr-sup-list">${[...new Set(grvs.map(g => g.supplier).filter(Boolean))].map(s => `<option value="${esc(s)}"></option>`).join('')}</datalist>
     <div class="toolbar" style="margin:.4rem 0 .6rem">
       <input id="gr-scan" class="search" placeholder="Scan a barcode, or search the shop and press Enter…" autocomplete="off">
-      <button class="btn ghost" data-act="ss-scan">📷 Scan</button>
-      <label class="btn ghost" style="cursor:pointer">📄 Supplier’s invoice (PDF, Excel, CSV)<input type="file" id="gr-file" accept=".pdf,.xlsx,.xlsm,.csv,text/csv,application/pdf" hidden></label>
+      <button class="btn ghost" data-act="ss-scan">${icon('camera')} Scan</button>
+      <label class="btn ghost" style="cursor:pointer">${icon('file')} Supplier’s invoice (PDF, Excel, CSV)<input type="file" id="gr-file" accept=".pdf,.xlsx,.xlsm,.csv,text/csv,application/pdf" hidden></label>
     </div>
     ${draft.lines.length ? `<div style="overflow:auto"><table class="tbl ss-lines"><thead><tr><th>Product</th><th class="r">Qty</th>${seesCost ? '<th class="r">Cost each</th><th class="r">Amount</th>' : ''}<th></th></tr></thead><tbody>
       ${draft.lines.map((l, i) => `<tr><td><strong>${esc(l.name)}</strong><div class="muted">${esc([l.sku, l.barcode].filter(Boolean).join(' · '))}</div></td>
@@ -337,7 +338,7 @@ function takeHtml() {
   const done = t.lines.filter(l => l.counted != null).length, diff = t.lines.filter(l => l.counted != null && Number(l.counted) !== Number(l.system)).length;
   return `<div class="card">
     <div class="page-head" style="margin:0 0 .5rem"><div><h2>${esc(t.no)}${t.scope ? ' · ' + esc(t.scope) : ''}</h2><p class="sub">${done} of ${t.lines.length} counted · ${diff} different from the shop · started ${esc(niceDate(String(t.startedAt || '').slice(0, 10)))} by ${esc(t.by || '')}</p></div>
-      <div class="btn-row"><button class="btn ghost" data-act="ss-take-scan">📷 Scan</button><button class="btn ghost" data-act="ss-take-cancel">Cancel count</button><button class="btn primary" data-act="ss-take-done">Make it the shop’s stock</button></div></div>
+      <div class="btn-row"><button class="btn ghost" data-act="ss-take-scan">${icon('camera')} Scan</button><button class="btn ghost" data-act="ss-take-cancel">Cancel count</button><button class="btn primary" data-act="ss-take-done">Make it the shop’s stock</button></div></div>
     <input id="st-scan" class="search" placeholder="Scan a barcode (adds one), or type to find a product…" value="${esc(takeScan)}" autocomplete="off" style="width:100%; margin-bottom:.5rem">
     <div style="overflow:auto; max-height:60vh"><table class="tbl"><thead><tr><th>Product</th><th class="r">Shop says</th><th class="r">Counted</th><th class="r">Difference</th></tr></thead><tbody>
       ${lines.map(l => { const d = l.counted == null ? null : Number(l.counted) - Number(l.system); return `<tr><td><strong>${esc(l.name)}</strong><div class="muted">${esc([l.sku, l.barcode].filter(Boolean).join(' · '))}</div></td><td class="r">${esc(l.system)}</td>
@@ -551,7 +552,7 @@ function drawCatalogueRows(h) {
   box.innerHTML = rows.length ? `<table class="tbl"><thead><tr><th></th><th>Product</th><th>Category</th><th class="r">Stock</th><th class="r">Price</th>${costs ? '<th class="r">Cost</th><th class="r">Margin</th><th class="r">Reorder at</th>' : ''}<th class="r">Labels</th></tr></thead><tbody>${rows.map(i => {
     const e = catEdits[i.variantId] || {}; const cost = e.cost != null ? e.cost : costOfShopItem(i.variantId); const lvl = e.reorderLevel != null ? e.reorderLevel : (shopProds[i.variantId] && shopProds[i.variantId].reorderLevel);
     const margin = cost > 0 && i.price > 0 ? Math.round((1 - cost / i.price) * 100) : null;
-    return `<tr><td><button class="icon-btn" data-act="ss-cat-star" data-v="${esc(i.variantId)}" data-name="${esc(i.name)}" title="Quick key">${isQuickKey(i.variantId) ? '⭐' : '☆'}</button></td>
+    return `<tr><td><button class="icon-btn" data-act="ss-cat-star" data-v="${esc(i.variantId)}" data-name="${esc(i.name)}" title="Quick key"><span class="pos-star-ico${isQuickKey(i.variantId) ? ' on' : ''}">${icon('star')}</span></button></td>
       <td><strong>${esc(i.name)}</strong><div class="muted">${esc(i.sku || '')}${i.barcode ? ' · ' + esc(i.barcode) : ''}${i.vendor ? ' · ' + esc(i.vendor) : ''}</div></td><td>${esc((i.collections && i.collections.length ? i.collections : [i.category]).filter(Boolean).join(', '))}</td>
       <td class="r">${i.tracked ? esc(i.qty) : '—'}</td><td class="r">${esc(money(i.price, c))}</td>
       ${costs ? `<td class="r"><input class="ct-in" data-v="${esc(i.variantId)}" data-f="cost" type="number" min="0" step="0.01" value="${cost > 0 ? esc(cost) : ''}" style="width:90px"></td><td class="r">${margin == null ? '—' : margin + '%'}</td><td class="r"><input class="ct-in" data-v="${esc(i.variantId)}" data-f="reorderLevel" type="number" min="0" step="1" value="${lvl > 0 ? esc(lvl) : ''}" style="width:70px"></td>` : ''}
