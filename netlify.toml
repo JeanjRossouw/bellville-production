@@ -23,8 +23,8 @@
 [functions."couchpotato-feed"]
   schedule = "*/15 * * * *"
 
-# Friendly path for the dedicated till on the main site: /pos boots POS-only mode.
-# (A separate POS site can instead use a pos.* subdomain, which auto-detects.)
+# The old Bellville till inside index.html, on /till (it was /pos, which is
+# now the retail POS app in the pos/ folder).
 # ---- factorymanager.co.za: Factory Manager's own address ----
 # The website at the root, the app under /app/. Same site, same functions and
 # settings as the /couchpotato/ path, which keeps working. www goes to the
@@ -54,7 +54,7 @@
   force = true
 
 [[redirects]]
-  from = "/pos"
+  from = "/till"
   to = "/index.html?pos=1"
   status = 200
 

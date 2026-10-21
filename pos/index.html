@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+  <meta name="theme-color" content="#0b0b0b">
+  <title>Point of sale</title>
+  <meta name="description" content="The retail group's point of sale.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%230b0b0b'/><text x='50' y='68' font-size='52' text-anchor='middle' fill='white' font-family='Arial' font-weight='700'>P</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/pos.css">
+</head>
+<body>
+
+  <!-- Sign in: email for the office, a PIN on an enrolled till -->
+  <section id="login" class="login" hidden>
+    <div class="login-card">
+      <div class="login-brand"><h1 class="wordmark">Point of sale</h1><div class="rule"></div><p class="wordsub" id="login-device"></p></div>
+      <div class="login-switch" id="login-switch" hidden>
+        <button type="button" data-mode="pin">PIN</button>
+        <button type="button" data-mode="email">Email</button>
+      </div>
+      <div id="login-pin" hidden></div>
+      <form id="login-form" hidden>
+        <label class="fld"><span>Email</span><input id="login-email" type="email" autocomplete="username" required></label>
+        <label class="fld"><span>Password</span><input id="login-pass" type="password" autocomplete="current-password" required></label>
+        <p class="login-msg" id="login-msg"></p>
+        <button class="btn primary wide" id="login-submit" type="submit">Sign in</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- The very first sign-in: nobody owns the group yet -->
+  <section id="claim" class="login" hidden>
+    <form class="login-card" id="claim-form">
+      <div class="login-brand"><h1 class="wordmark">Point of sale</h1><div class="rule"></div><p class="wordsub">First time here</p></div>
+      <p class="muted">Nobody has set this system up yet. You will be its owner.</p>
+      <label class="fld"><span>Your name</span><input id="claim-name" autocomplete="name" required></label>
+      <label class="fld"><span>Name of the group</span><input id="claim-group" placeholder="e.g. Rossouw Retail"></label>
+      <button class="btn primary wide" type="submit">Make me the owner</button>
+      <button class="btn ghost wide" type="button" id="claim-out">Sign out</button>
+    </form>
+  </section>
+
+  <!-- Signed in, but not on the staff list -->
+  <section id="nobody" class="login" hidden>
+    <div class="login-card">
+      <div class="login-brand"><h1 class="wordmark">Point of sale</h1><div class="rule"></div></div>
+      <p>This login is not on the staff list. Ask the owner or a manager to add you under Staff, with the same email.</p>
+      <button class="btn ghost wide" type="button" id="nobody-out">Sign out</button>
+    </div>
+  </section>
+
+  <div id="app" hidden>
+    <header class="topbar">
+      <div class="brand"><span class="brand-name">Point of sale</span><span class="brand-sub" id="brand-sub"></span></div>
+      <div class="topbar-right">
+        <div class="who" id="who"></div>
+        <button class="btn ghost sm" id="lock" title="Back to the PIN pad">Lock</button>
+        <button class="btn sm" id="sign-out">Sign out</button>
+      </div>
+    </header>
+    <nav class="tabs" id="nav"></nav>
+    <main class="shell" id="screen"></main>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -307,9 +307,14 @@ service cloud.firestore {
     function pOwner(gid) { return pMember(gid) && pRole(gid) == 'owner'; }
     function pInEntity(gid, eid) { return pRole(gid) == 'owner' || eid in pUserDoc(gid).entityIds; }
     function pInStore(gid, sid) { return pRole(gid) == 'owner' || sid in pUserDoc(gid).storeIds; }
-    // reads: a record of one of my entities; a record of one of my stores
-    function pReadsEntity(gid) { return pMember(gid) && pInEntity(gid, resource.data.entityId); }
-    function pReadsStore(gid) { return pMember(gid) && pInEntity(gid, resource.data.entityId) && pInStore(gid, resource.data.storeId); }
+    // reads: a record of one of my entities; a record of one of my stores.
+    // The owner is settled before resource.data is touched, so an owner's
+    // unfiltered list works; everyone else's query must filter the fields.
+    function pReadsEntity(gid) { return pMember(gid) && (pRole(gid) == 'owner' || resource.data.entityId in pUserDoc(gid).entityIds); }
+    function pReadsStore(gid) {
+      return pMember(gid) && (pRole(gid) == 'owner'
+        || (resource.data.entityId in pUserDoc(gid).entityIds && resource.data.storeId in pUserDoc(gid).storeIds));
+    }
     // writes: at least this role, into one of my entities
     function pWritesEntity(gid, r) { return pAtLeast(gid, r) && pInEntity(gid, request.resource.data.entityId); }
     // the five stamps every record carries (rule 6), on a browser create ...
@@ -359,7 +364,7 @@ service cloud.firestore {
 
       // ---- entities, stores, registers, settings --------------------------
       match /entities/{id} {
-        allow read: if pMember(gid) && pInEntity(gid, id);
+        allow read: if pReadsEntity(gid);
         allow create: if pOwner(gid) && pStamped() && request.resource.data.entityId == id && request.resource.data.storeId == '';
         allow update: if pOwner(gid) && pStampsKept();
         allow delete: if false;
@@ -380,7 +385,7 @@ service cloud.firestore {
         allow delete: if false;
       }
       match /settings/{eid} {
-        allow read: if pMember(gid) && pInEntity(gid, eid);
+        allow read: if pReadsEntity(gid);
         allow create: if pAtLeast(gid, 'manager') && pInEntity(gid, eid) && pStamped()
                       && request.resource.data.entityId == eid && request.resource.data.storeId == '';
         allow update: if pAtLeast(gid, 'manager') && pInEntity(gid, eid) && pStampsKept();
