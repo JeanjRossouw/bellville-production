@@ -3,10 +3,11 @@ import * as store from './store.js';
 import { FACTORY_DEFAULTS, isCloudConfigured, isDemoForced, PRODUCT, TRIAL_DAYS } from './config.js';
 import { AREAS, LEVELS, levelOf } from './permissions.js';
 import { renderClients, clientExtend, clientFree, setClients, setClientPlan } from './clients.js';
-import { esc, field, row, toast, money, daysUntil, openModal } from './ui.js';
+import { esc, field, row, toast, money, daysUntil, openModal, today, niceDate } from './ui.js';
+import { download } from './exporter.js';
 import { startAssistant } from './assistant.js';
 import { openImport } from './importer.js';
-import { startCustomers, renderCustomers, newCustomer, editCustomer, deleteCustomer } from './customers.js';
+import { startCustomers, renderCustomers, newCustomer, editCustomer, deleteCustomer, allCustomers } from './customers.js';
 import {
   startOrders, renderOrders, newOrder, editOrder, cancelOrder, reopenOrder, setStatus, setFabric,
   setDue, setFilter, getFilter, setOrderSettings, allOrders, exportOrders
@@ -588,7 +589,7 @@ function renderSettings(host) {
       )}
       <div class="card-actions"><button class="btn primary" data-act="save-settings">Save settings</button></div>
     </div>
-    ${store.getUser().role === 'owner' ? billingCard() + shopCard() + xeroCard() + rolesCard() + teamCard() : ''}
+    ${store.getUser().role === 'owner' ? moveCard() + billingCard() + shopCard() + xeroCard() + rolesCard() + teamCard() : ''}
     ${store.can('settings', 'edit') && store.can('pos') ? staffCardHtml() : ''}
     <div class="card">
       <h2>How this system is wired</h2>
@@ -645,6 +646,59 @@ function redrawXeroCard() {
   if (typing(el)) return;                                   // mid-typing: leave it be
   el.outerHTML = xeroCard();
 }
+// Moving from the demo: the demo hands over one file, the real system takes it in.
+const MOVE_LABELS = { customers: 'Customers', orders: 'Orders', products: 'Products', materials: 'Materials', invoices: 'Invoices', quotes: 'Quotes', sales: 'Till sales', purchaseOrders: 'Purchase orders',
+  suppliers: 'Suppliers', staff: 'Staff', wageRuns: 'Wage runs', drivers: 'Drivers', deliveryNotes: 'Signed delivery notes', stockMoves: 'Stock movements', settings: 'Business settings', counters: 'Numbering' };
+function moveCard() {
+  if (store.storeMode() === 'demo') return `<div class="card" id="move-card">
+    <h2>Move to the real system</h2>
+    <p>Everything you put in here is kept in this browser only. To keep it, download it as one file, then sign in to the real system at <strong>${esc(location.host)}${esc(location.pathname)}</strong> (without <code>?demo=1</code>) and bring the file in under Settings → <em>Bring in data from the demo</em>.</p>
+    <p class="muted">Customers, orders, products, materials, invoices, quotes, till sales, suppliers, staff, deliveries, settings and the numbering all move. Logins, the team and the shop and Xero connections are set up again in the real system.</p>
+    <div class="card-actions"><button class="btn primary" data-act="move-export">⬇ Download all my data</button></div></div>`;
+  return `<div class="card" id="move-card">
+    <h2>Bring in data from the demo</h2>
+    <p>Worked in the demo first? In the demo, go to Settings → <em>Move to the real system</em> → <em>Download all my data</em> (on the same computer and browser you used), then choose that file here.</p>
+    <div class="card-actions"><button class="btn ghost" data-act="move-import">⬆ Choose the demo file</button></div></div>`;
+}
+function moveExport() {
+  let b;
+  try { b = store.exportDemoBundle(); } catch (e) { toast(e.message, 'warn'); return; }
+  const n = Object.values(b.collections).reduce((t, m) => t + Object.keys(m).length, 0);
+  if (!n) { toast('There is nothing in this demo company yet', 'warn'); return; }
+  const name = (b.company.name || 'demo').replace(/[^\w -]+/g, '').trim() || 'demo';
+  download(new Blob([JSON.stringify(b)], { type: 'application/json' }), 'Factory Manager data - ' + name + ' - ' + today() + '.json');
+  toast('Downloaded ' + n + ' records. Now sign in to the real system and bring the file in under Settings.');
+}
+function moveImport() {
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json,application/json';
+  inp.addEventListener('change', async () => {
+    const f = inp.files && inp.files[0]; if (!f) return;
+    let b; try { b = JSON.parse(await f.text()); } catch (e) { toast('This file could not be read', 'warn'); return; }
+    if (!b || b.app !== 'factory-manager' || !b.collections) { toast('This is not a Factory Manager data file. Download it in the demo: Settings → Move to the real system.', 'warn'); return; }
+    const rows = Object.entries(b.collections).filter(([c]) => !store.MOVE_SKIP.includes(c)).map(([c, m]) => ({ c, n: Object.keys(m || {}).length, samples: Object.entries(m || {}).filter(([id, d]) => store.isSampleRecord(c, id, d, b.company && b.company.id)).length })).filter(r => r.n).sort((x, y) => y.n - x.n);
+    const samples = rows.filter(r => r.c !== 'settings' && r.c !== 'counters').reduce((t, r) => t + r.samples, 0);
+    const already = allOrders().length + allCustomers().length;
+    openModal('Bring in data from the demo', `
+      <p>From <strong>${esc(b.company && b.company.name || 'the demo')}</strong>, downloaded ${esc(niceDate(String(b.exportedAt || '').slice(0, 10)))}.</p>
+      <div class="pk-list" style="max-height:34vh">${rows.map(r => `<div class="pk-row" style="cursor:default; grid-template-columns:1fr auto; display:grid"><strong>${esc(MOVE_LABELS[r.c] || r.c)}</strong><span>${r.n}${r.samples && r.c !== 'settings' && r.c !== 'counters' ? ' (' + r.samples + ' demo samples)' : ''}</span></div>`).join('')}</div>
+      ${samples ? `<label class="check"><input type="checkbox" id="mv-samples" checked> Leave out the demo’s own sample records (${samples})</label>` : ''}
+      ${b.collections.settings ? '<label class="check"><input type="checkbox" id="mv-settings" checked> Also bring in the business settings (name, address, VAT, numbering, prefixes)</label>' : ''}
+      ${already ? `<p class="notice-inline">This company already has ${already} orders and customers. They stay; what comes in is added (a record with the same id is replaced).</p>` : ''}`, {
+      okLabel: 'Bring it in',
+      onOk: async (w) => {
+        try {
+          toast('Bringing the data in…');
+          const done = await store.importBundle(b, { skipSamples: !!(w.querySelector('#mv-samples') || {}).checked, settings: !!(w.querySelector('#mv-settings') || {}).checked, progress: (x, n) => toast('Bringing the data in… ' + x + ' of ' + n) });
+          const total = Object.values(done).reduce((t, x) => t + x, 0);
+          toast(total + ' records brought in. Reloading…');
+          setTimeout(() => location.reload(), 1500);
+        } catch (e) { toast('Stopped: ' + e.message, 'warn'); return false; }
+      }
+    });
+  });
+  inp.click();
+}
+
 function xeroCard() {
   const x = xero || {};
   const pend = store.shopifyPendingCount();
@@ -1051,6 +1105,8 @@ async function onAction(e) {
     case 'cancel-sub': return cancelSubscription();
     case 'shop-connect': return shopConnect();
     case 'xero-connect': return xeroConnect();
+    case 'move-export': return moveExport();
+    case 'move-import': return moveImport();
     case 'xero-save': return xeroSave();
     case 'xero-disconnect': return xeroDisconnect();
     case 'shop-products': return shopProducts(b);

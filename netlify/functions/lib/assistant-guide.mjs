@@ -47,6 +47,18 @@ password; the owner invites the team under Settings and gives each person a role
   shows no pay. Factory-floor and wages roles may clock people in.
 - Each part shows only to a role that may see what it is about.
 
+## Moving from the demo to the real system
+- The demo (?demo=1) keeps everything in that one browser only. To keep it: in the demo,
+  Settings → "Move to the real system" → "⬇ Download all my data" (one .json file). Use the
+  same computer and browser, and the same web address, that the data was typed in on.
+- Then sign in to the real system (the same address without ?demo=1), as the owner, and go
+  to Settings → "Bring in data from the demo" → "⬆ Choose the demo file". It shows what is
+  in the file; tick "Leave out the demo's own sample records" if you used the built-in sample
+  company, and "Also bring in the business settings". "Bring it in" adds everything with the
+  same links (orders to customers, invoices to orders) and the numbering carries on.
+- Logins, the team, roles and the shop and Xero connections are not moved: invite the team
+  and connect the shop and Xero again in the real system. Each demo company is its own file.
+
 ## Suppliers and the supplier sheet
 - Buying → Stock → Suppliers (and on the till: Stock → Suppliers) lists every supplier with
   the contact person, WhatsApp, email, office phone, account no. and what you buy from them
