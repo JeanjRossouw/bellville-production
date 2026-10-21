@@ -4,10 +4,13 @@ import { APP_VERSION, ROLES, DEFAULTS } from './config.js';
 import { initFirebase, watch, getOne, patchOne } from './db.js';
 import * as auth from './auth.js';
 import { esc, toast, openModal, field, row, val, checks, empty, niceDate, niceTime } from './ui.js';
+import * as admin from './admin.js';
 
 const $ = (id) => document.getElementById(id);
 let view = 'home';
-let entities = [], stores = [], registers = [], users = [], devices = [];
+let adminSub = 'companies';          // the Admin tab's sub-screen
+let editId = '', settingsEntity = '';  // what the admin forms are on
+let entities = [], stores = [], registers = [], users = [], devices = [], settings = {};
 const unwatch = [];
 
 // ------------------------------------------------------------------ boot --
@@ -19,7 +22,7 @@ async function main() {
   $('screen').addEventListener('click', onAction);
   $('sign-out').addEventListener('click', () => auth.signOut());
   $('lock').addEventListener('click', () => auth.lock());
-  $('nav').addEventListener('click', (e) => { const b = e.target.closest('[data-view]'); if (b) { view = b.dataset.view; paint(); } });
+  $('nav').addEventListener('click', (e) => { const b = e.target.closest('[data-view]'); if (b) { view = b.dataset.view; editId = ''; paint(); } });
   await auth.boot();
   window.POS = { requireOverride: auth.requireOverride, forceIdle: auth.forceIdle, session: auth.session, version: APP_VERSION };   // for tests and the console
 }
@@ -37,9 +40,10 @@ function startData() {
   const owner = u.role === 'owner';
   const ents = u.entityIds || [], sts = u.storeIds || [];
   const w = (name, wheres, set) => unwatch.push(watch(name, wheres, rows => { set(rows); paint(); }));
-  if (owner) { w('entities', [], r => { entities = r; }); w('stores', [], r => { stores = r; }); w('registers', [], r => { registers = r; }); }
+  const bySettings = (rows) => { settings = Object.fromEntries(rows.map(r => [r.id, r])); };
+  if (owner) { w('entities', [], r => { entities = r; }); w('stores', [], r => { stores = r; }); w('registers', [], r => { registers = r; }); w('settings', [], bySettings); }
   else {
-    if (ents.length) w('entities', [['entityId', 'in', ents.slice(0, 30)]], r => { entities = r; });
+    if (ents.length) { w('entities', [['entityId', 'in', ents.slice(0, 30)]], r => { entities = r; }); w('settings', [['entityId', 'in', ents.slice(0, 30)]], bySettings); }
     // a store-scoped query must name both the entity and the store for the rules to allow it
     if (ents.length && sts.length) { w('stores', [['entityId', 'in', ents.slice(0, 10)], ['storeId', 'in', sts.slice(0, 10)]], r => { stores = r; }); w('registers', [['entityId', 'in', ents.slice(0, 10)], ['storeId', 'in', sts.slice(0, 10)]], r => { registers = r; }); }
   }
@@ -52,7 +56,7 @@ function startData() {
   const eid = (auth.session.device && auth.session.device.entityId) || ents[0] || (owner ? '' : '');
   if (eid) getOne('settings', eid).then(s => auth.setIdleMinutes((s && s.session && s.session.idleLogoutMinutes) || DEFAULTS.idleLogoutMinutes)).catch(() => {});
 }
-function stopData() { while (unwatch.length) { try { unwatch.pop()(); } catch (e) {} } entities = []; stores = []; registers = []; users = []; devices = []; }
+function stopData() { while (unwatch.length) { try { unwatch.pop()(); } catch (e) {} } entities = []; stores = []; registers = []; users = []; devices = []; settings = {}; }
 
 // --------------------------------------------------------------- login --
 function wireLogin() {
@@ -119,19 +123,36 @@ const storeName = (id) => (stores.find(s => s.id === id) || {}).name || '';
 const entityName = (id) => { const e = entities.find(x => x.id === id); return e ? (e.tradingName || e.legalName) : id; };
 function navItems() {
   const out = [{ key: 'home', label: 'Home' }];
-  if (auth.atLeast('manager')) out.push({ key: 'staff', label: 'Staff' }, { key: 'devices', label: 'Devices' });
+  if (auth.atLeast('manager')) out.push({ key: 'admin', label: 'Admin' });
   out.push({ key: 'me', label: 'My PIN' });
   return out;
 }
+// the Admin sub-screens: companies and stores are the owner's; the rest a manager's too
+function adminSubs() {
+  const owner = auth.session.user.role === 'owner';
+  return [
+    { key: 'companies', label: 'Companies', show: true }, { key: 'stores', label: 'Stores', show: true },
+    { key: 'registers', label: 'Registers', show: true }, { key: 'settings', label: 'Settings', show: true },
+    { key: 'staff', label: 'Staff', show: true }, { key: 'devices', label: 'Devices', show: true }
+  ].filter(x => x.show || owner);
+}
+const adminData = () => ({ entities, stores, registers, users, devices, settings, editId, settingsEntity });
 function paint() {
   if (!auth.session.user) return;
   $('nav').innerHTML = navItems().map(n => `<button class="tab${n.key === view ? ' on' : ''}" data-view="${n.key}">${esc(n.label)}</button>`).join('');
   const screen = $('screen');
-  if (view === 'staff') screen.innerHTML = staffHtml();
-  else if (view === 'devices') screen.innerHTML = devicesHtml();
+  if (view === 'admin') {
+    const subs = adminSubs();
+    if (!subs.some(x => x.key === adminSub)) adminSub = subs[0].key;
+    const body = adminSub === 'companies' ? admin.companiesHtml(adminData()) : adminSub === 'stores' ? admin.storesHtml(adminData())
+      : adminSub === 'registers' ? admin.registersHtml(adminData()) : adminSub === 'settings' ? admin.settingsHtml(adminData())
+      : adminSub === 'staff' ? staffHtml() : devicesHtml();
+    screen.innerHTML = `<div class="subnav">${subs.map(x => `<button class="subtab${x.key === adminSub ? ' on' : ''}" data-sub="${x.key}">${esc(x.label)}</button>`).join('')}</div>` + body;
+  }
   else if (view === 'me') screen.innerHTML = meHtml();
   else screen.innerHTML = homeHtml();
 }
+function goSub(sub) { adminSub = sub; editId = ''; paint(); }
 
 function homeHtml() {
   const u = auth.session.user, d = auth.session.device;
@@ -147,7 +168,7 @@ function homeHtml() {
           : `<p class="muted">Not an enrolled till. ${auth.atLeast('manager') ? 'Enrol it under Devices to let staff sign in here with a PIN.' : 'Staff sign in with a PIN only on an enrolled till.'}</p>`}
       </div>
     </div>
-    <p class="muted" style="margin-top:1rem">Selling, products and the admin screens come in the next steps. Version ${esc(APP_VERSION)}.</p>`;
+    <p class="muted" style="margin-top:1rem">Selling and products come in the next steps. Version ${esc(APP_VERSION)}.</p>`;
 }
 
 // ---------------------------------------------------------------- staff --
@@ -251,9 +272,23 @@ async function myPin() {
 
 // -------------------------------------------------------------- actions --
 async function onAction(e) {
+  const sub = e.target.closest('[data-sub]'); if (sub) return goSub(sub.dataset.sub);
   const b = e.target.closest('[data-act]'); if (!b) return;
   const id = b.dataset.id;
+  const w = $('screen');
   switch (b.dataset.act) {
+    case 'entity-edit': editId = id; paint(); return;
+    case 'entity-cancel': editId = ''; paint(); return;
+    case 'entity-save': if (await admin.entitySave(w, adminData())) { editId = ''; paint(); } return;
+    case 'store-edit': editId = id; paint(); return;
+    case 'store-cancel': editId = ''; paint(); return;
+    case 'store-save': if (await admin.storeSave(w, adminData())) { editId = ''; paint(); } return;
+    case 'register-edit': editId = id; paint(); return;
+    case 'register-cancel': editId = ''; paint(); return;
+    case 'register-save': if (await admin.registerSave(w, adminData())) { editId = ''; paint(); } return;
+    case 'settings-save': return admin.settingsSave(w, adminData());
+    case 'rate-add': return admin.rateAdd(w);
+    case 'rate-del': return admin.rateDel(w, b.dataset.i);
     case 'staff-add': return staffAdd();
     case 'staff-pin': return staffPin(id);
     case 'staff-off': return staffActive(id, false);
@@ -264,6 +299,7 @@ async function onAction(e) {
   }
 }
 $('screen').addEventListener('change', (e) => {
+  if (e.target.id === 'se-entity') { settingsEntity = e.target.value; return paint(); }
   if (e.target.id === 'dv-store') {
     const sel = $('dv-register'); if (!sel) return;
     const regs = registers.filter(r => r.storeId === e.target.value);

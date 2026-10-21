@@ -148,7 +148,7 @@ R: members of the entity. W: owner. Delete never.
 
 **`stores/{storeId}`** (`storeId` = its own id)
 ```
-entityId, name, address {…}, phone, email, paymentMethods [ 'cash'|'card'|'eft'|'voucher'|'storeCredit'|'account' ],
+entityId, name, address {…}, phone, email, paymentMethods [ 'cash'|'card'|'eft'|'qr'|'voucher'|'storeCredit'|'account' ],
 receiptHeader, receiptFooter (override the entity's when set), active, + stamps
 ```
 R: members of the store. W: owner.
@@ -265,7 +265,7 @@ R: members of the store. W: server only.
 ```
 entityId, storeId, registerId, shiftId,
 docType ('sale'|'layby'|'specialOrder'|'refund'|'account'), docId, docNo,
-method ('cash'|'card'|'eft'|'voucher'|'storeCredit'|'account'),
+method ('cash'|'card'|'eft'|'qr'|'voucher'|'storeCredit'|'account'),
 amountCents (int; a refund is negative), ref (card slip no., EFT ref, voucher code),
 + stamps, serverReceivedAt
 ```

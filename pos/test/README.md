@@ -15,6 +15,8 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   offline PIN. It starts `server.mjs` (the repo as static files plus the
   `pos-*` functions on the emulators) on port 8788 if nothing is there.
   `node pos/test/auth.test.mjs`
+- `admin.test.mjs` — step 3: companies, stores, registers and settings as the
+  owner, then as a manager. `node pos/test/admin.test.mjs`
   Set `FIREBASE_SDK_DIR` to a local copy of the `firebase` package's browser
   builds when www.gstatic.com is not reachable, and `CHROME` to a Chromium
   path when Playwright's own is not installed.

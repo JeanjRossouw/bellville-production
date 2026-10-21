@@ -53,7 +53,7 @@ const p = await ctx.newPage();
 p.on('pageerror', e => errs.push('PAGEERROR ' + e.message)); p.on('console', m => { if (m.type() === 'error' && !/ERR_|net::|favicon|emulator|WebChannel|transport errored|Failed to load resource/i.test(m.text())) errs.push(m.text().slice(0, 200)); });
 p.on('dialog', d => d.accept());
 const toast = async () => { await p.waitForTimeout(500); return (await p.locator('#toast').innerText().catch(() => '')).trim(); };
-const nav = async (v) => { await p.click('#nav [data-view=' + v + ']'); await p.waitForTimeout(500); };
+const nav = async (v) => { if (['staff', 'devices'].includes(v)) { await p.click('#nav [data-view=admin]'); await p.waitForTimeout(300); await p.click('[data-sub=' + v + ']'); } else await p.click('#nav [data-view=' + v + ']'); await p.waitForTimeout(500); };
 const who = () => p.locator('#who').innerText().then(t => t.replace(/\s+/g, ' ').trim());
 const pinType = async (scope, pin) => { for (const d of pin) await p.locator(scope + ' [data-key="' + d + '"]').click(); await p.waitForTimeout(900); };
 
@@ -69,7 +69,7 @@ await p.waitForSelector('#claim:not([hidden])', { timeout: 15000 });
 await p.fill('#claim-name', 'Jean'); await p.fill('#claim-group', 'Rossouw Retail'); await p.click('#claim-form button[type=submit]');
 await p.waitForSelector('#app:not([hidden])', { timeout: 15000 }); await p.waitForTimeout(800);
 R.ownerWho = await who(); check('owner signed in', /Jean.*Owner/i.test(R.ownerWho), R.ownerWho);
-R.nav = await p.$$eval('#nav [data-view]', x => x.map(y => y.dataset.view)); check('owner menu: home, staff, devices, me', R.nav.join() === 'home,staff,devices,me', R.nav);
+R.nav = await p.$$eval('#nav [data-view]', x => x.map(y => y.dataset.view)); check('owner menu: home, admin, me', R.nav.join() === 'home,admin,me', R.nav);
 const group = await (await fetch(`${docs}/pos/retail`, { headers: H })).json(); check('group doc written', fromFs(group.fields.name) === 'Rossouw Retail');
 
 mark('claimed');
@@ -181,7 +181,7 @@ await fetch(`${AU}/identitytoolkit.googleapis.com/v1/projects/${PID}/accounts:up
 await p.click('#login-switch [data-mode=email]'); await p.fill('#login-email', 'mgr@shop.co.za'); await p.fill('#login-pass', 'mgrpass1'); await p.click('#login-submit');
 await p.waitForSelector('#app:not([hidden])', { timeout: 15000 }); await p.waitForTimeout(800);
 R.mgrWho = await who(); check('manager signed in by email', /Mandla.*Manager/i.test(R.mgrWho), R.mgrWho);
-R.mgrNav = await p.$$eval('#nav [data-view]', x => x.map(y => y.dataset.view)); check('manager menu has staff and devices', R.mgrNav.includes('staff') && R.mgrNav.includes('devices'), R.mgrNav);
+R.mgrNav = await p.$$eval('#nav [data-view]', x => x.map(y => y.dataset.view)); check('manager menu has admin', R.mgrNav.includes('admin'), R.mgrNav);
 await nav('staff'); R.mgrRoles = await p.$$eval('#st-role option', o => o.map(x => x.value)); check('a manager may only add cashiers and supervisors', R.mgrRoles.join() === 'cashier,supervisor', R.mgrRoles);
 await p.evaluate(() => window.POS.forceIdle()); await p.waitForSelector('#login:not([hidden])'); R.idleOut = await toast(); check('idle signs an email user out', /Signed out after/.test(R.idleOut), R.idleOut);
 check('Firebase session gone after sign-out', (await p.evaluate(() => window.POS.session.uid)) === '');
