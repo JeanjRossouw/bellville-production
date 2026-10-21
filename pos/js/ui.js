@@ -55,8 +55,9 @@ export function openModal(title, html, o = {}) {
     const res = await o.onOk(wrap);
     if (res !== false) close(true);
   });
+  // focus the first field, unless the person (or a scanner) has already gone to another one
   const first = wrap.querySelector('input, select, textarea');
-  if (first) setTimeout(() => first.focus(), 40);
+  if (first) setTimeout(() => { if (!wrap.contains(document.activeElement)) first.focus(); }, 40);
   return { close, wrap };
 }
 export function closeModal() { const m = document.getElementById('modal'); if (m) m.remove(); }
