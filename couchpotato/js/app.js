@@ -656,36 +656,57 @@ function moveCard() {
     <p class="muted">Customers, orders, products, materials, invoices, quotes, till sales, suppliers, staff, deliveries, settings and the numbering all move. Logins, the team and the shop and Xero connections are set up again in the real system.</p>
     <div class="card-actions"><button class="btn primary" data-act="move-export">⬇ Download all my data</button></div></div>`;
   return `<div class="card" id="move-card">
-    <h2>Bring in data from the demo</h2>
+    <h2>Bring in data · copy a company</h2>
     <p>Worked in the demo first? In the demo, go to Settings → <em>Move to the real system</em> → <em>Download all my data</em> (on the same computer and browser you used), then choose that file here.</p>
-    <div class="card-actions"><button class="btn ghost" data-act="move-import">⬆ Choose the demo file</button></div></div>`;
+    <p>Moving everything from another company on Factory Manager? Sign in to that company, tap <em>Download all my data</em> here, then sign in to this one and choose the file.</p>
+    <div class="card-actions">
+      <button class="btn ghost" data-act="move-import">⬆ Choose the file to bring in</button>
+      <button class="btn ghost" data-act="move-export">⬇ Download all my data</button>
+      <button class="btn ghost" data-act="move-undo" title="Take out every record that came in from a file">Remove what came in from a file</button>
+    </div></div>`;
 }
-function moveExport() {
+async function moveExport() {
   let b;
-  try { b = store.exportDemoBundle(); } catch (e) { toast(e.message, 'warn'); return; }
+  try { if (store.storeMode() !== 'demo') toast('Gathering all the data…'); b = await store.exportCompanyBundle(); } catch (e) { toast(e.message, 'warn'); return; }
   const n = Object.values(b.collections).reduce((t, m) => t + Object.keys(m).length, 0);
   if (!n) { toast('There is nothing in this demo company yet', 'warn'); return; }
   const name = (b.company.name || 'demo').replace(/[^\w -]+/g, '').trim() || 'demo';
   download(new Blob([JSON.stringify(b)], { type: 'application/json' }), 'Factory Manager data - ' + name + ' - ' + today() + '.json');
   toast('Downloaded ' + n + ' records. Now sign in to the real system and bring the file in under Settings.');
 }
+async function moveUndo() {
+  let counts;
+  try { toast('Looking for what came in from a file…'); counts = await store.removeMovedIn(true); } catch (e) { toast(e.message, 'warn'); return; }
+  const total = Object.values(counts).reduce((t, x) => t + x, 0);
+  if (!total) { toast('Nothing here came in from a file'); return; }
+  openModal('Remove what came in from a file', `
+    <p>These ${total} records came in from a file (the demo or another company). Removing them leaves everything your team added here itself.</p>
+    <div class="pk-list" style="max-height:34vh">${Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([c, n]) => `<div class="pk-row" style="cursor:default; display:grid; grid-template-columns:1fr auto"><strong>${esc(MOVE_LABELS[c] || c)}</strong><span>${n}</span></div>`).join('')}</div>
+    <p class="notice-inline">This cannot be undone, but you can bring the same file in again.</p>`, {
+    okLabel: 'Remove ' + total + ' records',
+    onOk: async () => {
+      try { await store.removeMovedIn(false); toast(total + ' records removed. Reloading…'); setTimeout(() => location.reload(), 1200); }
+      catch (e) { toast('Stopped: ' + ((e && (e.code || e.message)) || e), 'warn'); return false; }
+    }
+  });
+}
 function moveImport() {
   const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json,application/json';
   inp.addEventListener('change', async () => {
     const f = inp.files && inp.files[0]; if (!f) return;
     let b; try { b = JSON.parse(await f.text()); } catch (e) { toast('This file could not be read', 'warn'); return; }
-    if (!b || b.app !== 'factory-manager' || !b.collections) { toast('This is not a Factory Manager data file. Download it in the demo: Settings → Move to the real system.', 'warn'); return; }
+    if (!b || b.app !== 'factory-manager' || !b.collections) { toast('This is not a Factory Manager data file. Download it with Settings → Download all my data.', 'warn'); return; }
     const rows = Object.entries(b.collections).filter(([c]) => !store.MOVE_SKIP.includes(c)).map(([c, m]) => ({ c, n: Object.keys(m || {}).length, samples: Object.entries(m || {}).filter(([id, d]) => store.isSampleRecord(c, id, d, b.company && b.company.id)).length })).filter(r => r.n).sort((x, y) => y.n - x.n);
     const samples = rows.filter(r => r.c !== 'settings' && r.c !== 'counters').reduce((t, r) => t + r.samples, 0);
     // nothing of the user's own besides the samples: they worked in the sample company, so keep it all by default
     const own = rows.filter(r => r.c !== 'settings' && r.c !== 'counters').reduce((t, r) => t + r.n - r.samples, 0);
     const already = allOrders().length + allCustomers().length;
-    openModal('Bring in data from the demo', `
+    openModal('Bring in data' + (b.kind === 'company-export' ? ' from another company' : ' from the demo'), `
       <p>From <strong>${esc(b.company && b.company.name || 'the demo')}</strong>, downloaded ${esc(niceDate(String(b.exportedAt || '').slice(0, 10)))}.</p>
       <div class="pk-list" style="max-height:34vh">${rows.map(r => `<div class="pk-row" style="cursor:default; grid-template-columns:1fr auto; display:grid"><strong>${esc(MOVE_LABELS[r.c] || r.c)}</strong><span>${r.n}${r.samples && r.c !== 'settings' && r.c !== 'counters' ? ' (' + r.samples + ' demo samples)' : ''}</span></div>`).join('')}</div>
       ${samples ? `<label class="check"><input type="checkbox" id="mv-samples"${own ? ' checked' : ''}> Leave out the demo’s own sample records (${samples})</label>
         <p class="muted">${own ? 'Ticked: only the ' + own + ' records you added come across. Untick it to bring the demo’s example orders and customers too (for instance if you worked with them).' : 'Everything in this file is the demo company’s data, so it all comes across. Tick this only if you want none of it.'}</p>` : ''}
-      ${b.collections.settings ? '<label class="check"><input type="checkbox" id="mv-settings" checked> Also bring in the business settings (name, address, VAT, numbering, prefixes)</label>' : ''}
+      ${b.collections.settings ? `<label class="check"><input type="checkbox" id="mv-settings"${b.kind === 'company-export' ? '' : ' checked'}> Also bring in the business settings (name, address, VAT, numbering, prefixes)${b.kind === 'company-export' ? ' — leave it unticked to keep this company’s own name and details' : ''}</label>` : ''}
       ${already ? `<p class="notice-inline">This company already has ${already} orders and customers. They stay; what comes in is added (a record with the same id is replaced).</p>` : ''}`, {
       okLabel: 'Bring it in',
       onOk: async (w) => {
@@ -693,9 +714,16 @@ function moveImport() {
           toast('Bringing the data in…');
           const done = await store.importBundle(b, { skipSamples: !!(w.querySelector('#mv-samples') || {}).checked, settings: !!(w.querySelector('#mv-settings') || {}).checked, progress: (x, n) => toast('Bringing the data in… ' + x + ' of ' + n) });
           const total = Object.values(done).reduce((t, x) => t + x, 0);
-          toast(total + ' records brought in. Reloading…');
-          setTimeout(() => location.reload(), 1500);
-        } catch (e) { toast('Stopped: ' + e.message, 'warn'); return false; }
+          const failed = done.failed || [];
+          if (!failed.length) { toast(total + ' records brought in. Reloading…'); setTimeout(() => location.reload(), 1500); return; }
+          // say exactly what did not come across, and why
+          const byColl = {}; failed.forEach(f => { (byColl[f.coll] = byColl[f.coll] || []).push(f); });
+          setTimeout(() => openModal('Brought in, with ' + failed.length + ' left out', `
+            <p><strong>${total}</strong> records came across. These did not:</p>
+            <div class="pk-list" style="max-height:40vh">${Object.entries(byColl).map(([c, list]) => `<div class="pk-row" style="cursor:default"><strong>${esc(MOVE_LABELS[c] || c)}: ${list.length}</strong><span>${esc(list[0].error)}${list.length > 1 ? ' (and ' + (list.length - 1) + ' more)' : ''}</span></div>`).join('')}</div>
+            <p class="muted">“permission-denied” means the database rules on Firebase are older than the app: publish the latest firestore.rules in the Firebase console, then bring the same file in again (what is already here is simply replaced). Send a screenshot of this box if anything else is listed.</p>`,
+            { okLabel: 'Reload', onOk: () => { location.reload(); } }), 50);
+        } catch (e) { toast('Stopped: ' + ((e && (e.code || e.message)) || e), 'warn'); return false; }
       }
     });
   });
@@ -1110,6 +1138,7 @@ async function onAction(e) {
     case 'xero-connect': return xeroConnect();
     case 'move-export': return moveExport();
     case 'move-import': return moveImport();
+    case 'move-undo': return moveUndo();
     case 'xero-save': return xeroSave();
     case 'xero-disconnect': return xeroDisconnect();
     case 'shop-products': return shopProducts(b);
