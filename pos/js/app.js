@@ -3,20 +3,22 @@
 import { APP_VERSION, ROLES, DEFAULTS } from './config.js';
 import { initFirebase, watch, getOne, patchOne } from './db.js';
 import * as auth from './auth.js';
-import { esc, toast, openModal, field, row, val, checks, empty, niceDate, niceTime } from './ui.js';
+import { esc, toast, openModal, field, row, val, checks, empty, niceDate, niceTime, money } from './ui.js';
 import * as admin from './admin.js';
 import { icon } from './icons.js';
 import * as products from './products.js';
 import * as sell from './sell.js';
 import * as salesTab from './sales.js';
 import * as register from './register.js';
+import * as sync from './sync.js';
+import { EMULATOR } from './db.js';
 
 const $ = (id) => document.getElementById(id);
 let view = '';                       // the tab on screen; a till starts on Sell, the office on Home
 let adminSub = 'companies';          // the Admin tab's sub-screen
 let editId = '', settingsEntity = '';  // what the admin forms are on
 let entities = [], stores = [], registers = [], users = [], devices = [], settings = {};
-let catalogue = [], variants = [], stockLevels = [], customers = [], storeSales = [];
+let catalogue = [], variants = [], stockLevels = [], customers = [], storeSales = [], stockOffsets = {};
 let sellStore = '';                 // the store being sold from: the till's, else chosen
 let prEntity = '', prFilter = { q: '', category: '', brand: '', type: '', archived: false };
 const unwatch = [];
@@ -33,6 +35,9 @@ async function main() {
   $('lock').addEventListener('click', () => auth.lock());
   $('nav').addEventListener('click', (e) => { const b = e.target.closest('[data-view]'); if (b) { view = b.dataset.view; editId = ''; if (view === 'register') register.reg.stale = true; paint(); } });
   await auth.boot();
+  sync.setContext({ repaint: () => { paintBanner(); reloadOffsets(); if (view === 'register') paint(); }, storeId: sellStoreId });   // reloadOffsets repaints Sell itself
+  sync.watchNetwork();
+  if ('serviceWorker' in navigator && !EMULATOR) navigator.serviceWorker.register('./sw.js').catch(() => {});
   window.POS = { requireOverride: auth.requireOverride, forceIdle: auth.forceIdle, session: auth.session, version: APP_VERSION };   // for tests and the console
 }
 
@@ -93,8 +98,11 @@ function startStoreData() {
   const u2 = watch('sales', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeSales = rows; if (view === 'sales') paint(); });
   unwatchStore = () => { u1(); u2(); };
   sell.loadCart(sid);
+  reloadOffsets();
 }
-const sellData = () => { const sid = sellStoreId(); const st = stores.find(x => x.id === sid) || null; const ent = st ? entities.find(e => e.id === st.entityId) || null : null; return { store: st, entity: ent, settings: ent ? settings[ent.id] || {} : {}, products: catalogue, variants, stockLevels, customers, registerId: register.registerId(), shiftOpen: register.canSell(), shiftKnown: !register.registerId() || !!register.reg.state }; };
+const sellData = () => { const sid = sellStoreId(); const st = stores.find(x => x.id === sid) || null; const ent = st ? entities.find(e => e.id === st.entityId) || null : null; return { store: st, entity: ent, settings: ent ? settings[ent.id] || {} : {}, products: catalogue, variants, stockLevels, stockOffsets, customers, registerId: register.registerId(), shiftOpen: register.canSell(), shiftKnown: !register.registerId() || !!register.reg.state }; };
+async function reloadOffsets() { stockOffsets = await sync.stockOffsets(); if (view === 'sell') paint(); }
+function paintBanner() { const bar = $('offline-bar'); if (!bar) return; const html = sync.bannerHtml(); bar.hidden = !html; bar.className = sync.bannerClass(); bar.innerHTML = html; }
 
 // --------------------------------------------------------------- login --
 function wireLogin() {
@@ -307,6 +315,13 @@ async function deviceEnrol() {
   catch (e) { toast(e.message, 'warn'); }
 }
 
+// the offline sales the office refused, for a manager
+async function showFailed() {
+  const list = await sync.failedList();
+  openModal('Refused offline sales', list.length ? `<div class="pk-list">${list.map(x => `<div class="pk-row" style="cursor:default"><strong>${esc(x.docNo)} · ${esc(money(x.totalCents))} · ${esc(niceDate(x.clientCreatedAt))} ${esc(niceTime(x.clientCreatedAt))}</strong><span>${esc(x.error)}</span>${auth.atLeast('manager') ? `<button class="btn ghost sm" data-act="sync-drop" data-id="${esc(x.saleId)}" style="justify-self:start;margin-top:.3rem">Drop</button>` : ''}</div>`).join('')}</div><p class="muted">The number of each was voided; the goods and money need checking by hand.</p>` : '<p class="muted">None.</p>', { okLabel: 'Close', cancelLabel: '', onOk: () => true });
+}
+document.addEventListener('click', (e) => { const b = e.target.closest('#offline-bar [data-act], #modal [data-act=sync-drop]'); if (b) onAction(e); });
+
 // ------------------------------------------------------------------- me --
 function meHtml() {
   const u = auth.session.user;
@@ -333,6 +348,9 @@ async function onAction(e) {
   if (b.dataset.act.startsWith('sl-')) return sell.action(b.dataset.act, b);
   if (b.dataset.act === 'sa-open') return salesTab.openSale(id, { ...sellData(), sales: storeSales });
   if (b.dataset.act.startsWith('rg-')) return register.action(b.dataset.act, b);
+  if (b.dataset.act === 'sync-now') return sync.syncNow().then(reloadOffsets);
+  if (b.dataset.act === 'sync-failed') return showFailed();
+  if (b.dataset.act === 'sync-drop') { if (confirm('Drop this refused sale from the till? It was never written; ring it up again if it should be.')) sync.dropFailed(id).then(showFailed); return; }
   if (b.dataset.act === 'sa-all') { salesTab.view.day = ''; return paint(); }
   switch (b.dataset.act) {
     case 'entity-edit': editId = id; paint(); return;
@@ -381,11 +399,11 @@ $('screen').addEventListener('input', (e) => { if (e.target.id === 'pr-q') { prF
 $('screen').addEventListener('keydown', (e) => { if (e.target.id === 'sl-q' && e.key === 'Enter') { e.preventDefault(); sell.onSearchEnter(e.target.value); } });
 document.addEventListener('keydown', (e) => { if (view === 'sell' && auth.session.user) sell.onDocumentKey(e); }, true);
 $('screen').addEventListener('change', (e) => { if (e.target.id === 'sl-store') { sellStore = e.target.value; startStoreData(); paint(); } });
-sell.setContext({ repaint: () => { if (view === 'sell') paint(); }, data: sellData, onSold: () => { register.reg.stale = true; } });
+sell.setContext({ repaint: () => { if (view === 'sell') paint(); }, data: sellData, onSold: (r) => { register.reg.stale = true; reloadOffsets(); if (!r.offline) sync.refreshBlocks(); } });
 register.setContext({ repaint: () => { if (view === 'register' || view === 'sell') paint(); }, data: sellData });
 register.wireScreen($('screen'));
 // the register's state is read once a till signs in, and forgotten on sign-out
-auth.onSession((s) => { if (!s.user) { register.reg.state = null; return; } if (register.registerId() && !register.reg.state) register.refresh(); });
+auth.onSession((s) => { paintBanner(); if (!s.user) { register.reg.state = null; return; } if (register.registerId() && !register.reg.state) register.refresh(); if (s.device) { sync.refreshBlocks().then(() => { reloadOffsets(); sync.syncNow(); }); } });
 import * as __ui from './ui.js';
 window.__ui = __ui;
 main().catch(e => { console.error(e); document.body.insertAdjacentHTML('beforeend', `<p class="boot-fail">The till could not start: ${esc(e.message)}</p>`); });

@@ -45,7 +45,7 @@ const myLimit = () => maxPct(auth.session.user.role);
 // the lowest role allowed to give this much
 const roleFor = (pct) => ROLE_ORDER.find(r => maxPct(r) >= pct) || 'owner';
 const variantsOf = (pid) => d().variants.filter(v => v.productId === pid && !v.archived);
-const stockOf = (itemId) => { const s = store(); const lv = (d().stockLevels || []).find(x => x.storeId === (s && s.id) && (x.variantId === itemId || (!x.variantId && x.productId === itemId))); return lv ? Number(lv.onHandQty) || 0 : 0; };
+const stockOf = (itemId) => { const s = store(); const lv = (d().stockLevels || []).find(x => x.storeId === (s && s.id) && (x.variantId === itemId || (!x.variantId && x.productId === itemId))); return (lv ? Number(lv.onHandQty) || 0 : 0) + ((d().stockOffsets || {})[itemId] || 0); };
 // what an item sells for here: the store's price, else the variant's, else the product's
 function priceOf(p, v) {
   const s = store();
@@ -189,7 +189,7 @@ export async function action(act, b) {
       const t = totals();
       return openPay({ totals: t, cart: c, data: d(), onDone: (r) => {
         sale.lastSale = r; sale.cart = freshCart(); persist(); ctx.repaint();
-        toast((r.again ? 'Already written as ' : 'Sale ') + r.sale.docNo + (r.sale.changeCents ? ' · change ' + money(r.sale.changeCents) : '') + (r.negativeStock ? ' · stock went negative' : ''));
+        toast((r.again ? 'Already written as ' : r.offline ? 'Offline sale ' : 'Sale ') + r.sale.docNo + (r.sale.changeCents ? ' · change ' + money(r.sale.changeCents) : '') + (r.negativeStock ? ' · stock went negative' : '') + (r.offline ? ' · sent when the line is back' : ''), r.offline ? 'warn' : '');
         if (ctx.onSold) ctx.onSold(r);
       } });
     }

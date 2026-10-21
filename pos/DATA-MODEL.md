@@ -96,11 +96,12 @@ sequence `seq` is also stored as a number so gaps can be audited with a query.
   (default 50 numbers; refilled when fewer than 10 remain and the device is
   online). The device stores its blocks in IndexedDB and numbers offline
   sales from them. `usedUpTo` moves as the server accepts documents.
-- When a register closes, or a block is replaced, every number in the block
-  that has no document gets a `voidedNumbers` record (`reason:
-  'unused at close'`). A document the server refuses (verification failed)
-  also voids its number (`reason: 'refused'`) and the till re-rings with a
-  fresh one.
+- When fewer than `refillBelow` numbers remain, the server issues the till
+  its next block early, so it always has spare numbers offline.
+- A queued offline sale the server refuses on replay (the price changed
+  meanwhile, say) gets its number voided (`voidNumber`, `reason: 'refused…'`)
+  and is kept on the till for a manager to see. A till that is retired has
+  the unused remainder of its blocks voided (`reason: 'till retired'`).
 
 ## Collections
 

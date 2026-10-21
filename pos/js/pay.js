@@ -10,6 +10,8 @@ import { roundTo10c, centsOf, randsOf } from './money.js';
 import { icon } from './icons.js';
 import { fullInvoiceGap, ABRIDGED_MAX } from './receipt.js';
 import { openReceipt } from './receiptui.js';
+import * as sync from './sync.js';
+import { vatIn } from './money.js';
 import { patchOne } from './db.js';
 
 const METHODS = [
@@ -132,11 +134,31 @@ export function openPay(o) {
       openReceipt({ sale: r.sale, lines: r.lines, payments: r.payments, vouchersSold: r.vouchersSold || [], entity: data.entity, store: data.store, settings: data.settings, copy: !!r.again });
       return true;
     } catch (e) {
+      if (e.offline && auth.session.device) {
+        // the line is down: the till takes a number from its block and keeps the sale to send later
+        const r = await queueOffline(body);
+        if (r) { close(true); o.onDone(r); openReceipt({ sale: r.sale, lines: r.lines, payments: r.payments, vouchersSold: [], entity: data.entity, store: data.store, settings: data.settings, copy: false }); return true; }
+      }
       busy = false; draw();
-      if (e.offline) toast('No connection: the sale could not be sent. (Offline sales come in step 9.)', 'warn');
-      else toast(e.message, 'warn');
+      toast(e.offline ? 'No connection, and no number for an offline sale.' : e.message, 'warn');
       return false;
     }
+  }
+  // the sale as the server would write it, from the till's own arithmetic, with a number from the block
+  async function queueOffline(body) {
+    const num = await sync.nextNumber();
+    if (!num) { toast('No numbers left for offline sales: connect once to get more.', 'warn'); return null; }
+    body.seq = num.seq; body.blockId = num.blockId;
+    const cashT = tenders.find(x => x.method === 'cash');
+    const sale = { id: cart.id, docNo: num.docNo, seq: num.seq, series: 'INV', blockId: num.blockId, registerId: auth.session.device.registerId || '', shiftId: '', customerId: cart.customerId || '', customerSnapshot: cart.customer ? { name: cart.customer.name, phone: cart.customer.phone || '', email: cart.customer.email || '', vatNo: cart.customer.vatNo || '', address: cart.customer.address || {} } : null,
+      lineCount: t.lines.length, subtotalCents: t.grossCents, lineDiscountCents: t.lineDiscountCents, saleDiscountCents: t.saleDiscountCents, totalCents: t.totalCents, vatCents: t.vatCents, vatRateBp: t.lines[0] ? t.lines[0].vatRateBp : 0, vatRegistered: !!data.entity.vatRegistered,
+      roundingCents: cashT ? cashT.roundingCents || 0 : 0, tenderedCents: cashT ? cashT.tenderedCents : 0, changeCents: cashT ? cashT.changeCents : 0, paymentMethods: [...new Set(tenders.map(x => x.method))], paidStatus: tenders.some(x => x.status === 'awaiting') ? 'awaiting' : 'paid',
+      cashierUid: auth.session.uid, cashierName: auth.session.user.name, clientCreatedAt: body.clientCreatedAt, source: 'till', pending: true, entityId: data.entity.id, storeId: data.store.id, deviceId: auth.session.device.deviceId };
+    const lines = t.lines.map((l, i) => ({ saleId: cart.id, docNo: num.docNo, lineNo: i + 1, productId: l.productId, variantId: l.variantId, itemId: l.itemId, name: l.name, qty: l.qty, unitPriceCents: l.unitPriceCents, discountCents: l.discountCents, lineTotalCents: l.lineTotalCents, saleDiscountCents: l.saleDiscountCents, netCents: l.netCents, vatRateBp: l.vatRateBp, vatCents: l.vatCents, note: l.note, trackStock: l.trackStock }));
+    const payments = tenders.map(x => ({ method: x.method, amountCents: x.amountCents, tenderedCents: x.tenderedCents, changeCents: x.changeCents, ref: x.ref, cardLast4: x.cardLast4, approvalCode: x.approvalCode, status: x.status || 'paid' }));
+    const stockMoves = t.lines.filter(l => l.trackStock && l.itemId).map(l => ({ itemId: l.itemId, qty: -l.qty }));
+    await sync.enqueue({ saleId: cart.id, body, seq: num.seq, docNo: num.docNo, stockMoves, totalCents: t.totalCents, clientCreatedAt: body.clientCreatedAt });
+    return { ok: true, sale, lines, payments, vouchersSold: [], offline: true };
   }
   const reopen = () => openPay({ ...o, keep: tenders });
   wrap.addEventListener('click', (e) => {

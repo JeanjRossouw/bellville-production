@@ -119,7 +119,7 @@ R.gvOver = await call('pos-sale', sale({ tenders: [{ method: 'voucher', amountCe
 
 // ---- a till: its own block, numbers it chose offline
 R.blocks = await call('pos-sale', { action: 'blocks', ...till }); const blk = R.blocks.blocks && R.blocks.blocks.INV;
-check('the till gets a block after the office’s', R.blocks.ok && blk && blk.from === 21 && blk.to === 40 && blk.usedUpTo === 20, R.blocks);
+check('the till gets a block after the office’s', R.blocks.ok && blk && blk.from === 21 && blk.to === 40 && blk.usedUpTo === 20 && blk.list.length === 1 && blk.prefix === 'BF', R.blocks);
 R.tillSale = await call('pos-sale', sale({ ...till, saleId: 'dev_t1-abc-1', seq: 25 })); check('a till-chosen number inside its block is kept; the sale is on the open shift', R.tillSale.ok && R.tillSale.sale.docNo === 'BF-000025' && R.tillSale.sale.source === 'till' && R.tillSale.sale.deviceId === 'dev_t1' && R.tillSale.sale.shiftId === 'sh_open', R.tillSale);
 R.tillReuse = await call('pos-sale', sale({ ...till, saleId: 'dev_t1-abc-2', seq: 25 })); check('the same number again: 409', R.tillReuse.status === 409, R.tillReuse);
 R.tillOut = await call('pos-sale', sale({ ...till, saleId: 'dev_t1-abc-3', seq: 99 })); check('a number outside the block: 409', R.tillOut.status === 409, R.tillOut);

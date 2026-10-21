@@ -51,7 +51,7 @@ export function receiptModel({ sale, lines, payments, entity, store, settings, c
     subtotalCents: sale.subtotalCents, discountCents: (sale.lineDiscountCents || 0) + (sale.saleDiscountCents || 0), totalCents: sale.totalCents, vatCents: sale.vatCents, vatRateBp: sale.vatRateBp,
     exVatCents: sale.totalCents - sale.vatCents, roundingCents: sale.roundingCents || 0, changeCents: sale.changeCents || 0,
     payments: (payments || []).map(p => ({ label: methodLabel(p.method) + (p.cardLast4 ? ' ••' + p.cardLast4 : '') + (p.status === 'awaiting' ? ' (awaiting)' : ''), amountCents: p.amountCents, tenderedCents: p.tenderedCents, ref: p.ref || p.approvalCode || '' })),
-    awaiting: sale.paidStatus === 'awaiting', vouchers: sale.vouchersSold || []
+    awaiting: sale.paidStatus === 'awaiting', vouchers: sale.vouchersSold || [], pending: !!sale.pending
   };
 }
 
@@ -73,6 +73,7 @@ export function slipHtml(m) {
     ${m.payments.map(p => row(esc(p.label), esc(money(p.tenderedCents && p.tenderedCents !== p.amountCents ? p.tenderedCents : p.amountCents)))).join('')}
     ${m.changeCents ? row('Change', esc(money(m.changeCents))) : ''}
     ${m.awaiting ? '<div class="c s">Payment awaited: not yet paid</div>' : ''}
+    ${m.pending ? '<div class="c s">Rung up offline: sent to the office when the line is back</div>' : ''}
     ${m.vat && m.lines.some(l => l.zero) ? '<div class="s">* zero-rated or exempt</div>' : ''}
     ${m.vouchers.map(v => `<div class="box c">Gift voucher ${esc(money(v.amountCents))}<br><b>${esc(v.code)}</b></div>`).join('')}
     <div class="c bar">${encodable(m.docNo) ? barcodeSvg(m.docNo, 40) : ''}<div class="s">${esc(m.docNo)}</div></div>

@@ -42,6 +42,12 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   shift. `node pos/test/shift-api.test.mjs`
 - `register.test.mjs` — step 8 in the browser: the Register tab on a till.
   `node pos/test/register.test.mjs`
+- `offline.test.mjs` — step 9: blocks fetched at sign-in; sales rung up with
+  the line down take the next numbers and wait in the outbox with the banner
+  counting them and the cached stock dropping; back online they sync in
+  order; a queued sale whose price changed is refused, kept for a manager
+  and its number voided; the next block comes early when few numbers remain.
+  `node pos/test/offline.test.mjs`
 - `money.test.mjs` — the shared cents and VAT maths; needs no emulator.
   `node pos/test/money.test.mjs`
   Set `FIREBASE_SDK_DIR` to a local copy of the `firebase` package's browser

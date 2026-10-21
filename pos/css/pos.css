@@ -243,6 +243,10 @@ small { font-size: 12px; }
 .notice-inline { background: var(--amber-soft); color: #78350f; border-radius: 6px; padding: .55rem .75rem; font-size: 12.5px; margin: .6rem 0 0; }
 .reg-closed { margin: .8rem 1rem 0; }
 
+/* ---------------------------------------------------------------- offline */
+.offline-bar { display: flex; align-items: center; justify-content: center; gap: .8rem; flex-wrap: wrap; background: #7c2d12; color: #fff; font-size: 13px; padding: .5rem 1rem; }
+.offline-bar.ok { background: #1f5f2f; } .offline-bar .btn { color: #fff; border-color: rgba(255,255,255,.5); background: transparent; }
+
 /* ------------------------------------------------------------------ modal */
 .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); display: flex; align-items: center; justify-content: center; padding: 1rem; z-index: 50; }
 .modal-card { background: #fff; border-radius: 10px; width: 100%; max-width: 520px; max-height: 92vh; display: flex; flex-direction: column; }
