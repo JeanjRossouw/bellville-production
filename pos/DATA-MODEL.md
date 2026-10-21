@@ -171,6 +171,7 @@ cash { varianceLimitCents }                                            // beyond
 layby { minDepositPct, termDays, penaltyPct }
 session { idleLogoutMinutes, pinLength (4..6) }
 numbering { blockSize, refillBelow }
+reports { phone, email }                                               // where the daily summary goes (the owner)
 + stamps
 ```
 R: members of the entity. W: manager or owner of the entity.
@@ -323,15 +324,26 @@ status ('ordered'|'received'|'collected'|'cancelled'), completedSaleId, + stamps
 ```
 R: members of the store. W: server only.
 
-**`shifts/{id}`** — one register session
+**`shifts/{id}`** — one register session (the `pos-shift` function)
 ```
-entityId, storeId, registerId, deviceId,
-openedBy, openedAt, openingFloatCents,
-closedBy, closedAt, status ('open'|'closed'),
-expectedByMethod { cash, card, eft, voucher, storeCredit, account }  (cents, server-summed from payments),
-countedCashCents, varianceCents, varianceApprovedBy, closingNote,
-salesCount, salesTotalCents, refundsTotalCents, numberBlocksClosed [blockId],
+entityId, storeId, registerId, deviceId, status ('open'|'closed'),
+openedBy, openedByName, openedAt, openingFloat { denoms { '20000': 2, … }, totalCents },
+closedBy, closedByName, closedAt, countedCash { denoms, totalCents },
+countedByMethod { cash, card, eft, qr, voucher, storeCredit, account },     what was counted or typed at close (null = not counted)
+expectedByMethod { … }                                                     the server's own sums: float + cash sales + cash in − cash out; the other methods from payments
+varianceByMethod { … }, varianceCents (cash), varianceApprovedBy { uid, name } (a manager, when over the limit), closingNote,
+salesCount, salesTotalCents, zReport { the whole closing picture, kept as it was },
 + stamps, updatedAt
+```
+R: members of the store. W: server only. A till with a register sells only
+while its shift is open; the sale and its payments carry `shiftId`. The till's
+number block is not touched by a close (it carries on next shift); the unused
+remainder is voided only when the till is retired.
+
+**`cashMovements/{id}`** — cash in or out of the drawer during a shift
+```
+entityId, storeId, registerId, shiftId, kind ('in'|'out'), amountCents, reason,
+actorUid, actorName, approvedBy { uid, name } (a supervisor or higher when the actor is a cashier), + stamps, serverReceivedAt
 ```
 R: members of the store. W: server only.
 

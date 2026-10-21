@@ -44,7 +44,16 @@ async function whoAndWhere(event, b) {
   const [entity, store, settings] = await Promise.all([getDoc('entities', entityId), getDoc('stores', storeId), getDoc('settings', entityId)]);
   if (!entity || entity.active === false || !store || store.active === false || store.entityId !== entityId) throw new Reject(400, 'That store is not set up.');
   const registerId = device && device.registerId ? device.registerId : clean(b.registerId, 40);
-  return { user, device, deviceId: device ? device.id : 'web:' + login.sub, entityId, storeId, registerId, entity, store, settings: settings || {} };
+  // a register sells only while its shift is open; the office (no register) has no shift
+  let shiftId = '';
+  if (registerId) {
+    const reg = await getDoc('registers', registerId);
+    if (!reg || reg.storeId !== storeId) throw new Reject(400, 'That register is not in this store.');
+    const sh = reg.currentShiftId ? await getDoc('shifts', reg.currentShiftId) : null;
+    if (!sh || sh.status !== 'open') throw new Reject(409, 'The register is closed: open it under Register first.');
+    shiftId = sh.id;
+  }
+  return { user, device, deviceId: device ? device.id : 'web:' + login.sub, entityId, storeId, registerId, shiftId, entity, store, settings: settings || {} };
 }
 
 // the till's open block for a series, issuing one inside the transaction when it has none
@@ -214,7 +223,7 @@ const actions = {
         const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
         const writes = [];
         const sale = {
-          series: 'INV', seq, docNo, blockId: block.id, registerId: ctx.registerId || '', shiftId: '',
+          series: 'INV', seq, docNo, blockId: block.id, registerId: ctx.registerId || '', shiftId: ctx.shiftId || '',
           customerId: customer ? customer.id : '', customerSnapshot: customer ? { name: customer.name, phone: customer.phone || '', email: customer.email || '', vatNo: customer.vatNo || '', address: customer.address || {} } : null,
           lineCount: lines.length, subtotalCents: gross, lineDiscountCents: lineDisc, saleDiscountCents: saleDisc, saleDiscountPct: Number(b.saleDiscountPct) || 0, saleDiscountReason: clean(b.saleDiscountReason, 120), saleDiscountBy: saleBy,
           totalCents: total, vatCents: vat, vatRateBp: rateBp, vatRegistered: !!ctx.entity.vatRegistered, roundingCents: rounding,
@@ -224,7 +233,7 @@ const actions = {
         };
         writes.push({ create: true, coll: 'sales', id: saleId, data: sale });
         lines.forEach(l => writes.push({ create: true, coll: 'saleLines', id: saleId + '_' + l.lineNo, data: { saleId, docNo, ...l, ...stamp } }));
-        pays.forEach(p => writes.push({ create: true, coll: 'payments', id: randomId('pay_'), data: { docType: 'sale', docId: saleId, docNo, registerId: ctx.registerId || '', shiftId: '', ...p, ...stamp, serverReceivedAt: now } }));
+        pays.forEach(p => writes.push({ create: true, coll: 'payments', id: randomId('pay_'), data: { docType: 'sale', docId: saleId, docNo, registerId: ctx.registerId || '', shiftId: ctx.shiftId || '', ...p, ...stamp, serverReceivedAt: now } }));
         for (const m of moves) {
           const id = ctx.storeId + '_' + m.itemId; const lv = levels.get(id);
           const onHand = (lv ? lv.onHandQty || 0 : 0) + m.qty;

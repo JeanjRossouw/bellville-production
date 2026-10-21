@@ -33,6 +33,8 @@ await put('pos/retail/users/' + CATHY, { email: 'cathy@shop.co.za', name: 'Cathy
 await put('pos/retail/entities/BF', { legalName: 'Bellville Furniture (Pty) Ltd', tradingName: 'Bellville Furniture', vatRegistered: true, vatNo: '4123456789', invoicePrefix: 'BF', active: true, ...srv('BF') });
 await put('pos/retail/settings/BF', { vat: { rates: [{ rateBp: 1500, effectiveFrom: '2018-04-01' }] }, discounts: { maxPctByRole: { cashier: 5, supervisor: 15, manager: 50, owner: 100 } }, numbering: { blockSize: 20, refillBelow: 5 }, ...srv('BF') });
 await put('pos/retail/stores/BF-BELL', { entityId: 'BF', name: 'Bellville', active: true, paymentMethods: ['cash', 'card', 'eft', 'voucher', 'storeCredit', 'account'], ...srv('BF', 'BF-BELL') });
+await put('pos/retail/registers/r1', { name: 'Till 1', active: true, currentShiftId: 'sh_open', ...srv('BF', 'BF-BELL') });
+await put('pos/retail/shifts/sh_open', { registerId: 'r1', status: 'open', openedBy: OWNER, openedByName: 'Jean', openedAt: '2026-10-21T08:00:00.000Z', openingFloat: { denoms: {}, totalCents: 0 }, closedBy: '', closedByName: '', closedAt: '', ...srv('BF', 'BF-BELL', 'dev_t1') });
 const secret = 'till-secret-1';
 await put('pos/retail/devices/dev_t1', { label: 'Till 1', registerId: 'r1', secretHash: createHash('sha256').update(secret).digest('hex'), enrolledBy: 'server', enrolledAt: '2026-10-21T08:00:00.000Z', active: true, lastSeenAt: '', appVersion: '', ...srv('BF', 'BF-BELL', 'dev_t1') });
 const prod = (id, o) => put('pos/retail/products/' + id, { sku: '', barcodes: [], category: '', brand: '', type: 'stock', vatClass: 'standard', trackStock: true, costCents: 0, priceCents: 0, images: [], options: [], hasVariants: false, storePrices: {}, bundle: [], archived: false, favourite: false, ...o, ...srv('BF') });
@@ -118,7 +120,7 @@ R.gvOver = await call('pos-sale', sale({ tenders: [{ method: 'voucher', amountCe
 // ---- a till: its own block, numbers it chose offline
 R.blocks = await call('pos-sale', { action: 'blocks', ...till }); const blk = R.blocks.blocks && R.blocks.blocks.INV;
 check('the till gets a block after the office’s', R.blocks.ok && blk && blk.from === 21 && blk.to === 40 && blk.usedUpTo === 20, R.blocks);
-R.tillSale = await call('pos-sale', sale({ ...till, saleId: 'dev_t1-abc-1', seq: 25 })); check('a till-chosen number inside its block is kept', R.tillSale.ok && R.tillSale.sale.docNo === 'BF-000025' && R.tillSale.sale.source === 'till' && R.tillSale.sale.deviceId === 'dev_t1', R.tillSale);
+R.tillSale = await call('pos-sale', sale({ ...till, saleId: 'dev_t1-abc-1', seq: 25 })); check('a till-chosen number inside its block is kept; the sale is on the open shift', R.tillSale.ok && R.tillSale.sale.docNo === 'BF-000025' && R.tillSale.sale.source === 'till' && R.tillSale.sale.deviceId === 'dev_t1' && R.tillSale.sale.shiftId === 'sh_open', R.tillSale);
 R.tillReuse = await call('pos-sale', sale({ ...till, saleId: 'dev_t1-abc-2', seq: 25 })); check('the same number again: 409', R.tillReuse.status === 409, R.tillReuse);
 R.tillOut = await call('pos-sale', sale({ ...till, saleId: 'dev_t1-abc-3', seq: 99 })); check('a number outside the block: 409', R.tillOut.status === 409, R.tillOut);
 R.tillNext = await call('pos-sale', sale({ ...till, saleId: 'dev_t1-abc-4' })); check('next from the till with no number given: 26', R.tillNext.ok && R.tillNext.sale.docNo === 'BF-000026', R.tillNext);

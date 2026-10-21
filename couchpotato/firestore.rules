@@ -452,6 +452,7 @@ service cloud.firestore {
       match /laybys/{id}         { allow read: if pReadsStore(gid); allow write: if false; }
       match /specialOrders/{id}  { allow read: if pReadsStore(gid); allow write: if false; }
       match /shifts/{id}         { allow read: if pReadsStore(gid); allow write: if false; }
+      match /cashMovements/{id}  { allow read: if pReadsStore(gid); allow write: if false; }
       match /goodsReceived/{id}  { allow read: if pReadsStore(gid) && pAtLeast(gid, 'supervisor'); allow write: if false; }
       match /numberBlocks/{id}   { allow read: if pReadsStore(gid); allow write: if false; }
       match /voidedNumbers/{id}  { allow read: if pReadsEntity(gid) && pAtLeast(gid, 'manager'); allow write: if false; }

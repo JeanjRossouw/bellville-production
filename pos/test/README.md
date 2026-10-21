@@ -35,6 +35,13 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   invoice (the address prompt over R 5 000), the 80 mm page, printer bytes,
   the A4 page, the share link and its page, a COPY reprint from the Sales
   tab, and an Invoice for a company not VAT registered. `node pos/test/receipt.test.mjs`
+- `shift-api.test.mjs` — step 8: the `pos-shift` function over HTTP: open
+  with a float, sales refused before and carrying the shift after, cash in
+  and out with approval, the X-report figures, a close over the limit
+  needing a note and a manager, the Z-report, the register freed, a second
+  shift. `node pos/test/shift-api.test.mjs`
+- `register.test.mjs` — step 8 in the browser: the Register tab on a till.
+  `node pos/test/register.test.mjs`
 - `money.test.mjs` — the shared cents and VAT maths; needs no emulator.
   `node pos/test/money.test.mjs`
   Set `FIREBASE_SDK_DIR` to a local copy of the `firebase` package's browser

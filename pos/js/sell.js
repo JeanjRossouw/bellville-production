@@ -133,6 +133,7 @@ export function sellHtml() {
     </div>
     <div class="pos-right"><div class="card pos-cart">
       <div class="pos-cart-title"><span>Current sale</span><span class="muted" style="letter-spacing:0;text-transform:none;font-weight:500">${esc(s.name)}</span></div>
+      ${d().registerId && d().shiftKnown && !d().shiftOpen ? '<div class="notice-inline reg-closed">The register is closed. Open it under <strong>Register</strong> before selling.</div>' : ''}
       <button class="pos-cust${c.customer ? ' set' : ''}" data-act="sl-customer"><span class="pos-cust-ico">${icon('user')}</span><span class="pos-cust-txt">${c.customer ? `<strong>${esc(c.customer.name)}</strong><span>${esc([c.customer.phone, c.customer.vatNo ? 'VAT ' + c.customer.vatNo : ''].filter(Boolean).join(' · ') || 'tap to change')}</span>` : '<strong>Add a customer</strong><span>Needed over R 5 000, for lay-bys and accounts</span>'}</span></button>
       <div class="pos-lines">${c.lines.length ? t.lines.map((l, i) => `<div class="pos-line" data-i="${i}">
         <div class="pos-line-top"><strong>${esc(l.name)}</strong><button class="pos-icon-btn light" data-act="sl-void-line" data-i="${i}" title="Remove this line">${icon('x')}</button></div>
@@ -151,7 +152,7 @@ export function sellHtml() {
         ${e.vatRegistered ? `<div class="muted"><span>Includes VAT</span><strong>${esc(money(t.vatCents))}</strong></div>` : '<div class="muted"><span>No VAT (not registered)</span><strong></strong></div>'}
         <div class="tot"><span>Total</span><strong>${esc(money(t.totalCents))}</strong></div>
       </div>
-      <button class="btn primary pos-charge" data-act="sl-pay"${c.lines.length ? '' : ' disabled'}><span>Pay</span><span>${esc(money(t.totalCents))}</span></button>
+      <button class="btn primary pos-charge" data-act="sl-pay"${c.lines.length && (!d().registerId || d().shiftOpen) ? '' : ' disabled'}><span>Pay</span><span>${esc(money(t.totalCents))}</span></button>
       <div class="pos-extra">
         <button data-act="sl-park"${c.lines.length ? '' : ' disabled'}>${icon('inbox')}Park</button>
         <button data-act="sl-recall"${park.length ? '' : ' disabled'}>${icon('list')}Recall${park.length ? ' (' + park.length + ')' : ''}</button>
@@ -184,6 +185,7 @@ export async function action(act, b) {
     case 'sl-custom': return customItem();
     case 'sl-pay': {
       if (!c.lines.length) return;
+      if (d().registerId && !d().shiftOpen) return toast('The register is closed: open it under Register first.', 'warn');
       const t = totals();
       return openPay({ totals: t, cart: c, data: d(), onDone: (r) => {
         sale.lastSale = r; sale.cart = freshCart(); persist(); ctx.repaint();

@@ -9,6 +9,7 @@ import { icon } from './icons.js';
 import * as products from './products.js';
 import * as sell from './sell.js';
 import * as salesTab from './sales.js';
+import * as register from './register.js';
 
 const $ = (id) => document.getElementById(id);
 let view = '';                       // the tab on screen; a till starts on Sell, the office on Home
@@ -30,7 +31,7 @@ async function main() {
   $('screen').addEventListener('click', onAction);
   $('sign-out').addEventListener('click', () => auth.signOut());
   $('lock').addEventListener('click', () => auth.lock());
-  $('nav').addEventListener('click', (e) => { const b = e.target.closest('[data-view]'); if (b) { view = b.dataset.view; editId = ''; paint(); } });
+  $('nav').addEventListener('click', (e) => { const b = e.target.closest('[data-view]'); if (b) { view = b.dataset.view; editId = ''; if (view === 'register') register.reg.stale = true; paint(); } });
   await auth.boot();
   window.POS = { requireOverride: auth.requireOverride, forceIdle: auth.forceIdle, session: auth.session, version: APP_VERSION };   // for tests and the console
 }
@@ -93,7 +94,7 @@ function startStoreData() {
   unwatchStore = () => { u1(); u2(); };
   sell.loadCart(sid);
 }
-const sellData = () => { const sid = sellStoreId(); const st = stores.find(x => x.id === sid) || null; const ent = st ? entities.find(e => e.id === st.entityId) || null : null; return { store: st, entity: ent, settings: ent ? settings[ent.id] || {} : {}, products: catalogue, variants, stockLevels, customers }; };
+const sellData = () => { const sid = sellStoreId(); const st = stores.find(x => x.id === sid) || null; const ent = st ? entities.find(e => e.id === st.entityId) || null : null; return { store: st, entity: ent, settings: ent ? settings[ent.id] || {} : {}, products: catalogue, variants, stockLevels, customers, registerId: register.registerId(), shiftOpen: register.canSell(), shiftKnown: !register.registerId() || !!register.reg.state }; };
 
 // --------------------------------------------------------------- login --
 function wireLogin() {
@@ -161,6 +162,7 @@ const entityName = (id) => { const e = entities.find(x => x.id === id); return e
 function navItems() {
   const out = [];
   if (sellStoreId()) out.push({ key: 'sell', label: 'Sell' }, { key: 'sales', label: 'Sales' });
+  if (register.registerId()) out.push({ key: 'register', label: 'Register' });
   out.push({ key: 'home', label: 'Home' }, { key: 'products', label: 'Products' });
   if (auth.atLeast('manager')) out.push({ key: 'admin', label: 'Admin' });
   out.push({ key: 'me', label: 'My PIN' });
@@ -191,6 +193,7 @@ function paint() {
     return;
   }
   if (view === 'sales') { startStoreData(); screen.innerHTML = salesTab.salesHtml({ ...sellData(), sales: storeSales }); return; }
+  if (view === 'register') { startStoreData(); screen.innerHTML = register.registerHtml(); return; }
   if (view === 'admin') {
     const subs = adminSubs();
     if (!subs.some(x => x.key === adminSub)) adminSub = subs[0].key;
@@ -329,6 +332,7 @@ async function onAction(e) {
   const w = $('screen');
   if (b.dataset.act.startsWith('sl-')) return sell.action(b.dataset.act, b);
   if (b.dataset.act === 'sa-open') return salesTab.openSale(id, { ...sellData(), sales: storeSales });
+  if (b.dataset.act.startsWith('rg-')) return register.action(b.dataset.act, b);
   if (b.dataset.act === 'sa-all') { salesTab.view.day = ''; return paint(); }
   switch (b.dataset.act) {
     case 'entity-edit': editId = id; paint(); return;
@@ -377,7 +381,11 @@ $('screen').addEventListener('input', (e) => { if (e.target.id === 'pr-q') { prF
 $('screen').addEventListener('keydown', (e) => { if (e.target.id === 'sl-q' && e.key === 'Enter') { e.preventDefault(); sell.onSearchEnter(e.target.value); } });
 document.addEventListener('keydown', (e) => { if (view === 'sell' && auth.session.user) sell.onDocumentKey(e); }, true);
 $('screen').addEventListener('change', (e) => { if (e.target.id === 'sl-store') { sellStore = e.target.value; startStoreData(); paint(); } });
-sell.setContext({ repaint: () => { if (view === 'sell') paint(); }, data: sellData });
+sell.setContext({ repaint: () => { if (view === 'sell') paint(); }, data: sellData, onSold: () => { register.reg.stale = true; } });
+register.setContext({ repaint: () => { if (view === 'register' || view === 'sell') paint(); }, data: sellData });
+register.wireScreen($('screen'));
+// the register's state is read once a till signs in, and forgotten on sign-out
+auth.onSession((s) => { if (!s.user) { register.reg.state = null; return; } if (register.registerId() && !register.reg.state) register.refresh(); });
 import * as __ui from './ui.js';
 window.__ui = __ui;
 main().catch(e => { console.error(e); document.body.insertAdjacentHTML('beforeend', `<p class="boot-fail">The till could not start: ${esc(e.message)}</p>`); });

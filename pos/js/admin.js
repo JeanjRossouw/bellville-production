@@ -22,7 +22,8 @@ export const defaultSettings = () => ({
   cash: { varianceLimitCents: 5000 },
   layby: { minDepositPct: 20, termDays: 90, penaltyPct: 10 },
   session: { idleLogoutMinutes: 10, pinLength: 6 },
-  numbering: { blockSize: 50, refillBelow: 10 }
+  numbering: { blockSize: 50, refillBelow: 10 },
+  reports: { phone: '', email: '' }
 });
 
 // rands typed on a screen → whole cents; never a float kept
@@ -211,6 +212,10 @@ export function settingsHtml(d) {
       <div class="card"><h2>Lay-bys</h2>
         <div class="grid three">${field('Minimum deposit %', 'se-lb-dep', { value: s.layby.minDepositPct, type: 'number', min: 0, max: 100 })}${field('Term (days)', 'se-lb-term', { value: s.layby.termDays, type: 'number', min: 1 })}${field('Cancellation penalty %', 'se-lb-pen', { value: s.layby.penaltyPct, type: 'number', min: 0, max: 100 })}</div>
       </div>
+      <div class="card"><h2>Daily summary to the owner</h2>
+        <div class="grid two">${field('WhatsApp number', 'se-rep-phone', { value: (s.reports || {}).phone, inputmode: 'tel', placeholder: '082 123 4567' })}${field('Email', 'se-rep-email', { value: (s.reports || {}).email, type: 'email' })}</div>
+        <p class="muted">When a register closes, the Z-report summary is offered to send here.</p>
+      </div>
       <div class="card"><h2>Tills</h2>
         <div class="grid three">${field('Lock after quiet minutes', 'se-idle', { value: s.session.idleLogoutMinutes, type: 'number', min: 1 })}${field('PIN length', 'se-pinlen', { type: 'select', value: String(s.session.pinLength), options: [4, 5, 6].map(n => ({ value: String(n), label: n + ' digits' })) })}${field('Numbers per block (offline)', 'se-block', { value: s.numbering.blockSize, type: 'number', min: 10, max: 500 })}</div>
       </div>
@@ -231,7 +236,8 @@ export function settingsRead(w) {
     cash: { varianceLimitCents: centsOf(val(w, 'se-variance')) },
     layby: { minDepositPct: num('se-lb-dep', 0, 100, 20), termDays: num('se-lb-term', 1, 3650, 90), penaltyPct: num('se-lb-pen', 0, 100, 10) },
     session: { idleLogoutMinutes: num('se-idle', 1, 1440, 10), pinLength: num('se-pinlen', 4, 6, 6) },
-    numbering: { blockSize: num('se-block', 10, 500, 50), refillBelow: 10 }
+    numbering: { blockSize: num('se-block', 10, 500, 50), refillBelow: 10 },
+    reports: { phone: val(w, 'se-rep-phone'), email: val(w, 'se-rep-email') }
   };
 }
 export async function settingsSave(w, d) {

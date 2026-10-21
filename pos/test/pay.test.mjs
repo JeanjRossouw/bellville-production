@@ -31,7 +31,8 @@ await put('pos/retail/pinHashes/st_cathy', { ...pinRec('111111'), ...srv('BF') }
 await put('pos/retail/entities/BF', { legalName: 'Bellville Furniture (Pty) Ltd', tradingName: 'Bellville Furniture', vatRegistered: true, vatNo: '4123456789', invoicePrefix: 'BF', active: true, ...srv('BF') });
 await put('pos/retail/settings/BF', { vat: { rates: [{ rateBp: 1500, effectiveFrom: '2018-04-01' }] }, discounts: { maxPctByRole: { cashier: 5, supervisor: 15, manager: 50, owner: 100 } }, session: { idleLogoutMinutes: 10, pinLength: 6 }, ...srv('BF') });
 await put('pos/retail/stores/BF-BELL', { entityId: 'BF', name: 'Bellville', active: true, paymentMethods: ['cash', 'card', 'eft', 'voucher', 'storeCredit', 'account'], ...srv('BF', 'BF-BELL') });
-await put('pos/retail/registers/r1', { name: 'Till 1', active: true, currentShiftId: '', ...srv('BF', 'BF-BELL') });
+await put('pos/retail/registers/r1', { name: 'Till 1', active: true, currentShiftId: 'sh_open', ...srv('BF', 'BF-BELL') });
+await put('pos/retail/shifts/sh_open', { registerId: 'r1', status: 'open', openedBy: 'st_cathy', openedByName: 'Cathy', openedAt: '2026-10-21T08:00:00.000Z', openingFloat: { denoms: { '10000': 5 }, totalCents: 50000 }, closedBy: '', closedByName: '', closedAt: '', ...srv('BF', 'BF-BELL', 'dev_pay') });
 const secret = 'pay-secret-' + Date.now();
 await put('pos/retail/devices/dev_pay', { label: 'Front till', registerId: 'r1', secretHash: createHash('sha256').update(secret).digest('hex'), enrolledBy: 'server', enrolledAt: '2026-10-21T08:00:00.000Z', active: true, lastSeenAt: '', appVersion: '', ...srv('BF', 'BF-BELL', 'dev_pay') });
 const prod = (id, o) => put('pos/retail/products/' + id, { sku: '', barcodes: [], category: 'Shop', brand: '', type: 'stock', vatClass: 'standard', trackStock: true, costCents: 0, priceCents: 0, images: [], options: [], hasVariants: false, storePrices: {}, bundle: [], reorderLevel: null, reorderQty: null, archived: false, favourite: true, description: '', shopifyProductId: '', shopifyHandle: '', ...o, ...srv('BF') });
@@ -116,7 +117,7 @@ check('EFT awaiting shown', /EFT \(awaiting\)/.test(await payText()));
 R.done5 = await finish();
 sales = await listColl('sales'); const s5 = sales.find(s => s.docNo === 'BF-000005');
 check('EFT sale written as awaiting', s5 && s5.paidStatus === 'awaiting' && s5.paymentMethods.join() === 'eft', s5 && s5.paidStatus);
-check('five sales numbered 1..5 from the till’s block', sales.map(s => s.seq).sort().join() === '1,2,3,4,5' && sales.every(s => s.blockId.includes('dev_pay')), sales.map(s => [s.seq, s.blockId]));
+check('five sales numbered 1..5 from the till’s block, on the open shift', sales.map(s => s.seq).sort().join() === '1,2,3,4,5' && sales.every(s => s.blockId.includes('dev_pay') && s.shiftId === 'sh_open'), sales.map(s => [s.seq, s.blockId, s.shiftId]));
 const audit = await listColl('auditLog'); check('each sale audited', audit.filter(a => a.action === 'sale.commit').length === 5);
 
 console.log(JSON.stringify({ fails, errs, ...R }, null, 1).slice(0, 5000));

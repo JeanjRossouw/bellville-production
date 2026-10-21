@@ -19,7 +19,8 @@ export const FIREBASE_CONFIG = {
 export const API = {
   auth: '/.netlify/functions/pos-auth',
   sale: '/.netlify/functions/pos-sale',
-  doc: '/.netlify/functions/pos-doc'
+  doc: '/.netlify/functions/pos-doc',
+  shift: '/.netlify/functions/pos-shift'
 };
 export const ROLES = [
   { key: 'cashier', label: 'Cashier' },
