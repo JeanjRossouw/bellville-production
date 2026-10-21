@@ -31,6 +31,10 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   used, the till's number block and numbers it chose. `node pos/test/sale-api.test.mjs`
 - `pay.test.mjs` — step 6 in the browser: the payment screen on a till.
   `node pos/test/pay.test.mjs`
+- `receipt.test.mjs` — step 7: a till slip, an abridged and a full tax
+  invoice (the address prompt over R 5 000), the 80 mm page, printer bytes,
+  the A4 page, the share link and its page, a COPY reprint from the Sales
+  tab, and an Invoice for a company not VAT registered. `node pos/test/receipt.test.mjs`
 - `money.test.mjs` — the shared cents and VAT maths; needs no emulator.
   `node pos/test/money.test.mjs`
   Set `FIREBASE_SDK_DIR` to a local copy of the `firebase` package's browser

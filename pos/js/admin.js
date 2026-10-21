@@ -115,6 +115,7 @@ export function storesHtml(d) {
     ${field('Email', 'st-email', { value: s.email, type: 'email' })}
     <div class="fld"><span>Payment methods at this store</span><div class="checks inline">${PAYMENT_METHODS.map(m => `<label><input type="checkbox" data-pm="${m.key}"${(s.paymentMethods || ['cash', 'card']).includes(m.key) ? ' checked' : ''}> ${esc(m.label)}</label>`).join('')}</div></div>
     ${row(field('Receipt header (blank = the company’s)', 'st-rhead', { type: 'textarea', value: s.receiptHeader }), field('Receipt footer (blank = the company’s)', 'st-rfoot', { type: 'textarea', value: s.receiptFooter }))}
+    ${field('Till printer: print agent address (optional)', 'st-agent', { value: s.printAgentUrl, placeholder: 'e.g. http://192.168.0.20:9100/print — a small program on the shop network that passes the slip to the printer' })}
     ${editing ? check('Active', 'st-active', s.active !== false) : ''}
     <div class="card-actions"><button class="btn primary" data-act="store-save">${editing ? 'Save' : 'Add store'}</button>${editing ? '<button class="btn ghost" data-act="store-cancel">Cancel</button>' : ''}</div>
   </div>`;
@@ -132,7 +133,7 @@ export async function storeSave(w, d) {
   const entityId = editing ? editing.entityId : val(w, 'st-entity');
   const data = {
     name: val(w, 'st-name'), phone: val(w, 'st-phone'), email: val(w, 'st-email'), address: addrOf(w, 'st'),
-    paymentMethods: checks(w, 'data-pm'), receiptHeader: val(w, 'st-rhead'), receiptFooter: val(w, 'st-rfoot'),
+    paymentMethods: checks(w, 'data-pm'), receiptHeader: val(w, 'st-rhead'), receiptFooter: val(w, 'st-rfoot'), printAgentUrl: val(w, 'st-agent'),
     active: editing ? bool(w, 'st-active') : true
   };
   if (!data.name) return toast('Give the store a name.', 'warn');

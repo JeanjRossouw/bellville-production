@@ -149,7 +149,7 @@ R: members of the entity. W: owner. Delete never.
 **`stores/{storeId}`** (`storeId` = its own id)
 ```
 entityId, name, address {…}, phone, email, paymentMethods [ 'cash'|'card'|'eft'|'qr'|'voucher'|'storeCredit'|'account' ],
-receiptHeader, receiptFooter (override the entity's when set), active, + stamps
+receiptHeader, receiptFooter (override the entity's when set), printAgentUrl (a local print agent the till posts ESC/POS bytes to), active, + stamps
 ```
 R: members of the store. W: owner.
 

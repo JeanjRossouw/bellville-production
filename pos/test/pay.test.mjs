@@ -40,7 +40,7 @@ await prod('p_book', { name: 'Care Book', barcodes: ['9780000000001'], vatClass:
 await prod('p_cushion', { name: 'Scatter Cushion', barcodes: ['6002222222222'], costCents: 5000, priceCents: 19899 });
 await prod('p_gv', { name: 'Gift voucher R500', type: 'voucher', trackStock: false, barcodes: ['GV500'], priceCents: 50000 });
 await put('pos/retail/stockLevels/BF-BELL_p_ch', { productId: 'p_ch', variantId: '', onHandQty: 3, reservedQty: 0, ...srv('BF', 'BF-BELL') });
-await put('pos/retail/customers/c_thandi', { name: 'Thandi Mokoena', contact: 'Thandi', phone: '0825550101', email: '', vatNo: '', address: {}, accountEnabled: true, creditLimitCents: 1000000, storeCreditCents: 20000, accountBalanceCents: 0, notes: '', archived: false, ...srv('BF') });
+await put('pos/retail/customers/c_thandi', { name: 'Thandi Mokoena', contact: 'Thandi', phone: '0825550101', email: '', vatNo: '', address: { line1: '5 Lane', city: 'Parow' }, accountEnabled: true, creditLimitCents: 1000000, storeCreditCents: 20000, accountBalanceCents: 0, notes: '', archived: false, ...srv('BF') });
 
 let server = null;
 if (!(await fetch('http://localhost:8788/pos/').then(r => r.ok).catch(() => false))) {
@@ -60,26 +60,28 @@ const pinType = async (scope, pin) => { for (const ch of pin) await p.locator(sc
 const scan = async (code) => { await p.evaluate(() => { if (document.activeElement) document.activeElement.blur(); }); await p.keyboard.type(code); await p.keyboard.press('Enter'); await p.waitForTimeout(350); };
 const cartText = () => p.locator('.pos-right').innerText().then(t => t.replace(/\s+/g, ' ').trim());
 const payText = () => p.locator('#pay-right').innerText().then(t => t.replace(/\s+/g, ' ').trim());
+// completing opens the receipt panel: read the toast, then close it
+const finish = async () => { await p.click('#modal-ok'); const t = await toast(); await p.waitForTimeout(900); if (await p.locator('#modal .rc-paper').count()) { await p.click('#modal-ok'); await p.waitForTimeout(300); } return t; };
 const money = (c) => 'R ' + String(Math.floor(c / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '.' + String(c % 100).padStart(2, '0');
 
 await p.goto(BASE, { waitUntil: 'load' });
 await p.waitForSelector('#login-pin .pinpad'); await pinType('#login-pin', '111111'); await p.waitForSelector('#app:not([hidden])', { timeout: 15000 }); await p.waitForSelector('#sl-q'); await p.waitForTimeout(800);
 
-// 1. cash: chesterfield + cushion (R 9,197.99 → cash due R 9,198.00, rounding 1c), R 10,000 given
-await scan('6001234567890'); await scan('6002222222222');
+// 1. cash, a walk-in: cushion + book (R 318.99 → cash due R 319.00, rounding 1c), R 1,000 given
+await scan('6002222222222'); await scan('9780000000001');
 await p.click('[data-act=sl-pay]'); await p.waitForSelector('#modal .pay');
-R.pay1 = await payText(); check('pay screen shows the total', /Total R 9,197\.99/.test(R.pay1) && /Still to pay R 9,197\.99/i.test(R.pay1), R.pay1);
+R.pay1 = await payText(); check('pay screen shows the total', /Total R 318\.99/.test(R.pay1) && /Still to pay R 318\.99/i.test(R.pay1), R.pay1);
 R.methods = await p.$$eval('#modal .pay-m', x => x.map(y => y.dataset.m + (y.disabled ? '!' : ''))); check('store methods; credit and account off without a customer', R.methods.join() === 'cash,card,eft,voucher,storeCredit!,account!', R.methods);
-R.cashDue = await p.locator('#modal .pay-cash .muted').innerText(); check('cash due rounded to 10c', /Cash due R 9,198\.00 \(rounded from R 9,197\.99\)/.test(R.cashDue), R.cashDue);
-await p.fill('#py-tendered', '10000'); await p.waitForTimeout(100); R.change = await p.locator('#py-change').innerText(); check('live change', R.change === 'Change R 802.00', R.change);
+R.cashDue = await p.locator('#modal .pay-cash .muted').innerText(); check('cash due rounded to 10c', /Cash due R 319\.00 \(rounded from R 318\.99\)/.test(R.cashDue), R.cashDue);
+await p.fill('#py-tendered', '1000'); await p.waitForTimeout(100); R.change = await p.locator('#py-change').innerText(); check('live change', R.change === 'Change R 681.00', R.change);
 await p.click('[data-add=cash]'); await p.waitForTimeout(200);
-R.pay1b = await payText(); check('cash added: paid in full, change and rounding shown', /Paid in full R 0\.00/i.test(R.pay1b) && /Change R 802\.00/.test(R.pay1b) && /Cash rounding R 0\.01/.test(R.pay1b), R.pay1b);
+R.pay1b = await payText(); check('cash added: paid in full, change and rounding shown', /Paid in full R 0\.00/i.test(R.pay1b) && /Change R 681\.00/.test(R.pay1b) && /Cash rounding R 0\.01/.test(R.pay1b), R.pay1b);
 await p.screenshot({ path: S + '/shots/pos6-pay.png' });
-await p.click('#modal-ok'); R.done1 = await toast(); await p.waitForTimeout(600);
-check('sale written: number and change in the toast, cart cleared', /Sale BF-000001 · change R 802\.00/.test(R.done1) && /No items yet/.test(await cartText()), R.done1);
+R.done1 = await finish();
+check('sale written: number and change in the toast, cart cleared', /Sale BF-000001 · change R 681\.00/.test(R.done1) && /No items yet/.test(await cartText()), R.done1);
 let sales = await listColl('sales'); const s1 = sales.find(s => s.docNo === 'BF-000001');
-check('the sale in the database: cents, VAT, rounding, cashier, till', s1 && s1.totalCents === 919799 && s1.roundingCents === 1 && s1.changeCents === 80200 && s1.vatCents === vatIn(919799, 1500) && s1.cashierUid === 'st_cathy' && s1.deviceId === 'dev_pay' && s1.source === 'till', s1);
-check('stock moved 3 → 2', (await getDoc('pos/retail/stockLevels/BF-BELL_p_ch')).onHandQty === 2);
+check('the sale in the database: cents, VAT (book zero-rated), rounding, cashier, till', s1 && s1.totalCents === 31899 && s1.roundingCents === 1 && s1.changeCents === 68100 && s1.vatCents === vatIn(19899, 1500) && s1.cashierUid === 'st_cathy' && s1.deviceId === 'dev_pay' && s1.source === 'till', s1);
+check('the cushion’s stock level appeared at -1 (none on hand before)', (await getDoc('pos/retail/stockLevels/BF-BELL_p_cushion')).onHandQty === -1);
 
 // 2. split: card part, then the rest on store credit, with the customer attached
 await scan('6001234567890');
@@ -89,20 +91,20 @@ R.methods2 = await p.$$eval('#modal .pay-m', x => x.map(y => y.dataset.m + (y.di
 await p.click('[data-m=card]'); await p.fill('#py-amount', '8799'); await p.fill('#py-last4', '4321'); await p.fill('#py-approval', 'OK77'); await p.click('[data-add=card]'); await p.waitForTimeout(200);
 R.split1 = await payText(); check('card part added, R 200 still to pay', /Card ••4321 R 8,799\.00/.test(R.split1) && /Still to pay R 200\.00/i.test(R.split1), R.split1);
 await p.click('[data-m=storeCredit]'); await p.waitForTimeout(100); R.creditDefault = await p.inputValue('#py-amount'); check('store credit offers the rest (R 200 of R 200 credit)', R.creditDefault === '200.00', R.creditDefault);
-await p.click('[data-add=storeCredit]'); await p.waitForTimeout(200); await p.click('#modal-ok'); R.done2 = await toast(); await p.waitForTimeout(600);
+await p.click('[data-add=storeCredit]'); await p.waitForTimeout(200); R.done2 = await finish();
 check('split sale written', /Sale BF-000002/.test(R.done2), R.done2);
 const c = await getDoc('pos/retail/customers/c_thandi'); check('store credit used up', c.storeCreditCents === 0, c);
 let pays = await listColl('payments'); check('two payment rows on the split sale', pays.filter(x => x.docNo === 'BF-000002').map(x => x.method).sort().join() === 'card,storeCredit' && pays.some(x => x.cardLast4 === '4321' && x.approvalCode === 'OK77'), pays.map(x => [x.docNo, x.method]));
 
 // 3. a voucher sold on account, then used on the next sale
 await scan('GV500'); await p.click('[data-act=sl-customer]'); await p.waitForSelector('#modal #cu-q'); await p.fill('#cu-q', 'thandi'); await p.waitForTimeout(200); await p.click('#cu-list .pk-row'); await p.waitForTimeout(300);
-await p.click('[data-act=sl-pay]'); await p.waitForSelector('#modal .pay'); await p.click('[data-m=account]'); await p.click('[data-add=account]'); await p.waitForTimeout(200); await p.click('#modal-ok'); R.done3 = await toast(); await p.waitForTimeout(600);
+await p.click('[data-act=sl-pay]'); await p.waitForSelector('#modal .pay'); await p.click('[data-m=account]'); await p.click('[data-add=account]'); await p.waitForTimeout(200); R.done3 = await finish();
 const vouchers = await listColl('vouchers'); const gv = vouchers[0];
 check('voucher created on the account sale', /Sale BF-000003/.test(R.done3) && gv && gv.balanceCents === 50000 && gv.status === 'open' && (await getDoc('pos/retail/customers/c_thandi')).accountBalanceCents === 50000, { done: R.done3, gv });
 await scan('9780000000001');   // the R 120 book
 await p.click('[data-act=sl-pay]'); await p.waitForSelector('#modal .pay'); await p.click('[data-m=voucher]'); await p.fill('#py-code', gv.id.toLowerCase()); await p.click('[data-add=voucher]'); await p.waitForTimeout(600);
 R.gvUse = await payText(); check('voucher covers the book', new RegExp('Voucher ' + gv.id + ' R 120\\.00').test(R.gvUse) && /Paid in full/i.test(R.gvUse), R.gvUse);
-await p.click('#modal-ok'); R.done4 = await toast(); await p.waitForTimeout(600);
+R.done4 = await finish();
 check('voucher balance down to R 380', /Sale BF-000004/.test(R.done4) && (await getDoc('pos/retail/vouchers/' + gv.id)).balanceCents === 38000, R.done4);
 
 // 4. EFT awaiting; a tender can be removed before completing
@@ -111,7 +113,7 @@ await p.click('[data-act=sl-pay]'); await p.waitForSelector('#modal .pay'); awai
 await p.click('#modal [data-rm="0"]'); await p.waitForTimeout(200); check('a tender can be taken off again', /Still to pay R 198\.99/i.test(await payText()));
 await p.click('[data-m=eft]'); await p.fill('#py-ref', 'EFT-9'); await p.selectOption('#py-status', 'awaiting'); await p.click('[data-add=eft]'); await p.waitForTimeout(200);
 check('EFT awaiting shown', /EFT \(awaiting\)/.test(await payText()));
-await p.click('#modal-ok'); R.done5 = await toast(); await p.waitForTimeout(600);
+R.done5 = await finish();
 sales = await listColl('sales'); const s5 = sales.find(s => s.docNo === 'BF-000005');
 check('EFT sale written as awaiting', s5 && s5.paidStatus === 'awaiting' && s5.paymentMethods.join() === 'eft', s5 && s5.paidStatus);
 check('five sales numbered 1..5 from the till’s block', sales.map(s => s.seq).sort().join() === '1,2,3,4,5' && sales.every(s => s.blockId.includes('dev_pay')), sales.map(s => [s.seq, s.blockId]));

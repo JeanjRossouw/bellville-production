@@ -148,6 +148,12 @@ const actions = {
     const total = sub - saleDisc;
     const told = b.totals || {};
     if (int(told.totalCents) !== total || int(told.vatCents) !== vat) throw new Reject(409, `The till’s total (${told.totalCents}) does not match the server’s (${total}). Reopen the sale and try again.`);
+    // over R 5 000 a VAT-registered company must issue a full tax invoice: the customer's name and address go on it
+    if (ctx.entity.vatRegistered && total > 500000) {
+      const a = customer && customer.address;
+      if (!customer || !String(customer.name || '').trim()) throw new Reject(400, 'Over R 5 000 a full tax invoice is needed: add the customer with their name and address.');
+      if (!a || !String(a.line1 || a.city || '').trim()) throw new Reject(400, `Over R 5 000 a full tax invoice is needed: add ${customer.name}’s address.`);
+    }
 
     // ---- the tenders
     const tenders = Array.isArray(b.tenders) ? b.tenders : [];

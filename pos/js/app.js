@@ -8,13 +8,14 @@ import * as admin from './admin.js';
 import { icon } from './icons.js';
 import * as products from './products.js';
 import * as sell from './sell.js';
+import * as salesTab from './sales.js';
 
 const $ = (id) => document.getElementById(id);
 let view = '';                       // the tab on screen; a till starts on Sell, the office on Home
 let adminSub = 'companies';          // the Admin tab's sub-screen
 let editId = '', settingsEntity = '';  // what the admin forms are on
 let entities = [], stores = [], registers = [], users = [], devices = [], settings = {};
-let catalogue = [], variants = [], stockLevels = [], customers = [];
+let catalogue = [], variants = [], stockLevels = [], customers = [], storeSales = [];
 let sellStore = '';                 // the store being sold from: the till's, else chosen
 let prEntity = '', prFilter = { q: '', category: '', brand: '', type: '', archived: false };
 const unwatch = [];
@@ -66,7 +67,7 @@ function startData() {
 }
 function stopData() {
   while (unwatch.length) { try { unwatch.pop()(); } catch (e) {} }
-  if (unwatchStore) { try { unwatchStore(); } catch (e) {} unwatchStore = null; } watchedStore = '';   // or it would go on listening as the next person
+  if (unwatchStore) { try { unwatchStore(); } catch (e) {} unwatchStore = null; } watchedStore = ''; storeSales = []; stockLevels = [];   // or it would go on listening as the next person
   entities = []; stores = []; registers = []; users = []; devices = []; settings = {}; catalogue = []; variants = []; stockLevels = []; customers = [];
 }
 // the store sold from: the till's own, else the person's default, else their first
@@ -82,12 +83,14 @@ function startStoreData() {
   const sid = sellStoreId();
   if (sid === watchedStore) return;
   if (unwatchStore) { try { unwatchStore(); } catch (e) {} unwatchStore = null; }
-  watchedStore = sid; stockLevels = [];
+  watchedStore = sid; stockLevels = []; storeSales = [];
   if (!sid) return;
   const st = stores.find(x => x.id === sid);
   const eid = st ? st.entityId : (auth.session.device && auth.session.device.entityId) || '';
   if (!eid) return;
-  unwatchStore = watch('stockLevels', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { stockLevels = rows; if (view === 'sell') paint(); });
+  const u1 = watch('stockLevels', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { stockLevels = rows; if (view === 'sell') paint(); });
+  const u2 = watch('sales', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeSales = rows; if (view === 'sales') paint(); });
+  unwatchStore = () => { u1(); u2(); };
   sell.loadCart(sid);
 }
 const sellData = () => { const sid = sellStoreId(); const st = stores.find(x => x.id === sid) || null; const ent = st ? entities.find(e => e.id === st.entityId) || null : null; return { store: st, entity: ent, settings: ent ? settings[ent.id] || {} : {}, products: catalogue, variants, stockLevels, customers }; };
@@ -157,7 +160,7 @@ const storeName = (id) => (stores.find(s => s.id === id) || {}).name || '';
 const entityName = (id) => { const e = entities.find(x => x.id === id); return e ? (e.tradingName || e.legalName) : id; };
 function navItems() {
   const out = [];
-  if (sellStoreId()) out.push({ key: 'sell', label: 'Sell' });
+  if (sellStoreId()) out.push({ key: 'sell', label: 'Sell' }, { key: 'sales', label: 'Sales' });
   out.push({ key: 'home', label: 'Home' }, { key: 'products', label: 'Products' });
   if (auth.atLeast('manager')) out.push({ key: 'admin', label: 'Admin' });
   out.push({ key: 'me', label: 'My PIN' });
@@ -187,6 +190,7 @@ function paint() {
     screen.innerHTML = pick + sell.sellHtml();
     return;
   }
+  if (view === 'sales') { startStoreData(); screen.innerHTML = salesTab.salesHtml({ ...sellData(), sales: storeSales }); return; }
   if (view === 'admin') {
     const subs = adminSubs();
     if (!subs.some(x => x.key === adminSub)) adminSub = subs[0].key;
@@ -324,6 +328,8 @@ async function onAction(e) {
   const id = b.dataset.id;
   const w = $('screen');
   if (b.dataset.act.startsWith('sl-')) return sell.action(b.dataset.act, b);
+  if (b.dataset.act === 'sa-open') return salesTab.openSale(id, { ...sellData(), sales: storeSales });
+  if (b.dataset.act === 'sa-all') { salesTab.view.day = ''; return paint(); }
   switch (b.dataset.act) {
     case 'entity-edit': editId = id; paint(); return;
     case 'entity-cancel': editId = ''; paint(); return;
@@ -353,6 +359,7 @@ async function onAction(e) {
 $('screen').addEventListener('change', (e) => {
   if (e.target.id === 'se-entity') { settingsEntity = e.target.value; return paint(); }
   if (e.target.id === 'pr-entity') { prEntity = e.target.value; return paint(); }
+  if (e.target.id === 'sa-day') { salesTab.view.day = e.target.value; return paint(); }
   if (e.target.id === 'pr-cat') { prFilter.category = e.target.value; return paint(); }
   if (e.target.id === 'pr-brand') { prFilter.brand = e.target.value; return paint(); }
   if (e.target.id === 'pr-type') { prFilter.type = e.target.value; return paint(); }
@@ -366,7 +373,7 @@ $('screen').addEventListener('change', (e) => {
   }
 });
 
-$('screen').addEventListener('input', (e) => { if (e.target.id === 'pr-q') { prFilter.q = e.target.value; paint(); } if (e.target.id === 'sl-q') sell.onSearchInput(e.target.value); });
+$('screen').addEventListener('input', (e) => { if (e.target.id === 'pr-q') { prFilter.q = e.target.value; paint(); } if (e.target.id === 'sl-q') sell.onSearchInput(e.target.value); if (e.target.id === 'sa-q') { salesTab.view.q = e.target.value; paint(); const q = $('sa-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } } });
 $('screen').addEventListener('keydown', (e) => { if (e.target.id === 'sl-q' && e.key === 'Enter') { e.preventDefault(); sell.onSearchEnter(e.target.value); } });
 document.addEventListener('keydown', (e) => { if (view === 'sell' && auth.session.user) sell.onDocumentKey(e); }, true);
 $('screen').addEventListener('change', (e) => { if (e.target.id === 'sl-store') { sellStore = e.target.value; startStoreData(); paint(); } });

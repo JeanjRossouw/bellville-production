@@ -18,7 +18,8 @@ export const FIREBASE_CONFIG = {
 // the server functions (Netlify), relative so previews and the live site both work
 export const API = {
   auth: '/.netlify/functions/pos-auth',
-  sale: '/.netlify/functions/pos-sale'
+  sale: '/.netlify/functions/pos-sale',
+  doc: '/.netlify/functions/pos-doc'
 };
 export const ROLES = [
   { key: 'cashier', label: 'Cashier' },

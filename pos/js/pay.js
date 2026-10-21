@@ -8,6 +8,9 @@ import * as auth from './auth.js';
 import { esc, toast, field, row, val, openModal, money } from './ui.js';
 import { roundTo10c, centsOf, randsOf } from './money.js';
 import { icon } from './icons.js';
+import { fullInvoiceGap, ABRIDGED_MAX } from './receipt.js';
+import { openReceipt } from './receiptui.js';
+import { patchOne } from './db.js';
 
 const METHODS = [
   { key: 'cash', label: 'Cash', ico: 'cash' }, { key: 'card', label: 'Card', ico: 'card' }, { key: 'eft', label: 'EFT', ico: 'file' }, { key: 'qr', label: 'QR', ico: 'grid' },
@@ -20,7 +23,7 @@ export function openPay(o) {
   const { totals: t, cart, data } = o;
   const store = data.store, customer = cart.customer;
   const allowed = (store.paymentMethods || ['cash', 'card']).filter(k => METHODS.some(m => m.key === k));
-  const tenders = [];           // { method, amountCents, tenderedCents?, ref?, cardLast4?, approvalCode?, status?, voucherCode?, label }
+  const tenders = o.keep ? [...o.keep] : [];   // { method, amountCents, tenderedCents?, ref?, cardLast4?, approvalCode?, status?, voucherCode?, label }
   let method = allowed[0] || 'cash', busy = false;
   const sumOthers = () => tenders.reduce((n, x) => n + x.amountCents, 0);
   // what is still owed, and for cash the 10c-rounded figure
@@ -92,8 +95,27 @@ export function openPay(o) {
     }
     draw();
   }
+  // over R 5 000 a VAT-registered company issues a full tax invoice: the customer's name and address must be on it
+  async function fullInvoiceReady() {
+    if (!data.entity.vatRegistered || t.totalCents <= ABRIDGED_MAX) return true;
+    const gap = fullInvoiceGap(customer);
+    if (!gap) return true;
+    if (!customer) { toast('Over R 5 000 a full tax invoice is needed: go Back and add the customer.', 'warn'); return false; }
+    return new Promise((resolve) => {
+      openModal('Full tax invoice: ' + customer.name, `<p class="muted">Over R 5 000 the invoice must carry the customer’s name and address (and VAT number if they have one).</p>` +
+        row(field('Street', 'fi-line1', { value: customer.address && customer.address.line1 }), field('Suburb', 'fi-line2', { value: customer.address && customer.address.line2 })) + row(field('City', 'fi-city', { value: customer.address && customer.address.city }), field('Postal code', 'fi-code', { value: customer.address && customer.address.code })) + field('Customer VAT number (if any)', 'fi-vat', { value: customer.vatNo }), {
+        okLabel: 'Save and continue', onOk: async (w) => {
+          const address = { line1: val(w, 'fi-line1'), line2: val(w, 'fi-line2'), city: val(w, 'fi-city'), code: val(w, 'fi-code') }, vatNo = val(w, 'fi-vat');
+          if (!address.line1 && !address.city) { toast('A street or a city, at least.', 'warn'); return false; }
+          try { await patchOne('customers', customer.id, { address, vatNo, ...auth.touch() }); customer.address = address; customer.vatNo = vatNo; resolve(true); return true; }
+          catch (e) { toast('Could not save: ' + e.message, 'warn'); return false; }
+        }, onClose: (ok) => { if (!ok) resolve(false); }
+      });
+    });
+  }
   async function complete() {
     if (busy || due() > 0) return false;
+    if (!(await fullInvoiceReady())) { if (!document.getElementById('modal')) reopen(); return false; }
     busy = true; okBtn.disabled = true; okBtn.textContent = 'Writing the sale…';
     const body = {
       saleId: cart.id, clientCreatedAt: new Date().toISOString(), customerId: cart.customerId || '',
@@ -107,6 +129,7 @@ export function openPay(o) {
       const r = await auth.api('commit', body, API.sale);
       close(true);
       o.onDone(r);
+      openReceipt({ sale: r.sale, lines: r.lines, payments: r.payments, vouchersSold: r.vouchersSold || [], entity: data.entity, store: data.store, settings: data.settings, copy: !!r.again });
       return true;
     } catch (e) {
       busy = false; draw();
@@ -115,6 +138,7 @@ export function openPay(o) {
       return false;
     }
   }
+  const reopen = () => openPay({ ...o, keep: tenders });
   wrap.addEventListener('click', (e) => {
     const m = e.target.closest('[data-m]'); if (m) { method = m.dataset.m; return draw(); }
     const q = e.target.closest('[data-q]'); if (q) { wrap.querySelector('#py-tendered').value = randsOf(Number(q.dataset.q)); return liveChange(); }

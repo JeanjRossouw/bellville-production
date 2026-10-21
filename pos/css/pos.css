@@ -215,11 +215,22 @@ small { font-size: 12px; }
 .pay-change-live { font-family: var(--font-ui); font-weight: 600; font-size: 15px; min-height: 1.4em; margin-bottom: .4rem; }
 .pay-sum { border: 1px solid var(--line); border-radius: 6px; padding: .6rem .8rem; font-size: 13px; }
 .pay-sum > div { display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding: .25rem 0; }
-.pay-tender { color: var(--ink-2); } .pay-tender strong { margin-left: auto; }
+.pay-tender { color: var(--ink-2); } .pay-tender strong { margin-left: auto; white-space: nowrap; } .pay-sum strong { white-space: nowrap; }
 .pay-due { border-top: 1px solid var(--ink); margin-top: .3rem; padding-top: .5rem !important; font-family: var(--font-ui); font-weight: 600; text-transform: uppercase; letter-spacing: .1em; font-size: 11px; } .pay-due strong { font-size: 20px; letter-spacing: 0; }
 .pay-change strong { color: var(--green); font-size: 16px; }
 .pay-done { text-align: center; padding: 2rem 1rem; color: var(--muted); } .pay-done .ico { width: 30px; height: 30px; }
 @media (max-width: 700px) { .pay { grid-template-columns: 1fr; } }
+
+/* ---------------------------------------------------------------- receipt */
+.rc { display: grid; grid-template-columns: 1fr 220px; gap: 1rem; }
+.rc-preview { background: #e9e8e4; padding: 1rem; border-radius: 6px; max-height: 60vh; overflow: auto; display: flex; justify-content: center; }
+.rc-paper { background: #fff; padding: 10px 8px; width: 74mm; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+.rc-paper .slip { font: 11.5px/1.35 "Courier New", monospace; width: 100%; }
+.rc-paper .c { text-align: center; } .rc-paper .co { font-weight: 700; font-size: 14px; } .rc-paper .t { font-weight: 700; margin: 4px 0; text-transform: uppercase; } .rc-paper .s { font-size: 10px; }
+.rc-paper .r { display: flex; justify-content: space-between; gap: 6px; } .rc-paper .hr { border-top: 1px dashed #000; margin: 4px 0; } .rc-paper .tot { font-size: 13.5px; font-weight: 700; }
+.rc-paper .box { border: 1px solid #000; padding: 3px 5px; margin: 4px 0; } .rc-paper .bar svg { width: 60mm; height: 12mm; display: block; margin: 6px auto 0; } .rc-paper .pol { margin-top: 6px; border-top: 1px dashed #000; padding-top: 4px; }
+.rc-acts { display: grid; gap: .5rem; align-content: start; } .rc-acts .btn { display: flex; align-items: center; gap: .5rem; justify-content: flex-start; }
+@media (max-width: 700px) { .rc { grid-template-columns: 1fr; } }
 
 /* ------------------------------------------------------------------ modal */
 .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); display: flex; align-items: center; justify-content: center; padding: 1rem; z-index: 50; }
