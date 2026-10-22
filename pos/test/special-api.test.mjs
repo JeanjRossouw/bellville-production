@@ -1,8 +1,9 @@
 // Retail POS step 12: the pos-special function over HTTP. Opening needs
 // the customer and a signed-off spec, takes made-to-order items only; a
 // deposit under the minimum leaves it quoted, reaching it sends it to the
-// factory; the factory endpoints with their key (queue, status by SO number
-// or factory ref); the till's status step; updates logged; a delivery
+// factory: written into the linked Factory Manager company's own orders with
+// the store as the customer and no retail customer data, the factory's
+// status read back; the till's status step; updates logged; a delivery
 // booking; the hand-over into a tax invoice paid by the order with the
 // signed note; cancellation by a manager with no fee before production and
 // the deposit after.
@@ -14,7 +15,6 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const S = REPO + '/pos/test';
 const PID = 'factory-manager-ece82', FS = 'http://127.0.0.1:8085', AU = 'http://127.0.0.1:9099';
 const FN = 'http://localhost:8788/.netlify/functions/';
-const KEY = process.env.POS_FACTORY_KEY || 'test-factory-key';
 const R = {}, fails = [];
 const check = (n, c, x) => { if (!c) fails.push(n + (x !== undefined ? ' — ' + JSON.stringify(x).slice(0, 300) : '')); };
 process.on('unhandledRejection', (e) => { console.log(JSON.stringify({ fails, ...R, crash: String(e && e.message || e) }, null, 1)); process.exit(1); });
@@ -34,8 +34,10 @@ await put('pos/retail/users/' + own.localId, { email: 'owner@shop.co.za', name: 
 await put('pos/retail/users/' + cas.localId, { email: 'cathy@shop.co.za', name: 'Cathy', role: 'cashier', active: true, entityIds: ['BF'], storeIds: ['BF-BELL'], defaultStoreId: 'BF-BELL', pinSet: false, ...srv('BF') });
 await put('pos/retail/users/' + sup.localId, { email: 'sam@shop.co.za', name: 'Sam', role: 'supervisor', active: true, entityIds: ['BF'], storeIds: ['BF-BELL'], defaultStoreId: 'BF-BELL', pinSet: false, ...srv('BF') });
 await put('pos/retail/entities/BF', { legalName: 'Bellville Furniture (Pty) Ltd', tradingName: 'Bellville Furniture', vatRegistered: true, vatNo: '4123456789', invoicePrefix: 'BF', creditNotePrefix: 'BF-CN', laybyPrefix: 'BF-LB', specialOrderPrefix: 'BF-SO', active: true, ...srv('BF') });
-await put('pos/retail/settings/BF', { vat: { rates: [{ rateBp: 1500, effectiveFrom: '2018-04-01' }] }, discounts: { maxPctByRole: { cashier: 5, supervisor: 15, manager: 50, owner: 100 } }, specialOrder: { minDepositPct: 50, leadDays: 21 }, ...srv('BF') });
-await put('pos/retail/stores/BF-BELL', { entityId: 'BF', name: 'Bellville', active: true, paymentMethods: ['cash', 'card', 'eft'], ...srv('BF', 'BF-BELL') });
+await put('pos/retail/settings/BF', { vat: { rates: [{ rateBp: 1500, effectiveFrom: '2018-04-01' }] }, discounts: { maxPctByRole: { cashier: 5, supervisor: 15, manager: 50, owner: 100 } }, specialOrder: { minDepositPct: 50, leadDays: 21 }, factory: { companyId: 'CPTEST', companyName: 'Couch Potato Test' }, ...srv('BF') });
+await put('pos/retail/stores/BF-BELL', { entityId: 'BF', name: 'Bellville', phone: '021 555 0100', address: { line1: '12 Voortrekker Rd', city: 'Bellville', code: '7530' }, active: true, paymentMethods: ['cash', 'card', 'eft'], ...srv('BF', 'BF-BELL') });
+await put('companies/CPTEST', { name: 'Couch Potato Test', ownerUid: 'x', plan: 'free', status: 'free', createdAt: '2026-01-01T00:00:00.000Z' });
+await put('companies/CPTEST/settings/factory', { name: 'Couch Potato Test', orderPrefix: 'CP-', firstOrderNo: 1001, leadDays: 21, vatRegistered: true });
 const prod = (id, o) => put('pos/retail/products/' + id, { sku: '', barcodes: [], category: '', brand: '', type: 'stock', vatClass: 'standard', trackStock: true, costCents: 0, priceCents: 0, images: [], options: [], hasVariants: false, storePrices: {}, bundle: [], archived: false, ...o, ...srv('BF') });
 await prod('p_sofa', { name: 'Custom Sofa', type: 'mto', trackStock: false, priceCents: 1500000, costCents: 600000 });
 await prod('p_cushion', { name: 'Scatter Cushion', priceCents: 19900, costCents: 5000 });
@@ -43,11 +45,13 @@ await put('pos/retail/customers/c1', { name: 'Thandi Mokoena', phone: '082555010
 
 let server = null;
 if (!(await fetch('http://localhost:8788/pos/').then(r => r.ok).catch(() => false))) {
-  server = spawn('node', [S + '/server.mjs', REPO], { stdio: 'inherit', env: { ...process.env, POS_FACTORY_KEY: KEY } });
+  server = spawn('node', [S + '/server.mjs', REPO], { stdio: 'inherit' });
   for (let i = 0; i < 30; i++) { await new Promise(r => setTimeout(r, 300)); if (await fetch('http://localhost:8788/pos/').then(r => r.ok).catch(() => false)) break; }
 }
 const call = async (fn, body, token = cas.idToken, headers = {}) => { const r = await fetch(FN + fn, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}), ...headers }, body: JSON.stringify(body) }); return { status: r.status, ...(await r.json()) }; };
-const factory = (body, key = KEY) => call('pos-special', { entityId: 'BF', ...body }, '', key ? { 'X-Factory-Key': key } : {});
+const listAt = async (p) => { const r = await (await fetch(`${docs}/${p}?pageSize=300`, { headers: H })).json(); return (r.documents || []).map(d => ({ id: d.name.split('/').pop(), ...Object.fromEntries(Object.entries(d.fields || {}).map(([k, x]) => [k, fromFs(x)])) })); };
+const patchAt = (p, data) => fetch(`${docs}/${p}?` + Object.keys(data).map(k => 'updateMask.fieldPaths=' + k).join('&'), { method: 'PATCH', headers: H, body: JSON.stringify({ fields: toFs(data).mapValue.fields }) });
+const FO = (id, n = 1) => 'companies/CPTEST/orders/pos-' + id + '-' + n;
 const bell = { entityId: 'BF', storeId: 'BF-BELL', registerId: '' };
 let n = 0;
 const sig = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
@@ -70,23 +74,32 @@ check('the spec kept, model from the product, photo kept', O.lines[0].spec.model
 check('the sign-off reads the spec back with the no-change-of-mind clause', /Fabric Linen look, Colour Charcoal, Legs Oak, tapered/.test(O.signoff.text) && /no change of mind once production has started/.test(O.signoff.text) && /section 20\(2\)\(b\)/.test(O.signoff.text) && /Deposit R 7,500\.00 \(50%\)/.test(O.signoff.text) && O.signoff.signedBy === 'T Mokoena', O.signoff && O.signoff.text);
 check('expected 21 days out', O.expectedAt === new Date(Date.now() + 21 * 86400000).toISOString().slice(0, 10), O.expectedAt);
 let pays = await listColl('payments'); check('the deposit is a payment row', pays.some(p => p.docType === 'specialOrder' && p.docNo === 'BF-SO-000001' && p.instalment === 0 && p.amountCents === 300000), pays);
-R.q0 = await factory({ action: 'factoryQueue' }); check('the factory queue is empty while quoted', R.q0.ok && R.q0.orders.length === 0, R.q0);
-R.early = await factory({ action: 'factoryStatus', docNo: 'BF-SO-000001', status: 'inProduction' }); check('the factory cannot start before the deposit', R.early.status === 409 && /before the deposit/.test(R.early.error), R.early);
-R.badKey = await factory({ action: 'factoryQueue' }, 'wrong'); check('wrong factory key: 403', R.badKey.status === 403, R.badKey);
-R.noKey = await factory({ action: 'factoryQueue' }, ''); check('no factory key: 403', R.noKey.status === 403, R.noKey);
+check('nothing at the factory while quoted', (await listAt('companies/CPTEST/orders')).length === 0 && !O.factory);
+R.cos = await call('pos-special', { action: 'factoryCompanies', entityId: 'BF' }, own.idToken); check('the owner sees the factory companies and the link', R.cos.ok && R.cos.companies.some(c => c.id === 'CPTEST' && c.name === 'Couch Potato Test') && R.cos.linked.companyId === 'CPTEST', R.cos);
+R.cosCas = await call('pos-special', { action: 'factoryCompanies', entityId: 'BF' }); check('not a cashier', R.cosCas.status === 403, R.cosCas);
+R.sendEarly = await call('pos-special', { action: 'factorySend', orderId: O.id, ...bell }, sup.idToken); check('cannot be sent before the deposit', R.sendEarly.status === 409 && /deposit/.test(R.sendEarly.error), R.sendEarly);
 R.pay1 = await call('pos-special', { action: 'pay', orderId: O.id, paymentId: 'sp-' + Date.now().toString(36) + '-1', tenders: [{ method: 'cash', amountCents: 450000, tenderedCents: 450000 }], clientCreatedAt: new Date().toISOString(), ...bell });
 check('R 4 500 more: the deposit reached, to the factory, an update due', R.pay1.ok && R.pay1.order.status === 'depositPaid' && R.pay1.order.paidCents === 750000 && R.pay1.order.depositCents === 750000 && R.pay1.order.updateDue === true && R.pay1.order.history.length === 2, R.pay1.error || R.pay1.order);
+check('the order went to the factory by itself: CP-1001, the ref filled in', R.pay1.order.factory && R.pay1.order.factory.companyId === 'CPTEST' && R.pay1.order.factory.orders.length === 1 && R.pay1.order.factory.orders[0].orderNo === 'CP-1001' && R.pay1.order.factoryRef === 'CP-1001' && !R.pay1.order.factory.error, R.pay1.order.factory);
+R.fo = await getDoc(FO(O.id));
+check('the factory order: the store as the customer, the SO number, the spec, the price, the due date', R.fo && R.fo.orderNo === 'CP-1001' && R.fo.customerId === 'pos-BF-BF-BELL' && R.fo.customerName === 'Bellville Furniture · Bellville' && R.fo.externalRef === 'BF-SO-000001' && R.fo.source === 'pos' && R.fo.product === 'Custom Sofa' && R.fo.fabric === 'Linen look / Charcoal' && /Size: 2\.4 m/.test(R.fo.notes) && /Legs: Oak, tapered/.test(R.fo.notes) && /Notes: Firm seat/.test(R.fo.notes) && R.fo.priceEach === 15000 && R.fo.qty === 1 && R.fo.dueDate === O.expectedAt && R.fo.status === 'new' && R.fo.photo === photo && R.fo.deliveryAddress === '12 Voortrekker Rd, Bellville, 7530' && R.fo.deliveryContact === 'Bellville', R.fo && { ...R.fo, photo: undefined });
+R.fc = await getDoc('companies/CPTEST/customers/pos-BF-BF-BELL');
+check('the factory customer is the store, in the POS stores group', R.fc && R.fc.name === 'Bellville Furniture · Bellville' && R.fc.group === 'POS stores' && R.fc.phone === '021 555 0100' && R.fc.source === 'pos', R.fc);
+check('no retail customer went to the factory', !/Thandi|Mokoena|0825550101|5 Lane|Parow/.test(JSON.stringify([R.fo, R.fc, await listAt('companies/CPTEST/customers')])));
+check('only one factory customer and one order', (await listAt('companies/CPTEST/customers')).length === 1 && (await listAt('companies/CPTEST/orders')).length === 1);
+R.resend = await call('pos-special', { action: 'factorySend', orderId: O.id, ...bell }, sup.idToken); check('sending again writes nothing twice', R.resend.ok && R.resend.order.factory.orders[0].orderNo === 'CP-1001' && (await listAt('companies/CPTEST/orders')).length === 1 && (await getDoc('companies/CPTEST/counters/orderNo')).value === 1002, R.resend);
 R.upd1 = await call('pos-special', { action: 'update', orderId: O.id, how: 'whatsapp', ...bell });
 check('the deposit update: words, number, logged', R.upd1.ok && R.upd1.status === 'depositPaid' && /Thank you for your deposit on order BF-SO-000001/.test(R.upd1.text) && /21 days/.test(R.upd1.text) && R.upd1.phone === '0825550101' && (await getDoc('pos/retail/specialOrders/' + O.id)).updateDue === false, R.upd1);
 
-// ---- the factory: the queue with specs, then the status by SO number and by its own ref
-R.q1 = await factory({ action: 'factoryQueue' }); check('the queue shows the paid order with its spec, no money details beyond paid/balance', R.q1.ok && R.q1.orders.length === 1 && R.q1.orders[0].docNo === 'BF-SO-000001' && R.q1.orders[0].lines[0].spec.colour === 'Charcoal' && R.q1.orders[0].signedOff === true && !('signoff' in R.q1.orders[0]), R.q1);
-R.f1 = await factory({ action: 'factoryStatus', docNo: 'bf-so-000001', status: 'inProduction', factoryRef: 'CP-77', by: 'Factory floor', expectedAt: '2026-11-20' });
-check('in production, with the factory ref and a new date', R.f1.ok && R.f1.order.status === 'inProduction' && R.f1.order.factoryRef === 'CP-77' && R.f1.order.expectedAt === '2026-11-20' && R.f1.order.updateDue === true && R.f1.order.statusHistory.at(-1).source === 'factory' && R.f1.order.statusHistory.at(-1).byName === 'Factory floor', R.f1.error || R.f1.order);
+// ---- the factory: its status comes back to the till
+R.syncSame = await call('pos-special', { action: 'factorySync', orderId: O.id, ...bell }); check('checked: still new, nothing moves', R.syncSame.ok && R.syncSame.order.status === 'depositPaid' && R.syncSame.order.factory.orders[0].status === 'new' && R.syncSame.order.factory.lastCheckedAt, R.syncSame);
+await patchAt(FO(O.id), { status: 'in-production' });
+R.f1 = await call('pos-special', { action: 'factorySync', orderId: O.id, ...bell });
+check('the factory started: in production on the till, from the factory', R.f1.ok && R.f1.order.status === 'inProduction' && R.f1.order.updateDue === true && R.f1.order.statusHistory.at(-1).source === 'factory' && R.f1.order.statusHistory.at(-1).byName === 'Factory Manager' && /CP-1001 in-production/.test(R.f1.order.statusHistory.at(-1).note), R.f1.error || R.f1.order);
 R.cash = await call('pos-special', { action: 'status', orderId: O.id, status: 'ready', ...bell }); check('a cashier cannot move the status', R.cash.status === 403 && /supervisor/.test(R.cash.error), R.cash);
 R.sup = await call('pos-special', { action: 'status', orderId: O.id, status: 'ready', note: 'Checked', ...bell }, sup.idToken); check('a supervisor marks it ready', R.sup.ok && R.sup.order.status === 'ready' && R.sup.order.statusHistory.at(-1).note === 'Checked', R.sup.error || R.sup.order);
-R.f2 = await factory({ action: 'factoryStatus', factoryRef: 'CP-77', status: 'ready' }); check('the factory by its ref: already ready, nothing changes', R.f2.ok && R.f2.same === true, R.f2);
-R.back = await factory({ action: 'factoryStatus', docNo: 'BF-SO-000001', status: 'inProduction' }); check('no going backwards', R.back.status === 409, R.back);
+await patchAt(FO(O.id), { status: 'ready' });
+R.f2 = await call('pos-special', { action: 'factorySync', orderId: O.id, ...bell }); check('the factory done after the till already said ready: nothing changes', R.f2.ok && R.f2.order.status === 'ready' && R.f2.order.factory.orders[0].status === 'ready' && R.f2.order.statusHistory.filter(h => h.status === 'ready').length === 1, R.f2);
 R.upd2 = await call('pos-special', { action: 'update', orderId: O.id, ...bell }); check('the ready update names the balance', /is ready/.test(R.upd2.text) && /R 7,500\.00/.test(R.upd2.text) && /collection at Bellville/.test(R.upd2.text), R.upd2);
 
 // ---- delivery: booked, then the balance, then the hand-over with the signed note
@@ -107,6 +120,7 @@ check('one specialOrder tender on the sale, for the price, with the SO number', 
 check('no stock moved for a made-to-order sofa', (await listColl('stockMovements')).length === 0);
 R.again = await call('pos-special', { action: 'deliver', orderId: O.id, saleId, ...bell }); check('delivering again: the first answer stands', R.again.ok && R.again.again && R.again.sale.docNo === 'BF-000001', R.again);
 R.upd4 = await call('pos-special', { action: 'update', orderId: O.id, ...bell }); check('the delivered update', /was delivered today/.test(R.upd4.text), R.upd4.text);
+R.foDone = await getDoc(FO(O.id)); check('the factory order notes the hand-over', R.foDone.events.length === 2 && /Delivered to the customer from the Bellville store/.test(R.foDone.events[1].what) && R.foDone.status === 'ready', R.foDone.events);
 
 // ---- cancellation: a manager; no fee before production, the deposit after
 R.open2 = await call('pos-special', openBody(sofa(), 1500000, [{ method: 'card', amountCents: 300000 }]));
@@ -118,15 +132,22 @@ check('cancelled before production: everything back', R.cancel2.ok && R.cancel2.
 pays = await listColl('payments'); check('the refund as a negative payment', pays.some(p => p.docType === 'refund' && p.docNo === 'BF-SO-000002' && p.amountCents === -300000), pays.filter(p => p.docNo === 'BF-SO-000002'));
 R.open3 = await call('pos-special', openBody(sofa(), 1500000, [{ method: 'card', amountCents: 750000 }]));
 const O3 = R.open3.order; check('third order straight to deposit paid', R.open3.ok && O3.status === 'depositPaid' && O3.depositCents === 750000, R.open3.error || O3.status);
-R.f3 = await factory({ action: 'factoryStatus', docNo: 'BF-SO-000003', status: 'inProduction' }); check('in production', R.f3.ok && R.f3.order.status === 'inProduction', R.f3);
+check('straight to the factory on opening: CP-1002', O3.factory && O3.factory.orders[0].orderNo === 'CP-1002' && O3.factoryRef === 'CP-1002', O3.factory);
+await patchAt(FO(O3.id), { status: 'in-production' });
+R.f3 = await call('pos-special', { action: 'factorySync', orderId: O3.id, ...bell }); check('in production', R.f3.ok && R.f3.order.status === 'inProduction', R.f3);
 R.cancel3wrong = await call('pos-special', { action: 'cancel', orderId: O3.id, kind: 'customer', refunds: [{ method: 'cash', amountCents: 750000 }], ...bell }, own.idToken); check('after production starts the deposit stays: the refund must be nil', R.cancel3wrong.status === 400 && /must equal what is owed back: R 0\.00/.test(R.cancel3wrong.error), R.cancel3wrong);
 R.cancel3 = await call('pos-special', { action: 'cancel', orderId: O3.id, kind: 'customer', refunds: [], ...bell }, own.idToken);
 check('cancelled in production: the deposit is the fee', R.cancel3.ok && R.cancel3.order.feeCents === 750000 && R.cancel3.order.refundedCents === 0 && /work and materials/.test(R.cancel3.order.feeReason), R.cancel3.error || R.cancel3.order);
+R.fo3 = await getDoc(FO(O3.id)); check('the factory order is cancelled too, on record', R.fo3.status === 'cancelled' && /Cancelled at the till/.test(R.fo3.cancelReason) && R.fo3.events.at(-1).what.includes('Jean') && R.cancel3.order.factory.orders[0].status === 'cancelled', R.fo3);
 R.storeFault = await call('pos-special', openBody(sofa(), 1500000, [{ method: 'card', amountCents: 750000 }]));
 R.cancel4 = await call('pos-special', { action: 'cancel', orderId: R.storeFault.order.id, kind: 'store', reason: 'Fabric discontinued', refunds: [{ method: 'storeCredit', amountCents: 750000 }], ...bell }, own.idToken);
 check('we cannot make it: all back, as store credit', R.cancel4.ok && R.cancel4.order.feeCents === 0 && (await getDoc('pos/retail/customers/c1')).storeCreditCents === 750000, R.cancel4.error || R.cancel4.order);
+check('its factory order cancelled with the reason', (await getDoc(FO(R.storeFault.order.id))).status === 'cancelled' && /Fabric discontinued/.test((await getDoc(FO(R.storeFault.order.id))).cancelReason));
+R.unlink = await call('pos-special', { action: 'factoryLink', entityId: 'BF', companyId: '' }, own.idToken); check('the owner can unlink', R.unlink.ok && R.unlink.linked === null && !((await getDoc('pos/retail/settings/BF')).factory || {}).companyId, R.unlink);
+R.relink = await call('pos-special', { action: 'factoryLink', entityId: 'BF', companyId: 'CPTEST' }, own.idToken); check('and link again by id, the name looked up', R.relink.ok && R.relink.linked.companyName === 'Couch Potato Test', R.relink);
+R.badLink = await call('pos-special', { action: 'factoryLink', entityId: 'BF', companyId: 'NOPE' }, own.idToken); check('an unknown company is refused', R.badLink.status === 404, R.badLink);
 R.counter = await getDoc('pos/retail/counters/BF_SO'); check('SO numbers 1..4 without a gap', R.counter.next === 5, R.counter);
-const audit = await listColl('auditLog'); check('audited', ['specialOrder.open', 'specialOrder.pay', 'specialOrder.status', 'specialOrder.update', 'specialOrder.book', 'specialOrder.deliver', 'specialOrder.cancel'].every(a => audit.some(x => x.action === a)) && audit.some(x => x.action === 'specialOrder.status' && x.actorUid === 'factory'), audit.map(a => a.action));
+const audit = await listColl('auditLog'); check('audited', ['specialOrder.open', 'specialOrder.pay', 'specialOrder.status', 'specialOrder.update', 'specialOrder.book', 'specialOrder.deliver', 'specialOrder.cancel', 'specialOrder.factorySent', 'specialOrder.factoryCancel', 'factory.link', 'factory.unlink'].every(a => audit.some(x => x.action === a)) && audit.some(x => x.action === 'specialOrder.status' && x.actorUid === 'factory'), audit.map(a => a.action));
 
 console.log(JSON.stringify({ fails, ...R }, null, 1));
 console.log(fails.length ? fails.length + ' FAILED' : 'special-api: all passed');

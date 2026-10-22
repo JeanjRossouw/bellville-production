@@ -58,6 +58,8 @@ export async function action(act, b) {
   if (act === 'so-pay') return pay(id);
   if (act === 'so-update') return update(id, b.dataset.status || '');
   if (act === 'so-status') return status(id, b.dataset.to);
+  if (act === 'so-factory-sync') return factorySync(id);
+  if (act === 'so-factory-send') return factorySend(id);
   if (act === 'so-book') return book(id);
   if (act === 'so-deliver') return deliver(id);
   if (act === 'so-cancel') return cancel(id);
@@ -188,10 +190,13 @@ function openDetail(id) {
           ${/^(delivered|collected)$/.test(o.status) ? `<p class="ok">${esc(STATUS_LABEL[o.status])} ${esc(niceDate(o.completedAt))} · tax invoice ${esc(o.completedDocNo || '')}${o.deliveryNote && o.deliveryNote.signedBy ? ' · signed by ' + esc(o.deliveryNote.signedBy) : ''}</p>` : ''}</div>
       </div>
       <p class="muted">Specification signed off by ${esc(sg.signedBy || '')} on ${esc(niceDate(sg.acceptedAt))}: no change of mind once in production.</p>
+      ${factoryLine(o)}
       <div class="card-actions lb-acts">
         ${OPEN.includes(o.status) && o.balanceCents > 0 ? `<button class="btn primary" data-act="so-pay" data-id="${esc(o.id)}">${icon('cash')} Take a payment</button>` : ''}
         ${OPEN.includes(o.status) && o.balanceCents <= 0 && o.status !== 'quoted' ? `<button class="btn primary" data-act="so-deliver" data-id="${esc(o.id)}">${icon('truck')} Hand over: delivery note + tax invoice</button>` : ''}
         ${o.status !== 'quoted' ? `<button class="btn${o.updateDue ? ' primary' : ''}" data-act="so-update" data-id="${esc(o.id)}">${icon('user')} WhatsApp update</button>` : ''}
+        ${o.factory && (o.factory.orders || []).length && OPEN.includes(o.status) ? `<button class="btn" data-act="so-factory-sync" data-id="${esc(o.id)}">Check factory</button>` : ''}
+        ${sup && factoryLinked() && !(o.factory && (o.factory.orders || []).length) && ['depositPaid', 'inProduction', 'ready'].includes(o.status) ? `<button class="btn" data-act="so-factory-send" data-id="${esc(o.id)}">Send to factory</button>` : ''}
         ${sup && canStatus('inProduction') ? `<button class="btn" data-act="so-status" data-to="inProduction" data-id="${esc(o.id)}">In production</button>` : ''}
         ${sup && canStatus('ready') ? `<button class="btn" data-act="so-status" data-to="ready" data-id="${esc(o.id)}">Ready</button>` : ''}
         ${OPEN.includes(o.status) && o.status !== 'quoted' ? `<button class="btn" data-act="so-book" data-id="${esc(o.id)}">${icon('truck')} ${dv ? 'Rebook' : 'Book delivery / collection'}</button>` : ''}
@@ -255,6 +260,50 @@ async function update(id, status) {
     toast('Update logged on ' + o.docNo);
     if (ctx.onChange) ctx.onChange(r);
   } catch (e) { toast(noLine(e), 'warn'); }
+}
+const factoryLinked = () => !!(((d().settings || {}).factory || {}).companyId);
+// where the order stands at the factory
+function factoryLine(o) {
+  const f = o.factory || {};
+  const orders = f.orders || [];
+  if (orders.length) return `<p class="muted">Factory (${esc(f.companyName || '')}): ${orders.map(x => esc(x.orderNo || x.id) + ' ' + esc(String(x.status || 'new').replace('-', ' '))).join(', ')}${f.lastCheckedAt ? ' · checked ' + esc(niceTime(f.lastCheckedAt)) : ''}${f.error ? ' · <span class="warn">' + esc(f.error) + '</span>' : ''}</p>`;
+  if (f.error) return `<p class="warn">${esc(f.error)}</p>`;
+  if (factoryLinked() && ['depositPaid', 'inProduction', 'ready'].includes(o.status)) return '<p class="warn">Not at the factory yet.</p>';
+  return '';
+}
+async function factorySync(id) {
+  const o = one(id); if (!o) return;
+  try {
+    const r = await auth.api('factorySync', { orderId: o.id, ...where() }, API.special);
+    fresh(id, r);
+    toast(r.order.status !== o.status ? o.docNo + ' is now ' + STATUS_LABEL[r.order.status].toLowerCase() + ' · send the customer an update' : 'The factory: ' + (r.order.factory.orders || []).map(x => x.orderNo + ' ' + x.status).join(', '));
+    if (ctx.onChange) ctx.onChange(r);
+  } catch (e) { toast(noLine(e), 'warn'); }
+}
+async function factorySend(id) {
+  const o = one(id); if (!o) return;
+  try {
+    const r = await auth.api('factorySend', { orderId: o.id, ...where() }, API.special);
+    fresh(id, r);
+    toast(o.docNo + ' is at the factory: ' + (r.order.factory.orders || []).map(x => x.orderNo).join(', '));
+    if (ctx.onChange) ctx.onChange(r);
+  } catch (e) { toast(noLine(e), 'warn'); }
+}
+// Admin → Settings → Factory: the owner links the company to a Factory Manager company
+export async function factoryCard(host, entityId) {
+  const el = host.querySelector('#se-factory'); if (!el) return;
+  let r;
+  try { r = await auth.api('factoryCompanies', { entityId }, API.special); } catch (e) { el.innerHTML = `<p class="warn">${esc(e.message)}</p>`; return; }
+  const linked = r.linked;
+  el.innerHTML = `${linked ? `<p>Linked to <strong>${esc(linked.companyName)}</strong>.</p>` : '<p class="muted">Not linked: the till moves a custom order along by hand.</p>'}
+    ${field('Factory company', 'fa-co', { type: 'select', value: linked ? linked.companyId : '', options: [{ value: '', label: 'None' }, ...(r.companies || []).map(c => ({ value: c.id, label: c.name }))] })}
+    <div class="card-actions"><button class="btn primary" data-act="fa-link">Save factory link</button></div>`;
+  el.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-act]'); if (!b || b.dataset.act !== 'fa-link') return; e.preventDefault();
+    try { const x = await auth.api('factoryLink', { entityId, companyId: val(el, 'fa-co') }, API.special); toast(x.linked ? 'Custom orders go to ' + x.linked.companyName : 'Factory link removed'); }
+    catch (err) { toast(err.message, 'warn'); }
+    factoryCard(host, entityId);
+  }, { once: true });
 }
 async function status(id, to) {
   const o = one(id); if (!o) return;

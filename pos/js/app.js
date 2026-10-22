@@ -238,6 +238,7 @@ function paint() {
       : adminSub === 'staff' ? staffHtml() : devicesHtml();
     screen.innerHTML = `<div class="subnav">${subs.map(x => `<button class="subtab${x.key === adminSub ? ' on' : ''}" data-sub="${x.key}">${esc(x.label)}</button>`).join('')}</div>` + body;
     const shop = $('se-shop'); if (shop) online.shopifyCard(screen, shop.dataset.entity, stores);
+    const fac = $('se-factory'); if (fac) specials.factoryCard(screen, fac.dataset.entity);
   }
   else if (view === 'products') { screen.innerHTML = products.productsHtml(prData()); const q = $('pr-q'); if (q && prFilter.q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
   else if (view === 'me') screen.innerHTML = meHtml();

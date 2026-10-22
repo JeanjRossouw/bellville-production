@@ -12,12 +12,18 @@
 //             paid by the special order; the signed delivery note kept; status delivered or collected
 //   cancel    { orderId, kind, reason, feeCents, refunds: [ { method, amountCents, ref } ], approvalToken? }   a manager
 //
-// For the factory production app, with the header X-Factory-Key: <POS_FACTORY_KEY> instead of a sign-in:
-//   factoryQueue  { entityId }                                            → orders paid and not yet ready, with their specs
-//   factoryStatus { docNo | factoryRef, entityId, status: 'inProduction'|'ready', note, factoryRef?, expectedAt? }
+// The factory (Factory Manager, the same Firebase project): once the deposit
+// is paid the server writes the order into the linked factory company's own
+// orders, with the store as the customer — no retail customer goes across —
+// and reads the factory's status back. The factory never calls the POS.
+//   factoryCompanies { entityId }                     the owner: the factory companies to link to
+//   factoryLink      { entityId, companyId | '' }     the owner: link this company to a factory company (or unlink)
+//   factorySend      { orderId }                      a supervisor: send (again) an order whose deposit is paid
+//   factorySync      { orderId }                      any member: read the factory's status now
 //
-// Env: FACTORY_SERVICE_ACCOUNT, POS_FACTORY_KEY, POS_GROUP_ID (optional).
-import { json, Reject, clean, randomId, nowIso, getDoc, query, patchDoc, serverStamp, bodyOf, audit } from './lib/pos.mjs';
+// Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
+import { json, Reject, clean, randomId, nowIso, getDoc, query, patchDoc, serverStamp, bodyOf, audit, requireMember, inEntity } from './lib/pos.mjs';
+import { factoryCfg, listCompanies, companyNamed, sendOrder, readOrders, posStatusOf, cancelOrders, noteHandover } from './lib/factory-link.mjs';
 import { whoAndWhere, prepareSale, prepareTenders, runSale, nextFromCounter, approved, int } from './lib/sale.mjs';
 import { pctOf } from '../../pos/js/money.js';
 import { specialSettings, signoffText, updateText, NEXT, STATUSES, SPEC_FIELDS, CANCEL_KINDS } from '../../pos/js/special-terms.js';
@@ -45,13 +51,6 @@ const specOf = (sp) => { const out = {}; for (const [k] of SPEC_FIELDS) out[k] =
 const payRows = (ctx, so, pays, instalment, firstId, stamp, now) => pays.map((p, i) => ({ create: true, coll: 'payments', id: i === 0 && firstId ? firstId : randomId('pay_'), data: { docType: 'specialOrder', docId: so.id, docNo: so.docNo, instalment, registerId: ctx.registerId || '', shiftId: ctx.shiftId || '', ...p, ...stamp, serverReceivedAt: now } }));
 const auditRow = (ctx, action, so, details, approvers, stamp, now) => ({ create: true, coll: 'auditLog', id: randomId('au_'), data: { action, docType: 'specialOrder', docId: so.id, docNo: so.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, overrideUid: [...approvers.keys()][0] || '', overrideName: [...approvers.values()][0] || '', details, ...stamp, serverReceivedAt: now } });
 const hist = (so, status, by, source, note, now) => [...(so.statusHistory || []), { status, at: now, byName: by, source, note: note || '' }].slice(-50);
-// the factory's shared key, compared in constant time
-function factoryOk(event) {
-  const key = process.env.POS_FACTORY_KEY || '';
-  const got = event.headers['x-factory-key'] || event.headers['X-Factory-Key'] || '';
-  if (!key) throw new Reject(503, 'POS_FACTORY_KEY is not set on the server.');
-  if (got.length !== key.length || [...got].some((c, i) => c !== key[i])) throw new Reject(403, 'Wrong factory key.');
-}
 
 const actions = {
   async open(event, b) {
@@ -104,6 +103,7 @@ const actions = {
       writes.push(auditRow(ctx, 'specialOrder.open', so, { totalCents: prep.total, depositCents: paid, status, lines: prep.lines.length }, prep.approvers, stamp, now));
       return { writes, result: { order: so, payments: dep ? dep.pays : [] } };
     } });
+    if (r.order && r.order.status === 'depositPaid') r.order = await pushToFactory(ctx, r.order);
     return r;
   },
 
@@ -133,8 +133,10 @@ const actions = {
       writes.push(...payRows(ctx, so, t.pays, n, payId, stamp, now));
       if (t.creditUsed) writes.push({ update: true, coll: 'customers', id: customer.id, data: { storeCreditCents: (customer.storeCreditCents || 0) - t.creditUsed, updatedAt: now } });
       writes.push(auditRow(ctx, 'specialOrder.pay', so, { amountCents: t.paid, instalment: n, methods: t.pays.map(p => p.method), balanceCents: patch.balanceCents, status: patch.status || cur.status }, new Map(), stamp, now));
-      return { writes, result: { order: { ...cur, ...patch, id: so.id }, payments: t.pays, instalment: n, paidAt: now } };
+      return { writes, result: { order: { ...cur, ...patch, id: so.id }, payments: t.pays, instalment: n, paidAt: now, sent: !!patch.status } };
     } });
+    if (r.sent) r.order = await pushToFactory(ctx, r.order);
+    delete r.sent;
     return r;
   },
 
@@ -210,6 +212,7 @@ const actions = {
       return { writes, result: { order: { ...cur, ...patch, id: so.id } } };
     } });
     if (r.sale && r.sale.docNo) { await patchDoc('specialOrders', so.id, { completedDocNo: r.sale.docNo }); r.order.completedDocNo = r.sale.docNo; }
+    if (so.factory && so.factory.orders && so.factory.orders.length) await noteHandover(so.factory.companyId, so.factory.orders, `${kind === 'collect' ? 'Collected by' : 'Delivered to'} the customer from the ${ctx.store.name} store on ${nowIso().slice(0, 10)} (${so.docNo}, invoice ${r.sale ? r.sale.docNo : ''})`).catch(() => {});
     return r;
   },
 
@@ -250,29 +253,102 @@ const actions = {
       writes.push(auditRow(ctx, 'specialOrder.cancel', so, { kind, feeCents: fee, refundedCents: refunded, methods: refunds.map(x => x.method) }, approvers, stamp, now));
       return { writes, result: { order: { ...cur, ...patch, id: so.id }, refunds } };
     } });
+    if (so.factory && so.factory.orders && so.factory.orders.length) {
+      try {
+        const done = await cancelOrders(so.factory.companyId, so.factory.orders, clean(b.reason, 200), ctx.user.name);
+        const orders = await readOrders(so.factory.companyId, so.factory.orders);
+        const factory = { ...so.factory, orders, lastCheckedAt: nowIso(), error: '' };
+        await patchDoc('specialOrders', so.id, { factory });
+        r.order.factory = factory;
+        await audit({ action: 'specialOrder.factoryCancel', docType: 'specialOrder', docId: so.id, docNo: so.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, details: { cancelled: done, kept: orders.filter(o => !done.includes(o.id)).map(o => o.orderNo) }, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
+      } catch (e) { console.error('factory cancel', e.message); await patchDoc('specialOrders', so.id, { factory: { ...so.factory, error: 'Could not cancel at the factory: ' + String(e.message).slice(0, 200) } }).catch(() => {}); }
+    }
     return r;
   },
 
-  // ---- the factory production app
-  async factoryQueue(event, b) {
-    factoryOk(event);
+  // ---- the factory
+  async factoryCompanies(event, b) {
+    const { user: u } = await requireMember(event);
     const entityId = clean(b.entityId, 20);
-    if (!entityId) throw new Reject(400, 'Which company (entityId)?');
-    const rows = await query('specialOrders', [{ field: 'entityId', value: entityId }, { field: 'status', value: 'depositPaid' }], 500);
-    const busy = await query('specialOrders', [{ field: 'entityId', value: entityId }, { field: 'status', value: 'inProduction' }], 500);
-    const strip = (o) => ({ id: o.id, docNo: o.docNo, status: o.status, storeId: o.storeId, customer: o.customerSnapshot ? { name: o.customerSnapshot.name, phone: o.customerSnapshot.phone } : null, expectedAt: o.expectedAt, factoryRef: o.factoryRef || '', openedAt: o.openedAt, lines: o.lines.map(l => ({ name: l.name, qty: l.qty, spec: l.spec, note: l.note })), signedOff: !!(o.signoff && o.signoff.signedBy), paidCents: o.paidCents, balanceCents: o.balanceCents });
-    return { ok: true, orders: [...rows, ...busy].sort((x, y) => String(x.openedAt).localeCompare(String(y.openedAt))).map(strip) };
+    if (u.role !== 'owner') throw new Reject(403, 'This is for the owner.');
+    const settings = (await getDoc('settings', entityId)) || {};
+    return { ok: true, companies: await listCompanies(), linked: factoryCfg(settings) };
   },
-  async factoryStatus(event, b) {
-    factoryOk(event);
+  async factoryLink(event, b) {
+    const { uid, user: u } = await requireMember(event);
     const entityId = clean(b.entityId, 20);
-    let so = null;
-    if (b.docNo) { const rows = await query('specialOrders', [{ field: 'entityId', value: entityId }, { field: 'docNo', value: clean(b.docNo, 30).toUpperCase() }], 1); so = rows[0] || null; }
-    else if (b.factoryRef) { const rows = await query('specialOrders', [{ field: 'entityId', value: entityId }, { field: 'factoryRef', value: clean(b.factoryRef, 60) }], 1); so = rows[0] || null; }
-    if (!so) throw new Reject(404, 'No such order: give its SO number or the factory reference, and the entityId.');
-    return setStatus(so, b, { byName: clean(b.by, 80) || 'Factory', source: 'factory' });
+    if (u.role !== 'owner' || !inEntity(u, entityId)) throw new Reject(403, 'This is for the owner.');
+    const companyId = clean(b.companyId, 60);
+    const name = companyId ? await companyNamed(companyId) : '';
+    if (companyId && !name) throw new Reject(404, 'No such factory company.');
+    const factory = companyId ? { companyId, companyName: name, linkedAt: nowIso(), linkedBy: u.name } : {};
+    await patchDoc('settings', entityId, { factory });
+    await audit({ action: companyId ? 'factory.link' : 'factory.unlink', docType: 'settings', docId: entityId, docNo: '', actorUid: uid, actorName: u.name, details: { companyId, name }, entityId, storeId: '', deviceId: 'web' });
+    return { ok: true, linked: companyId ? { companyId, companyName: name } : null };
+  },
+  // send the order to the factory (again): after a failure, or a link made after the deposit was paid
+  async factorySend(event, b) {
+    const ctx = await whoAndWhere(event, b, { noShift: true });
+    approved(ctx, b.approvalToken, 'specialOrder', 'supervisor', 'Sending an order to the factory');
+    const so = await loadOrder(ctx, b.orderId);
+    if (!['depositPaid', 'inProduction', 'ready'].includes(so.status)) throw new Reject(409, `Order ${so.docNo} is ${so.status}: the factory gets it once the deposit is paid.`);
+    const order = await pushToFactory(ctx, so);
+    if (order.factory && order.factory.error) throw new Reject(502, order.factory.error);
+    return { ok: true, order };
+  },
+  // what the factory says now, and the order moved along if it has
+  async factorySync(event, b) {
+    const ctx = await whoAndWhere(event, b, { noShift: true });
+    const so = await loadOrder(ctx, b.orderId);
+    if (!so.factory || !so.factory.orders || !so.factory.orders.length) throw new Reject(409, `Order ${so.docNo} has not been sent to the factory.`);
+    const order = await syncFromFactory(so);
+    return { ok: true, order };
   }
 };
+
+// ---- the factory: the order written into the linked factory company once the deposit is paid
+async function pushToFactory(ctx, so) {
+  const cfg = factoryCfg(ctx.settings);
+  if (!cfg) return so;    // no factory linked: the till moves the status by hand
+  const store = ctx.store || (await getDoc('stores', so.storeId)) || { id: so.storeId, name: so.storeId };
+  try {
+    const sent = await sendOrder(cfg.companyId, so, { ...ctx.entity, id: ctx.entityId }, { ...store, id: so.storeId });
+    const factory = { companyId: cfg.companyId, companyName: cfg.companyName, customerId: sent.customerId, orders: sent.orders, sentAt: so.factory && so.factory.sentAt ? so.factory.sentAt : nowIso(), lastCheckedAt: nowIso(), error: '' };
+    const factoryRef = sent.orders.map(o => o.orderNo).filter(Boolean).join(', ');
+    const patch = { factory, factoryRef, updatedAt: nowIso() };
+    await patchDoc('specialOrders', so.id, patch);
+    await audit({ action: 'specialOrder.factorySent', docType: 'specialOrder', docId: so.id, docNo: so.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, details: { companyId: cfg.companyId, orders: factoryRef }, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
+    return { ...so, ...patch };
+  } catch (e) {
+    console.error('factory send', e.message);
+    const factory = { ...(so.factory || {}), companyId: cfg.companyId, companyName: cfg.companyName, error: 'Not at the factory yet: ' + String(e.message).slice(0, 200) + '. It will be tried again.' };
+    await patchDoc('specialOrders', so.id, { factory }).catch(() => {});
+    await audit({ action: 'specialOrder.factoryFailed', docType: 'specialOrder', docId: so.id, docNo: so.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, details: { error: String(e.message).slice(0, 200) }, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId }).catch(() => {});
+    return { ...so, factory };
+  }
+}
+// the schedule's way in: the same push, with the entity and settings read here
+export async function pushForSchedule(entity, settings, so) {
+  const store = await getDoc('stores', so.storeId);
+  const ctx = { entityId: so.entityId, storeId: so.storeId, entity: { ...entity, id: entity.id }, settings, store: { ...(store || { name: so.storeId }), id: so.storeId }, user: { id: 'server', name: 'Schedule' }, deviceId: 'server' };
+  return pushToFactory(ctx, so);
+}
+// the factory's status read back; the custom order moved forward when the factory has
+export async function syncFromFactory(so) {
+  const orders = await readOrders(so.factory.companyId, so.factory.orders);
+  const now = nowIso();
+  const factory = { ...so.factory, orders, lastCheckedAt: now, error: '' };
+  const patch = { factory, factoryRef: orders.map(o => o.orderNo).filter(Boolean).join(', ') || so.factoryRef || '', updatedAt: now };
+  const to = posStatusOf(orders);
+  const forward = { depositPaid: ['inProduction', 'ready'], inProduction: ['ready'] };
+  if (to && (forward[so.status] || []).includes(to) && NEXT[so.status] && NEXT[so.status].includes(to)) {
+    const note = orders.filter(o => o.orderNo).map(o => `${o.orderNo} ${o.status}`).join(', ');
+    patch.status = to; patch.statusHistory = hist(so, to, 'Factory Manager', 'factory', note, now); patch.updateDue = true;
+    await audit({ action: 'specialOrder.status', docType: 'specialOrder', docId: so.id, docNo: so.docNo, actorUid: 'factory', actorName: 'Factory Manager', details: { from: so.status, to, source: 'factory', note }, entityId: so.entityId, storeId: so.storeId, deviceId: 'factory' });
+  }
+  await patchDoc('specialOrders', so.id, patch);
+  return { ...so, ...patch };
+}
 
 // a status step: only forward, only inProduction or ready from here (delivery and cancellation have their own actions)
 async function setStatus(so, b, { byName, source, ctx }) {
@@ -291,7 +367,7 @@ async function setStatus(so, b, { byName, source, ctx }) {
 const specNote = (sp) => sp ? SPEC_FIELDS.filter(f => sp[f[0]] && f[0] !== 'notes').map(f => f[1] + ' ' + sp[f[0]]) : [];
 
 export const handler = async (event) => {
-  if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Factory-Key', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }, body: '' };
+  if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }, body: '' };
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' });
   try {
     const b = bodyOf(event);

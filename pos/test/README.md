@@ -71,8 +71,11 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
 - `special-api.test.mjs` — step 12: the `pos-special` function over HTTP:
   opening needs the customer and a signed-off spec and takes made-to-order
   items only; a deposit under the minimum leaves it quoted, reaching it
-  sends it to the factory; the factory endpoints with their key (the queue
-  with specs, status by SO number or factory ref); the till's status step;
+  writes the order into the linked Factory Manager company's own orders with
+  the store as the customer and no retail customer data (one factory
+  customer per store, numbered from the factory's sequence, sent again
+  without a second copy); the factory's status read back to the till and
+  its orders cancelled when the till cancels; the owner's link; the till's status step;
   updates logged; a delivery booking; the hand-over into a tax invoice paid
   by the order with the signed note; cancellation by a manager, no fee
   before production and the deposit after. `node pos/test/special-api.test.mjs`

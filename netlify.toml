@@ -28,6 +28,9 @@
 [functions."pos-xero-daily"]
   schedule = "30 1 * * *"
 
+[functions."pos-factory-sync"]
+  schedule = "*/10 * * * *"
+
 # The old Bellville till inside index.html, on /till (it was /pos, which is
 # now the retail POS app in the pos/ folder).
 # ---- factorymanager.co.za: Factory Manager's own address ----

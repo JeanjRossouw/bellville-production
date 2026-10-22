@@ -400,7 +400,8 @@ history [ { n (0 = the deposit), at, amountCents, methods, storeId, byName } ],
 signoff { text (the specification read back and the no-change-of-mind clause), acceptedAt, signedBy, signature (PNG data URL), cashierUid, cashierName },
 status ('quoted'|'depositPaid'|'inProduction'|'ready'|'delivered'|'collected'|'cancelled'),
 statusHistory [ { status, at, byName, source ('till'|'factory'), note } ], updateDue (bool: a status changed and no message went yet),
-updates [ { at, status, how, byName } ], lastUpdateAt, factoryRef, expectedAt (date), openedAt,
+updates [ { at, status, how, byName } ], lastUpdateAt, factoryRef (the factory's order numbers, filled in by the server), expectedAt (date), openedAt,
+factory { companyId, companyName, customerId, orders [ { id, orderNo, lineNo, status } ], sentAt, lastCheckedAt, error } (once sent),
 delivery { kind ('deliver'|'collect'), date, slot, address, phone, note, driverName, bookedAt, bookedBy } | null,
 deliveryNote { signedBy, signature, at, byName, note, kind } | null,
 completedAt, completedSaleId, completedDocNo, completedByUid, completedByName,
@@ -415,11 +416,25 @@ covers the work, as the sign-off says). The deposit and the balance are
 `payments` rows (`docType 'specialOrder'`), taken at any till. The
 hand-over writes the final `sales` document paid by one `specialOrder`
 tender (the sale carries `specialOrderOf`) and keeps the signed delivery
-note. Nothing is reserved: the goods do not exist until made. The factory
-production app reads the queue and sets `inProduction`/`ready` through
-`pos-special` (`factoryQueue`, `factoryStatus`) with the header
-`X-Factory-Key: <POS_FACTORY_KEY>`; every status change marks `updateDue`
-until the till sends the customer the WhatsApp update.
+note. Nothing is reserved: the goods do not exist until made.
+
+**The factory.** The POS and Factory Manager are separate systems in one
+Firebase project; the POS server is the only bridge. When the deposit is
+reached, `pos-special` writes the order into the linked factory company
+(`settings/{entityId}.factory { companyId, companyName, linkedAt, linkedBy }`,
+set by the owner under Admin → Settings → Factory): one
+`companies/{companyId}/orders/pos-{specialOrderId}-{lineNo}` per line,
+numbered from the factory's own sequence, with
+`companies/{companyId}/customers/pos-{entityId}-{storeId}` — the *store*, in
+group "POS stores" — as the customer. The order carries the SO number, the
+specification, the price per piece, the expected date and the store's
+address; the retail customer never goes across. The factory's status comes
+back the same way (`factorySync`, and the `pos-factory-sync` schedule every
+ten minutes, which also sends what is not there yet): in production →
+`inProduction`, all lines done or dispatched → `ready`, with
+`source: 'factory'` in the history. A cancellation at the till cancels the
+factory orders not yet out of the door. Every status change marks
+`updateDue` until the till sends the customer the WhatsApp update.
 
 **`shifts/{id}`** — one register session (the `pos-shift` function)
 ```
