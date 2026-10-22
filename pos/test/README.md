@@ -153,6 +153,10 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   token good once on an action (`approvalToken`) and once on a sale line
   (a discount over the limit), the same sale replayed still answered.
   `node pos/test/auth-api.test.mjs`
+- `shopifycard.test.mjs` — the Shopify and Factory cards under Admin →
+  Settings in the browser, used the way a person does (a click into a field
+  or on the select first, then the button): Connect, the location and the
+  default store saved, the factory link saved. `node pos/test/shopifycard.test.mjs`
 - `money.test.mjs` — the shared cents, VAT and loyalty-points maths; needs
   no emulator. `node pos/test/money.test.mjs`
 - Step 18 (hardening, see `pos/HARDENING.md`) is covered inside the suites
