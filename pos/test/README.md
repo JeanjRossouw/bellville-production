@@ -79,6 +79,17 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   updates logged; a delivery booking; the hand-over into a tax invoice paid
   by the order with the signed note; cancellation by a manager, no fee
   before production and the deposit after. `node pos/test/special-api.test.mjs`
+- `salesorder-api.test.mjs` — sales orders over HTTP: a made-to-order item on
+  an ordinary sale needs the customer; the sale is written with its
+  `salesOrders` document and the spec on the invoice line, and goes to the
+  factory at once (store as the customer, invoice as the reference); the
+  factory's status back by hand and by the schedule; the update; the signed
+  hand-over; a credit note on the line cancels the factory order; on account.
+  `node pos/test/salesorder-api.test.mjs`
+- `salesorders.test.mjs` — sales orders in the browser: the specification on
+  the line, the customer needed before paying, paid by card with the spec on
+  the invoice, the Sales orders section, the factory checked, the WhatsApp
+  update, the hand-over signed on the screen. `node pos/test/salesorders.test.mjs`
 - `specials.test.mjs` — step 12 in the browser: a custom order from the
   cart with a photo and the sign-off signed on the screen, the tab, the
   WhatsApp update, the balance, the hand-over with a signed delivery note,

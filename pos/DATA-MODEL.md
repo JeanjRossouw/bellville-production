@@ -436,6 +436,29 @@ ten minutes, which also sends what is not there yet): in production →
 factory orders not yet out of the door. Every status change marks
 `updateDue` until the till sends the customer the WhatsApp update.
 
+**`salesOrders/{saleId}`** — a sales order: made-to-order lines sold on an
+ordinary sale (the `pos-sale` function writes it in the sale's transaction;
+`pos-salesorder` moves it along). The sale is never touched again; this is
+the live document beside it.
+```
+saleId, docNo (the invoice), seq, entityId, storeId, registerId, shiftId, customerId (required), customerSnapshot { name, phone, email },
+lines [ { lineNo, productId, variantId, itemId, name, qty, unitPriceCents, netCents, note, spec { model, size, fabric, colour, legs, notes }, cancelledQty } ],
+lineCount, totalCents, paidInFull (false when on account),
+status ('open'|'inProduction'|'ready'|'delivered'|'collected'|'cancelled'), statusHistory [ { status, at, byName, source ('till'|'factory'), note } ],
+updateDue, updates [ { at, status, how, byName } ], lastUpdateAt, expectedAt, openedAt, lastPaidAt,
+factory { companyId, companyName, customerId, orders [ { id, orderNo, lineNo, status } ], sentAt, lastCheckedAt, error }, factoryRef,
+handover { signedBy, signature, at, byName, note, kind } | null, completedAt, cancelledAt, cancelReason,
+cashierUid, cashierName, note, + stamps, updatedAt
+```
+R: members of the store. W: server only. A made-to-order line on a sale
+carries `spec` on its `saleLines` row too (and the spec is read back on the
+line's note, so it prints). The sale needs a customer. The factory gets the
+order the moment the sale is written, exactly as for a custom order, and
+its status comes back the same way; the hand-over keeps the signed note
+here (the invoice was written with the sale). A credit note on a
+made-to-order line sets `cancelledQty`, cancels the sales order when every
+line is back, and calls the factory order off.
+
 **`shifts/{id}`** — one register session (the `pos-shift` function)
 ```
 entityId, storeId, registerId, deviceId, status ('open'|'closed'),

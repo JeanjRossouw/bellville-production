@@ -15,7 +15,8 @@
 // is store credit only, needs the customer and a manager.
 //
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
-import { json, Reject, clean, randomId, nowIso, getDoc, query, serverStamp, bodyOf } from './lib/pos.mjs';
+import { cancelAtFactory } from './lib/factory-bridge.mjs';
+import { json, Reject, clean, randomId, nowIso, getDoc, query, serverStamp, bodyOf, patchDoc } from './lib/pos.mjs';
 import { whoAndWhere, prepareSale, runSale, nextFromCounter, moveWrites, approved, priceOf, int } from './lib/sale.mjs';
 import { vatIn, rateOn, rateFor } from '../../pos/js/money.js';
 
@@ -175,6 +176,20 @@ const actions = {
         return { writes, result: { creditNote: { id, ...note }, refunds } };
       }
     });
+    // a made-to-order line credited: the sales order's line is off, and its factory order called off when the whole line is back
+    if (sale && lines.some(l => l.type === 'mto')) {
+      const so = await getDoc('salesOrders', sale.id);
+      if (so) {
+        const soLines = (so.lines || []).map(l => { const hit = lines.find(x => x.type === 'mto' && x.saleLineNo === l.lineNo); return hit ? { ...l, cancelledQty: Math.min(l.qty, (l.cancelledQty || 0) + hit.qty) } : l; });
+        const allOff = soLines.every(l => (l.cancelledQty || 0) >= l.qty);
+        const now = nowIso(), cn = result.creditNote.docNo;
+        const patch = { lines: soLines, updatedAt: now, ...(allOff && so.status !== 'cancelled' ? { status: 'cancelled', cancelledAt: now, cancelReason: 'Credit note ' + cn, statusHistory: [...(so.statusHistory || []), { status: 'cancelled', at: now, byName: ctx.user.name, source: 'till', note: 'Credit note ' + cn }].slice(-50), updateDue: true } : {}) };
+        await patchDoc('salesOrders', sale.id, patch);
+        const off = ((so.factory || {}).orders || []).filter(o => soLines.some(l => l.lineNo === o.lineNo && (l.cancelledQty || 0) >= l.qty && !((so.lines || []).find(x => x.lineNo === l.lineNo) || {}).cancelledQty));
+        if (off.length) await cancelAtFactory(ctx, 'salesOrders', { ...so, ...patch, id: sale.id }, off, 'Credit note ' + cn);
+        result.salesOrder = { ...so, ...patch, id: sale.id };
+      }
+    }
     return result;
   }
 };

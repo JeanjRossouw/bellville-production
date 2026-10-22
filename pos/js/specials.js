@@ -10,7 +10,7 @@ import { API } from './config.js';
 import * as auth from './auth.js';
 import { esc, toast, field, row, val, openModal, money, niceDate, niceTime, empty } from './ui.js';
 import { centsOf, randsOf, pctOf } from './money.js';
-import { specialSettings, signoffText, STATUS_LABEL, NEXT, SPEC_FIELDS, CANCEL_KINDS } from './special-terms.js';
+import { specialSettings, signoffText, STATUS_LABEL, NEXT, SPEC_FIELDS, CANCEL_KINDS, SALES_LABEL, SALES_NEXT } from './special-terms.js';
 import { openReceipt } from './receiptui.js';
 import { whatsappUrl, specLines } from './receipt.js';
 import { padHtml, wirePad } from './signpad.js';
@@ -40,7 +40,7 @@ export function specialsHtml() {
     .sort((a, b) => (OPEN.includes(a.status) ? 0 : 1) - (OPEN.includes(b.status) ? 0 : 1) || String(a.expectedAt).localeCompare(String(b.expectedAt)));
   const open = all.filter(o => OPEN.includes(o.status));
   const due = all.filter(o => o.updateDue && o.status !== 'quoted').length;
-  return `<div class="page-head"><h1>Custom orders</h1><p class="sub">${open.length} open · ${esc(money(open.reduce((n, o) => n + o.balanceCents, 0)))} still to come in${due ? ' · ' + due + ' update' + (due === 1 ? '' : 's') + ' to send' : ''}${all.filter(o => o.status === 'ready').length ? ' · ' + all.filter(o => o.status === 'ready').length + ' ready' : ''}</p></div>
+  return salesOrdersHtml() + `<div class="page-head"><h1>Custom orders</h1><p class="sub">${open.length} open · ${esc(money(open.reduce((n, o) => n + o.balanceCents, 0)))} still to come in${due ? ' · ' + due + ' update' + (due === 1 ? '' : 's') + ' to send' : ''}${all.filter(o => o.status === 'ready').length ? ' · ' + all.filter(o => o.status === 'ready').length + ' ready' : ''}</p></div>
     <div class="toolbar">
       <input id="so-q" class="search" type="search" placeholder="Number, customer, phone, item, factory ref" value="${esc(so.q)}">
       <select id="so-filter">${[['open', 'Open'], ['quoted', 'Quoted'], ['depositPaid', 'Deposit paid'], ['inProduction', 'In production'], ['ready', 'Ready'], ['done', 'Delivered / collected'], ['cancelled', 'Cancelled'], ['all', 'All']].map(x => `<option value="${x[0]}"${so.filter === x[0] ? ' selected' : ''}>${x[1]}</option>`).join('')}</select>
@@ -51,6 +51,93 @@ export function specialsHtml() {
       : empty(so.filter === 'open' ? 'No open custom orders' : 'Nothing here', so.filter === 'open' ? 'Ring a made-to-order item up under Sell, add the customer, and tap Custom order.' : '')}`;
 }
 
+// ---------------------------------------------------------- sales orders --
+// a made-to-order item sold as an ordinary sale: invoiced at the till, built by the factory, handed over here
+const SX_OPEN = ['open', 'inProduction', 'ready'];
+const SX_CHIP = { open: 'prod', inProduction: 'prod', ready: 'ok', delivered: '', collected: '', cancelled: 'off' };
+const sx = { filter: 'open' };
+const oneSales = (id) => (d().salesOrders || []).find(o => o.id === id);
+function salesOrdersHtml() {
+  const all = d().salesOrders || [];
+  if (!all.length) return '';
+  const rows = all.filter(o => sx.filter === 'all' || (sx.filter === 'open' ? SX_OPEN.includes(o.status) : !SX_OPEN.includes(o.status)))
+    .sort((a, b) => (SX_OPEN.includes(a.status) ? 0 : 1) - (SX_OPEN.includes(b.status) ? 0 : 1) || String(a.expectedAt).localeCompare(String(b.expectedAt)));
+  const open = all.filter(o => SX_OPEN.includes(o.status));
+  const due = all.filter(o => o.updateDue).length;
+  return `<div class="page-head"><h1>Sales orders</h1><p class="sub">${open.length} open · made-to-order items sold on an invoice, built by the factory${all.filter(o => o.status === 'ready').length ? ' · ' + all.filter(o => o.status === 'ready').length + ' ready' : ''}${due ? ' · ' + due + ' update' + (due === 1 ? '' : 's') + ' to send' : ''}</p></div>
+    <div class="toolbar"><select id="sx-filter">${[['open', 'Open'], ['done', 'Handed over / cancelled'], ['all', 'All']].map(x => `<option value="${x[0]}"${sx.filter === x[0] ? ' selected' : ''}>${x[1]}</option>`).join('')}</select><span class="muted">A sales order starts under Sell: ring up a made-to-order item, fill in its specification on the line, add the customer and take payment.</span></div>
+    ${rows.length ? `<div class="card" style="padding:0;overflow:auto"><table class="tbl lb-tbl"><thead><tr><th>Invoice</th><th>Customer</th><th>What</th><th>Expected</th><th class="r">Value</th><th>Status</th><th>Factory</th><th></th></tr></thead>
+      <tbody>${rows.map(o => `<tr class="${SX_OPEN.includes(o.status) ? '' : 'off'}"><td><strong>${esc(o.docNo)}</strong></td><td>${esc((o.customerSnapshot || {}).name || '')}<div class="muted">${esc((o.customerSnapshot || {}).phone || '')}</div></td><td>${esc(o.lines.map(l => l.qty + ' × ' + l.name + (l.cancelledQty ? ' (' + l.cancelledQty + ' credited)' : '')).join(', '))}</td><td class="muted">${esc(niceDate(o.expectedAt))}</td><td class="r">${esc(money(o.totalCents))}</td><td><span class="chip ${SX_CHIP[o.status] || ''}">${esc(SALES_LABEL[o.status] || o.status)}</span>${o.updateDue ? '<span class="chip late">update to send</span>' : ''}</td><td class="muted">${esc(o.factoryRef || (o.factory && o.factory.error ? 'not sent' : ''))}</td><td class="r"><button class="btn ghost sm" data-act="so-sales-open" data-id="${esc(o.id)}">Open</button></td></tr>`).join('')}</tbody></table></div>` : empty('No open sales orders', '')}`;
+}
+function openSalesDetail(id) {
+  const o = oneSales(id); if (!o) return;
+  const sup = auth.atLeast('supervisor');
+  const can = (to) => SX_OPEN.includes(o.status) && SALES_NEXT[o.status] && SALES_NEXT[o.status].includes(to);
+  const { wrap } = openModal('Sales order · invoice ' + o.docNo, `<div class="lb-detail">
+    <div class="lb-head"><span class="chip ${SX_CHIP[o.status] || ''}">${esc(SALES_LABEL[o.status] || o.status)}</span>${o.updateDue ? '<span class="chip late">update to send</span>' : ''}<span class="muted">Sold ${esc(niceDate(o.openedAt))} by ${esc(o.cashierName)} · expected ${esc(niceDate(o.expectedAt))} · ${esc((o.customerSnapshot || {}).name || '')} ${esc((o.customerSnapshot || {}).phone || '')}${o.paidInFull === false ? ' · on account' : ' · paid'}</span></div>
+    <div class="grid two">
+      <div><h3>What</h3>${o.lines.map(l => `<div class="x-row"><span>${esc(l.qty + ' × ' + l.name)}${l.cancelledQty ? ' <span class="chip off">' + l.cancelledQty + ' credited</span>' : ''}${l.spec ? '<div class="muted">' + esc(specLines(l.spec).join(' · ')) + '</div>' : ''}${l.note ? '<div class="muted">' + esc(l.note) + '</div>' : ''}</span><span>${esc(money(l.netCents))}</span></div>`).join('')}</div>
+      <div><h3>Progress</h3>${(o.statusHistory || []).map(h => `<div class="x-row"><span>${esc(SALES_LABEL[h.status] || h.status)}${h.note ? ' · ' + esc(h.note) : ''}</span><span class="muted">${esc(niceDate(h.at))} · ${esc(h.byName)}${h.source === 'factory' ? ' (factory)' : ''}</span></div>`).join('')}
+        ${(o.updates || []).length ? '<h3>Updates sent</h3>' + o.updates.map(u => `<div class="x-row"><span>${esc(SALES_LABEL[u.status] || u.status)} by ${esc(u.how)}</span><span class="muted">${esc(niceDate(u.at))} · ${esc(u.byName)}</span></div>`).join('') : ''}
+        ${o.handover ? `<p class="ok">${esc(SALES_LABEL[o.status])} ${esc(niceDate(o.handover.at))}${o.handover.signedBy ? ' · signed by ' + esc(o.handover.signedBy) : ''}</p>` : ''}
+        ${o.status === 'cancelled' ? `<p class="warn">Cancelled ${esc(niceDate(o.cancelledAt))}${o.cancelReason ? ': ' + esc(o.cancelReason) : ''}</p>` : ''}</div>
+    </div>
+    ${factoryLine(o)}
+    <div class="card-actions lb-acts">
+      ${o.factory && (o.factory.orders || []).length && SX_OPEN.includes(o.status) ? `<button class="btn" data-act="so-sales-sync" data-id="${esc(o.id)}">Check factory</button>` : ''}
+      ${sup && factoryLinked() && !(o.factory && (o.factory.orders || []).length) && SX_OPEN.includes(o.status) ? `<button class="btn" data-act="so-sales-send" data-id="${esc(o.id)}">Send to factory</button>` : ''}
+      <button class="btn${o.updateDue ? ' primary' : ''}" data-act="so-sales-update" data-id="${esc(o.id)}">${icon('user')} WhatsApp update</button>
+      ${sup && can('inProduction') ? `<button class="btn" data-act="so-sales-status" data-to="inProduction" data-id="${esc(o.id)}">In production</button>` : ''}
+      ${sup && can('ready') ? `<button class="btn" data-act="so-sales-status" data-to="ready" data-id="${esc(o.id)}">Ready</button>` : ''}
+      ${SX_OPEN.includes(o.status) ? `<button class="btn primary" data-act="so-sales-handover" data-id="${esc(o.id)}">${icon('truck')} Hand over</button>` : ''}
+    </div></div>`, { okLabel: 'Close', cancelLabel: '' });
+  wrap.querySelector('.modal-card').classList.add('wide');
+}
+function freshSales(id, r) { if (r && r.order) { const list = d().salesOrders || []; const i = list.findIndex(x => x.id === id); if (i >= 0) list[i] = { ...list[i], ...r.order }; } return oneSales(id) || (r && r.order); }
+async function salesCall(id, action, body, done) {
+  const o = oneSales(id); if (!o) return;
+  try {
+    const r = await auth.api(action, { saleId: o.id, ...body, ...where() }, API.salesOrder);
+    freshSales(id, r);
+    done(r, o);
+    if (ctx.onChange) ctx.onChange(r);
+    document.querySelector('#modal') && openSalesDetail(id);
+  } catch (e) { toast(noLine(e), 'warn'); }
+}
+function salesStatus(id, to) { const note = prompt((to === 'ready' ? 'Ready: ' : 'In production: ') + 'a note for the record (optional)', ''); if (note === null) return; return salesCall(id, 'status', { status: to, note }, (r, o) => toast(o.docNo + ' is now ' + SALES_LABEL[to].toLowerCase() + ' · send the customer an update')); }
+async function salesUpdate(id) {
+  const o = oneSales(id); if (!o) return;
+  try {
+    const r = await auth.api('update', { saleId: o.id, how: 'whatsapp', ...where() }, API.salesOrder);
+    freshSales(id, r);
+    if (r.phone) window.open(whatsappUrl(r.phone, r.text), '_blank'); else { await navigator.clipboard.writeText(r.text).catch(() => {}); toast('No phone number: the message is copied.'); }
+    if (ctx.onChange) ctx.onChange(r);
+    document.querySelector('#modal') && openSalesDetail(id);
+  } catch (e) { toast(noLine(e), 'warn'); }
+}
+function salesHandover(id) {
+  const o = oneSales(id); if (!o) return;
+  let busy = false;
+  const { wrap, close } = openModal('Hand over: invoice ' + o.docNo, `
+    <p class="muted">${esc(o.lines.map(l => l.qty + ' × ' + l.name).join(', '))}. The tax invoice was written with the sale${o.paidInFull === false ? ' (on account)' : ''}.</p>
+    ${row(field('Received by', 'dn-name', { value: (o.customerSnapshot || {}).name || '' }), field('Collected or delivered', 'dn-kind', { type: 'select', value: 'collect', options: [{ value: 'collect', label: 'Collected at the store' }, { value: 'deliver', label: 'Delivered' }] }))}
+    ${field('Note', 'dn-note', { placeholder: 'e.g. small scuff noted' })}
+    ${padHtml('dn-pad')}`, { okLabel: 'Hand over', cancelLabel: 'Back', onOk: () => submit() });
+  const pad = wirePad(wrap.querySelector('#dn-pad'));
+  async function submit() {
+    if (busy) return false;
+    if (pad.isEmpty() && !confirm('No signature. Hand over without one?')) return false;
+    busy = true;
+    try {
+      const r = await auth.api('handover', { saleId: o.id, kind: val(wrap, 'dn-kind'), signedBy: val(wrap, 'dn-name'), signature: pad.dataUrl(), note: val(wrap, 'dn-note'), ...where() }, API.salesOrder);
+      close(true); freshSales(id, r);
+      toast(o.docNo + ' handed over · send the customer an update');
+      if (ctx.onChange) ctx.onChange(r);
+      return true;
+    } catch (e) { busy = false; toast(noLine(e), 'warn'); return false; }
+  }
+}
+
 // ------------------------------------------------------------ actions --
 export async function action(act, b) {
   const id = b.dataset.id;
@@ -59,6 +146,12 @@ export async function action(act, b) {
   if (act === 'so-update') return update(id, b.dataset.status || '');
   if (act === 'so-status') return status(id, b.dataset.to);
   if (act === 'so-factory-sync') return factorySync(id);
+  if (act === 'so-sales-open') return openSalesDetail(id);
+  if (act === 'so-sales-sync') return salesCall(id, 'factorySync', {}, (r, o) => toast(r.order.status !== o.status ? o.docNo + ' is now ' + SALES_LABEL[r.order.status].toLowerCase() : 'The factory: ' + (r.order.factory.orders || []).map(x => x.orderNo + ' ' + x.status).join(', ')));
+  if (act === 'so-sales-send') return salesCall(id, 'factorySend', {}, (r, o) => toast(o.docNo + ' is at the factory: ' + (r.order.factory.orders || []).map(x => x.orderNo).join(', ')));
+  if (act === 'so-sales-status') return salesStatus(id, b.dataset.to);
+  if (act === 'so-sales-update') return salesUpdate(id);
+  if (act === 'so-sales-handover') return salesHandover(id);
   if (act === 'so-factory-send') return factorySend(id);
   if (act === 'so-book') return book(id);
   if (act === 'so-deliver') return deliver(id);
@@ -68,7 +161,7 @@ export async function action(act, b) {
   if (act === 'so-print-cancel') { const o = one(id); if (o) openReceipt(docOf(o, 'cancel')); return; }
 }
 export function onInput(id, value) { if (id === 'so-q') { so.q = value; ctx.repaint(); const q = document.getElementById('so-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } } }
-export function onChange(e) { if (e.target.id === 'so-filter') { so.filter = e.target.value; ctx.repaint(); } }
+export function onChange(e) { if (e.target.id === 'so-filter') { so.filter = e.target.value; ctx.repaint(); } if (e.target.id === 'sx-filter') { sx.filter = e.target.value; ctx.repaint(); } }
 
 // ------------------------------------------------------- the documents --
 export function docOf(o, docKind, extra = {}) {
@@ -268,7 +361,7 @@ function factoryLine(o) {
   const orders = f.orders || [];
   if (orders.length) return `<p class="muted">Factory (${esc(f.companyName || '')}): ${orders.map(x => esc(x.orderNo || x.id) + ' ' + esc(String(x.status || 'new').replace('-', ' '))).join(', ')}${f.lastCheckedAt ? ' · checked ' + esc(niceTime(f.lastCheckedAt)) : ''}${f.error ? ' · <span class="warn">' + esc(f.error) + '</span>' : ''}</p>`;
   if (f.error) return `<p class="warn">${esc(f.error)}</p>`;
-  if (factoryLinked() && ['depositPaid', 'inProduction', 'ready'].includes(o.status)) return '<p class="warn">Not at the factory yet.</p>';
+  if (factoryLinked() && ['open', 'depositPaid', 'inProduction', 'ready'].includes(o.status)) return '<p class="warn">Not at the factory yet.</p>';
   return '';
 }
 async function factorySync(id) {

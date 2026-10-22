@@ -62,7 +62,7 @@ await t('cashier lists products of her entity', getDocs(query(collection(cash, '
 await t('cashier reads stock in her store', getDoc(P(cash, 'stockLevels', 'BF-BELL_p1')), true);
 
 // ---- the server-only collections refuse every browser
-const srvColls = ['sales', 'saleLines', 'payments', 'creditNotes', 'refunds', 'laybys', 'specialOrders', 'shifts', 'goodsReceived', 'stockMovements', 'stockLevels', 'numberBlocks', 'voidedNumbers', 'counters', 'devices', 'pinHashes'];
+const srvColls = ['sales', 'saleLines', 'payments', 'creditNotes', 'refunds', 'laybys', 'specialOrders', 'salesOrders', 'shifts', 'goodsReceived', 'stockMovements', 'stockLevels', 'numberBlocks', 'voidedNumbers', 'counters', 'devices', 'pinHashes'];
 for (const c of srvColls) await t('owner CANNOT write ' + c, setDoc(P(owner, c, 'x1'), { any: 1, ...stamp('owner', 'BF', 'BF-BELL') }), false);
 await t('owner CANNOT change a sale', updateDoc(P(owner, 'sales', 's1'), { totalCents: 1 }), false);
 await t('owner CANNOT delete a sale', deleteDoc(P(owner, 'sales', 's1')), false);

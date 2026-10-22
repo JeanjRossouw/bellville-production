@@ -144,7 +144,7 @@ export function sellHtml() {
           <strong class="pos-line-tot">${esc(money(l.lineTotalCents))}</strong>
         </div>
         <div class="pos-line-disc"><button class="btn ghost sm" data-act="sl-line-disc" data-i="${i}">${l.discountCents ? '− ' + esc(money(l.discountCents)) + (l.discountPct ? ' (' + esc(l.discountPct) + '%)' : '') + (l.discountBy ? ' · ' + esc(l.discountBy.name) : '') : 'Discount'}</button>
-          <button class="btn ghost sm" data-act="sl-note" data-i="${i}">${l.note ? esc(l.note) : 'Note'}</button>${l.trackStock && stockOf(l.itemId) < l.qty ? '<span class="chip late">stock goes negative</span>' : ''}</div>
+          <button class="btn ghost sm" data-act="sl-note" data-i="${i}">${l.type === 'mto' ? (l.spec && (l.spec.fabric || l.spec.size || l.spec.colour) ? esc([l.spec.size, l.spec.fabric, l.spec.colour, l.spec.legs].filter(Boolean).join(' · ')) : 'Specification') + (l.note ? ' · ' + esc(l.note) : '') : l.note ? esc(l.note) : 'Note'}</button>${l.type === 'mto' ? '<span class="chip prod">made to order</span>' : ''}${l.trackStock && stockOf(l.itemId) < l.qty ? '<span class="chip late">stock goes negative</span>' : ''}</div>
       </div>`).join('') : `<div class="pos-cart-empty">${icon('cart')}<span>No items yet</span><small>Scan a barcode or tap a product</small></div>`}</div>
       <div class="pos-totals">
         <div><span>Items (${t.pieces})</span><strong>${esc(money(t.grossCents))}</strong></div>
@@ -199,6 +199,7 @@ export async function action(act, b) {
     case 'sl-pay': {
       if (!c.lines.length) return;
       if (d().registerId && !d().shiftOpen) return toast('The register is closed: open it under Register first.', 'warn');
+      if (c.lines.some(l => l.type === 'mto') && !c.customer) return toast('A made-to-order item is a sales order: add the customer first, so the store can tell them when it is ready.', 'warn');
       const t = totals();
       return openPay({ totals: t, cart: c, data: d(), onDone: (r) => {
         sale.lastSale = r; sale.cart = freshCart(); persist(); ctx.repaint();
@@ -243,7 +244,13 @@ function customItem() {
 }
 function lineNote(i) {
   const l = sale.cart.lines[i]; if (!l) return;
-  openModal('Note on ' + l.name, field('Note', 'ln-note', { value: l.note, placeholder: 'e.g. Grey fabric, deliver Friday' }), { okLabel: 'Save', onOk: (w) => { l.note = val(w, 'ln-note'); persist(); ctx.repaint(); return true; } });
+  if (l.type !== 'mto') return openModal('Note on ' + l.name, field('Note', 'ln-note', { value: l.note, placeholder: 'e.g. Grey fabric, deliver Friday' }), { okLabel: 'Save', onOk: (w) => { l.note = val(w, 'ln-note'); persist(); ctx.repaint(); return true; } });
+  // made to order: the specification goes to the factory with the sale (a sales order)
+  const sp = l.spec || {};
+  openModal('Made to order: ' + l.name, `<p class="muted">Sold as a sales order: when the sale is written the factory gets this specification, and the customer on the sale is told when it is ready.</p>
+    <div class="grid two">${field('Model', 'ln-model', { value: sp.model || l.name })}${field('Size', 'ln-size', { value: sp.size || '', placeholder: 'e.g. 2.4 m' })}${field('Fabric', 'ln-fabric', { value: sp.fabric || '', placeholder: 'e.g. Linen look' })}${field('Colour', 'ln-colour', { value: sp.colour || '', placeholder: 'e.g. Charcoal' })}${field('Legs', 'ln-legs', { value: sp.legs || '', placeholder: 'e.g. Oak, tapered' })}</div>
+    ${field('Notes for the maker', 'ln-notes', { type: 'textarea', rows: 2, value: sp.notes || '' })}
+    ${field('Note on the slip', 'ln-note', { value: l.note, placeholder: 'e.g. deliver Friday' })}`, { okLabel: 'Save', onOk: (w) => { l.spec = { model: val(w, 'ln-model'), size: val(w, 'ln-size'), fabric: val(w, 'ln-fabric'), colour: val(w, 'ln-colour'), legs: val(w, 'ln-legs'), notes: val(w, 'ln-notes') }; l.note = val(w, 'ln-note'); persist(); ctx.repaint(); return true; } });
 }
 // a discount needs a reason; over my limit, the PIN of a role that may give it
 async function approveDiscount(pct, what) {
