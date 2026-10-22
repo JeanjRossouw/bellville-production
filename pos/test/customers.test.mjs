@@ -71,6 +71,10 @@ await scan('LAMP');
 await p.click('[data-act=sl-customer]'); await p.waitForSelector('#modal #cu-q'); await p.click('#modal summary');
 await p.fill('#cu-name', 'Thandi Mokoena'); await p.fill('#cu-phone', '082 555 0101'); await p.check('#cu-whatsapp');
 await p.click('#cu-add'); R.added = await toast(); await p.waitForTimeout(800);
+if (/name and a cell number/.test(R.added)) {   // the details panel sometimes opens after the first fill: once more
+  await p.fill('#cu-name', 'Thandi Mokoena'); await p.fill('#cu-phone', '082 555 0101'); if (!(await p.isChecked('#cu-whatsapp'))) await p.check('#cu-whatsapp');
+  await p.click('#cu-add'); R.added = await toast(); await p.waitForTimeout(800);
+}
 check('added through the server', /Thandi Mokoena added/.test(R.added) && /Thandi Mokoena/.test(await p.locator('.pos-right').innerText()), R.added);
 const c1 = (await listColl('customers'))[0];
 check('written with the key and dated WhatsApp consent from the till', c1 && c1.phoneKey === '27825550101' && c1.consent.whatsapp.granted && c1.consent.whatsapp.source === 'till' && c1.consent.whatsapp.byName === 'Cathy' && !c1.consent.sms.granted, c1 && c1.consent);

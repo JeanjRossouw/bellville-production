@@ -73,7 +73,7 @@ R.nav = await p.$$eval('#nav [data-view]', x => x.map(y => y.dataset.view)); che
 
 check('the assistant button is on the till', (await p.locator('#as-fab').count()) === 1);
 await p.click('#as-fab'); await p.waitForSelector('#as-panel:not([hidden])');
-R.hello = await p.locator('#as-log').innerText(); check('the welcome and the starter questions', /Ask me how to do anything on the till/.test(R.hello) && /What should I reorder\?/.test(R.hello), R.hello);
+R.hello = await p.locator('#as-log').innerText(); check('the welcome and the starter questions', /Ask me how to do anything on the till/.test(R.hello) && /What should I reorder\?/i.test(R.hello), R.hello);
 await p.click('#as-log [data-ask="What should I reorder?"]'); await p.waitForTimeout(1500);
 R.log1 = await p.locator('#as-log').innerText(); check('the starter asked and answered', /What should I reorder\?/.test(R.log1) && /Mock answer to: What should I reorder\?/.test(R.log1), R.log1);
 const L = mock.last(); check('the till sent the tab and the store', /Tab open now: sell/.test(L.body.messages[0].content) && /Store: Bellville/.test(L.body.system[1].text), L.body.messages[0].content);

@@ -15,9 +15,15 @@
   # esbuild bundles each function with its node_modules (e.g. jose, @netlify/blobs)
   node_bundler = "esbuild"
 
-# The two timed jobs. Declared here because Netlify does not pick up the
+# The timed jobs. Declared here because Netlify does not pick up the
 # schedule written inside these functions (the deploy record showed none),
 # so without this they only ever ran when called by hand.
+#
+# This repo deploys to more than one site, so every schedule fires on every
+# site. Each scheduled function checks for the keys it needs and answers
+# 200 "not configured on this site" where they are absent, instead of
+# failing: the factory and POS schedules work where FACTORY_SERVICE_ACCOUNT
+# is set (factorymanager-za), the order feed where its four keys are set.
 [functions."factory-shopify-poll"]
   schedule = "*/15 * * * *"
 [functions."couchpotato-feed"]

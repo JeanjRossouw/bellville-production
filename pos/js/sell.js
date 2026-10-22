@@ -341,7 +341,7 @@ function pickCustomer() {
       try { const rec = await saveCustomer({ name, phone, email: val(wrap, 'cu-email'), vatNo: val(wrap, 'cu-vat'), consent: readConsent(wrap, 'cu'), consentSource: 'till' }); attach(rec); close(true); toast(name + ' added'); } catch (err) { toast(err.offline ? 'Adding a customer needs the line.' : err.message, 'warn'); }
     }
   });
-  setTimeout(() => wrap.querySelector('#cu-q').focus(), 50);
+  setTimeout(() => { const q = wrap.querySelector('#cu-q'); if (q && !wrap.contains(document.activeElement)) q.focus(); }, 50);   // not when the cashier is already typing in the quick-add
 }
 function attach(x) { if (!x) return; sale.cart.customerId = x.id; sale.cart.customer = { id: x.id, name: x.name, phone: x.phone || '', email: x.email || '', vatNo: x.vatNo || '', address: x.address || {}, accountEnabled: !!x.accountEnabled, storeCreditCents: x.storeCreditCents || 0, loyalty: x.loyalty ? { points: x.loyalty.points || 0, tier: x.loyalty.tier || '' } : null }; persist(); ctx.repaint(); }
 
