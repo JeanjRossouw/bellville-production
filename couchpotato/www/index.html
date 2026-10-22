@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Factory Manager · Software for furniture makers</title>
-  <meta name="description" content="Orders, the factory floor, costing, dispatch, invoicing and your showroom till in one app for furniture makers. Works on any phone, tablet or computer. 14-day free trial, no card needed.">
+  <meta name="description" content="Factory software built inside a working Cape Town upholstery factory: orders, the factory floor, costing, wages, dispatch, invoicing and your showroom till. Price on the page, 14-day free trial, no card and no sales call.">
   <meta property="og:title" content="Factory Manager · Software for furniture makers">
   <meta property="og:description" content="Orders, the factory floor, costing, dispatch, invoicing and your showroom till in one app. 14-day free trial.">
   <meta property="og:image" content="/couchpotato/www/img/floor.jpg">
@@ -50,11 +50,13 @@
     header.hero { background: var(--black); color: var(--white); padding: 0; overflow: hidden; }
     .hero .kicker { color: var(--gold); display: flex; align-items: center; gap: 12px; }
     .hero .kicker::before { content: ""; width: 28px; height: 1px; background: var(--gold); }
-    .hero h1 { font-size: clamp(40px, 6.4vw, 84px); line-height: 1.02; font-weight: 700; letter-spacing: -.025em; margin: 20px 0 22px; max-width: 12ch; }
+    .hero h1 { font-size: clamp(38px, 5.4vw, 72px); line-height: 1.04; font-weight: 700; letter-spacing: -.025em; margin: 20px 0 22px; max-width: 15ch; }
     .hero h1 em { font-style: normal; color: var(--gold); }
     .hero p.lead { font-size: clamp(16px, 1.6vw, 19px); color: #d6d6d6; max-width: 42ch; margin: 0 0 32px; }
     .hero .ctas { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
     .hero .small { color: #9a9a9a; font-size: 13px; margin-top: 14px; }
+    .hero .price-line { color: #e9e9e9; font-size: 14px; margin-top: 16px; }
+    .hero .price-line b { color: var(--gold); font-weight: 600; }
     .btn.gold { background: var(--gold); color: var(--black); border-color: var(--gold); }
     .btn.gold:hover { background: #f0bd4f; border-color: #f0bd4f; }
     .shot { border-radius: 8px; overflow: hidden; box-shadow: 0 30px 80px rgba(0,0,0,.35), 0 0 0 1px rgba(0,0,0,.06); background: var(--white); }
@@ -105,6 +107,16 @@
     .stage .num { font-size: 12px; letter-spacing: .2em; color: var(--accent); font-weight: 600; }
     .stage h4 { font-size: 17px; font-weight: 600; margin: 4px 0 6px; }
     .stage p { margin: 0; color: var(--muted); font-size: 14.5px; }
+
+    /* works with what they already use */
+    .with { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-top: 40px; }
+    .with-card { border: 1px solid var(--line); border-radius: 6px; padding: 22px; background: var(--white); }
+    .with-card .tag { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
+    .with-card h4 { margin: 0 0 6px; font-size: 16px; font-weight: 600; }
+    .with-card p { margin: 0; color: var(--muted); font-size: 14px; }
+    .nolock { list-style: none; padding: 0; margin: 24px 0 0; max-width: 46ch; }
+    .nolock li { padding: 10px 0 10px 26px; border-top: 1px solid var(--line); position: relative; font-size: 15px; }
+    .nolock li::before { content: ""; position: absolute; left: 2px; top: 18px; width: 8px; height: 8px; background: var(--accent); border-radius: 50%; }
 
     /* the whole team, with a photo */
     .team-head { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: center; }
@@ -180,6 +192,7 @@
       .steps { grid-template-columns: 1fr; }
       section { padding: 72px 0; }
       .team-head { grid-template-columns: 1fr; gap: 36px; }
+      .with { grid-template-columns: 1fr 1fr; }
       .hero-stage { min-height: calc(100svh - 68px); max-height: 900px; align-items: stretch; }
       .hero-bg { width: 100%; }
       .hero-bg img { -webkit-mask-image: none; mask-image: none; object-position: 52% 50%; }
@@ -204,8 +217,9 @@
       .after-hero { padding-top: 108px; }
       .price-card { padding: 32px 24px; }
       .stage h4 { font-size: 15px; }
+      .with { grid-template-columns: 1fr; }
       .stage p { font-size: 13.5px; }
-      .hero h1 { font-size: 42px; }
+      .hero h1 { font-size: 36px; }
       .hero p.lead { margin-bottom: 22px; }
       .hero .ctas { flex-direction: column; align-items: stretch; gap: 10px; }
       .hero .ctas .btn { text-align: center; }
@@ -246,22 +260,22 @@
     </div>
     <div class="wrap hero-copy">
       <div class="hero-top">
-        <div class="caps kicker">Software for furniture makers</div>
-        <h1>Run your furniture factory from <em>one screen.</em></h1>
+        <div class="caps kicker">Built inside a working Cape Town upholstery factory</div>
+        <h1>Know where every couch is, what it cost and <em>when it ships.</em></h1>
       </div>
       <div class="hero-bottom">
-        <p class="lead">Orders, the factory floor, costing, dispatch, invoicing and your showroom till, in one app that works on any phone, tablet or computer.</p>
+        <p class="lead">Orders, the factory floor, costing, wages, dispatch, invoicing and your showroom till, in one app that works on any phone, tablet or computer.</p>
         <div class="ctas">
           <a class="btn gold" href="/couchpotato/?signup=1" data-trial>Start your 14-day free trial</a>
           <a class="btn ghost" href="/couchpotato/?demo=1" data-demo>Try the demo</a>
           <a class="btn ghost more" href="#features">See what it does</a>
         </div>
-        <p class="small">No card needed. Set up in a minute.</p>
+        <p class="price-line"><b><span data-price>R 2 999</span> a month</b>, everything included. No card, no sales call, no setup fee.</p>
       </div>
     </div>
     <div class="job-chip" aria-hidden="true"><b>Job 1042 · 3-seater couch</b><span>Frame making, due Friday</span><em class="pill">On the floor</em></div>
   </div>
-  <div class="ticker" aria-hidden="true"><div class="ticker-track"><span>Orders</span><span>Factory floor</span><span>Job cards</span><span>Fabric list</span><span>Costing</span><span>Showroom till</span><span>Scan out</span><span>WhatsApp updates</span><span>Invoicing</span><span>Orders</span><span>Factory floor</span><span>Job cards</span><span>Fabric list</span><span>Costing</span><span>Showroom till</span><span>Scan out</span><span>WhatsApp updates</span><span>Invoicing</span></div></div>
+  <div class="ticker" aria-hidden="true"><div class="ticker-track"><span>Orders</span><span>Factory floor</span><span>Job cards</span><span>Fabric list</span><span>Costing</span><span>Showroom till</span><span>Scan out</span><span>WhatsApp updates</span><span>Wages &amp; payslips</span><span>Invoicing</span><span>Works with Xero</span><span>Orders</span><span>Factory floor</span><span>Job cards</span><span>Fabric list</span><span>Costing</span><span>Showroom till</span><span>Scan out</span><span>WhatsApp updates</span><span>Wages &amp; payslips</span><span>Invoicing</span><span>Works with Xero</span></div></div>
   <div class="wrap">
     <div class="shot"><div class="bar"><i></i><i></i><i></i></div><picture><source media="(max-width: 700px)" srcset="/couchpotato/www/img/floor-m.jpg" width="390" height="760"><img src="/couchpotato/www/img/floor.jpg" alt="The factory floor: four weeks of orders, what is late and what is waiting on fabric" width="1280" height="800"></picture></div>
   </div>
@@ -390,6 +404,20 @@
   </div>
 </section>
 
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="caps" style="color:var(--muted)">Works with what you already use</div>
+    <h2>Keep your accountant, your shop and your WhatsApp.</h2>
+    <p class="sec-lead">Factory Manager runs the floor and the money that comes in. It hands the rest to the tools you already pay for.</p>
+    <div class="with">
+      <div class="with-card"><span class="tag">Xero</span><h4>Sales go to your books</h4><p>Till sales paid in full go to Xero by themselves, as paid invoices. Every invoice line exports for your accountant.</p></div>
+      <div class="with-card"><span class="tag">Shopify</span><h4>Online orders hit the floor</h4><p>Orders from your Shopify shop come in as factory orders, with the fabric and the delivery address.</p></div>
+      <div class="with-card"><span class="tag">WhatsApp</span><h4>Send it where people read it</h4><p>Quotes, purchase orders, the driver's run and "it's on its way" all go out on WhatsApp.</p></div>
+      <div class="with-card"><span class="tag">Excel</span><h4>Start from your spreadsheets</h4><p>Bring in your materials, products, costings and customers from the Excel or CSV files you already have.</p></div>
+    </div>
+  </div>
+</section>
+
 <section class="alt">
   <div class="wrap">
     <div class="team-head">
@@ -427,13 +455,19 @@
       <div class="caps" style="color:var(--muted)">Pricing</div>
       <h2>One plan. Everything included.</h2>
       <p class="sec-lead">No per-user fees and no limits on orders. Try it free for 14 days, then pay monthly. Cancel whenever you like.</p>
+      <ul class="nolock">
+        <li>No setup fee, no consultants, no contract</li>
+        <li>No demo to book: start the trial or click through the live demo yourself</li>
+        <li>Download all your data any time, in one file</li>
+        <li>The same price with two people or twenty</li>
+      </ul>
     </div>
     <div class="price-card">
       <div class="caps plan" data-plan-name>Standard</div>
       <div class="amount" data-price>R 2 999</div>
       <div class="per">per month</div>
       <ul>
-        <li>Orders, factory floor, costing, scan out, invoicing and the till</li>
+        <li>Orders, factory floor, costing, wages, scan out, invoicing and the till</li>
         <li>Your whole team, with roles</li>
         <li>Unlimited orders, customers and products</li>
         <li>14 days free before you pay anything</li>
@@ -450,10 +484,13 @@
     <h2>Good to know.</h2>
     <div class="faq">
       <details><summary>Do I need a card to start the trial?</summary><p>No. Sign up with your company name, email and a password. You only pay if you decide to carry on after 14 days.</p></details>
+      <details><summary>Do I have to book a demo or talk to sales?</summary><p>No. Click <a href="/couchpotato/?demo=1" data-demo>Try the demo</a> to use it with sample orders, or start the free trial on your own orders. Nobody will call you unless you ask.</p></details>
+      <details><summary>Does it do wages?</summary><p>Yes. Weekly or monthly wage runs for hourly, weekly, piece-work and salaried staff, with piece-work taken from the job cards finished that week, payslips, UIF and an export for your accountant or payroll service. PAYE is left to them, because the tax tables change every year.</p></details>
+      <details><summary>Does it work with my accounting?</summary><p>If you use Xero, connect it under Settings and paid till sales go across by themselves. Whatever you use, every invoice line exports to Excel for your accountant.</p></details>
       <details><summary>What happens when the trial ends?</summary><p>If you have not subscribed, the app becomes read only. You and your team can still sign in and see everything you captured, but you cannot add or change anything until you subscribe. Nothing is deleted.</p></details>
       <details><summary>How do I pay?</summary><p>Monthly, through PayFast, by card or instant EFT. The owner subscribes under Settings, Billing, and PayFast takes the payment each month.</p></details>
       <details><summary>Can I cancel?</summary><p>Yes, any time, under Settings, Billing. No more payments are taken, and you keep full use until the end of the month you have paid for.</p></details>
-      <details><summary>Who can see my data?</summary><p>Only the people you invite. Each business is kept separate in the database itself, so no other company on the app can see your orders, customers, prices or costs.</p></details>
+      <details><summary>Who can see my data?</summary><p>Only the people you invite. Each business is kept separate in the database itself, so no other company on the app can see your orders, customers, prices or costs. You can download all of it in one file whenever you like.</p></details>
       <details><summary>Does it work on a phone?</summary><p>Yes. It runs in the browser on any phone, tablet or computer, with nothing to install. The till is made for a tablet at the counter, and scan out uses the phone's own camera.</p></details>
       <details><summary>How many people can use it?</summary><p>As many as you need. The price is the same whether you have two people or twenty.</p></details>
     </div>
@@ -462,8 +499,8 @@
 
 <section class="final photo">
   <div class="wrap">
-    <h2>See your whole factory on one screen.</h2>
-    <p>Start the 14-day free trial now. It takes a minute, and there is no card needed.</p>
+    <h2>Built on a factory floor. Ready for yours today.</h2>
+    <p>Start the 14-day free trial now. No card, no sales call, and your team can be working by this afternoon.</p>
     <a class="btn gold" href="/couchpotato/?signup=1" data-trial>Start your free trial</a>
   </div>
 </section>
