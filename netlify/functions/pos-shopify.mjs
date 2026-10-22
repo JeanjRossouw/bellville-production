@@ -10,6 +10,8 @@
 //                                                               locations by name, products linked by SKU, stock pushed, codes pulled
 //   setup       { entityId, siteUrl? }                         the owner: run those steps again (each one is safe to repeat)
 //   disconnect  { entityId }                                   the owner; our webhooks are removed from the app
+//   catalogue   { entityId }                                   the owner: what bringing the shop's catalogue in would do (new, updated, variants, opening stock)
+//   catalogueImport { entityId, openingStock }                 the owner: bring it in; with openingStock the shop's stock becomes the opening stock of items that never moved here
 //   status      { entityId }                                   managers: connected? locations? the queue and the last error
 //   settings    { entityId, locationByStore, defaultStoreId, pushStock, pullOrders, syncCodes, syncCustomers }   the owner
 //   locations   { entityId }                                   the shop's locations, to map
@@ -26,6 +28,7 @@
 import { json, Reject, clean, randomId, nowIso, getDoc, query, commit, createDoc, patchDoc, deleteDoc, loginOf, loadUser, inEntity, inStore, rank, serverStamp, bodyOf, audit } from './lib/pos.mjs';
 import { whoAndWhere, runSale, moveWrites, approved } from './lib/sale.mjs';
 import { gql, gidNum, secretsOf, settingsOf, patchShopify, verifyWebhook, logSync, queueStock, flushStock } from './lib/shopify-pos.mjs';
+import { pullCatalogue, planCatalogue, planStock, applyCatalogue } from './lib/shopify-catalogue.mjs';
 
 async function who(event, b, minRole = 'manager') {
   const login = await loginOf(event);
@@ -295,6 +298,32 @@ const actions = {
     const cfg = await cfgOf(w.entityId);
     const sh = await settingsOf(w.entityId);
     return { ok: true, setup: await runSetup(w.entityId, cfg, siteOf(event, b, sh), w) };
+  },
+  // ---- the shop's catalogue into the till (a cut-over from ReptiCube or any shop that ran on Shopify)
+  async catalogue(event, b) {
+    const w = await who(event, b, 'owner');
+    const cfg = await cfgOf(w.entityId);
+    const sh = await settingsOf(w.entityId);
+    let shop; try { shop = await pullCatalogue(cfg); } catch (e) { throw new Reject(502, e.message); }
+    const plan = await planCatalogue(w.entityId, shop);
+    const st = await planStock(w.entityId, plan, sh.locationByStore || {});
+    const stores = await query('stores', [{ field: 'entityId', value: w.entityId }], 100);
+    const name = (id) => (stores.find(s => s.id === id) || { name: id }).name;
+    return { ok: true, products: plan.length, created: plan.filter(x => !x.existing).length, updated: plan.filter(x => x.existing).length, variants: plan.reduce((n, x) => n + x.variants.length, 0), archived: plan.filter(x => x.product.archived).length,
+      stock: { items: st.rows.length, qty: st.rows.reduce((n, r) => n + r.qty, 0), skipped: st.skipped, stores: st.stores.map(name), perStore: st.stores.map(s => ({ store: name(s), items: st.rows.filter(r => r.storeId === s).length, qty: st.rows.filter(r => r.storeId === s).reduce((n, r) => n + r.qty, 0) })) },
+      sample: plan.slice(0, 40).map(x => ({ name: x.product.name, action: x.existing ? 'update' : 'new', priceCents: x.product.priceCents, variants: x.variants.length, archived: x.product.archived })) };
+  },
+  async catalogueImport(event, b) {
+    const w = await who(event, b, 'owner');
+    const cfg = await cfgOf(w.entityId);
+    const sh = await settingsOf(w.entityId);
+    let shop; try { shop = await pullCatalogue(cfg); } catch (e) { throw new Reject(502, e.message); }
+    const plan = await planCatalogue(w.entityId, shop);
+    const r = await applyCatalogue(w.entityId, w.user, plan, { openingStock: !!b.openingStock, locationByStore: sh.locationByStore || {} });
+    await patchShopify(w.entityId, { linkedAt: nowIso(), catalogueImportedAt: nowIso() });
+    await logSync(w.entityId, 'link', 'ok', `catalogue brought in: ${r.created} new, ${r.updated} updated, ${r.variants} variants${b.openingStock ? `, opening stock for ${r.stock.items} item(s) (${r.stock.qty} units)` : ''}`);
+    await audit({ action: 'shopify.catalogue', docType: 'settings', docId: w.entityId, docNo: '', actorUid: w.user.id, actorName: w.user.name, details: { ...r, openingStock: !!b.openingStock }, entityId: w.entityId, storeId: '', deviceId: 'office' });
+    return { ok: true, ...r };
   },
   async disconnect(event, b) {
     const w = await who(event, b, 'owner');

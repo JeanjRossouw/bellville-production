@@ -22,7 +22,12 @@ await prod('p_cushion', { name: 'Scatter Cushion', sku: 'CU-1', priceCents: 1990
 await prod('p_lamp', { name: 'Lamp', sku: 'LA-1', priceCents: 50000, costCents: 20000 });
 await prod('p_rug', { name: 'Rug', sku: 'RU-1', priceCents: 80000, costCents: 30000 });
 for (const [id, q] of [['p_cushion', 12], ['p_lamp', 4], ['p_rug', 2]]) await put('pos/retail/stockLevels/BF-BELL_' + id, { productId: id, variantId: '', onHandQty: q, reservedQty: 0, onOrderQty: 0, ...srv('BF', 'BF-BELL') });
-const mock = await startMockShopify(8799, { variants: [
+const mock = await startMockShopify(8799, { products: [
+  { id: 'gid://shopify/Product/3010', title: 'Reptile Hide', handle: 'reptile-hide', descriptionHtml: 'A cave.', status: 'ACTIVE', vendor: 'ReptiCube', productType: 'Enclosures', tags: [], isGiftCard: false, options: [{ name: 'Size', values: ['Small', 'Medium'] }], images: { nodes: [] }, variants: { nodes: [
+    { id: 'gid://shopify/ProductVariant/1101', title: 'Small', sku: 'HD-S', barcode: '', price: '149.00', taxable: true, selectedOptions: [{ name: 'Size', value: 'Small' }], image: null, inventoryItem: { id: 'gid://shopify/InventoryItem/2101', tracked: true, unitCost: { amount: '60.00' }, inventoryLevels: { nodes: [{ location: { id: 'gid://shopify/Location/11' }, quantities: [{ name: 'available', quantity: 7 }] }] } } },
+    { id: 'gid://shopify/ProductVariant/1102', title: 'Medium', sku: 'HD-M', barcode: '', price: '199.00', taxable: true, selectedOptions: [{ name: 'Size', value: 'Medium' }], image: null, inventoryItem: { id: 'gid://shopify/InventoryItem/2102', tracked: true, unitCost: null, inventoryLevels: { nodes: [{ location: { id: 'gid://shopify/Location/11' }, quantities: [{ name: 'available', quantity: 3 }] }] } } }
+  ] } }
+], variants: [
   { id: 'gid://shopify/ProductVariant/1001', sku: 'CU-1', title: 'Default', inventoryItem: { id: 'gid://shopify/InventoryItem/2001', tracked: true }, product: { id: 'gid://shopify/Product/3001', title: 'Scatter Cushion — Linen', handle: 'scatter-cushion', descriptionHtml: '<p>A soft linen cushion.</p>', status: 'ACTIVE', images: { nodes: [] } } },
   { id: 'gid://shopify/ProductVariant/1002', sku: 'LA-1', title: 'Default', inventoryItem: { id: 'gid://shopify/InventoryItem/2002', tracked: true }, product: { id: 'gid://shopify/Product/3002', title: 'Lamp', handle: 'lamp', descriptionHtml: '', status: 'ACTIVE', images: { nodes: [] } } },
   { id: 'gid://shopify/ProductVariant/1003', sku: 'RU-1', title: 'Default', inventoryItem: { id: 'gid://shopify/InventoryItem/2003', tracked: true }, product: { id: 'gid://shopify/Product/3003', title: 'Rug', handle: 'rug', descriptionHtml: '', status: 'ACTIVE', images: { nodes: [] } } }
@@ -39,6 +44,7 @@ if (FBDIR) await ctx.route(/www\.gstatic\.com\/firebasejs\/10\.13\.0\/(firebase-
 const p = await ctx.newPage();
 p.on('pageerror', e => errs.push('PAGEERROR ' + e.message)); p.on('dialog', d => d.accept());
 const toast = async () => { await p.waitForTimeout(500); return (await p.locator('#toast').innerText().catch(() => '')).trim(); };
+const toastLike = async (re, ms = 15000) => { const t0 = Date.now(); let t = ''; while (Date.now() - t0 < ms) { t = (await p.locator('#toast').innerText().catch(() => '')).trim(); if (re.test(t)) return t; await p.waitForTimeout(250); } return t; };
 await p.goto(BASE, { waitUntil: 'load' });
 await p.waitForSelector('#login:not([hidden])');
 const sw = p.locator('#login-switch [data-mode=email]'); if (await sw.isVisible()) await sw.click();
@@ -57,7 +63,7 @@ check('Copy puts the scopes on the clipboard', /Scopes copied/.test(R.copy) && /
 await p.click('#sh-domain'); await p.keyboard.type('bellville-furniture.myshopify.com');
 await p.click('#sh-id'); await p.keyboard.type('a1b2c3d4e5f6');
 await p.click('#sh-secret'); await p.keyboard.type('shpss_secret');
-await p.click('[data-act=on-connect]'); R.connect = await toast(); await p.waitForTimeout(2500);
+await p.click('[data-act=on-connect]'); R.connect = await toastLike(/Connected to/); await p.waitForTimeout(2500);
 check('Connect works after clicking into the fields', /Connected to Bellville Online/.test(R.connect), R.connect);
 await p.waitForSelector('#sh-default', { timeout: 15000 }); await p.waitForTimeout(2500);
 // Connect did the setup: the webhooks on the app, the store matched by name, products linked, stock pushed
@@ -74,6 +80,17 @@ check('Save works after clicking the select', /Shopify settings saved/.test(R.sa
 const st = await (await fetch(`${docs}/pos/retail/settings/BF`, { headers: H })).json();
 const sh = st.fields && st.fields.shopify && st.fields.shopify.mapValue.fields;
 check('written: the location for Bellville and the default store', sh && sh.locationByStore.mapValue.fields['BF-BELL'].stringValue === 'gid://shopify/Location/11' && sh.defaultStoreId.stringValue === 'BF-BELL', sh && Object.keys(sh));
+// the shop's catalogue brought in from the card: the preview modal, the opening stock ticked, one tap
+await p.click('[data-act=on-catalogue]'); await p.waitForSelector('#modal-ok', { timeout: 15000 }); await p.waitForTimeout(400);
+R.catModal = (await p.locator('#modal .modal-card').innerText()).replace(/\s+/g, ' ');
+check('the preview: 1 product, new, 2 variants, opening stock of 10 units at Bellville', /Bring in 1 product from the shop/i.test(R.catModal) && /1 new/.test(R.catModal) && /2 variants/.test(R.catModal) && /2 items \(10 units\) have stock on the shop/.test(R.catModal) && (await p.isChecked('#cat-stock')), R.catModal);
+if (process.env.SHOT_DIR) await p.locator('#modal .modal-card').screenshot({ path: process.env.SHOT_DIR + '/shopify-3-catalogue.png' });
+await p.click('#modal-ok'); R.catToast = await toastLike(/updated/); await p.waitForTimeout(2500);
+check('brought in: 1 new, 2 variants, opening stock for 2 items', /1 new, 0 updated, 2 variants · opening stock for 2 items/.test(R.catToast), R.catToast);
+const pl = await (await fetch(`${docs}/pos/retail/products?pageSize=50`, { headers: H })).json();
+const hide = (pl.documents || []).map(d => d.fields).find(f => f.name && f.name.stringValue === 'Reptile Hide');
+check('the hide is in the catalogue with its Size option', hide && hide.hasVariants.booleanValue === true && hide.shopifyProductId.stringValue === 'gid://shopify/Product/3010', hide && Object.keys(hide));
+await p.waitForSelector('[data-act=on-catalogue]', { timeout: 15000 });
 // the factory card the same way: click the select, pick, save
 await p.waitForSelector('#fa-co', { timeout: 15000 });
 await p.click('#fa-co'); await p.selectOption('#fa-co', 'CPTEST'); await p.click('[data-act=fa-link]'); R.link = await toast(); await p.waitForTimeout(1500);
