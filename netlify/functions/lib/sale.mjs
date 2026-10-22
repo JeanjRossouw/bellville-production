@@ -268,11 +268,16 @@ export function moveWrites(ctx, levels, m, doc, stamp, now) {
   const onHand = (lv ? lv.onHandQty || 0 : 0) + (bucket === 'onHand' ? m.qty : 0);
   const quarantine = (lv ? lv.quarantineQty || 0 : 0) + (bucket === 'quarantine' ? m.qty : 0);
   const reserved = (lv ? lv.reservedQty || 0 : 0) + (bucket === 'reserved' ? m.qty : 0);
-  const next = { ...(lv || {}), onHandQty: onHand, quarantineQty: quarantine, reservedQty: reserved };
+  const onOrder = (lv ? lv.onOrderQty || 0 : 0) + (m.onOrderDelta || 0);
+  // the weighted average cost moves when stock comes in at a cost (a receipt, stock found); counts and sales leave it
+  const oldOnHand = lv ? lv.onHandQty || 0 : 0;
+  const oldAvg = lv && lv.avgCostCents > 0 ? lv.avgCostCents : (m.baseCostCents || m.unitCostCents || 0);
+  const avg = m.wac && bucket === 'onHand' && m.qty > 0 && m.unitCostCents >= 0 ? (oldOnHand > 0 ? Math.round((oldOnHand * oldAvg + m.qty * m.unitCostCents) / (oldOnHand + m.qty)) : m.unitCostCents) : oldAvg;
+  const next = { ...(lv || {}), onHandQty: onHand, quarantineQty: quarantine, reservedQty: reserved, onOrderQty: onOrder, avgCostCents: avg, lastCountedAt: m.countedAt || (lv ? lv.lastCountedAt || '' : '') };
   levels.set(id, next);
   return [
-    { create: true, coll: 'stockMovements', id: randomId('mv_'), data: { productId: m.productId, variantId: m.variantId, qty: m.qty, bucket, reason: m.reason, docType: doc.docType, docId: doc.docId, docNo: doc.docNo, unitCostCents: m.unitCostCents, note: m.name, onHandAfter: onHand, ...stamp, serverReceivedAt: now } },
-    { set: true, coll: 'stockLevels', id, data: { productId: m.productId, variantId: m.variantId, onHandQty: onHand, quarantineQty: quarantine, reservedQty: reserved, lastMovementAt: now, lastCountedAt: lv ? lv.lastCountedAt || '' : '', rebuiltAt: lv ? lv.rebuiltAt || '' : '', negative: onHand < 0, ...(lv ? {} : serverStamp(ctx.entityId, ctx.storeId, 'server', 'server')), entityId: ctx.entityId, storeId: ctx.storeId } }
+    { create: true, coll: 'stockMovements', id: randomId('mv_'), data: { productId: m.productId, variantId: m.variantId, qty: m.qty, bucket, reason: m.reason, code: m.code || '', docType: doc.docType, docId: doc.docId, docNo: doc.docNo, unitCostCents: m.unitCostCents || 0, note: m.note || m.name || '', byName: m.byName || '', onHandAfter: onHand, ...stamp, serverReceivedAt: now } },
+    { set: true, coll: 'stockLevels', id, data: { productId: m.productId, variantId: m.variantId, onHandQty: onHand, quarantineQty: quarantine, reservedQty: reserved, onOrderQty: onOrder, avgCostCents: avg, lastMovementAt: now, lastCountedAt: next.lastCountedAt, rebuiltAt: lv ? lv.rebuiltAt || '' : '', negative: onHand < 0, ...(lv ? {} : serverStamp(ctx.entityId, ctx.storeId, 'server', 'server')), entityId: ctx.entityId, storeId: ctx.storeId } }
   ];
 }
 

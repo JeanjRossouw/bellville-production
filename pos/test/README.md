@@ -80,6 +80,15 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   cart with a photo and the sign-off signed on the screen, the tab, the
   WhatsApp update, the balance, the hand-over with a signed delivery note,
   a quotation cancelled with a manager's PIN. `node pos/test/specials.test.mjs`
+- `stock-api.test.mjs` — step 13: the `pos-stock` function over HTTP:
+  adjustments need a manager and a reason and move the weighted average
+  cost when stock is found at a cost; quarantine moves by a supervisor; a
+  stock take frozen, counted by scans and typed counts while a sale goes
+  through, reviewed, posted by a manager as `count` movements against the
+  frozen figures with uncounted items left alone. `node pos/test/stock-api.test.mjs`
+- `stock.test.mjs` — step 13 in the browser: the Stock tab as a manager —
+  levels, the low-stock list, an adjustment, the item card, a stock take
+  counted by scanning, reviewed and posted. `node pos/test/stock.test.mjs`
 - `money.test.mjs` — the shared cents and VAT maths; needs no emulator.
   `node pos/test/money.test.mjs`
   Set `FIREBASE_SDK_DIR` to a local copy of the `firebase` package's browser

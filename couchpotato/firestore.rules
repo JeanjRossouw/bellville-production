@@ -450,6 +450,7 @@ service cloud.firestore {
       match /creditNotes/{id}    { allow read: if pReadsStore(gid); allow write: if false; }
       match /refunds/{id}        { allow read: if pReadsStore(gid); allow write: if false; }
       match /laybys/{id}         { allow read: if pReadsStore(gid); allow write: if false; }
+      match /stockTakes/{id}     { allow read: if pReadsStore(gid); allow write: if false; }
       match /specialOrders/{id}  { allow read: if pReadsStore(gid); allow write: if false; }
       match /shifts/{id}         { allow read: if pReadsStore(gid); allow write: if false; }
       match /cashMovements/{id}  { allow read: if pReadsStore(gid); allow write: if false; }

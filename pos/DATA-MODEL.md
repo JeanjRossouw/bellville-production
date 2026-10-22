@@ -213,6 +213,7 @@ variants, else the product. `itemId` = `variantId || productId`.
 entityId, storeId, productId, variantId ('' when none), onHandQty (int),
 quarantineQty (int: returns kept apart until inspected; its own movement bucket),
 reservedQty (int: open lay-bys and special orders holding stock; its own movement bucket `reserved`; the till sells on hand less reserved),
+onOrderQty (int: on open purchase orders, not yet received), avgCostCents (the weighted average cost: moved when stock comes in at a cost — a receipt, stock found — never by sales or counts),
 lastMovementAt, lastCountedAt, rebuiltAt, + stamps (createdBy 'server')
 ```
 R: members of the store. W: server only, in the same batch as the movement.
@@ -221,10 +222,27 @@ R: members of the store. W: server only, in the same batch as the movement.
 **`stockMovements/{id}`** — append only
 ```
 entityId, storeId, productId, variantId, qty (int, signed: +in, −out),
-reason ('sale'|'creditNote'|'receive'|'adjust'|'count'|'transferOut'|'transferIn'|'layby'|'specialOrder'|'bundle'),
-docType, docId, docNo, unitCostCents, note, + stamps, serverReceivedAt
+reason ('sale'|'creditNote'|'receive'|'adjust'|'count'|'quarantine'|'transferOut'|'transferIn'|'layby'|'specialOrder'|'bundle'),
+code (adjustments: 'damaged'|'stolen'|'found'|'correction'|'sample'|'writeoff'|'other'), bucket ('onHand'|'quarantine'|'reserved'),
+docType, docId, docNo, unitCostCents, note, byName (the approver), onHandAfter, + stamps, serverReceivedAt
 ```
 R: members of the store. W: server only. Never updated or deleted.
+
+**`stockTakes/{id}`** (the `pos-stock` function)
+```
+entityId, storeId, name, scope ('all'|'category'), category, status ('open'|'review'|'posted'|'cancelled'),
+frozenAt, items [ { itemId, productId, variantId, name, sku, barcodes, frozenQty (on hand when frozen), countedQty (null until counted), countedBy, countedAt, costCents } ],
+itemCount, countedItems, log [ { at, byName, itemId, qty, mode ('add'|'set'), deviceId } ] (every scan, from every phone),
+varianceQty, varianceValueCents, openedBy, reviewedAt, reviewedBy, postedAt, approvedBy, movementCount, cancelledAt, + stamps, updatedAt
+```
+R: members of the store. W: server only. Opening freezes what the system
+says is on hand (a supervisor); any member of the store counts from any
+phone (scans add one, or a typed count sets it), merged live; review closes
+the count; posting (a manager) writes one `count` movement per variance
+against the frozen figure — sales during the count have already moved the
+level — and stamps `lastCountedAt`; items not counted are left alone.
+Adjustments (`adjust`, a manager) and quarantine moves (`move`, a
+supervisor) are movements too; stock on hand is never typed over.
 
 ### Customers
 
