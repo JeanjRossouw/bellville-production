@@ -19,6 +19,7 @@ import * as buying from './buying.js';
 import * as customersTab from './customers.js';
 import * as reports from './reports.js';
 import * as online from './online.js';
+import * as assist from './assist.js';
 import { EMULATOR } from './db.js';
 
 const $ = (id) => document.getElementById(id);
@@ -165,6 +166,7 @@ function setLoginMode(mode) {
 }
 function showLogin() {
   $('app').hidden = true; $('claim').hidden = true; $('nobody').hidden = true;
+  assist.stopAssistant();
   const fbUser = auth.session.uid && !auth.session.user;
   if (fbUser && auth.session.nobodyYet) { $('login').hidden = true; $('claim').hidden = false; return; }
   if (fbUser) { $('login').hidden = true; $('nobody').hidden = false; return; }
@@ -182,6 +184,7 @@ function showApp() {
   $('brand-sub').textContent = auth.session.device ? (storeName(auth.session.device.storeId) || auth.session.device.label) : 'Office';
   if (!view || !navItems().some(n => n.key === view)) view = sellStoreId() && auth.session.mode !== 'email' ? 'sell' : 'home';
   paint();
+  assist.startAssistant(() => view, () => { const sd = sellData(); return { entityId: sd.entity ? sd.entity.id : '', storeId: sd.store ? sd.store.id : '' }; });
 }
 const roleLabel = (k) => (ROLES.find(r => r.key === k) || { label: k }).label;
 const storeName = (id) => (stores.find(s => s.id === id) || {}).name || '';

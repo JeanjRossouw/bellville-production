@@ -62,13 +62,14 @@ await t('cashier lists products of her entity', getDocs(query(collection(cash, '
 await t('cashier reads stock in her store', getDoc(P(cash, 'stockLevels', 'BF-BELL_p1')), true);
 
 // ---- the server-only collections refuse every browser
-const srvColls = ['sales', 'saleLines', 'payments', 'creditNotes', 'refunds', 'laybys', 'specialOrders', 'salesOrders', 'shifts', 'goodsReceived', 'stockMovements', 'stockLevels', 'numberBlocks', 'voidedNumbers', 'counters', 'devices', 'pinHashes'];
+const srvColls = ['sales', 'saleLines', 'payments', 'creditNotes', 'refunds', 'laybys', 'specialOrders', 'salesOrders', 'shifts', 'goodsReceived', 'stockMovements', 'stockLevels', 'numberBlocks', 'voidedNumbers', 'counters', 'devices', 'pinHashes', 'assistantUse'];
 for (const c of srvColls) await t('owner CANNOT write ' + c, setDoc(P(owner, c, 'x1'), { any: 1, ...stamp('owner', 'BF', 'BF-BELL') }), false);
 await t('owner CANNOT change a sale', updateDoc(P(owner, 'sales', 's1'), { totalCents: 1 }), false);
 await t('owner CANNOT delete a sale', deleteDoc(P(owner, 'sales', 's1')), false);
 await t('owner CANNOT bump the stock cache', updateDoc(P(owner, 'stockLevels', 'BF-BELL_p1'), { onHandQty: 99 }), false);
 await t('nobody reads counters', getDoc(P(owner, 'counters', 'BF_INV')), false);
 await t('nobody reads PIN hashes', getDoc(P(owner, 'pinHashes', 'cash')), false);
+await t('nobody reads the assistant\'s use counts', getDoc(P(owner, 'assistantUse', 'cash')), false);
 
 // ---- entities, stores, registers, settings
 await t('owner creates an entity', setDoc(P(owner, 'entities', 'PF'), { legalName: 'PinkFoot', vatRegistered: false, invoicePrefix: 'PF', ...stamp('owner', 'PF') }), true);

@@ -140,6 +140,13 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
 - `online.test.mjs` — step 17 in the browser: the Online tab's click &
   collect list and a shop discount code applied on the till.
   `node pos/test/online.test.mjs`
+- `assist-api.test.mjs` — the assistant: `pos-assist` over HTTP against a
+  mock Anthropic API in the test (`mock-anthropic.mjs`): sign-in needed, the
+  store needed, the guide and the store's live snapshot in the system prompt,
+  money for a supervisor and not for a cashier, the day's count, a failed
+  model call. `node pos/test/assist-api.test.mjs`
+- `assist.test.mjs` — the assistant in the browser: the "?" button, a starter
+  question, the answer, the chat cleared at sign-out. `node pos/test/assist.test.mjs`
 - `money.test.mjs` — the shared cents, VAT and loyalty-points maths; needs
   no emulator. `node pos/test/money.test.mjs`
 - Step 18 (hardening, see `pos/HARDENING.md`) is covered inside the suites

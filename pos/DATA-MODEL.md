@@ -459,6 +459,13 @@ here (the invoice was written with the sale). A credit note on a
 made-to-order line sets `cancelledQty`, cancels the sales order when every
 line is back, and calls the factory order off.
 
+**`assistantUse/{uid}`** — the assistant's daily allowance per login
+(`pos-assist`): `day, count, name, lastAt, entityId, storeId`. Nobody reads
+or writes it but the server. The assistant answers from `lib/pos-guide.mjs`
+and a live snapshot of the store (today against last week, open registers,
+lay-bys due, open custom and sales orders, low stock) built per question;
+money figures go to supervisors and up.
+
 **`shifts/{id}`** — one register session (the `pos-shift` function)
 ```
 entityId, storeId, registerId, deviceId, status ('open'|'closed'),

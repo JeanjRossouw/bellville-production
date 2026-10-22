@@ -318,3 +318,23 @@ small { font-size: 12px; }
 .dash { margin-bottom: 1rem; } .dash-h2 { font-family: var(--font-ui); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 0 0 .5rem; }
 .dash-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: .7rem; } .dash-card h3 { font-family: var(--font-ui); font-size: 12px; margin: 0 0 .3rem; }
 .dash-big { font-family: var(--font-ui); font-weight: 700; font-size: 22px; margin-bottom: .2rem; } .dash-delta { font-size: 12px; font-weight: 600; margin-left: .4rem; color: var(--muted); } .dash-delta.up { color: #1f5f2f; } .dash-delta.down { color: var(--red); }
+
+/* ---- the assistant: a "?" button and a small chat ---- */
+.as-fab { position: fixed; right: 18px; bottom: 18px; z-index: 60; width: 48px; height: 48px; border-radius: 50%; border: 0; background: var(--ink); color: #fff; font: 700 22px/1 var(--font-ui); cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.25); }
+.as-fab:hover { transform: translateY(-1px); }
+.as-panel { position: fixed; right: 18px; bottom: 78px; z-index: 61; width: min(420px, calc(100vw - 32px)); height: min(600px, calc(100vh - 110px)); background: #fff; border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 16px 40px rgba(0,0,0,.22); display: flex; flex-direction: column; }
+.as-panel[hidden] { display: none; }
+.as-head { display: flex; align-items: center; gap: .5rem; padding: .7rem .8rem; border-bottom: 1px solid var(--line); }
+.as-head .muted { flex: 1; font-size: 12px; }
+.as-head .icon-btn { border: 0; background: none; font-size: 16px; cursor: pointer; padding: .2rem .4rem; }
+.as-log { flex: 1; overflow-y: auto; padding: .8rem; display: flex; flex-direction: column; gap: .5rem; }
+.as-msg { max-width: 90%; padding: .55rem .7rem; border-radius: 10px; font-size: 14px; line-height: 1.45; }
+.as-msg.me { align-self: flex-end; background: var(--ink); color: #fff; }
+.as-msg.bot { align-self: flex-start; background: var(--paper); }
+.as-msg.err { background: var(--red-soft); color: var(--red); }
+.as-typing { opacity: .7; font-style: italic; }
+.as-starters { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .5rem; }
+.as-form { display: flex; gap: .5rem; padding: .6rem; border-top: 1px solid var(--line); }
+.as-form textarea { flex: 1; resize: none; font: inherit; padding: .5rem; border: 1px solid var(--line-2); border-radius: 6px; }
+body:has(.pos-mbar) .as-fab { bottom: 84px; }
+@media print { .as-fab, .as-panel { display: none !important; } }

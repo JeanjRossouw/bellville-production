@@ -19,7 +19,7 @@ can switch.
 1. **Netlify → Add new site → Import an existing project → the same GitHub repo**,
    branch `main`. Build settings are inherited from `netlify.toml` (publish `.`,
    functions `netlify/functions`).
-2. **Copy the environment variables** onto this new site — the same Xero / Shopify
+2. **Copy the environment variables** onto this new site (`ANTHROPIC_API_KEY` too, for the assistant on the page) — the same Xero / Shopify
    / Firebase vars as the main site, since this site runs its own copy of the
    functions. (Same external apps + same Firebase project = shared data.)
 3. **Add a custom domain** like `pos.repticube.co.za`. Because the host starts
