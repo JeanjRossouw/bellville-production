@@ -11,7 +11,7 @@
 //   voucher    { code, entityId } → { balanceCents, status }
 //
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
-import { json, Reject, clean, nowIso, getDoc, query, commit, beginTransaction, rollback, serverStamp, createDoc, patchDoc, bodyOf } from './lib/pos.mjs';
+import { json, Reject, clean, nowIso, getDoc, query, commit, beginTransaction, rollback, serverStamp, createDoc, patchDoc, bodyOf, audit } from './lib/pos.mjs';
 import { whoAndWhere, prepareSale, runSale, int, pad6, blockId, BLOCK_SIZE_DEFAULT } from './lib/sale.mjs';
 
 const actions = {
@@ -21,6 +21,7 @@ const actions = {
     if (!/^[\w:.-]{8,80}$/.test(saleId)) throw new Reject(400, 'The sale has no id.');
     // the same sale again (a resend after a dropped line): the first answer stands
     const had = await getDoc('sales', saleId);
+    if (had && had.entityId !== ctx.entityId) throw new Reject(403, 'Not your sale.');
     if (had) return { ok: true, sale: had, again: true, lines: await query('saleLines', [{ field: 'saleId', value: saleId }], 500, { field: 'lineNo' }) };
     const prep = await prepareSale(ctx, b);
     return runSale(ctx, b, { saleId, prep });
@@ -64,6 +65,7 @@ const actions = {
     if ((await query('sales', [{ field: 'entityId', value: ctx.entityId }, { field: 'seq', value: seq }], 1)).length) throw new Reject(409, `Number ${seq} belongs to a written sale.`);
     const id = ctx.entityId + '_INV_' + seq;
     const made = await createDoc('voidedNumbers', id, { series: 'INV', seq, docNo: ctx.entity.invoicePrefix + '-' + pad6(seq), blockId: block.id, reason, ...serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId) });
+    await audit({ action: 'sale.voidNumber', docType: 'voidedNumber', docId: id, docNo: ctx.entity.invoicePrefix + '-' + pad6(seq), actorUid: ctx.user.id, actorName: ctx.user.name, details: { seq, reason, blockId: block.id }, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
     if (seq > (block.usedUpTo || 0)) await patchDoc('numberBlocks', block.id, { usedUpTo: seq });
     return { ok: true, voided: made, seq };
   },

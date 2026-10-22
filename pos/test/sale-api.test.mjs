@@ -92,6 +92,7 @@ check('split payment: two payment rows, change on the cash', R.split.ok && R.spl
 
 // ---- idempotent: the same saleId again writes nothing and answers the same
 R.again = await call('pos-sale', sale({ saleId: R.split.sale.id })); check('the same sale again: same number, flagged again', R.again.ok && R.again.again && R.again.sale.docNo === R.split.sale.docNo, R.again);
+await put('pos/retail/sales/' + R.split.sale.id, { ...(await getDoc('pos/retail/sales/' + R.split.sale.id)), entityId: 'ZZ' }); R.notMine = await call('pos-sale', sale({ saleId: R.split.sale.id })); check('a sale id from another company: 403', R.notMine.status === 403, R.notMine); await put('pos/retail/sales/' + R.split.sale.id, { ...(await getDoc('pos/retail/sales/' + R.split.sale.id)), entityId: 'BF' });
 
 // ---- stock: movements and levels, negative allowed, a bundle moves its parts
 let lv = await getDoc('pos/retail/stockLevels/BF-BELL_p_ch'); check('chesterfield stock 2 → -1 after the three written sales (refused ones move nothing)', lv.onHandQty === -1 && lv.negative === true, lv);

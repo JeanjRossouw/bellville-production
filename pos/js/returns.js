@@ -136,9 +136,10 @@ async function withApproval(body, action) {
     throw e;
   }
 }
+const creditId = () => 'cn-' + (auth.deviceId() || 'web') + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
 function bodyBase() {
-  if (rt.noReceipt) return { ...where(), noReceipt: true, customerId: rt.customer || '', lines: rt.nrLines.map(l => ({ productId: l.productId, variantId: l.variantId, qty: l.qty, reason: l.reason, disposition: l.disposition })), clientCreatedAt: new Date().toISOString() };
-  return { ...where(), saleId: rt.picked.sale.id, customerId: rt.picked.sale.customerId || '', lines: creditLines().map(l => ({ saleLineNo: l.saleLineNo, qty: l.qty, reason: l.reason, disposition: l.disposition })), clientCreatedAt: new Date().toISOString() };
+  if (rt.noReceipt) return { ...where(), creditId: creditId(), noReceipt: true, customerId: rt.customer || '', lines: rt.nrLines.map(l => ({ productId: l.productId, variantId: l.variantId, qty: l.qty, reason: l.reason, disposition: l.disposition })), clientCreatedAt: new Date().toISOString() };
+  return { ...where(), creditId: creditId(), saleId: rt.picked.sale.id, customerId: rt.picked.sale.customerId || '', lines: creditLines().map(l => ({ saleLineNo: l.saleLineNo, qty: l.qty, reason: l.reason, disposition: l.disposition })), clientCreatedAt: new Date().toISOString() };
 }
 function refund() {
   const total = creditTotal(); if (!total) return;

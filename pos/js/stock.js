@@ -18,6 +18,7 @@ let ctx = { repaint() {}, data: () => ({}) };
 export const setContext = (c) => { ctx = { ...ctx, ...c }; };
 const d = () => ctx.data();   // { store, entity, settings, products, variants, stockLevels, takes }
 const where = () => auth.session.device ? auth.deviceBody() : { entityId: d().entity.id, storeId: d().store.id, registerId: '' };
+const mkId = (p) => p + '-' + (auth.deviceId() || 'web') + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
 const CODES = [['damaged', 'Damaged'], ['stolen', 'Stolen / missing'], ['found', 'Found'], ['correction', 'Correction'], ['sample', 'Sample / display'], ['writeoff', 'Write off'], ['other', 'Other (say why)']];
 const REASON = { sale: 'Sale', creditNote: 'Return', receive: 'Received', adjust: 'Adjustment', count: 'Stock take', transferOut: 'Transfer out', transferIn: 'Transfer in', layby: 'Lay-by', specialOrder: 'Special order', bundle: 'Bundle', quarantine: 'Quarantine' };
 
@@ -239,7 +240,7 @@ function adjust(itemId) {
     if (code === 'other' && !note) { toast('Say why.', 'warn'); return false; }
     busy = true;
     try {
-      const r = await withPin('adjust', { productId: it.productId, variantId: it.variantId, qty, bucket: val(wrap, 'ad-bucket'), code, note, ...(qty > 0 ? { unitCostCents: centsOf(val(wrap, 'ad-cost')) } : {}), ...where() }, 'manager');
+      const r = await withPin('adjust', { adjustId: mkId('adj'), productId: it.productId, variantId: it.variantId, qty, bucket: val(wrap, 'ad-bucket'), code, note, ...(qty > 0 ? { unitCostCents: centsOf(val(wrap, 'ad-cost')) } : {}), ...where() }, 'manager');
       close(true); toast(`${it.name}: ${qty > 0 ? '+' : ''}${qty} · now ${r.level.onHandQty} on hand`); if (ctx.onChange) ctx.onChange(); return true;
     } catch (e) { busy = false; toast(e.offline ? 'An adjustment needs the line.' : e.message, 'warn'); return false; }
   }
@@ -248,7 +249,7 @@ function quarantine(itemId) {
   const it = one(itemId); if (!it) return;
   openModal('Quarantine ⇄ stock: ' + it.name, `<p class="muted">On hand ${it.onHand} · in quarantine ${it.quarantine}. Goods in quarantine are not for sale until inspected.</p>` + row(field('Move', 'qm-dir', { type: 'select', value: it.quarantine > 0 ? 'out' : 'in', options: [{ value: 'in', label: 'Stock → quarantine' }, { value: 'out', label: 'Quarantine → stock (inspected, fine)' }] }), field('How many', 'qm-qty', { type: 'number', value: 1, min: 1 })) + field('Note', 'qm-note', {}), {
     okLabel: 'Move', onOk: async (w) => { const dir = val(w, 'qm-dir'), qty = Number(val(w, 'qm-qty')); if (!(qty > 0)) { toast('How many?', 'warn'); return false; }
-      try { const r = await withPin('move', { productId: it.productId, variantId: it.variantId, qty, from: dir === 'in' ? 'onHand' : 'quarantine', to: dir === 'in' ? 'quarantine' : 'onHand', note: val(w, 'qm-note'), ...where() }, 'supervisor'); toast(`${it.name}: ${r.level.onHandQty} on hand, ${r.level.quarantineQty} in quarantine`); if (ctx.onChange) ctx.onChange(); return true; }
+      try { const r = await withPin('move', { moveId: mkId('qm'), productId: it.productId, variantId: it.variantId, qty, from: dir === 'in' ? 'onHand' : 'quarantine', to: dir === 'in' ? 'quarantine' : 'onHand', note: val(w, 'qm-note'), ...where() }, 'supervisor'); toast(`${it.name}: ${r.level.onHandQty} on hand, ${r.level.quarantineQty} in quarantine`); if (ctx.onChange) ctx.onChange(); return true; }
       catch (e) { toast(e.message, 'warn'); return false; } }
   });
 }

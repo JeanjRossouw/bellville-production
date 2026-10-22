@@ -26,7 +26,8 @@ export const emailKey = (e) => String(e || '').trim().toLowerCase();
 
 export const tierFor = (ls, lifetimeCents) => { let t = ls.tiers[0]; for (const x of ls.tiers) if ((lifetimeCents || 0) >= x.fromCents) t = x; return t; };
 // points for money spent (not for points redeemed), at the tier's multiplier
-export const earnPoints = (ls, amountCents, tier) => ls.enabled && amountCents > 0 ? Math.floor(amountCents / 100 * ls.pointsPerRand * (tier ? tier.multiplier : 1)) : 0;
+// points for money spent (not for points redeemed), at the tier's multiplier; rounded to a fixed scale first so binary drift cannot lose a point
+export const earnPoints = (ls, amountCents, tier) => ls.enabled && amountCents > 0 ? Math.floor(Math.round(amountCents * ls.pointsPerRand * (tier ? tier.multiplier : 1) * 1000) / 100000) : 0;
 export const pointsValueCents = (ls, points) => Math.max(0, Math.floor(points)) * ls.pointValueCents;
 export const pointsFor = (ls, cents) => Math.ceil(cents / ls.pointValueCents);
 const addMonths = (iso, n) => { const d = new Date(iso); d.setUTCMonth(d.getUTCMonth() + n); return d.toISOString(); };

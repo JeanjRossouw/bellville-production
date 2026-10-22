@@ -218,6 +218,7 @@ const actions = {
     const w = await who(event, b, 'owner');
     await deleteDoc('shopifySecrets', w.entityId).catch(() => {});
     await patchShopify(w.entityId, { connected: false, lastError: '' });
+    await audit({ action: 'shopify.disconnect', docType: 'settings', docId: w.entityId, docNo: '', actorUid: w.user.id, actorName: w.user.name, details: {}, entityId: w.entityId, storeId: '', deviceId: 'office' });
     return { ok: true };
   },
   async status(event, b) {
@@ -236,6 +237,7 @@ const actions = {
     const pickup = {}; for (const [k, v] of Object.entries(b.pickupByTitle || {})) { const t = clean(k, 80), sid = clean(v, 40); if (t && stores.some(s => s.id === sid)) pickup[t] = sid; }
     const patch = { locationByStore: map, pickupByTitle: pickup, defaultStoreId: stores.some(s => s.id === b.defaultStoreId) ? b.defaultStoreId : '', pushStock: b.pushStock !== false, pullOrders: b.pullOrders !== false, syncCodes: b.syncCodes !== false, syncCustomers: b.syncCustomers !== false };
     await patchShopify(w.entityId, patch);
+    await audit({ action: 'shopify.settings', docType: 'settings', docId: w.entityId, docNo: '', actorUid: w.user.id, actorName: w.user.name, details: patch, entityId: w.entityId, storeId: '', deviceId: 'office' });
     return { ok: true, ...patch };
   },
   async locations(event, b) {
@@ -249,7 +251,7 @@ const actions = {
   async link(event, b) {
     const w = await who(event, b);
     const cfg = await cfgOf(w.entityId);
-    try { const r = await linkBySku(w.entityId, cfg); await logSync(w.entityId, 'link', 'ok', `${r.linked} of ${r.seen} Shopify variants linked by SKU`); await patchShopify(w.entityId, { linkedAt: nowIso() }); return { ok: true, ...r }; }
+    try { const r = await linkBySku(w.entityId, cfg); await logSync(w.entityId, 'link', 'ok', `${r.linked} of ${r.seen} Shopify variants linked by SKU`); await patchShopify(w.entityId, { linkedAt: nowIso() }); await audit({ action: 'shopify.link', docType: 'settings', docId: w.entityId, docNo: '', actorUid: w.user.id, actorName: w.user.name, details: { linked: r.linked, seen: r.seen }, entityId: w.entityId, storeId: '', deviceId: 'office' }); return { ok: true, ...r }; }
     catch (e) { await logSync(w.entityId, 'link', 'failed', e.message); throw new Reject(502, e.message); }
   },
   async pushStock(event, b) {
@@ -257,6 +259,7 @@ const actions = {
     await cfgOf(w.entityId);
     const n = await queueAll(w.entityId);
     const r = await flushStock(w.entityId, { budgetMs: 8000, max: 200 });
+    await audit({ action: 'shopify.pushAll', docType: 'settings', docId: w.entityId, docNo: '', actorUid: w.user.id, actorName: w.user.name, details: { queued: n, pushed: r.pushed || 0 }, entityId: w.entityId, storeId: '', deviceId: 'office' });
     return { ok: true, queued: n, ...r };
   },
   async syncNow(event, b) {

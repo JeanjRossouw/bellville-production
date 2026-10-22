@@ -14,7 +14,7 @@
 import { json, Reject, clean, nowIso, getDoc, query, createDoc, patchDoc, loginOf, loadUser, inEntity, rank, overrideToken, verifyOverrideToken, bodyOf, audit } from './lib/pos.mjs';
 import { clientCreds, exchangeCode, getConnections, saveTokens, loadTokens, deleteTokens, xeroApi, AUTHORIZE_URL, SCOPES, connectBlobs } from './lib/xero.mjs';
 
-export const config = { schedule: '30 1 * * *' };   // 01:30 UTC = 03:30 in South Africa
+// the schedule lives in pos-xero-daily.mjs: a scheduled function cannot also serve HTTP
 const KEY = (entityId) => 'pos-' + entityId;
 const DEFAULT_ACCOUNTS = { sales: '200', vat: '820', cash: '090', card: '091', eft: '090', qr: '091', account: '610', storeCredit: '860', voucher: '861', layby: '862', specialOrder: '863', points: '864', exchange: '865', rounding: '260', penalty: '270' };
 const LABEL = { sales: 'Sales (ex VAT)', vat: 'VAT output', cash: 'Cash takings', card: 'Card takings', eft: 'EFT received', qr: 'QR payments', account: 'Customer accounts (receivable)', storeCredit: 'Store credit owed', voucher: 'Gift vouchers outstanding', layby: 'Lay-by deposits held', specialOrder: 'Custom order deposits held', points: 'Loyalty points owed', exchange: 'Exchange clearing', rounding: 'Cash rounding', penalty: 'Cancellation penalties' };
@@ -92,7 +92,7 @@ export function journalCsv(j, entity) {
   for (const l of j.lines) rows.push([`POS sales ${j.date} ${entity.tradingName || entity.legalName}`, j.date.split('-').reverse().join('/'), l.description, l.account, 'Tax Exempt', (l.cents / 100).toFixed(2), '', '', '', '']);
   return '﻿' + rows.map(r => r.map(esc).join(',')).join('\r\n');
 }
-async function buildDoc(entityId, day) {
+export async function buildDoc(entityId, day) {
   const [entity, settings] = await Promise.all([getDoc('entities', entityId), getDoc('settings', entityId)]);
   if (!entity) throw new Reject(404, 'No such company.');
   const id = entityId + '_' + day;
@@ -104,7 +104,7 @@ async function buildDoc(entityId, day) {
   if (had) await patchDoc('xeroJournals', id, doc); else await createDoc('xeroJournals', id, doc);
   return { ...doc, id, entity };
 }
-async function pushDoc(entityId, day, byName) {
+export async function pushDoc(entityId, day, byName) {
   const j = await buildDoc(entityId, day);
   if (j.status === 'posted') return { ...j, again: true };
   if (!j.lines.length) throw new Reject(400, 'Nothing to post: no sales that day.');
@@ -162,13 +162,14 @@ const actions = {
     const url = new URL(AUTHORIZE_URL);
     url.searchParams.set('response_type', 'code'); url.searchParams.set('client_id', process.env.XERO_CLIENT_ID);
     url.searchParams.set('redirect_uri', process.env.XERO_POS_REDIRECT_URI); url.searchParams.set('scope', SCOPES + ' accounting.transactions');
-    url.searchParams.set('state', overrideToken({ xero: w.entityId }, 20));
+    url.searchParams.set('state', overrideToken({ xero: w.entityId, by: w.user.id, byName: w.user.name }, 20));
     return { ok: true, url: url.toString() };
   },
   async disconnect(event, b) {
     const w = await who(event, b, 'owner');
     await deleteTokens(KEY(w.entityId));
     await patchXero(w.entityId, { connectedTenant: '', connectedAt: '' }).catch(() => {});
+    await audit({ action: 'xero.disconnect', docType: 'settings', docId: w.entityId, docNo: '', actorUid: w.user.id, actorName: w.user.name, details: {}, entityId: w.entityId, storeId: '', deviceId: 'office' });
     return { ok: true };
   }
 };
@@ -190,24 +191,12 @@ export const handler = async (event) => {
       if (!conn) return html(400, 'No organisation', '<p>No Xero organisation was chosen. Try again and pick one.</p>');
       await saveTokens(KEY(claim.xero), { ...((await loadTokens(KEY(claim.xero))) || {}), ...tokens, tenant_id: conn.tenantId, tenant_name: conn.tenantName, obtained_at: Date.now() });
       await patchXero(claim.xero, { connectedTenant: conn.tenantName || '', connectedAt: nowIso() }).catch(() => {});
+      await audit({ action: 'xero.connect', docType: 'settings', docId: claim.xero, docNo: '', actorUid: claim.by || '', actorName: claim.byName || 'owner', details: { tenant: conn.tenantName || '' }, entityId: claim.xero, storeId: '', deviceId: 'office' }).catch(() => {});
       return html(200, 'Xero connected', `<p>The POS is now linked to <strong>${String(conn.tenantName || '').replace(/</g, '&lt;')}</strong> for company ${claim.xero}.</p><p>Close this tab. Check the account codes under Admin → Settings → Xero.</p>`);
     } catch (e) {
       console.error('pos-xero callback:', e);
       return html(500, 'Xero could not be connected', `<pre style="white-space:pre-wrap;color:#b91c1c">${String(e.message).replace(/</g, '&lt;')}</pre>`);
     }
-  }
-  // ---- the schedule: yesterday's journal for every company that asked for it
-  if (event.httpMethod === 'POST' && !(event.headers.authorization || event.headers.Authorization) && (!event.body || /"next_run"/.test(event.body))) {
-    const day = new Date(Date.now() - 86400000 + 2 * 3600000).toISOString().slice(0, 10);
-    const ents = (await query('entities', [], 50)).filter(e => e.active !== false);
-    const out = [];
-    for (const e of ents) {
-      const s = (await getDoc('settings', e.id)) || {};
-      if (!(s.xero || {}).autoDaily) continue;
-      try { const j = await buildDoc(e.id, day); if (j.lines.length && !j.unbalanced && (await loadTokens(KEY(e.id)).catch(() => null))) await pushDoc(e.id, day, 'schedule'); out.push(e.id + ': ' + (j.lines.length ? 'built' : 'empty')); }
-      catch (err) { out.push(e.id + ': ' + err.message); console.error('pos-xero schedule', e.id, err); }
-    }
-    return json(200, { ok: true, day, done: out });
   }
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' });
   try {

@@ -112,7 +112,8 @@ check('anonymised: the details gone, consent cleared, numbers freed, credit kept
 check('the invoice keeps its snapshot', (await getDoc('pos/retail/sales/' + R.s1.sale.id)).customerSnapshot.name === 'Thandi Mokoena');
 R.saveAnon = await call('pos-customer', { action: 'save', customerId: T.id, name: 'Thandi', phone: '0825550102', ...bell }); check('an anonymised profile cannot be edited', R.saveAnon.status === 409, R.saveAnon);
 R.fresh = await call('pos-customer', { action: 'save', name: 'Thandi Again', phone: '0825550102', ...bell }); check('the freed number can start a new profile', R.fresh.ok && R.fresh.customer.phoneKey === '27825550102', R.fresh.error);
-R.pts = await call('pos-customer', { action: 'adjustPoints', customerId: R.fresh.customer.id, points: 50, note: 'Welcome', ...bell }, own.idToken); check('points by hand', R.pts.ok && R.pts.points === 50, R.pts.error);
+R.pts = await call('pos-customer', { action: 'adjustPoints', adjustId: 'pts-welcome-1', customerId: R.fresh.customer.id, points: 50, note: 'Welcome', ...bell }, own.idToken); check('points by hand', R.pts.ok && R.pts.points === 50, R.pts.error);
+R.ptsAgain = await call('pos-customer', { action: 'adjustPoints', adjustId: 'pts-welcome-1', customerId: R.fresh.customer.id, points: 50, note: 'Welcome', ...bell }, own.idToken); check('the same points again: not added twice', R.ptsAgain.ok && R.ptsAgain.again && R.ptsAgain.points === 50, R.ptsAgain);
 const audit = await listColl('auditLog'); check('audited', ['customer.create', 'customer.update', 'customer.consent', 'customer.merge', 'customer.export', 'customer.anonymise', 'customer.points'].every(a => audit.some(x => x.action === a)), audit.map(a => a.action));
 
 console.log(JSON.stringify({ fails, ...R, exp: undefined, hist: undefined, hist2: undefined }, null, 1));

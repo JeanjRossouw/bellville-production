@@ -49,7 +49,10 @@ const actions = {
     const note = clean(b.note, 200);
     if (code === 'other' && !note) throw new Reject(400, 'Say why.');
     const unitCost = b.unitCostCents != null && int(b.unitCostCents) >= 0 ? int(b.unitCostCents) : it.costCents;
-    const docId = randomId('adj_');
+    const docId = clean(b.adjustId, 80);
+    if (!/^[\w:.-]{8,80}$/.test(docId)) throw new Reject(400, 'The adjustment has no id.');
+    const dup = await query('stockMovements', [{ field: 'entityId', value: ctx.entityId }, { field: 'docType', value: 'adjust' }, { field: 'docId', value: docId }], 1);
+    if (dup.length) return { ok: true, again: true, movement: dup[0], level: await getDoc('stockLevels', ctx.storeId + '_' + it.itemId) };
     return runSale(ctx, {}, { more: async (tx, levels) => {
       const lid = await levelFor(tx, ctx, levels, it.itemId);
       const now = nowIso();
@@ -69,7 +72,10 @@ const actions = {
     if (!(qty > 0)) throw new Reject(400, 'How many?');
     const from = b.from === 'quarantine' ? 'quarantine' : 'onHand', to = b.to === 'quarantine' ? 'quarantine' : 'onHand';
     if (from === to) throw new Reject(400, 'From and to are the same.');
-    const docId = randomId('qm_');
+    const docId = clean(b.moveId, 80);
+    if (!/^[\w:.-]{8,80}$/.test(docId)) throw new Reject(400, 'The move has no id.');
+    const dup = await query('stockMovements', [{ field: 'entityId', value: ctx.entityId }, { field: 'docType', value: 'quarantine' }, { field: 'docId', value: docId }], 1);
+    if (dup.length) return { ok: true, again: true, level: await getDoc('stockLevels', ctx.storeId + '_' + it.itemId) };
     return runSale(ctx, {}, { more: async (tx, levels) => {
       const lid = await levelFor(tx, ctx, levels, it.itemId);
       const lv = levels.get(lid) || {};
@@ -155,6 +161,7 @@ const actions = {
     if (t.status !== 'review') throw new Reject(409, `Stock take “${t.name}” is ${t.status}.`);
     const now = nowIso();
     await patchDoc('stockTakes', t.id, { status: 'open', reviewedAt: '', reviewedBy: '', updatedAt: now });
+    await audit({ action: 'stock.takeReopen', docType: 'stockTake', docId: t.id, docNo: t.name, actorUid: ctx.user.id, actorName: ctx.user.name, details: {}, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
     return { ok: true, take: { ...t, status: 'open' } };
   },
 

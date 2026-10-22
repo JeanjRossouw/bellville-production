@@ -102,6 +102,7 @@ function openShift() {
     okLabel: 'Open', onOk: async () => { try { await auth.api('open', { ...where(), float: float_ }, API.shift); toast('Register open'); reg.stale = true; await refresh(); return true; } catch (e) { toast(e.message, 'warn'); return false; } }
   });
 }
+const mkId = (p) => p + '-' + (auth.deviceId() || 'web') + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
 function cashMove(kind) {
   const st = reg.state; if (!st || !st.shift) return;
   openModal(kind === 'in' ? 'Cash in' : 'Cash out', row(field('Amount (R)', 'cm-amount', { inputmode: 'decimal' }), field('Reason', 'cm-reason', { placeholder: kind === 'in' ? 'e.g. Change from the bank' : 'e.g. Cash drop to the safe, petty cash' })) + (auth.atLeast('supervisor') ? '' : '<p class="muted">A supervisor or manager approves with their PIN.</p>'), {
@@ -111,7 +112,7 @@ function cashMove(kind) {
       try {
         let approvalToken = '';
         if (!auth.atLeast('supervisor')) { const r = await auth.requireOverride({ minRole: 'supervisor', action: 'cash', details: { kind, amountCents, reason } }); approvalToken = r.token; }
-        await auth.api('cashMove', { ...where(), shiftId: st.shift.id, kind, amountCents, reason, approvalToken }, API.shift);
+        await auth.api('cashMove', { ...where(), shiftId: st.shift.id, kind, amountCents, reason, approvalToken, moveId: mkId('cm') }, API.shift);
         toast('Cash ' + kind + ' recorded'); await refresh(); return true;
       } catch (e) { toast(e.message, 'warn'); return false; }
     }

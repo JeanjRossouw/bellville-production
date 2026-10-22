@@ -163,6 +163,8 @@ const actions = {
     const c = await loadCustomer(ctx, b.customerId);
     const pts = int(b.points); const note = clean(b.note, 200);
     if (!pts) throw new Reject(400, 'How many points, plus or minus?');
+    const adjustId = clean(b.adjustId, 80);
+    if (adjustId) { const dup = await query('loyaltyLedger', [{ field: 'entityId', value: ctx.entityId }, { field: 'customerId', value: c.id }, { field: 'docNo', value: adjustId }], 1); if (dup.length) return { ok: true, again: true, points: dup[0].balanceAfter }; }
     if (!note) throw new Reject(400, 'Say why.');
     const ls = loyaltySettings(ctx.settings);
     return runSale(ctx, {}, { more: async (tx) => {
@@ -175,7 +177,7 @@ const actions = {
       else { if (-pts > sw.points) throw new Reject(400, `Only ${sw.points} points to take.`); let need = -pts; lots = lots.map(l => { const take = Math.min(l.left, need); need -= take; return { ...l, left: l.left - take }; }).filter(l => l.left > 0); }
       const after = lots.reduce((n, l) => n + l.left, 0);
       const loyalty = { ...lo, points: after, lots, tier: tierFor(ls, lo.lifetimeCents).name };
-      return { writes: [{ update: true, coll: 'customers', id: c.id, data: { loyalty, updatedAt: now, updatedBy: ctx.user.id } }, { create: true, coll: 'loyaltyLedger', id: randomId('lp_'), data: { customerId: c.id, kind: 'adjust', points: pts, balanceAfter: after, saleId: '', docNo: '', note, expiresAt: '', ...stamp, serverReceivedAt: now } }, auditRow(ctx, 'customer.points', c.id, { points: pts, note }, stamp, now)], result: { points: after } };
+      return { writes: [{ update: true, coll: 'customers', id: c.id, data: { loyalty, updatedAt: now, updatedBy: ctx.user.id } }, { create: true, coll: 'loyaltyLedger', id: randomId('lp_'), data: { customerId: c.id, kind: 'adjust', points: pts, balanceAfter: after, saleId: '', docNo: adjustId, note, expiresAt: '', ...stamp, serverReceivedAt: now } }, auditRow(ctx, 'customer.points', c.id, { points: pts, note }, stamp, now)], result: { points: after } };
     } });
   }
 };

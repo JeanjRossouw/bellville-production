@@ -259,7 +259,7 @@ function overrideSecret() {
   if (process.env.POS_OVERRIDE_SECRET) return process.env.POS_OVERRIDE_SECRET;
   return sha256('override:' + (serviceAccount().private_key || 'emulator'));
 }
-export function overrideToken(claims, minutes = 10) {
+export function overrideToken(claims, minutes = 5) {
   const body = { ...claims, exp: Date.now() + minutes * 60000, nonce: randomBytes(8).toString('hex') };
   const b = Buffer.from(JSON.stringify(body)).toString('base64url');
   return b + '.' + createHmac('sha256', overrideSecret()).update(b).digest('base64url');

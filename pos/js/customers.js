@@ -135,7 +135,7 @@ async function anonymise(id) {
 function adjustPoints(id) {
   const c = one(id); if (!c) return;
   openModal('Adjust points for ' + c.name, row(field('Points (minus to take away)', 'ap-pts', { type: 'number' }), field('Why', 'ap-note', { placeholder: 'e.g. goodwill, a missed scan' })), {
-    okLabel: 'Adjust', onOk: async (w) => { try { const r = await withPin('adjustPoints', { customerId: id, points: Number(val(w, 'ap-pts')), note: val(w, 'ap-note'), ...where() }); toast('Points now ' + r.points); const m = document.getElementById('modal'); if (m) m.remove(); return true; } catch (e) { toast(e.message, 'warn'); return false; } }
+    okLabel: 'Adjust', onOk: async (w) => { try { const r = await withPin('adjustPoints', { adjustId: 'pts-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6), customerId: id, points: Number(val(w, 'ap-pts')), note: val(w, 'ap-note'), ...where() }); toast('Points now ' + r.points); const m = document.getElementById('modal'); if (m) m.remove(); return true; } catch (e) { toast(e.message, 'warn'); return false; } }
   });
 }
 function exportAll() {

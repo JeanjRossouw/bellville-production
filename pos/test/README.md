@@ -126,8 +126,12 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
 - `online.test.mjs` — step 17 in the browser: the Online tab's click &
   collect list and a shop discount code applied on the till.
   `node pos/test/online.test.mjs`
-- `money.test.mjs` — the shared cents and VAT maths; needs no emulator.
-  `node pos/test/money.test.mjs`
+- `money.test.mjs` — the shared cents, VAT and loyalty-points maths; needs
+  no emulator. `node pos/test/money.test.mjs`
+- Step 18 (hardening, see `pos/HARDENING.md`) is covered inside the suites
+  above: a credit note, stock adjustment, quarantine move, cash movement and
+  points adjustment sent twice with one id are written once; a sale id from
+  another company is refused on replay.
   Set `FIREBASE_SDK_DIR` to a local copy of the `firebase` package's browser
   builds when www.gstatic.com is not reachable, and `CHROME` to a Chromium
   path when Playwright's own is not installed.

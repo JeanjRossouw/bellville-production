@@ -1,5 +1,6 @@
 // The money maths, which the till and the server share. node pos/test/money.test.mjs
 import assert from 'node:assert/strict';
+import { loyaltySettings, earnPoints } from '../js/loyalty-terms.js';
 import { vatIn, exVat, addVat, rateOn, rateFor, lineTotals, pctOf, marginPct, priceForMargin, roundTo10c, centsOf, randsOf, roundHalfUp } from '../js/money.js';
 
 let n = 0;
@@ -50,4 +51,5 @@ t('centsOf reads what people type', () => {
   assert.equal(centsOf('1,234.5'), 123450); assert.equal(centsOf(''), 0); assert.equal(centsOf('abc'), 0); assert.equal(centsOf('0.1'), 10);
 });
 t('randsOf prints cents', () => { assert.equal(randsOf(123456), '1234.56'); assert.equal(randsOf(5), '0.05'); assert.equal(randsOf(0), '0.00'); });
+t('points: R 100 at 0.29 a rand is 29, not 28 (no binary drift)', () => { const ls = loyaltySettings({ loyalty: { enabled: true, pointsPerRand: 0.29 } }); assert.equal(earnPoints(ls, 10000, null), 29); assert.equal(earnPoints(ls, 10000, { multiplier: 1.5 }), 43); assert.equal(earnPoints(ls, 0, null), 0); });
 console.log(process.exitCode ? 'money: FAILED' : 'money: all ' + n + ' passed');

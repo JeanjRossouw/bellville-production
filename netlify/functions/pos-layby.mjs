@@ -111,6 +111,7 @@ const actions = {
     const payId = clean(b.paymentId, 80);
     if (!idOk(payId)) throw new Reject(400, 'The payment has no id.');
     const had = await getDoc('payments', payId);
+    if (had && (had.entityId !== ctx.entityId || had.docId !== lb.id)) throw new Reject(403, 'That payment id belongs elsewhere.');
     if (had) return { ok: true, layby: lb, payments: [had], again: true };
     const customer = lb.customerId ? await getDoc('customers', lb.customerId) : null;
     const t = moneyNow(ctx, b.tenders, lb.balanceCents, customer);

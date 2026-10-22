@@ -44,6 +44,7 @@ if (!(await fetch('http://localhost:8788/pos/').then(r => r.ok).catch(() => fals
 const call = async (fn, body, token = cas.idToken) => { const r = await fetch(FN + fn, { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify(body) }); return { status: r.status, ...(await r.json()) }; };
 const till = { deviceId: 'dev_s', secret };
 let n = 0;
+const nid = (p) => p + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
 const sale = (o = {}) => ({ action: 'commit', saleId: 'dev_s-' + Date.now().toString(36) + '-' + (++n), clientCreatedAt: new Date().toISOString(), customerId: '', lines: [{ productId: 'p_c', variantId: '', qty: 1, unitPriceCents: 19900, discountCents: 0 }], saleDiscountCents: 0, totals: { totalCents: 19900, vatCents: vatIn(19900, 1500) }, tenders: [{ method: 'cash', amountCents: 19900, tenderedCents: 20000 }], ...till, ...o });
 
 R.closedSale = await call('pos-sale', sale()); check('a sale on a closed register: 409', R.closedSale.status === 409 && /closed/.test(R.closedSale.error), R.closedSale);
@@ -61,7 +62,9 @@ R.s3 = await call('pos-sale', sale({ tenders: [{ method: 'card', amountCents: 19
 check('four sales carry the shift', [R.s1, R.s2, R.s3, R.s4].every(x => x.ok && x.sale.shiftId === shiftId), [R.s1, R.s2, R.s3, R.s4].map(x => x.error || x.sale.shiftId));
 // cash out by a cashier needs a supervisor's token; the owner may on their own
 R.outNoTok = await call('pos-shift', { action: 'cashMove', ...till, shiftId, kind: 'out', amountCents: 10000, reason: 'Cash drop' }); check('cash out by a cashier without approval: 403', R.outNoTok.status === 403 && /supervisor/.test(R.outNoTok.error), R.outNoTok);
-R.out = await call('pos-shift', { action: 'cashMove', ...till, shiftId, kind: 'out', amountCents: 10000, reason: 'Cash drop to the safe' }, own.idToken); check('cash out by the owner', R.out.ok && R.out.movement.kind === 'out', R.out);
+const outId = nid('cm');
+R.out = await call('pos-shift', { action: 'cashMove', ...till, shiftId, kind: 'out', amountCents: 10000, reason: 'Cash drop to the safe', moveId: outId }, own.idToken); check('cash out by the owner', R.out.ok && R.out.movement.kind === 'out' && R.out.movement.id === outId, R.out);
+R.outAgain = await call('pos-shift', { action: 'cashMove', ...till, shiftId, kind: 'out', amountCents: 10000, reason: 'Cash drop to the safe', moveId: outId }, own.idToken); check('the same cash out again: the first answer, one movement', R.outAgain.ok && R.outAgain.again && (await listColl('cashMovements')).length === 1, R.outAgain);
 R.in = await call('pos-shift', { action: 'cashMove', ...till, shiftId, kind: 'in', amountCents: 2000, reason: 'Change from the bank' }, own.idToken); check('cash in', R.in.ok, R.in);
 R.noReason = await call('pos-shift', { action: 'cashMove', ...till, shiftId, kind: 'in', amountCents: 2000, reason: '' }, own.idToken); check('no reason: 400', R.noReason.status === 400, R.noReason);
 // the X-report

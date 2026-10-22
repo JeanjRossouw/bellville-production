@@ -47,27 +47,30 @@ if (!(await fetch('http://localhost:8788/pos/').then(r => r.ok).catch(() => fals
   server = spawn('node', [S + '/server.mjs', REPO], { stdio: 'inherit' });
   for (let i = 0; i < 30; i++) { await new Promise(r => setTimeout(r, 300)); if (await fetch('http://localhost:8788/pos/').then(r => r.ok).catch(() => false)) break; }
 }
+const nid = (p) => p + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
 const call = async (fn, body, token = cas.idToken) => { const r = await fetch(FN + fn, { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify(body) }); return { status: r.status, ...(await r.json()) }; };
 const bell = { entityId: 'BF', storeId: 'BF-BELL', registerId: '' };
 const lvl = (id) => getDoc('pos/retail/stockLevels/BF-BELL_' + id);
 
 // ---- adjustments: a manager, a reason, a movement; found stock moves the average cost
-R.adjCas = await call('pos-stock', { action: 'adjust', productId: 'p_cushion', qty: -2, code: 'damaged', note: 'torn', ...bell }); check('a cashier cannot adjust', R.adjCas.status === 403 && /manager/.test(R.adjCas.error), R.adjCas);
-R.adjSup = await call('pos-stock', { action: 'adjust', productId: 'p_cushion', qty: -2, code: 'damaged', ...bell }, sup.idToken); check('nor a supervisor on their own', R.adjSup.status === 403, R.adjSup);
-R.adjOther = await call('pos-stock', { action: 'adjust', productId: 'p_cushion', qty: -1, code: 'other', ...bell }, own.idToken); check('"other" needs a note', R.adjOther.status === 400 && /why/.test(R.adjOther.error), R.adjOther);
-R.adjMto = await call('pos-stock', { action: 'adjust', productId: 'p_sofa', qty: 1, code: 'found', ...bell }, own.idToken); check('a made-to-order item holds no stock', R.adjMto.status === 400 && /does not hold stock/.test(R.adjMto.error), R.adjMto);
-R.adj1 = await call('pos-stock', { action: 'adjust', productId: 'p_cushion', qty: -2, code: 'damaged', note: 'torn in the window', ...bell }, own.idToken);
+R.adjCas = await call('pos-stock', { action: 'adjust', adjustId: nid('adj'), productId: 'p_cushion', qty: -2, code: 'damaged', note: 'torn', ...bell }); check('a cashier cannot adjust', R.adjCas.status === 403 && /manager/.test(R.adjCas.error), R.adjCas);
+R.adjSup = await call('pos-stock', { action: 'adjust', adjustId: nid('adj'), productId: 'p_cushion', qty: -2, code: 'damaged', ...bell }, sup.idToken); check('nor a supervisor on their own', R.adjSup.status === 403, R.adjSup);
+R.adjOther = await call('pos-stock', { action: 'adjust', adjustId: nid('adj'), productId: 'p_cushion', qty: -1, code: 'other', ...bell }, own.idToken); check('"other" needs a note', R.adjOther.status === 400 && /why/.test(R.adjOther.error), R.adjOther);
+R.adjMto = await call('pos-stock', { action: 'adjust', adjustId: nid('adj'), productId: 'p_sofa', qty: 1, code: 'found', ...bell }, own.idToken); check('a made-to-order item holds no stock', R.adjMto.status === 400 && /does not hold stock/.test(R.adjMto.error), R.adjMto);
+const adj1Id = nid('adj');
+R.adj1 = await call('pos-stock', { action: 'adjust', adjustId: adj1Id, productId: 'p_cushion', qty: -2, code: 'damaged', note: 'torn in the window', ...bell }, own.idToken);
 check('−2 damaged: on hand 8, the reservation untouched', R.adj1.ok && R.adj1.level.onHandQty === 8 && R.adj1.level.reservedQty === 2 && R.adj1.movement.reason === 'adjust' && R.adj1.movement.code === 'damaged' && R.adj1.movement.qty === -2 && R.adj1.movement.onHandAfter === 8, R.adj1.error || R.adj1.level);
-R.adj2 = await call('pos-stock', { action: 'adjust', productId: 'p_cushion', qty: 3, code: 'found', unitCostCents: 6000, ...bell }, own.idToken);
+R.adjAgain = await call('pos-stock', { action: 'adjust', adjustId: adj1Id, productId: 'p_cushion', qty: -2, code: 'damaged', note: 'torn in the window', ...bell }, own.idToken); check('the same adjustment again: the first answer, stock untouched', R.adjAgain.ok && R.adjAgain.again && R.adjAgain.level.onHandQty === 8 && R.adjAgain.movement.docId === adj1Id, R.adjAgain);
+R.adj2 = await call('pos-stock', { action: 'adjust', adjustId: nid('adj'), productId: 'p_cushion', qty: 3, code: 'found', unitCostCents: 6000, ...bell }, own.idToken);
 check('+3 found at R 60: on hand 11, the average cost moves from R 50 to R 52.73', R.adj2.ok && R.adj2.level.onHandQty === 11 && R.adj2.level.avgCostCents === Math.round((8 * 5000 + 3 * 6000) / 11), R.adj2.error || R.adj2.level);
-R.adj3 = await call('pos-stock', { action: 'adjust', productId: 'p_cushion', qty: -1, code: 'sample', ...bell }, own.idToken); check('a sample out leaves the average cost alone', R.adj3.ok && R.adj3.level.onHandQty === 10 && R.adj3.level.avgCostCents === 5273, R.adj3.error || R.adj3.level);
+R.adj3 = await call('pos-stock', { action: 'adjust', adjustId: nid('adj'), productId: 'p_cushion', qty: -1, code: 'sample', ...bell }, own.idToken); check('a sample out leaves the average cost alone', R.adj3.ok && R.adj3.level.onHandQty === 10 && R.adj3.level.avgCostCents === 5273, R.adj3.error || R.adj3.level);
 let moves = await listColl('stockMovements'); check('three adjustment movements on the record, with the approver', moves.filter(m => m.reason === 'adjust' && m.docType === 'adjust').length === 3 && moves.every(m => m.byName === 'Jean'), moves.map(m => [m.reason, m.qty, m.byName]));
 
 // ---- quarantine: a supervisor moves goods aside and back
-R.qCas = await call('pos-stock', { action: 'move', productId: 'p_lamp', qty: 1, from: 'onHand', to: 'quarantine', ...bell }); check('a cashier cannot move to quarantine', R.qCas.status === 403, R.qCas);
-R.q1 = await call('pos-stock', { action: 'move', productId: 'p_lamp', qty: 1, from: 'onHand', to: 'quarantine', note: 'scratched?', ...bell }, sup.idToken);
+R.qCas = await call('pos-stock', { action: 'move', moveId: nid('qm'), productId: 'p_lamp', qty: 1, from: 'onHand', to: 'quarantine', ...bell }); check('a cashier cannot move to quarantine', R.qCas.status === 403, R.qCas);
+R.q1 = await call('pos-stock', { action: 'move', moveId: nid('qm'), productId: 'p_lamp', qty: 1, from: 'onHand', to: 'quarantine', note: 'scratched?', ...bell }, sup.idToken);
 check('1 lamp into quarantine', R.q1.ok && R.q1.level.onHandQty === 2 && R.q1.level.quarantineQty === 1, R.q1.error || R.q1.level);
-R.qTooMany = await call('pos-stock', { action: 'move', productId: 'p_lamp', qty: 5, from: 'quarantine', to: 'onHand', ...bell }, sup.idToken); check('not more than is in quarantine', R.qTooMany.status === 400 && /Only 1 in quarantine/.test(R.qTooMany.error), R.qTooMany);
+R.qTooMany = await call('pos-stock', { action: 'move', moveId: nid('qm'), productId: 'p_lamp', qty: 5, from: 'quarantine', to: 'onHand', ...bell }, sup.idToken); check('not more than is in quarantine', R.qTooMany.status === 400 && /Only 1 in quarantine/.test(R.qTooMany.error), R.qTooMany);
 moves = await listColl('stockMovements'); check('the move is two movements, one per bucket', moves.filter(m => m.reason === 'quarantine').length === 2 && moves.some(m => m.reason === 'quarantine' && m.bucket === 'onHand' && m.qty === -1) && moves.some(m => m.reason === 'quarantine' && m.bucket === 'quarantine' && m.qty === 1), moves.filter(m => m.reason === 'quarantine'));
 
 // ---- a stock take: frozen, counted while a sale goes through, reviewed, posted

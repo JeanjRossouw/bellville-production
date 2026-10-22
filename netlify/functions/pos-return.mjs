@@ -57,6 +57,11 @@ const actions = {
     const ctx = await whoAndWhere(event, b, { shiftOptional: !b.exchange });
     const when = clean(b.clientCreatedAt, 40) || nowIso();
     const rs = returnsSettings(ctx.settings);
+    // the till's own id for this credit: a resend after a dropped line gets the first answer, never a second note
+    const creditId = clean(b.creditId, 80);
+    if (!/^[\w:.-]{8,80}$/.test(creditId)) throw new Reject(400, 'The credit note has no id.');
+    const hadNote = await getDoc('creditNotes', creditId);
+    if (hadNote) { if (hadNote.entityId !== ctx.entityId) throw new Reject(403, 'Not your credit note.'); return { ok: true, again: true, creditNote: { ...hadNote, id: creditId }, refunds: hadNote.refunds || [], sale: hadNote.exchangeSaleId ? { ...(await getDoc('sales', hadNote.exchangeSaleId)), id: hadNote.exchangeSaleId } : null, lines: hadNote.exchangeSaleId ? await query('saleLines', [{ field: 'saleId', value: hadNote.exchangeSaleId }], 500, { field: 'lineNo' }) : [], payments: [] }; }
     const inLines = Array.isArray(b.lines) ? b.lines : [];
     if (!inLines.length || inLines.length > 100) throw new Reject(400, 'Nothing to return.');
     const approvers = new Map();
@@ -82,7 +87,8 @@ const actions = {
         const disposition = DISPOSITIONS.includes(l.disposition) ? l.disposition : 'restock';
         const reason = clean(l.reason, 80) || 'Other';
         // the price actually paid: this line's net (after its own and the sale's discounts), pro rata for a part
-        const netReturned = Math.round(sl.netCents * qty / sl.qty);
+        const done = got.returned[sl.lineNo] || 0;
+        const netReturned = Math.round(sl.netCents * (done + qty) / sl.qty) - Math.round(sl.netCents * done / sl.qty);   // the parts of a line add up to the line, whatever the order
         const vatReturned = vatIn(netReturned, sl.vatRateBp || 0);
         lines.push({ saleLineNo: sl.lineNo, productId: sl.productId, variantId: sl.variantId, itemId: sl.itemId, name: sl.name, qty, soldQty: sl.qty, unitPaidCents: Math.round(sl.netCents / sl.qty), lineTotalCents: netReturned, vatRateBp: sl.vatRateBp || 0, vatCents: vatReturned, reason, disposition, type: sl.type, fulfilment: sl.fulfilment });
         total += netReturned; vat += vatReturned;
@@ -137,7 +143,7 @@ const actions = {
     if (refunded + usedOnExchange !== total) throw new Reject(400, `The refunds (${refunded}) and the exchange (${usedOnExchange}) do not add up to the credit (${total}).`);
 
     // ---- in one transaction: the number, the credit note, refunds, stock, the customer, and the exchange's sale
-    const id = randomId('cn_');
+    const id = creditId;
     const result = await runSale(ctx, b.exchange || {}, {
       saleId: exchangeSaleId, prep: exchangePrep,
       more: async (tx, levels) => {

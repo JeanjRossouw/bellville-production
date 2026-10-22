@@ -110,7 +110,11 @@ const actions = {
     const amount = int(b.amountCents); const reason = clean(b.reason, 160);
     if (!kind || !(amount > 0) || !reason) throw new Reject(400, 'Cash in or out needs an amount and a reason.');
     const by = approved(ctx, b.approvalToken, 'cash', 'supervisor', 'Cash ' + kind);
-    const id = randomId('cm_'); const now = nowIso();
+    const id = clean(b.moveId, 80) || randomId('cm_');
+    if (!/^[\w:.-]{8,80}$/.test(id)) throw new Reject(400, 'The movement has no id.');
+    const had = await getDoc('cashMovements', id);
+    if (had) { if (had.entityId !== ctx.entityId) throw new Reject(403, 'Not your register.'); return { ok: true, again: true, movement: { id, ...had }, figures: await figures(shift) }; }
+    const now = nowIso();
     const data = { shiftId: shift.id, registerId: shift.registerId, kind, amountCents: amount, reason, actorUid: ctx.user.id, actorName: ctx.user.name, approvedBy: by.self ? null : { uid: by.uid, name: by.name }, ...serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId), serverReceivedAt: now };
     await commit([
       { create: true, coll: 'cashMovements', id, data },
