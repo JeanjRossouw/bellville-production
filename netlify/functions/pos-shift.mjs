@@ -14,6 +14,7 @@ import {
   getDoc, query, commit, beginTransaction, rollback, serverStamp,
   loginOf, loadUser, inEntity, inStore, verifyOverrideToken, loadDevice, bodyOf
 } from './lib/pos.mjs';
+import { approved, consumeToken } from './lib/sale.mjs';
 
 export const DENOMS = [20000, 10000, 5000, 2000, 1000, 500, 200, 100, 50, 20, 10];
 const METHODS = ['cash', 'card', 'eft', 'qr', 'voucher', 'storeCredit', 'account', 'points'];
@@ -30,7 +31,9 @@ async function whoAndWhere(event, b) {
   const entityId = device ? device.entityId : clean(b.entityId, 40);
   if (!inEntity(user, entityId) || !inStore(user, storeId)) throw new Reject(403, 'Not your store.');
   const settings = (await getDoc('settings', entityId)) || {};
-  return { user, device, deviceId: device ? device.id : 'web:' + login.sub, entityId, storeId, settings };
+  const ctx = { user, device, deviceId: device ? device.id : 'web:' + login.sub, entityId, storeId, settings };
+  if (b.approvalToken) { ctx.approvalToken = String(b.approvalToken); ctx.approval = await consumeToken(ctx, ctx.approvalToken); }   // an approval is good once
+  return ctx;
 }
 // a count by denomination: whole notes and coins, and its total
 function readCount(c) {
@@ -64,13 +67,6 @@ async function openShiftOf(registerId) {
   if (!reg) throw new Reject(404, 'No such register.');
   const shift = reg.currentShiftId ? await getDoc('shifts', reg.currentShiftId) : null;
   return { reg, shift: shift && shift.status === 'open' ? shift : null };
-}
-// an approval token from pos-auth for this action, by at least this role
-function approved(ctx, token, action, minRole, what) {
-  if (rank(ctx.user.role) >= rank(minRole)) return { uid: ctx.user.id, name: ctx.user.name, self: true };
-  const t = verifyOverrideToken(token);
-  if (!t || t.action !== 'override.' + action || t.entityId !== ctx.entityId || rank(t.role) < rank(minRole)) throw new Reject(403, `${what} needs a ${minRole}'s PIN.`);
-  return { uid: t.overrideUid, name: t.overrideName, self: false };
 }
 
 const actions = {
