@@ -5,6 +5,7 @@
 //   prepareSale(ctx, b, opts)    prices every line, checks discounts, overrides, totals, VAT and tenders; no writes
 //   saleWrites(tx, ctx, prep, saleId, b)   inside a transaction: the number, stock, vouchers; → { writes, result }
 //   runSale(ctx, b, { more })    the transaction loop; `more(tx)` adds writes (an exchange's credit note) and a result
+import { SPEC_FIELDS } from '../../../pos/js/special-terms.js';
 import {
   Reject, clean, randomId, nowIso, rank,
   getDoc, query, commit, beginTransaction, rollback, serverStamp,
@@ -142,8 +143,12 @@ export async function prepareSale(ctx, b, opts = {}) {
     const t = lineTotals({ qty, unitPriceCents: unit, discountCents: disc, rateBp: lr });
     gross += t.grossCents; lineDisc += t.discountCents; sub += t.lineTotalCents;
     const fulfilment = type === 'mto' ? 'mto' : type === 'nonstock' || type === 'voucher' ? 'service' : 'stock';
+    // a made-to-order line on an ordinary sale carries its specification (a sales order); it is read back on the invoice line's note
+    const spec = opts.spec && type === 'mto' && l.spec && typeof l.spec === 'object' ? specOf(l.spec) : null;
+    if (spec && !spec.model) spec.model = name;
+    const noteOf = [clean(l.note, 200), ...(spec ? specNote(spec).filter(x => x !== 'Model ' + name) : [])].filter(Boolean).join(' · ').slice(0, 200);
     lines.push({ lineNo: n, productId: p ? p.id : '', variantId: v ? v.id : '', itemId, sku: (v && v.sku) || (p && p.sku) || '', name, type, fulfilment, qty, unitPriceCents: unit, listPriceCents: listPrice, priceOverride: override,
-      discountCents: t.discountCents, discountPct: pct, discountReason: clean(l.discountReason, 120), discountBy: dOk.by, lineTotalCents: t.lineTotalCents, vatClass, vatRateBp: lr, costCents, trackStock, note: clean(l.note, 200), custom: !!l.custom });
+      discountCents: t.discountCents, discountPct: pct, discountReason: clean(l.discountReason, 120), discountBy: dOk.by, lineTotalCents: t.lineTotalCents, vatClass, vatRateBp: lr, costCents, trackStock, note: noteOf, custom: !!l.custom, ...(spec ? { spec } : {}) });
     if (p && type === 'bundle') for (const c of p.bundle || []) { const cp = await getDoc('products', c.productId); if (!cp) continue; const cv = c.variantId ? await getDoc('variants', c.variantId) : null; if (cp.trackStock !== false && cp.type === 'stock') moves.push({ productId: cp.id, variantId: cv ? cv.id : '', itemId: cv ? cv.id : cp.id, qty: -(qty * (int(c.qty) || 1)), unitCostCents: (cv && cv.costCents != null ? cv.costCents : cp.costCents) || 0, reason: 'bundle', name: cp.name + (cv ? ' · ' + cv.name : '') }); }
     else if (trackStock) moves.push({ productId: p.id, variantId: v ? v.id : '', itemId, qty: -qty, unitCostCents: costCents, reason: 'sale', name });
     if (type === 'voucher') for (let k = 0; k < qty; k++) vouchersSold.push({ lineNo: n, amountCents: unit });
@@ -324,7 +329,14 @@ export function moveWrites(ctx, levels, m, doc, stamp, now) {
 }
 
 // the transaction loop: `more(tx, levels)` may add writes and fields to the answer (an exchange's credit note)
-export async function runSale(ctx, b, { saleId, prep, more } = {}) {
+// the specification of a made-to-order line, as the till sends it; the photo (shrunk by the till) at most 300 KB
+export const PHOTO_MAX = 300000;
+export const specOf = (sp) => { const out = {}; for (const [k] of SPEC_FIELDS) out[k] = clean(sp && sp[k], k === 'notes' ? 500 : 120); const photo = String((sp && sp.photo) || ''); if (photo) { if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(photo) || photo.length > PHOTO_MAX) throw new Reject(400, 'The photo must be a JPEG, PNG or WebP under 300 KB (the till shrinks it).'); } out.photo = photo; return out; };
+export const specNote = (sp) => sp ? SPEC_FIELDS.filter(f => sp[f[0]] && f[0] !== 'notes').map(f => f[1] + ' ' + sp[f[0]]) : [];
+
+// `more` runs before the sale is numbered (a credit note the sale's tender names); `after` runs once the sale is
+// written and sees its result (a document that carries the invoice number), all in the one transaction
+export async function runSale(ctx, b, { saleId, prep, more, after } = {}) {
   for (let attempt = 0; attempt < 5; attempt++) {
     const tx = await beginTransaction();
     let done = false;
@@ -332,9 +344,10 @@ export async function runSale(ctx, b, { saleId, prep, more } = {}) {
       const levels = new Map();
       const extra = more ? await more(tx, levels) : { writes: [], result: {} };
       const s = prep ? await saleWrites(tx, ctx, prep, saleId, b, levels) : { writes: [], result: {} };
-      await commit(squash([...extra.writes, ...s.writes]), tx); done = true;
+      const late = after ? await after(tx, levels, s.result) : { writes: [], result: {} };
+      await commit(squash([...extra.writes, ...s.writes, ...late.writes]), tx); done = true;
       if (levels.size) await afterStock(ctx, levels);   // the POS is master for stock: Shopify hears of every movement
-      return { ...s.result, ...extra.result, ok: true };
+      return { ...s.result, ...extra.result, ...late.result, ok: true };
     } catch (e) {
       if (e instanceof Reject && e.status === 409 && /moment ago/.test(e.message) && attempt < 4) continue;   // the transaction lost a race: again
       if (e instanceof Reject) throw e;

@@ -19,6 +19,7 @@ import * as buying from './buying.js';
 import * as customersTab from './customers.js';
 import * as reports from './reports.js';
 import * as online from './online.js';
+import * as assist from './assist.js';
 import { EMULATOR } from './db.js';
 
 const $ = (id) => document.getElementById(id);
@@ -26,7 +27,7 @@ let view = '';                       // the tab on screen; a till starts on Sell
 let adminSub = 'companies';          // the Admin tab's sub-screen
 let editId = '', settingsEntity = '';  // what the admin forms are on
 let entities = [], stores = [], registers = [], users = [], devices = [], settings = {};
-let catalogue = [], variants = [], stockLevels = [], customers = [], storeSales = [], storeLaybys = [], storeSpecials = [], storeTakes = [], discountCodes = [], suppliers = [], storePOs = [], storeGrvs = [], transfersOut = [], transfersIn = [], stockOffsets = {};
+let catalogue = [], variants = [], stockLevels = [], customers = [], storeSales = [], storeLaybys = [], storeSpecials = [], storeSalesOrders = [], storeTakes = [], discountCodes = [], suppliers = [], storePOs = [], storeGrvs = [], transfersOut = [], transfersIn = [], stockOffsets = {};
 let sellStore = '';                 // the store being sold from: the till's, else chosen
 let prEntity = '', prFilter = { q: '', category: '', brand: '', type: '', archived: false };
 const unwatch = [];
@@ -83,7 +84,7 @@ function startData() {
 }
 function stopData() {
   while (unwatch.length) { try { unwatch.pop()(); } catch (e) {} }
-  if (unwatchStore) { try { unwatchStore(); } catch (e) {} unwatchStore = null; } watchedStore = ''; storeSales = []; storeLaybys = []; storeSpecials = []; storeTakes = []; storePOs = []; storeGrvs = []; transfersOut = []; transfersIn = []; suppliers = []; discountCodes = []; stockLevels = [];   // or it would go on listening as the next person
+  if (unwatchStore) { try { unwatchStore(); } catch (e) {} unwatchStore = null; } watchedStore = ''; storeSales = []; storeLaybys = []; storeSpecials = []; storeSalesOrders = []; storeTakes = []; storePOs = []; storeGrvs = []; transfersOut = []; transfersIn = []; suppliers = []; discountCodes = []; stockLevels = [];   // or it would go on listening as the next person
   entities = []; stores = []; registers = []; users = []; devices = []; settings = {}; catalogue = []; variants = []; stockLevels = []; customers = [];
 }
 // the store sold from: the till's own, else the person's default, else their first
@@ -99,7 +100,7 @@ function startStoreData() {
   const sid = sellStoreId();
   if (sid === watchedStore) return;
   if (unwatchStore) { try { unwatchStore(); } catch (e) {} unwatchStore = null; }
-  watchedStore = sid; stockLevels = []; storeSales = []; storeLaybys = []; storeSpecials = []; storeTakes = []; storePOs = []; storeGrvs = []; transfersOut = []; transfersIn = [];
+  watchedStore = sid; stockLevels = []; storeSales = []; storeLaybys = []; storeSpecials = []; storeSalesOrders = []; storeTakes = []; storePOs = []; storeGrvs = []; transfersOut = []; transfersIn = [];
   if (!sid) return;
   const st = stores.find(x => x.id === sid);
   const eid = st ? st.entityId : (auth.session.device && auth.session.device.entityId) || '';
@@ -108,13 +109,14 @@ function startStoreData() {
   const u2 = watch('sales', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeSales = rows; if (view === 'sales') paint(); });
   const u3 = watch('laybys', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeLaybys = rows; if (view === 'laybys') paint(); });
   const u4 = watch('specialOrders', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeSpecials = rows; if (view === 'orders') paint(); });
+  const u4b = watch('salesOrders', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeSalesOrders = rows; if (view === 'orders') paint(); });
   const u5 = auth.atLeast('supervisor') ? watch('stockTakes', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeTakes = rows; if (view === 'stock') paint(); }) : () => {};
   const sup = auth.atLeast('supervisor');
   const u6 = sup ? watch('purchaseOrders', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storePOs = rows; if (view === 'buying') paint(); }) : () => {};
   const u7 = sup ? watch('goodsReceived', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeGrvs = rows; if (view === 'buying') paint(); }) : () => {};
   const u8 = sup ? watch('transfers', [['entityId', '==', eid], ['fromStoreId', '==', sid]], rows => { transfersOut = rows; if (view === 'buying') paint(); }) : () => {};
   const u9 = sup ? watch('transfers', [['entityId', '==', eid], ['toStoreId', '==', sid]], rows => { transfersIn = rows; if (view === 'buying') paint(); }) : () => {};
-  unwatchStore = () => { u1(); u2(); u3(); u4(); u5(); u6(); u7(); u8(); u9(); };
+  unwatchStore = () => { u1(); u2(); u3(); u4(); u4b(); u5(); u6(); u7(); u8(); u9(); };
   sell.loadCart(sid);
   reloadOffsets();
 }
@@ -164,6 +166,7 @@ function setLoginMode(mode) {
 }
 function showLogin() {
   $('app').hidden = true; $('claim').hidden = true; $('nobody').hidden = true;
+  assist.stopAssistant();
   const fbUser = auth.session.uid && !auth.session.user;
   if (fbUser && auth.session.nobodyYet) { $('login').hidden = true; $('claim').hidden = false; return; }
   if (fbUser) { $('login').hidden = true; $('nobody').hidden = false; return; }
@@ -181,6 +184,7 @@ function showApp() {
   $('brand-sub').textContent = auth.session.device ? (storeName(auth.session.device.storeId) || auth.session.device.label) : 'Office';
   if (!view || !navItems().some(n => n.key === view)) view = sellStoreId() && auth.session.mode !== 'email' ? 'sell' : 'home';
   paint();
+  assist.startAssistant(() => view, () => { const sd = sellData(); return { entityId: sd.entity ? sd.entity.id : '', storeId: sd.store ? sd.store.id : '' }; });
 }
 const roleLabel = (k) => (ROLES.find(r => r.key === k) || { label: k }).label;
 const storeName = (id) => (stores.find(s => s.id === id) || {}).name || '';
@@ -447,7 +451,7 @@ reports.setContext({ repaint: () => { if (view === 'reports') paint(); }, data: 
 customersTab.setContext({ repaint: () => { if (view === 'customers') paint(); }, data: () => ({ ...sellData() }) });
 buying.setContext({ repaint: () => { if (view === 'buying') paint(); }, data: () => ({ ...sellData(), stores, suppliers, pos: storePOs, grvs: storeGrvs, transfers: [...transfersOut, ...transfersIn.filter(t => !transfersOut.some(o => o.id === t.id))] }), onChange: () => { reloadOffsets(); if (view === 'buying') paint(); } });
 stock.setContext({ repaint: () => { if (view === 'stock') paint(); }, data: () => ({ ...sellData(), takes: storeTakes }), onChange: () => { reloadOffsets(); if (view === 'stock') paint(); } });
-specials.setContext({ repaint: () => { if (view === 'orders') paint(); }, data: () => ({ ...sellData(), specials: storeSpecials }), onChange: () => { register.reg.stale = true; if (view === 'orders') paint(); } });
+specials.setContext({ repaint: () => { if (view === 'orders') paint(); }, data: () => ({ ...sellData(), specials: storeSpecials, salesOrders: storeSalesOrders }), onChange: () => { register.reg.stale = true; if (view === 'orders') paint(); } });
 document.addEventListener('keydown', (e) => { if (view === 'sell' && auth.session.user) sell.onDocumentKey(e); }, true);
 $('screen').addEventListener('change', (e) => { if (e.target.id === 'sl-store') { sellStore = e.target.value; startStoreData(); paint(); } });
 sell.setContext({ repaint: () => { if (view === 'sell') paint(); }, data: sellData, onSold: (r) => { register.reg.stale = true; reloadOffsets(); if (!r.offline) sync.refreshBlocks(); }, onLayby: (cart, t, clear) => laybys.openNew(cart, t, () => { clear(); register.reg.stale = true; }), onSpecial: (cart, t, clear) => specials.openNew(cart, t, () => { clear(); register.reg.stale = true; }) });

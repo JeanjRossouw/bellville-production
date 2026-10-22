@@ -53,12 +53,12 @@ export async function ensureStoreCustomer(cid, entity, store) {
 export const SPEC_LABELS = [['model', 'Model'], ['size', 'Size'], ['fabric', 'Fabric'], ['colour', 'Colour'], ['legs', 'Legs']];
 export const orderDocId = (soId, lineNo) => 'pos-' + safe(soId) + '-' + lineNo;
 // one factory order for one line of the custom order; the number is filled in by the caller
-export function factoryOrderDoc(so, line, lineNo, { customerId, customerName, store, entity }) {
+export function factoryOrderDoc(so, line, lineNo, { customerId, customerName, store, entity, kind = 'custom' }) {
   const t = now();
   const sp = line.spec || {};
   const fabric = [sp.fabric, sp.colour].filter(Boolean).join(' / ');
   const notes = [
-    `Custom order ${so.docNo} from the ${store.name || store.id} store (${entity.tradingName || entity.legalName || entity.id}), signed off by the customer at the till.`,
+    kind === 'sales' ? `Sales order: tax invoice ${so.docNo} from the ${store.name || store.id} store (${entity.tradingName || entity.legalName || entity.id}), ${so.paidInFull === false ? 'on the customer\'s account' : 'paid in full'} at the till.` : `Custom order ${so.docNo} from the ${store.name || store.id} store (${entity.tradingName || entity.legalName || entity.id}), signed off by the customer at the till.`,
     ...SPEC_LABELS.filter(([k]) => sp[k]).map(([k, l]) => `${l}: ${sp[k]}`),
     sp.notes ? 'Notes: ' + sp.notes : '',
     line.note ? 'Line note: ' + line.note : '',
@@ -76,12 +76,12 @@ export function factoryOrderDoc(so, line, lineNo, { customerId, customerName, st
     priceEach: r2(Number(line.qty) > 0 ? Math.round(line.netCents / line.qty) : line.netCents),
     status: 'new',
     deliveryContact: store.name || '', deliveryPhone: store.phone || entity.phone || '', deliveryAddress: addrLine(store.address || entity.address), deliveryInstructions: 'To the store, for ' + so.docNo + '.',
-    events: [{ at: t, by: 'POS', what: `Custom order ${so.docNo} came in from the ${store.name || store.id} till, deposit paid` }],
+    events: [{ at: t, by: 'POS', what: kind === 'sales' ? `Sales order ${so.docNo} came in from the ${store.name || store.id} till, invoiced` : `Custom order ${so.docNo} came in from the ${store.name || store.id} till, deposit paid` }],
     createdAt: t, createdBy: 'POS', updatedAt: t, updatedBy: 'POS'
   };
 }
 // write the orders the custom order needs; the ones already there are kept (a resend writes nothing twice)
-export async function sendOrder(cid, so, entity, store) {
+export async function sendOrder(cid, so, entity, store, kind = 'custom') {
   const settings = (await getDoc(`companies/${cid}/settings/factory`)) || {};
   const cust = await ensureStoreCustomer(cid, entity, store);
   const orders = [];
@@ -91,7 +91,7 @@ export async function sendOrder(cid, so, entity, store) {
     const path = `companies/${cid}/orders/${id}`;
     const had = await getDoc(path);
     if (had) { orders.push({ id, orderNo: had.orderNo || '', lineNo, status: had.status || 'new' }); continue; }
-    const doc = factoryOrderDoc(so, so.lines[i], lineNo, { customerId: cust.id, customerName: cust.name, store, entity });
+    const doc = factoryOrderDoc(so, so.lines[i], lineNo, { customerId: cust.id, customerName: cust.name, store, entity, kind });
     const n = await nextNumber(cid, 'orderNo', settings.firstOrderNo || 1001);
     doc.orderNo = (settings.orderPrefix || 'CP-') + n;
     if (!(await createDoc(path, doc))) { const again = await getDoc(path); orders.push({ id, orderNo: (again && again.orderNo) || '', lineNo, status: (again && again.status) || 'new' }); continue; }

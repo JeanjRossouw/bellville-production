@@ -7,6 +7,10 @@ export const STATUS_LABEL = { quoted: 'Quoted', depositPaid: 'Deposit paid', inP
 // what may follow what
 export const NEXT = { quoted: ['depositPaid', 'cancelled'], depositPaid: ['inProduction', 'ready', 'cancelled'], inProduction: ['ready', 'cancelled'], ready: ['delivered', 'collected', 'cancelled'], delivered: [], collected: [], cancelled: [] };
 export const SPEC_FIELDS = [['model', 'Model'], ['size', 'Size'], ['fabric', 'Fabric'], ['colour', 'Colour'], ['legs', 'Legs'], ['notes', 'Notes']];
+// a sales order: a made-to-order item sold as an ordinary sale (invoiced), built by the factory and handed over
+export const SALES_STATUSES = ['open', 'inProduction', 'ready', 'delivered', 'collected', 'cancelled'];
+export const SALES_LABEL = { open: 'Ordered', inProduction: 'In production', ready: 'Ready', delivered: 'Delivered', collected: 'Collected', cancelled: 'Cancelled' };
+export const SALES_NEXT = { open: ['inProduction', 'ready', 'cancelled'], inProduction: ['ready', 'cancelled'], ready: ['delivered', 'collected', 'cancelled'], delivered: [], collected: [], cancelled: [] };
 export const CANCEL_KINDS = [['customer', 'The customer cancels'], ['store', 'We cannot make it'], ['other', 'Other']];
 
 const num = (v, dflt) => (v == null || v === '' || !Number.isFinite(Number(v))) ? dflt : Number(v);
@@ -41,4 +45,17 @@ export function updateText(entity, store, so, status) {
   if (status === 'booked') return `Hi ${name}, ${co} here: your order ${so.docNo} is booked for ${so.delivery.kind === 'deliver' ? 'delivery' : 'collection'} on ${so.delivery.date}${so.delivery.slot ? ' (' + so.delivery.slot + ')' : ''}${so.delivery.kind === 'deliver' && so.delivery.address ? ' to ' + [so.delivery.address.line1, so.delivery.address.city].filter(Boolean).join(', ') : ''}.`;
   if (status === 'cancelled') return `Hi ${name}, ${co} here: your order ${so.docNo} has been cancelled${so.refundedCents ? ' and ' + rands(so.refundedCents) + ' refunded' : ''}.`;
   return `Hi ${name}, ${co} here with an update on your order ${so.docNo} (${what}): it is now ${STATUS_LABEL[status] || status}.`;
+}
+// the WhatsApp update on a sales order
+export function salesOrderText(entity, store, so, status) {
+  const co = entity.tradingName || entity.legalName;
+  const name = (so.customerSnapshot || {}).name || '';
+  const what = (so.lines || []).map(l => l.name).join(', ');
+  if (status === 'open') return `Hi ${name}, ${co} here. Thank you for your order (invoice ${so.docNo}: ${what}). It is in the queue for production${so.expectedAt ? ', expected around ' + so.expectedAt : ''}. We will let you know as it moves along.`;
+  if (status === 'inProduction') return `Hi ${name}, ${co} here: your order ${so.docNo} (${what}) is now in production${so.expectedAt ? ', expected around ' + so.expectedAt : ''}.`;
+  if (status === 'ready') return `Hi ${name}, ${co} here: good news, your order ${so.docNo} (${what}) is ready for collection at ${store.name}. Please reply to arrange a day, or delivery if you would prefer.`;
+  if (status === 'delivered') return `Hi ${name}, ${co} here: your order ${so.docNo} was delivered today. Thank you — enjoy it, and tell us if anything is not right.`;
+  if (status === 'collected') return `Hi ${name}, ${co} here: thank you for collecting your order ${so.docNo}. Enjoy it, and tell us if anything is not right.`;
+  if (status === 'cancelled') return `Hi ${name}, ${co} here: your order ${so.docNo} has been cancelled.`;
+  return `Hi ${name}, ${co} here with an update on your order ${so.docNo} (${what}): it is now ${SALES_LABEL[status] || status}.`;
 }
