@@ -50,8 +50,11 @@ export function startAssistant(screen, where) {
   if (where) ctx.where = where;
   if (document.getElementById('as-fab')) return;
   load();
+  // the button sits in the top bar next to Lock, so it never covers the cart or a tile; the panel floats
+  const bar = document.getElementById('lock');
+  const btn = '<button id="as-fab" class="as-fab in-bar" title="Assistant: ask how to do something, or for help planning" aria-label="Assistant" type="button">?</button>';
+  if (bar && bar.parentElement) bar.insertAdjacentHTML('beforebegin', btn); else document.body.insertAdjacentHTML('beforeend', btn.replace(' in-bar', ''));
   document.body.insertAdjacentHTML('beforeend', `
-    <button id="as-fab" class="as-fab" title="Assistant: ask how to do something, or for help planning" aria-label="Assistant">?</button>
     <div id="as-panel" class="as-panel" hidden role="dialog" aria-label="Assistant">
       <div class="as-head"><strong>Assistant</strong><span class="muted">The till, and planning from today's figures</span>
         <button class="icon-btn" id="as-clear" title="Start a new chat" type="button">↺</button><button class="icon-btn" id="as-close" title="Close" type="button">✕</button></div>
