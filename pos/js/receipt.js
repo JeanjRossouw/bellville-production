@@ -37,7 +37,7 @@ export function fullInvoiceGap(customer) {
 // the made-to-order spec as lines of text
 export const specLines = (sp) => sp ? [['Model', sp.model], ['Size', sp.size], ['Fabric', sp.fabric], ['Colour', sp.colour], ['Legs', sp.legs], ['Notes', sp.notes]].filter(x => x[1]).map(x => x[0] + ': ' + x[1]) : [];
 const addr = (a) => [a && a.line1, a && a.line2, a && a.city, a && a.code].filter(Boolean).join(', ');
-const methodLabel = (m) => ({ cash: 'Cash', card: 'Card', eft: 'EFT', qr: 'QR', voucher: 'Gift voucher', storeCredit: 'Store credit', account: 'On account', layby: 'Lay-by', specialOrder: 'Special order', creditNote: 'Credit note' })[m] || m;
+const methodLabel = (m) => ({ cash: 'Cash', card: 'Card', eft: 'EFT', qr: 'QR', voucher: 'Gift voucher', storeCredit: 'Store credit', account: 'On account', layby: 'Lay-by', specialOrder: 'Special order', creditNote: 'Credit note', points: 'Points' })[m] || m;
 
 // the facts every rendering shares
 export function receiptModel({ sale, lines, payments, entity, store, settings, copy }) {
@@ -58,9 +58,10 @@ export function receiptModel({ sale, lines, payments, entity, store, settings, c
     creditNote: sale.series === 'CN' ? { saleDocNo: sale.saleDocNo || '', noReceipt: !!sale.noReceipt, exchangeSaleId: sale.exchangeSaleId || '', exchangeUsedCents: sale.exchangeUsedCents || 0 } : null,
     subtotalCents: sale.subtotalCents, discountCents: (sale.lineDiscountCents || 0) + (sale.saleDiscountCents || 0), totalCents: sale.totalCents, vatCents: sale.vatCents, vatRateBp: sale.vatRateBp,
     exVatCents: sale.totalCents - sale.vatCents, roundingCents: sale.roundingCents || 0, changeCents: sale.changeCents || 0,
-    payments: (payments || []).map(p => ({ label: (sale.series === 'CN' || p.amountCents < 0 ? 'Refund: ' : '') + methodLabel(p.method) + (p.cardLast4 ? ' ••' + p.cardLast4 : '') + (p.status === 'awaiting' ? ' (awaiting)' : ''), amountCents: Math.abs(p.amountCents), tenderedCents: p.tenderedCents, ref: p.ref || p.approvalCode || '' })),
+    payments: (payments || []).map(p => ({ label: (sale.series === 'CN' || p.amountCents < 0 ? 'Refund: ' : '') + methodLabel(p.method) + (p.method === 'points' && p.points ? ' (' + p.points + ')' : '') + (p.cardLast4 ? ' ••' + p.cardLast4 : '') + (p.status === 'awaiting' ? ' (awaiting)' : ''), amountCents: Math.abs(p.amountCents), tenderedCents: p.tenderedCents, ref: p.ref || p.approvalCode || '' })),
     awaiting: sale.paidStatus === 'awaiting', vouchers: sale.vouchersSold || [], pending: !!sale.pending,
     // lay-by documents: facts in rows, the agreement's terms, the customer's signature, a line to sign on collection
+    loyalty: sale.loyalty && (sale.loyalty.earned || sale.loyalty.redeemed) ? sale.loyalty : null,
     totals: sale.noTotals ? false : true, sections: sale.sections || [], terms: sale.terms || '', signature: sale.signature || '', signedBy: sale.signedBy || '', signLine: sale.signLine || '', refLabel: sale.refLabel || ''
   };
 }
@@ -85,6 +86,7 @@ export function slipHtml(m) {
     ${m.roundingCents ? row('Cash rounding', esc(money(m.roundingCents))) : ''}
     ${m.payments.map(p => row(esc(p.label), esc(money(p.tenderedCents && p.tenderedCents !== p.amountCents ? p.tenderedCents : p.amountCents)))).join('')}
     ${m.changeCents ? row('Change', esc(money(m.changeCents))) : ''}
+    ${m.loyalty ? `<div class="s c">Points${m.loyalty.earned ? ' earned ' + m.loyalty.earned : ''}${m.loyalty.redeemed ? ' · used ' + m.loyalty.redeemed : ''} · balance ${m.loyalty.balance}${m.loyalty.tier ? ' · ' + esc(m.loyalty.tier) : ''}</div>` : ''}
     ${m.awaiting ? '<div class="c s">Payment awaited: not yet paid</div>' : ''}
     ${m.pending ? '<div class="c s">Rung up offline: sent to the office when the line is back</div>' : ''}
     ${m.vat && m.lines.some(l => l.zero) ? '<div class="s">* zero-rated or exempt</div>' : ''}
@@ -120,7 +122,7 @@ export function a4Html(m) {
         ${m.totals ? `<tr class="tot"><td colspan="${m.vat ? 5 : 4}" class="n">Total</td><td class="n">${esc(money(m.totalCents))}</td></tr>` : ''}</tfoot></table>
     ${m.refLabel ? `<div class="pay">${esc(m.refLabel)}</div>` : ''}
     ${m.sections.map(sec => `<div class="sec">${sec.title ? `<div class="s st">${esc(sec.title)}</div>` : ''}<table class="kv">${sec.rows.map(r => `<tr><td>${esc(r[0])}</td><td class="n">${r[2] ? '<b>' + esc(r[1]) + '</b>' : esc(r[1])}</td></tr>`).join('')}</table></div>`).join('')}
-    <div class="pay">${m.payments.map(p => `<div>${esc(p.label)}${p.ref ? ' · ' + esc(p.ref) : ''}: ${esc(money(p.amountCents))}</div>`).join('')}${m.roundingCents ? `<div>Cash rounding ${esc(money(m.roundingCents))}</div>` : ''}${m.changeCents ? `<div>Change ${esc(money(m.changeCents))}</div>` : ''}${m.awaiting ? '<div><b>Payment awaited: this invoice is not yet paid.</b></div>' : ''}</div>
+    <div class="pay">${m.payments.map(p => `<div>${esc(p.label)}${p.ref ? ' · ' + esc(p.ref) : ''}: ${esc(money(p.amountCents))}</div>`).join('')}${m.roundingCents ? `<div>Cash rounding ${esc(money(m.roundingCents))}</div>` : ''}${m.changeCents ? `<div>Change ${esc(money(m.changeCents))}</div>` : ''}${m.loyalty ? `<div>Points${m.loyalty.earned ? ' earned ' + m.loyalty.earned : ''}${m.loyalty.redeemed ? ', used ' + m.loyalty.redeemed : ''}; balance ${m.loyalty.balance}${m.loyalty.tier ? ' (' + esc(m.loyalty.tier) + ')' : ''}</div>` : ''}${m.awaiting ? '<div><b>Payment awaited: this invoice is not yet paid.</b></div>' : ''}</div>
     ${m.vouchers.length ? `<div class="pay">${m.vouchers.map(v => `<div>Gift voucher ${esc(money(v.amountCents))}: <b>${esc(v.code)}</b></div>`).join('')}</div>` : ''}
     ${m.terms ? `<div class="foot terms">${esc(m.terms).replace(/\n/g, '<br><br>')}</div>` : ''}
     ${m.signature ? `<div class="sig"><img src="${m.signature}" alt="signature"><div class="s">Signed: ${esc(m.signedBy)} · ${esc(niceDate(m.date))}</div></div>` : m.signedBy ? `<div class="sig s">Signed: ${esc(m.signedBy)}</div>` : ''}
@@ -172,6 +174,7 @@ export function escposBytes(m) {
   if (m.roundingCents) line(lr('Cash rounding', rand(m.roundingCents)));
   for (const p of m.payments) line(lr(p.label, rand(p.tenderedCents && p.tenderedCents !== p.amountCents ? p.tenderedCents : p.amountCents)));
   if (m.changeCents) line(lr('Change', rand(m.changeCents)));
+  if (m.loyalty) line(lr('Points' + (m.loyalty.earned ? ' +' + m.loyalty.earned : '') + (m.loyalty.redeemed ? ' -' + m.loyalty.redeemed : ''), 'balance ' + m.loyalty.balance));
   if (m.awaiting) line('Payment awaited: not yet paid');
   if (m.vat && m.lines.some(l => l.zero)) line('* zero-rated or exempt');
   for (const v of m.vouchers) { align(1); line('Gift voucher ' + rand(v.amountCents)); bold(true); line(v.code); bold(false); align(0); }

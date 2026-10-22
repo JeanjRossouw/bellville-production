@@ -53,7 +53,7 @@ function allocate(lines, landed) {
 
 const actions = {
   async poSend(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     approved(ctx, b.approvalToken, 'buy', 'manager', 'Sending a purchase order');
     const po = await loadPo(ctx, b.poId);
     if (po.status === 'sent' && po.docNo) return { ok: true, po, again: true };
@@ -81,7 +81,7 @@ const actions = {
   },
 
   async poCancel(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     approved(ctx, b.approvalToken, 'buy', 'manager', 'Cancelling a purchase order');
     const po = await loadPo(ctx, b.poId);
     if (!['draft', 'sent', 'part'].includes(po.status)) throw new Reject(409, `Purchase order is ${po.status}.`);
@@ -100,7 +100,7 @@ const actions = {
 
   // goods in: against a PO (part or full) or direct; the landed cost goes into the stock's cost
   async receive(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     const approvers = new Map();
     const a = approved(ctx, b.approvalToken, 'buy', 'supervisor', 'Receiving stock'); if (!a.self) approvers.set(a.uid, a.name);
     const grvId = clean(b.grvId, 80);
@@ -156,7 +156,7 @@ const actions = {
 
   // stock leaves the sender now; it is in transit until the other store receives it
   async transferSend(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     const approvers = new Map();
     const a = approved(ctx, b.approvalToken, 'buy', 'supervisor', 'Sending stock to another store'); if (!a.self) approvers.set(a.uid, a.name);
     const id = clean(b.transferId, 80);
@@ -190,7 +190,7 @@ const actions = {
   },
 
   async transferReceive(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     const approvers = new Map();
     const a = approved(ctx, b.approvalToken, 'buy', 'supervisor', 'Receiving a transfer'); if (!a.self) approvers.set(a.uid, a.name);
     const tr = await loadTransfer(ctx, b.transferId);
@@ -225,7 +225,7 @@ const actions = {
   },
 
   async transferCancel(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     const approvers = new Map();
     const a = approved(ctx, b.approvalToken, 'buy', 'supervisor', 'Cancelling a transfer'); if (!a.self) approvers.set(a.uid, a.name);
     const tr = await loadTransfer(ctx, b.transferId);

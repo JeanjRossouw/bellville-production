@@ -139,7 +139,7 @@ const actions = {
 
   // the till moves it along (a supervisor or higher), when the factory does not call
   async status(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     approved(ctx, b.approvalToken, 'specialOrder', 'supervisor', 'Changing an order’s status');
     const so = await loadOrder(ctx, b.orderId);
     return setStatus(so, b, { byName: ctx.user.name, source: 'till', ctx });
@@ -147,7 +147,7 @@ const actions = {
 
   // the WhatsApp message for the order's status (or a chosen one), logged on the order
   async update(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     const so = await loadOrder(ctx, b.orderId);
     const status = STATUSES.includes(b.status) || b.status === 'booked' ? b.status : so.status;
     const how = ['whatsapp', 'phone', 'email'].includes(b.how) ? b.how : 'whatsapp';
@@ -161,7 +161,7 @@ const actions = {
 
   // delivery or collection booked
   async book(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     const so = await loadOrder(ctx, b.orderId);
     if (['delivered', 'collected', 'cancelled'].includes(so.status)) throw new Reject(409, `Order ${so.docNo} is ${so.status}.`);
     const kind = b.kind === 'collect' ? 'collect' : 'deliver';

@@ -12,11 +12,12 @@ import { fullInvoiceGap, ABRIDGED_MAX } from './receipt.js';
 import { openReceipt } from './receiptui.js';
 import * as sync from './sync.js';
 import { vatIn } from './money.js';
-import { patchOne } from './db.js';
+import { saveCustomer } from './customers.js';
+import { loyaltySettings } from './loyalty-terms.js';
 
 const METHODS = [
   { key: 'cash', label: 'Cash', ico: 'cash' }, { key: 'card', label: 'Card', ico: 'card' }, { key: 'eft', label: 'EFT', ico: 'file' }, { key: 'qr', label: 'QR', ico: 'grid' },
-  { key: 'voucher', label: 'Gift voucher', ico: 'gift' }, { key: 'storeCredit', label: 'Store credit', ico: 'star' }, { key: 'account', label: 'On account', ico: 'user' }
+  { key: 'voucher', label: 'Gift voucher', ico: 'gift' }, { key: 'storeCredit', label: 'Store credit', ico: 'star' }, { key: 'account', label: 'On account', ico: 'user' }, { key: 'points', label: 'Points', ico: 'star' }
 ];
 const QUICK = [2000, 5000, 10000, 20000, 50000];
 
@@ -24,7 +25,9 @@ const QUICK = [2000, 5000, 10000, 20000, 50000];
 export function openPay(o) {
   const { totals: t, cart, data } = o;
   const store = data.store, customer = cart.customer;
-  const allowed = (store.paymentMethods || ['cash', 'card']).filter(k => METHODS.some(m => m.key === k));
+  const ls = loyaltySettings(data.settings);
+  const allowed = [...(store.paymentMethods || ['cash', 'card']).filter(k => METHODS.some(m => m.key === k)), ...(ls.enabled && !(store.paymentMethods || []).includes('points') ? ['points'] : [])];
+  const pointsHave = customer && customer.loyalty ? customer.loyalty.points || 0 : 0;
   const tenders = o.keep ? [...o.keep] : [];   // { method, amountCents, tenderedCents?, ref?, cardLast4?, approvalCode?, status?, voucherCode?, label }
   let method = allowed[0] || 'cash', busy = false;
   const sumOthers = () => tenders.reduce((n, x) => n + x.amountCents, 0);
@@ -51,7 +54,7 @@ export function openPay(o) {
     okBtn.textContent = d > 0 ? 'Still to pay ' + money(d) : 'Complete sale';
     if (!d) { wrap.querySelector('#pay-left').innerHTML = `<div class="pay-done">${icon('cart')}<p>Everything is covered. Tap <strong>Complete sale</strong>.</p></div>`; return; }
     wrap.querySelector('#pay-left').innerHTML = `
-      <div class="pay-methods">${allowed.map(k => { const mm = METHODS.find(x => x.key === k); const off = (k === 'storeCredit' && !(customer && customer.storeCreditCents > 0)) || (k === 'account' && !(customer && customer.accountEnabled)); return `<button class="pay-m${k === method ? ' on' : ''}" data-m="${k}"${off ? ' disabled' : ''}>${icon(mm.ico)}<span>${esc(mm.label)}</span></button>`; }).join('')}</div>
+      <div class="pay-methods">${allowed.map(k => { const mm = METHODS.find(x => x.key === k); const off = (k === 'storeCredit' && !(customer && customer.storeCreditCents > 0)) || (k === 'account' && !(customer && customer.accountEnabled)) || (k === 'points' && !(customer && pointsHave >= ls.minRedeemPoints)); return `<button class="pay-m${k === method ? ' on' : ''}" data-m="${k}"${off ? ' disabled' : ''}>${icon(mm.ico)}<span>${esc(mm.label)}</span></button>`; }).join('')}</div>
       <div class="pay-form">${formFor(method, d, cd)}</div>`;
     const first = wrap.querySelector('#pay-left input'); if (first) { first.focus(); first.select && first.select(); }
   }
@@ -68,6 +71,7 @@ export function openPay(o) {
     if (k === 'voucher') return field('Voucher code', 'py-code', { placeholder: 'GV…', autocomplete: 'off' }) + '<div class="muted" id="py-vinfo"></div>' + amountField('Amount to use (R)') + '<button class="btn primary" data-add="voucher">Use voucher</button>';
     if (k === 'storeCredit') return `<div class="muted">${esc(customer.name)} has ${esc(money(customer.storeCreditCents))} store credit.</div>` + field('Amount to use (R)', 'py-amount', { value: randsOf(Math.min(d, customer.storeCreditCents)), inputmode: 'decimal' }) + '<button class="btn primary" data-add="storeCredit">Use store credit</button>';
     if (k === 'account') return `<div class="muted">Goes onto ${esc(customer.name)}’s account.</div>` + amountField() + '<button class="btn primary" data-add="account">Put on account</button>';
+    if (k === 'points') return `<div class="muted">${esc(customer.name)} has ${pointsHave} points, worth ${esc(money(pointsHave * ls.pointValueCents))} (at least ${ls.minRedeemPoints} at a time).</div>` + field('Amount to use (R)', 'py-amount', { value: randsOf(Math.min(d, pointsHave * ls.pointValueCents)), inputmode: 'decimal' }) + '<button class="btn primary" data-add="points">Use points</button>';
     return '';
   }
   function liveChange() {
@@ -90,6 +94,7 @@ export function openPay(o) {
     if (k === 'qr') tenders.push({ method: 'qr', amountCents: amount, ref: val(wrap, 'py-ref'), label: 'QR' });
     if (k === 'storeCredit') { if (amount > customer.storeCreditCents) return toast('Not that much credit.', 'warn'); tenders.push({ method: 'storeCredit', amountCents: amount, label: 'Store credit' }); }
     if (k === 'account') tenders.push({ method: 'account', amountCents: amount, label: 'On account' });
+    if (k === 'points') { if (amount > pointsHave * ls.pointValueCents) return toast('Not that many points.', 'warn'); const pts = Math.ceil(amount / ls.pointValueCents); if (pts < ls.minRedeemPoints) return toast('At least ' + ls.minRedeemPoints + ' points at a time.', 'warn'); tenders.push({ method: 'points', amountCents: amount, label: 'Points (' + pts + ')' }); }
     if (k === 'voucher') {
       const code = val(wrap, 'py-code').toUpperCase(); if (!code) return toast('Type the voucher code.', 'warn');
       try { const r = await auth.api('voucher', { code, ...where(data) }, API.sale); if (r.status !== 'open' || r.balanceCents <= 0) return toast('That voucher has nothing left on it.', 'warn'); const use = Math.min(amount, r.balanceCents); tenders.push({ method: 'voucher', amountCents: use, voucherCode: code, label: 'Voucher ' + code }); }
@@ -109,7 +114,7 @@ export function openPay(o) {
         okLabel: 'Save and continue', onOk: async (w) => {
           const address = { line1: val(w, 'fi-line1'), line2: val(w, 'fi-line2'), city: val(w, 'fi-city'), code: val(w, 'fi-code') }, vatNo = val(w, 'fi-vat');
           if (!address.line1 && !address.city) { toast('A street or a city, at least.', 'warn'); return false; }
-          try { await patchOne('customers', customer.id, { address, vatNo, ...auth.touch() }); customer.address = address; customer.vatNo = vatNo; resolve(true); return true; }
+          try { await saveCustomer({ customerId: customer.id, name: customer.name, phone: customer.phone, email: customer.email, address, vatNo }); customer.address = address; customer.vatNo = vatNo; resolve(true); return true; }
           catch (e) { toast('Could not save: ' + e.message, 'warn'); return false; }
         }, onClose: (ok) => { if (!ok) resolve(false); }
       });

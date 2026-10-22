@@ -173,6 +173,7 @@ cash { varianceLimitCents }                                            // beyond
 layby { minDepositPct, termDays (the longest), penaltyPct (≤ 1), frequency, reminderDays }
 specialOrder { minDepositPct, leadDays }
 buying { updateCostsOnReceive }
+loyalty { enabled, pointsPerRand, pointValueCents, minRedeemPoints, expiryMonths, tiers }
 session { idleLogoutMinutes, pinLength (4..6) }
 numbering { blockSize, refillBelow }
 reports { phone, email }                                               // where the daily summary goes (the owner)
@@ -248,15 +249,39 @@ supervisor) are movements too; stock on hand is never typed over.
 
 ### Customers
 
-**`customers/{customerId}`** (`storeId` = '')
+**`customers/{customerId}`** (`storeId` = '') — the `pos-customer` function writes them
 ```
-entityId, name, contact, phone, email, vatNo, address {…},
+entityId, name, contact, phone, phoneKey (the cell number as 27…: one customer per number per company), email, emailKey, vatNo, address {…}, dob, tags [string], notes,
+consent { whatsapp|sms|email: { granted (bool), at, byName, source ('till'|'office'|'import'|'customer') } }   // POPIA: their choice per channel, dated
 accountEnabled (bool), creditLimitCents, storeCreditCents (server moves this), accountBalanceCents (server moves this: what they owe),
-notes, archived, + stamps, updatedBy, updatedAt
+loyalty { points, lifetimeCents, tier, lots [ { points, left, earnedAt, expiresAt, saleId } ], lastEarnedAt },
+stats { salesCount, spentCents, firstSaleAt, lastSaleAt },
+mergedIds [customerId] (duplicates merged into this one: history is found through them), altPhones [phoneKey], mergedInto (customerId, when this one was merged away),
+anonymised (bool), anonymisedAt, archived, + stamps, updatedBy, updatedAt
 ```
-R: members of the entity. W: any member of the entity may create and update,
-except `storeCreditCents` and `accountBalanceCents` (the server only) and
-`accountEnabled` and `creditLimitCents` (a manager). Delete never.
+R: members of the entity. W: server only — `pos-customer` (`save` with the
+number's uniqueness checked in the transaction, `consent`, `merge`,
+`anonymise`, `adjustPoints`) and the sale core (credit, the account,
+points, stats). Merging moves money, points, consent and history to the
+kept profile; documents already issued stay as issued. Anonymising wipes
+the personal details and frees the number; invoices keep their customer
+snapshot as tax records. The export answers a POPIA access request with
+the profile and history.
+
+**`customerPhones/{entityId}_{phoneKey}`** → `{ customerId }`: the uniqueness index, server only.
+
+**`loyaltyLedger/{id}`** — append only (server)
+```
+entityId, customerId, kind ('earn'|'redeem'|'expire'|'adjust'|'merge'), points (signed), balanceAfter, saleId, docNo, note, expiresAt, + stamps
+```
+R: members of the entity. Points: `settings.loyalty { enabled, pointsPerRand,
+pointValueCents, minRedeemPoints, expiryMonths, tiers [ { name, fromCents (lifetime spend), multiplier } ] }`.
+A sale with a customer earns `floor(rands paid other than with points ×
+pointsPerRand × tier multiplier)` as a lot that expires `expiryMonths`
+later; the `points` tender redeems oldest lots first (at least
+`minRedeemPoints`); expired lots are swept whenever the balance is
+touched. The sale carries `loyalty { earned, redeemed, balance, tier }`
+for the receipt.
 
 ### Sales and money
 
@@ -291,7 +316,7 @@ R: members of the store. W: server only.
 ```
 entityId, storeId, registerId, shiftId,
 docType ('sale'|'layby'|'specialOrder'|'refund'|'account'), docId, docNo,
-method ('cash'|'card'|'eft'|'qr'|'voucher'|'storeCredit'|'account'|'creditNote'|'layby'|'specialOrder'), instalment (lay-bys and special orders: 0 = the deposit),
+method ('cash'|'card'|'eft'|'qr'|'voucher'|'storeCredit'|'account'|'points'|'creditNote'|'layby'|'specialOrder'), instalment (lay-bys and special orders: 0 = the deposit),
 amountCents (int; a refund is negative), ref (card slip no., EFT ref, voucher code, the credit note or lay-by number),
 + stamps, serverReceivedAt
 ```

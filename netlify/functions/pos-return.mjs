@@ -40,7 +40,7 @@ async function saleWithLines(ctx, saleId) {
 
 const actions = {
   async find(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     let sales = [];
     if (b.docNo) sales = await query('sales', [{ field: 'entityId', value: ctx.entityId }, { field: 'docNo', value: clean(b.docNo, 30).toUpperCase() }], 5);
     else if (b.customerId) sales = (await query('sales', [{ field: 'entityId', value: ctx.entityId }, { field: 'customerId', value: clean(b.customerId, 60) }], 200)).filter(s => (!b.from || s.clientCreatedAt >= b.from) && (!b.to || s.clientCreatedAt <= b.to + 'T23:59:59'));

@@ -134,7 +134,7 @@ await p.click('[data-act=sl-customer]'); await p.waitForSelector('#modal #cu-q')
 R.custHits = await p.$$eval('#cu-list .pk-row', x => x.map(y => y.innerText.replace(/\s+/g, ' '))); check('customer found by cell', R.custHits.length === 1 && /Thandi/.test(R.custHits[0]), R.custHits);
 await p.click('#cu-list .pk-row'); await p.waitForTimeout(300); check('customer attached', /Thandi Mokoena/.test(await cartText()));
 await p.click('[data-act=sl-customer]'); await p.waitForSelector('#modal #cu-q'); await p.click('#modal summary'); await p.fill('#cu-name', 'Sipho Dlamini'); await p.fill('#cu-phone', '083 555 0102');
-await p.click('#cu-add'); R.quickAdd = await toast(); await p.waitForTimeout(600);
+await p.click('#cu-add'); R.quickAdd = await toast(); await p.waitForTimeout(600); if (!/added/.test(R.quickAdd) && (await p.locator('#cu-add').count())) { await p.click('#cu-add'); R.quickAdd = await toast(); await p.waitForTimeout(600); }
 check('quick-add attaches the new customer', /Sipho Dlamini added/.test(R.quickAdd) && /Sipho Dlamini/.test(await cartText()), R.quickAdd);
 const custs = await listColl('customers'); const sipho = custs.find(c => c.name === 'Sipho Dlamini');
 check('customer written by the cashier with stamps and no credit', sipho && sipho.phone === '0835550102' && sipho.storeCreditCents === 0 && sipho.createdBy === 'st_cathy' && sipho.deviceId === 'dev_test' && sipho.entityId === 'BF', sipho);

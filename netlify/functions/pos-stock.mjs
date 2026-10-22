@@ -38,7 +38,7 @@ const tally = (items) => { let counted = 0, vq = 0, vv = 0; for (const it of ite
 
 const actions = {
   async adjust(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     const approvers = new Map();
     const a = approved(ctx, b.approvalToken, 'stock', 'manager', 'A stock adjustment'); if (!a.self) approvers.set(a.uid, a.name);
     const it = await itemOf(ctx, b);
@@ -61,7 +61,7 @@ const actions = {
   },
 
   async move(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     const approvers = new Map();
     const a = approved(ctx, b.approvalToken, 'stock', 'supervisor', 'Moving stock to or from quarantine'); if (!a.self) approvers.set(a.uid, a.name);
     const it = await itemOf(ctx, b);
@@ -85,7 +85,7 @@ const actions = {
 
   // the snapshot: every stock item in the store (or a category) with what the system says is on hand right now
   async takeOpen(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     approved(ctx, b.approvalToken, 'stock', 'supervisor', 'Opening a stock take');
     for (const st of ['open', 'review']) { const live = await query('stockTakes', [{ field: 'entityId', value: ctx.entityId }, { field: 'storeId', value: ctx.storeId }, { field: 'status', value: st }], 1); if (live.length) throw new Reject(409, `Stock take “${live[0].name}” is still ${st === 'open' ? 'being counted' : 'in review'}: post or cancel it first.`); }
     const scope = b.scope === 'category' ? 'category' : 'all';
@@ -115,7 +115,7 @@ const actions = {
 
   // counts from any phone, merged into the take as they come
   async takeCount(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     const t = await loadTake(ctx, b.takeId);
     const counts = (Array.isArray(b.counts) ? b.counts : []).map(c => ({ itemId: clean(c.itemId, 60), qty: int(c.qty), mode: c.mode === 'set' ? 'set' : 'add' }));
     if (!counts.length || counts.length > 200) throw new Reject(400, 'Nothing to count.');
@@ -138,7 +138,7 @@ const actions = {
   },
 
   async takeReview(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     approved(ctx, b.approvalToken, 'stock', 'supervisor', 'Closing the count');
     const t = await loadTake(ctx, b.takeId);
     if (t.status !== 'open') throw new Reject(409, `Stock take “${t.name}” is ${t.status}.`);
@@ -149,7 +149,7 @@ const actions = {
     return { ok: true, take: { ...t, ...patch } };
   },
   async takeReopen(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     approved(ctx, b.approvalToken, 'stock', 'supervisor', 'Reopening the count');
     const t = await loadTake(ctx, b.takeId);
     if (t.status !== 'review') throw new Reject(409, `Stock take “${t.name}” is ${t.status}.`);
@@ -160,7 +160,7 @@ const actions = {
 
   // the variances become movements against the frozen figure; what sold meanwhile is already in the level
   async takePost(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     const approvers = new Map();
     const a = approved(ctx, b.approvalToken, 'stock', 'manager', 'Posting a stock take'); if (!a.self) approvers.set(a.uid, a.name);
     const t = await loadTake(ctx, b.takeId);
@@ -188,7 +188,7 @@ const actions = {
   },
 
   async takeCancel(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     approved(ctx, b.approvalToken, 'stock', 'supervisor', 'Cancelling a stock take');
     const t = await loadTake(ctx, b.takeId);
     if (!['open', 'review'].includes(t.status)) throw new Reject(409, `Stock take “${t.name}” is ${t.status}.`);

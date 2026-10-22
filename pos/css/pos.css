@@ -305,3 +305,7 @@ small { font-size: 12px; }
 
 /* ---- buying ---- */
 .po-lines input.in-sm { text-align: right; } .grid.four { display: grid; grid-template-columns: repeat(4, 1fr); gap: .6rem; } @media (max-width: 760px) { .grid.four { grid-template-columns: 1fr 1fr; } }
+
+/* ---- customers ---- */
+.cu-consent { display: flex; gap: .8rem; flex-wrap: wrap; align-items: center; margin: .4rem 0; } .cu-consent .muted { flex: 1 1 100%; font-size: 12px; }
+.cu-h4 { font-family: var(--font-ui); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: .8rem 0 .2rem; }

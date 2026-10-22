@@ -227,7 +227,7 @@ const actions = {
 
   // the lay-by report for the store: supervisors and up
   async report(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: '' });
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     approved(ctx, '', 'layby', 'supervisor', 'The lay-by report');
     const from = clean(b.from, 10) || '0000-00-00', to = clean(b.to, 10) || '9999-12-31';
     const all = await query('laybys', [{ field: 'entityId', value: ctx.entityId }, { field: 'storeId', value: ctx.storeId }], 2000);

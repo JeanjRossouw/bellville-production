@@ -21,7 +21,7 @@ export const API = {
   sale: '/.netlify/functions/pos-sale',
   doc: '/.netlify/functions/pos-doc',
   shift: '/.netlify/functions/pos-shift',
-  return: '/.netlify/functions/pos-return', layby: '/.netlify/functions/pos-layby', special: '/.netlify/functions/pos-special', stock: '/.netlify/functions/pos-stock', buy: '/.netlify/functions/pos-buy'
+  return: '/.netlify/functions/pos-return', layby: '/.netlify/functions/pos-layby', special: '/.netlify/functions/pos-special', stock: '/.netlify/functions/pos-stock', buy: '/.netlify/functions/pos-buy', customer: '/.netlify/functions/pos-customer'
 };
 export const ROLES = [
   { key: 'cashier', label: 'Cashier' },

@@ -12,6 +12,7 @@ import * as auth from './auth.js';
 import { esc, toast, field, row, val, openModal, money } from './ui.js';
 import { lineTotals, vatIn, pctOf, rateOn, rateFor, centsOf, randsOf } from './money.js';
 import { icon } from './icons.js';
+import { saveCustomer, consentFields, readConsent } from './customers.js';
 import { openPay } from './pay.js';
 
 const ROLE_ORDER = ['cashier', 'supervisor', 'manager', 'owner'];
@@ -307,7 +308,7 @@ function pickCustomer() {
   const { wrap, close } = openModal('Customer', `
     <input id="cu-q" class="search" placeholder="Name or cell number" autocomplete="off" style="width:100%;font:inherit;font-size:15px;padding:.6rem .7rem;border:1px solid var(--line-2);border-radius:4px;margin-bottom:.5rem">
     <div class="pk-list" id="cu-list"></div>
-    <details style="margin-top:.7rem"><summary class="muted">Quick add</summary>${row(field('Name', 'cu-name'), field('Cell number', 'cu-phone', { inputmode: 'tel', placeholder: '082 123 4567' }))}${row(field('Email (optional)', 'cu-email', { type: 'email' }), field('VAT number (optional)', 'cu-vat'))}<button class="btn primary sm" type="button" id="cu-add">Add and attach</button></details>
+    <details style="margin-top:.7rem"><summary class="muted">Quick add</summary>${row(field('Name', 'cu-name'), field('Cell number', 'cu-phone', { inputmode: 'tel', placeholder: '082 123 4567' }))}${row(field('Email (optional)', 'cu-email', { type: 'email' }), field('VAT number (optional)', 'cu-vat'))}${consentFields('cu')}<button class="btn primary sm" type="button" id="cu-add">Add and attach</button></details>
     ${c.customer ? '<p style="margin-top:.6rem"><button class="btn ghost sm" type="button" id="cu-clear">Walk-in: no customer</button></p>' : ''}`, { okLabel: 'Close', cancelLabel: '', onOk: () => true });
   const draw = () => { const q = wrap.querySelector('#cu-q').value; wrap.querySelector('#cu-list').innerHTML = list(q).map(x => `<button class="pk-row" data-c="${esc(x.id)}"><strong>${esc(x.name)}</strong><span>${esc([x.phone, x.email].filter(Boolean).join(' · '))}${x.accountEnabled ? ' · account' : ''}${Number(x.storeCreditCents) > 0 ? ' · credit ' + esc(money(x.storeCreditCents)) : ''}</span></button>`).join('') || '<div class="pk-row muted">No one matches: quick add below</div>'; };
   draw();
@@ -320,16 +321,14 @@ function pickCustomer() {
     if (ev.target.id === 'cu-add') {
       const name = val(wrap, 'cu-name'), phone = val(wrap, 'cu-phone').replace(/\s/g, '');
       if (!name || !/^\+?\d{9,13}$/.test(phone)) return toast('A name and a cell number (10 digits).', 'warn');
-      const dup = (d().customers || []).find(x => String(x.phone || '').replace(/\s/g, '') === phone);
+      const dup = (d().customers || []).find(x => String(x.phone || '').replace(/\s/g, '') === phone && !x.archived);
       if (dup) { attach(dup); close(true); return toast('That number is ' + dup.name + ': attached.'); }
-      const id = newId('customers');
-      const rec = { name, contact: name, phone, email: val(wrap, 'cu-email'), vatNo: val(wrap, 'cu-vat'), address: {}, accountEnabled: false, creditLimitCents: 0, storeCreditCents: 0, notes: '', archived: false, ...auth.stamp(e.id, '') };
-      try { await setOne('customers', id, rec); attach({ id, ...rec }); close(true); toast(name + ' added'); } catch (err) { toast('Could not add: ' + err.message, 'warn'); }
+      try { const rec = await saveCustomer({ name, phone, email: val(wrap, 'cu-email'), vatNo: val(wrap, 'cu-vat'), consent: readConsent(wrap, 'cu'), consentSource: 'till' }); attach(rec); close(true); toast(name + ' added'); } catch (err) { toast(err.offline ? 'Adding a customer needs the line.' : err.message, 'warn'); }
     }
   });
   setTimeout(() => wrap.querySelector('#cu-q').focus(), 50);
 }
-function attach(x) { if (!x) return; sale.cart.customerId = x.id; sale.cart.customer = { id: x.id, name: x.name, phone: x.phone || '', email: x.email || '', vatNo: x.vatNo || '', address: x.address || {}, accountEnabled: !!x.accountEnabled, storeCreditCents: x.storeCreditCents || 0 }; persist(); ctx.repaint(); }
+function attach(x) { if (!x) return; sale.cart.customerId = x.id; sale.cart.customer = { id: x.id, name: x.name, phone: x.phone || '', email: x.email || '', vatNo: x.vatNo || '', address: x.address || {}, accountEnabled: !!x.accountEnabled, storeCreditCents: x.storeCreditCents || 0, loyalty: x.loyalty ? { points: x.loyalty.points || 0, tier: x.loyalty.tier || '' } : null }; persist(); ctx.repaint(); }
 
 // --------------------------------------------------------- park, recall --
 function parkSale() {

@@ -23,6 +23,7 @@ export const defaultSettings = () => ({
   layby: { minDepositPct: 20, termDays: 90, penaltyPct: 1, frequency: 'monthly', reminderDays: 3 },
   specialOrder: { minDepositPct: 50, leadDays: 21 },
   buying: { updateCostsOnReceive: true },
+  loyalty: { enabled: false, pointsPerRand: 1, pointValueCents: 5, minRedeemPoints: 100, expiryMonths: 12, tiers: [{ name: 'Bronze', fromCents: 0, multiplier: 1 }, { name: 'Silver', fromCents: 1000000, multiplier: 1.25 }, { name: 'Gold', fromCents: 5000000, multiplier: 1.5 }] },
   session: { idleLogoutMinutes: 10, pinLength: 6 },
   numbering: { blockSize: 50, refillBelow: 10 },
   reports: { phone: '', email: '' },
@@ -221,6 +222,12 @@ export function settingsHtml(d) {
         <div class="grid two">${field('Minimum deposit %', 'se-so-dep', { value: (s.specialOrder || {}).minDepositPct == null ? 50 : s.specialOrder.minDepositPct, type: 'number', min: 0, max: 100 })}${field('Usual lead time (days)', 'se-so-lead', { value: (s.specialOrder || {}).leadDays == null ? 21 : s.specialOrder.leadDays, type: 'number', min: 1 })}</div>
         <p class="muted">The customer signs the specification off; no change of mind once it is in production. The factory app updates the status through the pos-special endpoint with the POS_FACTORY_KEY.</p>
       </div>
+      <div class="card"><h2>Loyalty points</h2>
+        <label class="chk"><input type="checkbox" id="se-loy-on"${(s.loyalty || {}).enabled ? ' checked' : ''}> Customers on a sale earn points, and pay with them</label>
+        <div class="grid four">${field('Points per rand spent', 'se-loy-rate', { value: (s.loyalty || {}).pointsPerRand == null ? 1 : s.loyalty.pointsPerRand, type: 'number', min: 0, step: '0.1' })}${field('A point is worth (cents)', 'se-loy-value', { value: (s.loyalty || {}).pointValueCents == null ? 5 : s.loyalty.pointValueCents, type: 'number', min: 1 })}${field('Fewest points to redeem', 'se-loy-min', { value: (s.loyalty || {}).minRedeemPoints == null ? 100 : s.loyalty.minRedeemPoints, type: 'number', min: 0 })}${field('Points expire after (months, 0 = never)', 'se-loy-exp', { value: (s.loyalty || {}).expiryMonths == null ? 12 : s.loyalty.expiryMonths, type: 'number', min: 0 })}</div>
+        <p class="muted">Tiers by lifetime spend: the multiplier scales what is earned.</p>
+        <div class="grid three">${[0, 1, 2].map(i => { const t = ((s.loyalty || {}).tiers || [])[i] || {}; return `<div class="card" style="padding:.5rem .7rem">${field('Tier ' + (i + 1), 'se-tier-name-' + i, { value: t.name == null ? ['Bronze', 'Silver', 'Gold'][i] : t.name })}${field('From spend (R)', 'se-tier-from-' + i, { value: t.fromCents == null ? [0, 10000, 50000][i] : t.fromCents / 100, type: 'number', min: 0 })}${field('Multiplier', 'se-tier-mult-' + i, { value: t.multiplier == null ? [1, 1.25, 1.5][i] : t.multiplier, type: 'number', min: 0, step: '0.05' })}</div>`; }).join('')}</div>
+      </div>
       <div class="card"><h2>Buying</h2>
         <label class="chk"><input type="checkbox" id="se-buy-cost"${(s.buying || {}).updateCostsOnReceive === false ? '' : ' checked'}> When stock is received, set the product’s cost to the new weighted average (landed)</label>
       </div>
@@ -253,6 +260,7 @@ export function settingsRead(w) {
     layby: { minDepositPct: num('se-lb-dep', 0, 100, 20), termDays: num('se-lb-term', 7, 3650, 90), penaltyPct: num('se-lb-pen', 0, 1, 1), frequency: val(w, 'se-lb-freq') || 'monthly', reminderDays: num('se-lb-rem', 0, 60, 3) },
     specialOrder: { minDepositPct: num('se-so-dep', 0, 100, 50), leadDays: num('se-so-lead', 1, 365, 21) },
     buying: { updateCostsOnReceive: !!w.querySelector('#se-buy-cost').checked },
+    loyalty: { enabled: !!w.querySelector('#se-loy-on').checked, pointsPerRand: Number(val(w, 'se-loy-rate')) || 0, pointValueCents: num('se-loy-value', 1, 100000, 5), minRedeemPoints: num('se-loy-min', 0, 1000000, 100), expiryMonths: num('se-loy-exp', 0, 120, 12), tiers: [0, 1, 2].map(i => ({ name: val(w, 'se-tier-name-' + i) || 'Tier ' + (i + 1), fromCents: Math.round((Number(val(w, 'se-tier-from-' + i)) || 0) * 100), multiplier: Number(val(w, 'se-tier-mult-' + i)) || 1 })) },
     session: { idleLogoutMinutes: num('se-idle', 1, 1440, 10), pinLength: num('se-pinlen', 4, 6, 6) },
     numbering: { blockSize: num('se-block', 10, 500, 50), refillBelow: 10 },
     reports: { phone: val(w, 'se-rep-phone'), email: val(w, 'se-rep-email') },

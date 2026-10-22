@@ -11,16 +11,18 @@ import {
   loginOf, loadUser, inEntity, inStore, verifyOverrideToken, loadDevice
 } from './pos.mjs';
 import { vatIn, rateOn, rateFor, lineTotals, roundTo10c } from '../../../pos/js/money.js';
+import { loyaltySettings, tierFor, earnPoints, pointsFor, sweep, earnLot, redeem, compactLots, blankLoyalty, blankStats } from '../../../pos/js/loyalty-terms.js';
 
 export const PREPAID = ['creditNote', 'layby', 'specialOrder'];   // a document that already holds the money pays first
-export const METHODS = ['cash', 'card', 'eft', 'qr', 'voucher', 'storeCredit', 'account'];
+export const METHODS = ['cash', 'card', 'eft', 'qr', 'voucher', 'storeCredit', 'account', 'points'];
 export const BLOCK_SIZE_DEFAULT = 50;
 export const int = (v) => Number.isInteger(v) ? v : (Number.isInteger(Number(v)) ? Number(v) : NaN);
 export const pad6 = (n) => String(n).padStart(6, '0');
 export const blockId = (entityId, series, deviceId, from) => `${entityId}_${series}_${deviceId}_${from}`;
 
 // who and where: the cashier (by token) and the till (by secret); an office login sells as 'web:<uid>'
-export async function whoAndWhere(event, b) {
+// opts.noShift: the till's register need not have an open shift (customers, stock, buying: no money changes hands)
+export async function whoAndWhere(event, b, opts = {}) {
   const login = await loginOf(event);
   if (!login) throw new Reject(401, 'Sign in first.');
   const user = await loadUser(login.sub);
@@ -35,7 +37,7 @@ export async function whoAndWhere(event, b) {
   const registerId = device && device.registerId ? device.registerId : clean(b.registerId, 40);
   // a register sells only while its shift is open; the office (no register) has no shift
   let shiftId = '';
-  if (registerId) {
+  if (registerId && !opts.noShift) {
     const reg = await getDoc('registers', registerId);
     if (!reg || reg.storeId !== storeId) throw new Reject(400, 'That register is not in this store.');
     const sh = reg.currentShiftId ? await getDoc('shifts', reg.currentShiftId) : null;
@@ -163,7 +165,7 @@ export async function prepareSale(ctx, b, opts = {}) {
 
   // ---- the tenders: a sale is paid in full; a lay-by's deposit or instalment is a part (opts.noTenders: none at all)
   const base = { when, at, rateBp, customer, lines, moves, vouchersSold, approvers, saleBy, gross, lineDisc, saleDisc, sub, total, vat };
-  if (opts.noTenders) return { ...base, voucherUse: [], pays: [], paid: 0, rounding: 0, cashTendered: 0, cashPay: null, creditUsed: 0, accountUsed: 0 };
+  if (opts.noTenders) return { ...base, voucherUse: [], pays: [], paid: 0, rounding: 0, cashTendered: 0, cashPay: null, creditUsed: 0, accountUsed: 0, pointsUsed: 0, pointsCents: 0 };
   const prepaid = opts.prepaid || (opts.creditNote ? { method: 'creditNote', ...opts.creditNote } : null);
   return { ...base, ...prepareTenders(ctx, b.tenders, { total, customer, prepaid }) };
 }
@@ -178,13 +180,14 @@ export function prepareTenders(ctx, inTenders, { total, customer, prepaid, parti
   if (prepaid) tenders.unshift({ method: prepaid.method, amountCents: Math.min(prepaid.amountCents, total), ref: prepaid.docNo });
   if (!tenders.length || tenders.length > 10) throw new Reject(400, 'No payment.');
   const allowed = ctx.store.paymentMethods || ['cash', 'card'];
-  let paid = 0, cashTendered = 0, cashCount = 0, creditUsed = 0, accountUsed = 0, rounding = 0;
+  let paid = 0, cashTendered = 0, cashCount = 0, creditUsed = 0, accountUsed = 0, rounding = 0, pointsCents = 0, pointsUsed = 0;
+  const ls = loyaltySettings(ctx.settings);
   const voucherUse = [];
   const pays = [];
   for (const t of tenders) {
     const method = clean(t.method, 20); const amount = int(t.amountCents);
     if (PREPAID.includes(method)) { if (!prepaid || method !== prepaid.method || t !== tenders[0]) throw new Reject(400, method === 'layby' ? 'A lay-by pays only when it is collected.' : method === 'specialOrder' ? 'A special order pays only when it is handed over.' : 'A credit note pays only through an exchange.'); }
-    else if (!METHODS.includes(method) || !allowed.includes(method)) throw new Reject(400, `${method || 'That'} is not a payment method at this store.`);
+    else if (!METHODS.includes(method) || (!allowed.includes(method) && method !== 'points')) throw new Reject(400, `${method || 'That'} is not a payment method at this store.`);
     if (!(amount > 0)) { if (prepaid && method === prepaid.method) continue; throw new Reject(400, 'A payment must be more than nothing.'); }
     const pay = { method, amountCents: amount, ref: clean(t.ref, 60), status: 'paid' };
     if (method === 'cash') { cashCount++; pay.tenderedCents = int(t.tenderedCents) || amount; if (pay.tenderedCents < amount) throw new Reject(400, 'Cash given is less than the cash part.'); cashTendered += pay.tenderedCents; }
@@ -192,17 +195,20 @@ export function prepareTenders(ctx, inTenders, { total, customer, prepaid, parti
     if (method === 'eft') pay.status = t.status === 'awaiting' ? 'awaiting' : 'paid';
     if (method === 'storeCredit') { if (!customer) throw new Reject(400, 'Store credit needs the customer on the sale.'); creditUsed += amount; }
     if (method === 'account') { if (!customer || !customer.accountEnabled) throw new Reject(400, 'This customer has no account.'); accountUsed += amount; }
+    if (method === 'points') { if (!ls.enabled) throw new Reject(400, 'Loyalty points are not switched on.'); if (!customer) throw new Reject(400, 'Points need the customer on the sale.'); pointsCents += amount; pay.points = pointsFor(ls, amount); pointsUsed += pay.points; }
     if (method === 'voucher') { const code = clean(t.voucherCode, 40).toUpperCase(); if (!code) throw new Reject(400, 'Which voucher?'); voucherUse.push({ code, amount, pay }); }
     paid += amount; pays.push(pay);
   }
   if (cashCount > 1) throw new Reject(400, 'One cash payment per sale: add the notes together.');
   if (creditUsed > (customer ? customer.storeCreditCents || 0 : 0)) throw new Reject(400, 'Not enough store credit.');
   if (accountUsed && accountUsed + (customer.accountBalanceCents || 0) > (customer.creditLimitCents || 0)) throw new Reject(400, 'That takes the account past its limit.');
+  if (pointsUsed) { const have = sweep(customer.loyalty, nowIso()).points; if (pointsUsed > have) throw new Reject(400, `Not enough points: ${have} (${(have * ls.pointValueCents / 100).toFixed(2)} rand).`); if (pointsUsed < ls.minRedeemPoints) throw new Reject(400, `At least ${ls.minRedeemPoints} points at a time.`); }
   const cashPay = pays.find(p => p.method === 'cash');
   if (partial) {
     if (paid > total) throw new Reject(400, `Payments (${paid}) are more than what is owed (${total}).`);
     if (cashPay) cashPay.changeCents = cashPay.tenderedCents - cashPay.amountCents;
-    return { voucherUse, pays, paid, rounding: 0, cashTendered, cashPay, creditUsed, accountUsed };
+    if (pointsUsed) throw new Reject(400, 'Points pay for a sale, not a deposit.');
+    return { voucherUse, pays, paid, rounding: 0, cashTendered, cashPay, creditUsed, accountUsed, pointsUsed: 0, pointsCents: 0 };
   }
   // cash may be rounded to 10c: the cash part due is total less the other tenders
   const others = paid - (cashPay ? cashPay.amountCents : 0);
@@ -217,7 +223,7 @@ export function prepareTenders(ctx, inTenders, { total, customer, prepaid, parti
     paid = others + cashPay.amountCents;
   }
   if (paid !== total + rounding) throw new Reject(400, `Payments (${paid}) do not cover the sale (${total + rounding}).`);
-  return { voucherUse, pays, paid, rounding, cashTendered, cashPay, creditUsed, accountUsed };
+  return { voucherUse, pays, paid, rounding, cashTendered, cashPay, creditUsed, accountUsed, pointsUsed, pointsCents };
 }
 
 // inside a transaction: the number, the vouchers, the stock levels; the writes for a sale and what to answer
@@ -242,13 +248,35 @@ export async function saleWrites(tx, ctx, s, saleId, b, levels = new Map()) {
     totalCents: s.total, vatCents: s.vat, vatRateBp: s.rateBp, vatRegistered: !!ctx.entity.vatRegistered, roundingCents: s.rounding,
     tenderedCents: s.cashTendered, changeCents: s.cashPay ? s.cashPay.changeCents : 0, paymentMethods: [...new Set(s.pays.map(p => p.method))], paidStatus: s.pays.some(p => p.status === 'awaiting') ? 'awaiting' : 'paid',
     cashierUid: ctx.user.id, cashierName: ctx.user.name, approvers: [...s.approvers].map(([uid, name]) => ({ uid, name })),
-    note: clean(b.note, 300), source: ctx.device ? 'till' : 'office', clientCreatedAt: s.when, verified: true, exchangeOf: b.exchangeOf || '', laybyOf: b.laybyOf || '', specialOrderOf: b.specialOrderOf || '', ...stamp, serverReceivedAt: now
+    note: clean(b.note, 300), source: ctx.device ? 'till' : 'office', clientCreatedAt: s.when, verified: true, loyalty: null, exchangeOf: b.exchangeOf || '', laybyOf: b.laybyOf || '', specialOrderOf: b.specialOrderOf || '', ...stamp, serverReceivedAt: now
   };
   writes.push({ create: true, coll: 'sales', id: saleId, data: sale });
   s.lines.forEach(l => writes.push({ create: true, coll: 'saleLines', id: saleId + '_' + l.lineNo, data: { saleId, docNo, ...l, ...stamp } }));
   s.pays.forEach(p => writes.push({ create: true, coll: 'payments', id: randomId('pay_'), data: { docType: 'sale', docId: saleId, docNo, registerId: ctx.registerId || '', shiftId: ctx.shiftId || '', ...p, ...stamp, serverReceivedAt: now } }));
   for (const m of s.moves) writes.push(...moveWrites(ctx, levels, m, { docType: 'sale', docId: saleId, docNo }, stamp, now));
-  if (customer && (s.creditUsed || s.accountUsed)) writes.push({ update: true, coll: 'customers', id: customer.id, data: { ...(s.creditUsed ? { storeCreditCents: (customer.storeCreditCents || 0) - s.creditUsed } : {}), ...(s.accountUsed ? { accountBalanceCents: (customer.accountBalanceCents || 0) + s.accountUsed } : {}), updatedAt: now, updatedBy: 'server' } });
+  let loyaltyOut = null;
+  if (customer) {
+    const ls = loyaltySettings(ctx.settings);
+    const lo = { ...blankLoyalty(), ...(customer.loyalty || {}) };
+    const sw = sweep(lo, now);
+    let lots = sw.lots;
+    const ledger = [];
+    if (sw.expiredPoints) ledger.push({ kind: 'expire', points: -sw.expiredPoints });
+    if (s.pointsUsed) { lots = redeem(lots, s.pointsUsed); ledger.push({ kind: 'redeem', points: -s.pointsUsed }); }
+    const tier = tierFor(ls, lo.lifetimeCents);
+    const earned = earnPoints(ls, s.total - s.pointsCents, tier);
+    if (earned) { lots = compactLots([...lots, earnLot(ls, earned, now, saleId)]); ledger.push({ kind: 'earn', points: earned, expiresAt: lots[lots.length - 1].expiresAt }); }
+    const after = lots.reduce((n, l) => n + l.left, 0);
+    const lifetime = (lo.lifetimeCents || 0) + (s.total - s.pointsCents);
+    const st = { ...blankStats(), ...(customer.stats || {}) };
+    const stats = { salesCount: (st.salesCount || 0) + 1, spentCents: (st.spentCents || 0) + s.total, firstSaleAt: st.firstSaleAt || now, lastSaleAt: now };
+    let bal = sw.points;
+    for (const e of ledger) { bal += e.points; writes.push({ create: true, coll: 'loyaltyLedger', id: randomId('lp_'), data: { customerId: customer.id, kind: e.kind, points: e.points, balanceAfter: bal, saleId, docNo, note: '', expiresAt: e.expiresAt || '', ...stamp, serverReceivedAt: now } }); }
+    const loyalty = ls.enabled || lots.length ? { points: after, lifetimeCents: lifetime, tier: tierFor(ls, lifetime).name, lots, lastEarnedAt: earned ? now : lo.lastEarnedAt || '' } : lo;
+    writes.push({ update: true, coll: 'customers', id: customer.id, data: { ...(s.creditUsed ? { storeCreditCents: (customer.storeCreditCents || 0) - s.creditUsed } : {}), ...(s.accountUsed ? { accountBalanceCents: (customer.accountBalanceCents || 0) + s.accountUsed } : {}), loyalty, stats, updatedAt: now, updatedBy: 'server' } });
+    if (ls.enabled) loyaltyOut = { earned, redeemed: s.pointsUsed, balance: after, tier: loyalty.tier };
+  }
+  if (loyaltyOut) sale.loyalty = loyaltyOut;
   for (const { vd, u } of vouchers) { const leftOver = vd.balanceCents - u.amount; writes.push({ update: true, coll: 'vouchers', id: vd.id, data: { balanceCents: leftOver, status: leftOver > 0 ? 'open' : 'used', uses: [...(vd.uses || []), { saleId, docNo, amountCents: u.amount, at: now }], updatedAt: now } }); u.pay.ref = vd.id; }
   const codesSold = [];
   for (const vs of s.vouchersSold) { const code = 'GV' + randomId().replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 10); codesSold.push({ lineNo: vs.lineNo, code, amountCents: vs.amountCents }); writes.push({ create: true, coll: 'vouchers', id: code, data: { code, amountCents: vs.amountCents, balanceCents: vs.amountCents, status: 'open', soldSaleId: saleId, soldDocNo: docNo, soldAt: now, expiresAt: new Date(s.at + 3 * 365 * 86400000).toISOString().slice(0, 10), customerId: customer ? customer.id : '', uses: [], ...serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId) } }); }

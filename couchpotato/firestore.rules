@@ -413,15 +413,12 @@ service cloud.firestore {
       // ---- customers ------------------------------------------------------
       match /customers/{id} {
         allow read: if pReadsEntity(gid);
-        // anyone at the till adds a customer; store credit is the server's, the account is the manager's
-        allow create: if pWritesEntity(gid, 'cashier') && pStamped() && request.resource.data.storeId == ''
-                      && request.resource.data.get('storeCreditCents', 0) == 0 && request.resource.data.get('accountBalanceCents', 0) == 0
-                      && (pAtLeast(gid, 'manager') || (request.resource.data.get('accountEnabled', false) == false && request.resource.data.get('creditLimitCents', 0) == 0));
-        allow update: if pWritesEntity(gid, 'cashier') && pStampsKept()
-                      && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['storeCreditCents', 'accountBalanceCents'])
-                      && (pAtLeast(gid, 'manager') || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['accountEnabled', 'creditLimitCents']));
-        allow delete: if false;
+        // the server alone writes customers: the cell number is one profile per company, store credit,
+        // the account, consent and points all move under its hand (pos-customer, pos-sale)
+        allow write: if false;
       }
+      match /customerPhones/{id} { allow read, write: if false; }
+      match /loyaltyLedger/{id}  { allow read: if pReadsEntity(gid); allow write: if false; }
 
       // ---- buying ---------------------------------------------------------
       match /suppliers/{id} {

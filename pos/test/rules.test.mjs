@@ -101,12 +101,14 @@ await t('manager creates a variant', setDoc(P(mgr, 'variants', 'v1'), { productI
 await t('manager CANNOT create a product in another entity', setDoc(P(mgr, 'products', 'p9'), { name: 'x', priceCents: 1, costCents: 1, ...stamp('mgr', 'RC') }), false);
 
 // ---- customers
-await t('cashier adds a customer', setDoc(P(cash, 'customers', 'c2'), { name: 'Sipho', storeCreditCents: 0, accountEnabled: false, creditLimitCents: 0, ...stamp('cash', 'BF') }), true);
+await t('cashier CANNOT add a customer directly (the server does, keyed by cell number)', setDoc(P(cash, 'customers', 'c2'), { name: 'Sipho', storeCreditCents: 0, accountEnabled: false, creditLimitCents: 0, ...stamp('cash', 'BF') }), false);
 await t('cashier CANNOT add a customer with store credit', setDoc(P(cash, 'customers', 'c3'), { name: 'x', storeCreditCents: 100, ...stamp('cash', 'BF') }), false);
-await t('cashier CANNOT open an account', updateDoc(P(cash, 'customers', 'c2'), { accountEnabled: true, creditLimitCents: 500000 }), false);
-await t('cashier updates a phone number', updateDoc(P(cash, 'customers', 'c2'), { phone: '0821234567', updatedBy: 'cash', updatedAt: 'now' }), true);
+await t('cashier CANNOT open an account', updateDoc(P(cash, 'customers', 'c1'), { accountEnabled: true, creditLimitCents: 500000 }), false);
+await t('cashier CANNOT change a phone number directly', updateDoc(P(cash, 'customers', 'c1'), { phone: '0821234567', updatedBy: 'cash', updatedAt: 'now' }), false);
 await t('cashier CANNOT touch store credit', updateDoc(P(cash, 'customers', 'c1'), { storeCreditCents: 999999 }), false);
-await t('manager opens an account', updateDoc(P(mgr, 'customers', 'c2'), { accountEnabled: true, creditLimitCents: 500000 }), true);
+await t('manager CANNOT open an account directly either', updateDoc(P(mgr, 'customers', 'c1'), { accountEnabled: true, creditLimitCents: 500000 }), false);
+await t('cashier reads customers', getDoc(P(cash, 'customers', 'c1')), true);
+await t('cashier CANNOT read the phone index', getDoc(P(cash, 'customerPhones', 'BF_27821234567')), false);
 await t('manager CANNOT touch store credit either', updateDoc(P(mgr, 'customers', 'c1'), { storeCreditCents: 0 }), false);
 await t('cashier in RC CANNOT read a BF customer', getDoc(P(cash2, 'customers', 'c1')), false);
 

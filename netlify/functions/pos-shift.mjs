@@ -16,7 +16,7 @@ import {
 } from './lib/pos.mjs';
 
 export const DENOMS = [20000, 10000, 5000, 2000, 1000, 500, 200, 100, 50, 20, 10];
-const METHODS = ['cash', 'card', 'eft', 'qr', 'voucher', 'storeCredit', 'account'];
+const METHODS = ['cash', 'card', 'eft', 'qr', 'voucher', 'storeCredit', 'account', 'points'];
 const int = (v) => Number.isInteger(v) ? v : (Number.isInteger(Number(v)) ? Number(v) : NaN);
 
 async function whoAndWhere(event, b) {

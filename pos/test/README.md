@@ -98,6 +98,15 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
 - `buying.test.mjs` — step 14 in the browser: a supplier, a PO suggested
   from low stock and sent (email link, print), received with freight, the
   GRV and labels, a transfer sent. `node pos/test/buying.test.mjs`
+- `customer-api.test.mjs` — step 15: the `pos-customer` function over HTTP:
+  one profile per cell number, consent per channel with the date, a sale
+  that earns points and one that redeems them, expiry, the history across
+  stores, merging a duplicate, the export, anonymising (invoices keep their
+  snapshot), points by hand. `node pos/test/customer-api.test.mjs`
+- `customers.test.mjs` — step 15 in the browser: quick-add at the till with
+  consent, the Customers tab and profile, a sale earning points and the
+  receipt line, points as payment, a merge and an anonymisation by a
+  manager. `node pos/test/customers.test.mjs`
 - `money.test.mjs` — the shared cents and VAT maths; needs no emulator.
   `node pos/test/money.test.mjs`
   Set `FIREBASE_SDK_DIR` to a local copy of the `firebase` package's browser
