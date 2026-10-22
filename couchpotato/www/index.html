@@ -16,7 +16,7 @@
   <style>
     :root {
       --ink: #111; --muted: #5f5d58; --line: #e4e2dd; --paper: #f4f3f0; --white: #fff; --black: #000;
-      --accent: #b8860b; --ok: #1f7a3a;
+      --accent: #b8860b; --gold: #e3a92b; --ok: #1f7a3a;
       --font: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
     }
     * { box-sizing: border-box; }
@@ -47,17 +47,73 @@
     nav.top .act .btn { padding: 10px 16px; font-size: 11px; }
 
     /* hero */
-    header.hero { background: var(--black); color: var(--white); padding: 72px 0 0; overflow: hidden; }
-    .hero .kicker { color: #9a9a9a; }
-    .hero h1 { font-size: clamp(34px, 5.4vw, 60px); line-height: 1.08; font-weight: 600; letter-spacing: -.01em; margin: 18px 0 20px; max-width: 15ch; }
-    .hero p.lead { font-size: clamp(16px, 1.7vw, 19px); color: #cfcfcf; max-width: 46ch; margin: 0 0 32px; }
+    header.hero { background: var(--black); color: var(--white); padding: 0; overflow: hidden; }
+    .hero .kicker { color: var(--gold); display: flex; align-items: center; gap: 12px; }
+    .hero .kicker::before { content: ""; width: 28px; height: 1px; background: var(--gold); }
+    .hero h1 { font-size: clamp(40px, 6.4vw, 84px); line-height: 1.02; font-weight: 700; letter-spacing: -.025em; margin: 20px 0 22px; max-width: 12ch; }
+    .hero h1 em { font-style: normal; color: var(--gold); }
+    .hero p.lead { font-size: clamp(16px, 1.6vw, 19px); color: #d6d6d6; max-width: 42ch; margin: 0 0 32px; }
     .hero .ctas { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-    .hero .small { color: #8f8f8f; font-size: 13px; margin-top: 14px; }
+    .hero .small { color: #9a9a9a; font-size: 13px; margin-top: 14px; }
+    .btn.gold { background: var(--gold); color: var(--black); border-color: var(--gold); }
+    .btn.gold:hover { background: #f0bd4f; border-color: #f0bd4f; }
     .shot { border-radius: 8px; overflow: hidden; box-shadow: 0 30px 80px rgba(0,0,0,.35), 0 0 0 1px rgba(0,0,0,.06); background: var(--white); }
     .shot .bar { height: 30px; background: #ececea; display: flex; align-items: center; gap: 7px; padding: 0 12px; }
     .shot .bar i { width: 10px; height: 10px; border-radius: 50%; background: #cfcdc8; display: block; }
     .hero .shot { margin: 56px auto -120px; max-width: 1040px; position: relative; }
     .after-hero { padding-top: 168px; }
+
+    /* hero: a full-bleed photo of the floor, the words over it */
+    .hero-stage { position: relative; min-height: min(86vh, 820px); display: flex; align-items: center; isolation: isolate; }
+    .hero-bg { position: absolute; top: 0; right: 0; bottom: 0; width: 66%; z-index: -1; overflow: hidden; }
+    .hero-bg picture, .hero-bg img { width: 100%; height: 100%; }
+    .hero-bg img { object-fit: cover; object-position: 50% 42%; -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 42%); mask-image: linear-gradient(90deg, transparent 0, #000 42%); animation: settle 7s ease-out both; }
+    .hero-bg::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.4) 0, rgba(0,0,0,0) 22%, rgba(0,0,0,0) 72%, #000 100%); }
+    .hero-copy { position: relative; width: 100%; padding-top: 72px; padding-bottom: 104px; }
+    .hero-copy .hero-top > *, .hero-copy .hero-bottom > * { animation: rise .8s cubic-bezier(.2,.7,.2,1) both; }
+    .hero-copy .hero-top > :nth-child(2) { animation-delay: .08s; }
+    .hero-copy .hero-bottom > :nth-child(1) { animation-delay: .16s; }
+    .hero-copy .hero-bottom > :nth-child(2) { animation-delay: .24s; }
+    .hero-copy .hero-bottom > :nth-child(3) { animation-delay: .32s; }
+    @keyframes rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+    @keyframes settle { from { transform: scale(1.07); } to { transform: scale(1); } }
+    .job-chip { position: absolute; right: max(24px, calc((100vw - 1160px) / 2 + 24px)); bottom: 56px; z-index: 1; white-space: nowrap; background: rgba(255,255,255,.96); color: var(--ink); border-radius: 6px; padding: 12px 14px; display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; box-shadow: 0 18px 50px rgba(0,0,0,.5); animation: rise .8s .5s cubic-bezier(.2,.7,.2,1) both; }
+    .job-chip b { font-size: 13px; font-weight: 600; }
+    .job-chip span { font-size: 12px; color: var(--muted); }
+    .job-chip .pill { font-style: normal; grid-row: 1 / span 2; grid-column: 2; align-self: center; background: #fff4d6; color: #7a5a06; font-size: 10.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; padding: 6px 9px; border-radius: 99px; }
+
+    @media (max-width: 1100px) { .job-chip { display: none; } }
+    .hero p.lead, .hero .small { text-shadow: 0 1px 14px rgba(0,0,0,.7); }
+
+    /* what it covers, running across under the hero */
+    .ticker { border-top: 1px solid #222; border-bottom: 1px solid #222; overflow: hidden; white-space: nowrap; }
+    .ticker-track { display: inline-flex; animation: tick 38s linear infinite; }
+    .ticker span { display: inline-flex; align-items: center; gap: 26px; padding: 18px 13px; font-size: 12px; font-weight: 600; letter-spacing: .24em; text-transform: uppercase; color: #a3a3a3; }
+    .ticker span::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--gold); margin-left: 13px; }
+    @keyframes tick { to { transform: translateX(-50%); } }
+    @media (prefers-reduced-motion: reduce) {
+      .ticker-track, .hero-bg img, .hero-copy * , .job-chip { animation: none !important; }
+    }
+
+    /* the floor, stage by stage */
+    .stages { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-top: 44px; }
+    .stage { margin: 0; }
+    .stage .pic { border-radius: 6px; overflow: hidden; aspect-ratio: 4 / 5; background: var(--paper); }
+    .stage .pic img { width: 100%; height: 100%; object-fit: cover; transition: transform .6s ease; }
+    .stage:hover .pic img { transform: scale(1.04); }
+    .stage figcaption { padding-top: 14px; }
+    .stage .num { font-size: 12px; letter-spacing: .2em; color: var(--accent); font-weight: 600; }
+    .stage h4 { font-size: 17px; font-weight: 600; margin: 4px 0 6px; }
+    .stage p { margin: 0; color: var(--muted); font-size: 14.5px; }
+
+    /* the whole team, with a photo */
+    .team-head { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: center; }
+    .team-photo { border-radius: 8px; overflow: hidden; aspect-ratio: 4 / 3; }
+    .team-photo img { width: 100%; height: 100%; object-fit: cover; }
+
+    /* final call to action over a photo of the floor */
+    .final.photo { position: relative; padding: 140px 0; background-color: var(--black); background-image: linear-gradient(rgba(0,0,0,.74), rgba(0,0,0,.74)), url(/couchpotato/www/img/people/cnc.jpg); background-image: linear-gradient(rgba(0,0,0,.74), rgba(0,0,0,.74)), image-set(url(/couchpotato/www/img/people/cnc.webp) type("image/webp"), url(/couchpotato/www/img/people/cnc.jpg) type("image/jpeg")); background-size: cover; background-position: center 40%; }
+    .final.photo p { color: #d6d6d6; }
 
     /* sections */
     section { padding: 96px 0; }
@@ -123,6 +179,15 @@
       .grid4 { grid-template-columns: 1fr 1fr; }
       .steps { grid-template-columns: 1fr; }
       section { padding: 72px 0; }
+      .team-head { grid-template-columns: 1fr; gap: 36px; }
+      .hero-stage { min-height: calc(100svh - 68px); max-height: 900px; align-items: stretch; }
+      .hero-bg { width: 100%; }
+      .hero-bg img { -webkit-mask-image: none; mask-image: none; object-position: 52% 50%; }
+      .hero-bg::after { background: linear-gradient(180deg, rgba(0,0,0,.8) 0, rgba(0,0,0,.3) 30%, rgba(0,0,0,0) 46%, rgba(0,0,0,0) 60%, rgba(0,0,0,.8) 80%, #000 100%); }
+      .hero-copy { display: flex; flex-direction: column; justify-content: space-between; gap: 32px; padding-top: 36px; padding-bottom: 32px; }
+      .job-chip { display: none; }
+      .stages { grid-template-columns: 1fr 1fr; gap: 24px 16px; }
+      .final.photo { padding: 100px 0; }
     }
     @media (max-width: 700px) {
       .shot { max-width: 360px; margin-left: auto; margin-right: auto; }
@@ -138,6 +203,14 @@
       .hero .shot { margin-bottom: -60px; }
       .after-hero { padding-top: 108px; }
       .price-card { padding: 32px 24px; }
+      .stage h4 { font-size: 15px; }
+      .stage p { font-size: 13.5px; }
+      .hero h1 { font-size: 42px; }
+      .hero p.lead { margin-bottom: 22px; }
+      .hero .ctas { flex-direction: column; align-items: stretch; gap: 10px; }
+      .hero .ctas .btn { text-align: center; }
+      .hero .ctas .more { display: none; }
+      .ticker span { font-size: 11px; padding: 15px 11px; }
     }
   </style>
 </head>
@@ -158,22 +231,69 @@
   </div>
 </nav>
 
+<!-- Photos in img/people/ are free-licence stock from Pexels (no attribution
+     needed; see img/people/CREDITS.md). Swap in your own factory's photos
+     by saving over the same file names. -->
 <header class="hero">
-  <div class="wrap">
-    <div class="caps kicker">Software for furniture makers</div>
-    <h1>Run your furniture factory from one screen.</h1>
-    <p class="lead">Orders, the factory floor, costing, dispatch, invoicing and your showroom till, in one app that works on any phone, tablet or computer.</p>
-    <div class="ctas">
-      <a class="btn solid" href="/couchpotato/?signup=1" data-trial>Start your 14-day free trial</a>
-      <a class="btn ghost" href="/couchpotato/?demo=1" data-demo>Try the demo</a>
-      <a class="btn ghost" href="#features">See what it does</a>
+  <div class="hero-stage">
+    <div class="hero-bg">
+      <picture>
+        <source media="(max-width: 700px)" type="image/webp" srcset="/couchpotato/www/img/people/hero-tall.webp">
+        <source media="(max-width: 700px)" srcset="/couchpotato/www/img/people/hero-tall.jpg">
+        <source type="image/webp" srcset="/couchpotato/www/img/people/hero-wide.webp">
+        <img src="/couchpotato/www/img/people/hero-wide.jpg" alt="A furniture maker cutting a panel on a bandsaw under a work light" width="1600" height="1200" fetchpriority="high">
+      </picture>
     </div>
-    <p class="small">No card needed. Set up in a minute.</p>
+    <div class="wrap hero-copy">
+      <div class="hero-top">
+        <div class="caps kicker">Software for furniture makers</div>
+        <h1>Run your furniture factory from <em>one screen.</em></h1>
+      </div>
+      <div class="hero-bottom">
+        <p class="lead">Orders, the factory floor, costing, dispatch, invoicing and your showroom till, in one app that works on any phone, tablet or computer.</p>
+        <div class="ctas">
+          <a class="btn gold" href="/couchpotato/?signup=1" data-trial>Start your 14-day free trial</a>
+          <a class="btn ghost" href="/couchpotato/?demo=1" data-demo>Try the demo</a>
+          <a class="btn ghost more" href="#features">See what it does</a>
+        </div>
+        <p class="small">No card needed. Set up in a minute.</p>
+      </div>
+    </div>
+    <div class="job-chip" aria-hidden="true"><b>Job 1042 · 3-seater couch</b><span>Frame making, due Friday</span><em class="pill">On the floor</em></div>
+  </div>
+  <div class="ticker" aria-hidden="true"><div class="ticker-track"><span>Orders</span><span>Factory floor</span><span>Job cards</span><span>Fabric list</span><span>Costing</span><span>Showroom till</span><span>Scan out</span><span>WhatsApp updates</span><span>Invoicing</span><span>Orders</span><span>Factory floor</span><span>Job cards</span><span>Fabric list</span><span>Costing</span><span>Showroom till</span><span>Scan out</span><span>WhatsApp updates</span><span>Invoicing</span></div></div>
+  <div class="wrap">
     <div class="shot"><div class="bar"><i></i><i></i><i></i></div><picture><source media="(max-width: 700px)" srcset="/couchpotato/www/img/floor-m.jpg" width="390" height="760"><img src="/couchpotato/www/img/floor.jpg" alt="The factory floor: four weeks of orders, what is late and what is waiting on fabric" width="1280" height="800"></picture></div>
   </div>
 </header>
 
-<section id="features" class="after-hero">
+<section class="after-hero">
+  <div class="wrap">
+    <div class="caps" style="color:var(--muted)">On the factory floor</div>
+    <h2>From frame to front door.</h2>
+    <p class="sec-lead">A couch passes through a lot of hands before it leaves. Factory Manager follows it through every one, so everyone knows what to build next and nothing goes out late or unbilled.</p>
+    <div class="stages">
+      <figure class="stage">
+        <div class="pic"><picture><source type="image/webp" srcset="/couchpotato/www/img/people/cut.webp"><img loading="lazy" src="/couchpotato/www/img/people/cut.jpg" alt="A craftsman cutting a board at his workbench" width="720" height="900"></picture></div>
+        <figcaption><div class="num">01</div><h4>Cutting</h4><p>Job cards with the spec and due date, each with a QR code.</p></figcaption>
+      </figure>
+      <figure class="stage">
+        <div class="pic"><picture><source type="image/webp" srcset="/couchpotato/www/img/people/sew.webp"><img loading="lazy" src="/couchpotato/www/img/people/sew.jpg" alt="A machinist sewing fabric in a busy sewing room" width="720" height="900"></picture></div>
+        <figcaption><div class="num">02</div><h4>Sewing</h4><p>The fabric list shows what is in and what is still waiting.</p></figcaption>
+      </figure>
+      <figure class="stage">
+        <div class="pic"><picture><source type="image/webp" srcset="/couchpotato/www/img/people/upholster.webp"><img loading="lazy" src="/couchpotato/www/img/people/upholster.jpg" alt="An upholsterer working on a buttoned couch with a hammer" width="720" height="901"></picture></div>
+        <figcaption><div class="num">03</div><h4>Upholstering</h4><p>One tap marks a piece in production or done.</p></figcaption>
+      </figure>
+      <figure class="stage">
+        <div class="pic"><picture><source type="image/webp" srcset="/couchpotato/www/img/people/dispatch.webp"><img loading="lazy" src="/couchpotato/www/img/people/dispatch.jpg" alt="Two workers boxing a finished chair for delivery" width="720" height="900"></picture></div>
+        <figcaption><div class="num">04</div><h4>Dispatch</h4><p>Scan it at the door and the customer hears it is on its way.</p></figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="features" style="padding-top:0">
   <div class="wrap">
     <div class="caps" style="color:var(--muted)">What it does</div>
     <h2>Everything between the order and the invoice.</h2>
@@ -272,8 +392,14 @@
 
 <section class="alt">
   <div class="wrap">
-    <div class="caps" style="color:var(--muted)">For the whole team</div>
-    <h2>Everyone sees what they need, nothing more.</h2>
+    <div class="team-head">
+      <div>
+        <div class="caps" style="color:var(--muted)">For the whole team</div>
+        <h2>Everyone sees what they need, nothing more.</h2>
+        <p class="sec-lead">The office, the showroom and the floor work from the same orders, on whatever screen is closest: a laptop on the bench, a tablet at the counter or a phone in a pocket.</p>
+      </div>
+      <div class="team-photo"><picture><source type="image/webp" srcset="/couchpotato/www/img/people/office.webp"><img loading="lazy" src="/couchpotato/www/img/people/office.jpg" alt="A furniture maker checking his laptop at the workbench, tools and a drill press behind him" width="1200" height="900"></picture></div>
+    </div>
     <div class="grid4">
       <div class="tilecard"><h4>Roles</h4><p>Owner, office, sales and factory floor. The factory sees the planner and scan out; the till sees sales.</p></div>
       <div class="tilecard"><h4>Invite by WhatsApp</h4><p>Add someone's email and send them the sign-up link. They are in, with the right role, in a minute.</p></div>
@@ -334,11 +460,11 @@
   </div>
 </section>
 
-<section class="final">
+<section class="final photo">
   <div class="wrap">
     <h2>See your whole factory on one screen.</h2>
     <p>Start the 14-day free trial now. It takes a minute, and there is no card needed.</p>
-    <a class="btn solid" href="/couchpotato/?signup=1" data-trial>Start your free trial</a>
+    <a class="btn gold" href="/couchpotato/?signup=1" data-trial>Start your free trial</a>
   </div>
 </section>
 
