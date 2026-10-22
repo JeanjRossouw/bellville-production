@@ -525,6 +525,146 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "saleLines",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "entityId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "storeId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "stockMovements",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "entityId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "storeId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "auditLog",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "entityId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "storeId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "laybys",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "entityId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "storeId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "openedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "specialOrders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "entityId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "storeId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "openedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "vouchers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "entityId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "soldAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "laybys",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "entityId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "storeId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "cancelledAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "specialOrders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "entityId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "storeId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "cancelledAt",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []

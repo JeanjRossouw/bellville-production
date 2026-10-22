@@ -17,6 +17,7 @@ import * as specials from './specials.js';
 import * as stock from './stock.js';
 import * as buying from './buying.js';
 import * as customersTab from './customers.js';
+import * as reports from './reports.js';
 import { EMULATOR } from './db.js';
 
 const $ = (id) => document.getElementById(id);
@@ -189,7 +190,7 @@ function navItems() {
   if (sellStoreId() && auth.atLeast('supervisor')) out.push({ key: 'stock', label: 'Stock' }, { key: 'buying', label: 'Buying' });
   if (register.registerId()) out.push({ key: 'register', label: 'Register' });
   out.push({ key: 'home', label: 'Home' }, { key: 'products', label: 'Products' });
-  if (auth.atLeast('manager')) out.push({ key: 'admin', label: 'Admin' });
+  if (auth.atLeast('manager')) out.push({ key: 'reports', label: 'Reports' }, { key: 'admin', label: 'Admin' });
   out.push({ key: 'me', label: 'My PIN' });
   return out;
 }
@@ -223,6 +224,7 @@ function paint() {
   if (view === 'orders') { startStoreData(); screen.innerHTML = specials.specialsHtml(); return; }
   if (view === 'buying') { startStoreData(); screen.innerHTML = buying.buyingHtml(); return; }
   if (view === 'customers') { screen.innerHTML = customersTab.customersHtml(); return; }
+  if (view === 'reports') { screen.innerHTML = reports.reportsHtml(); return; }
   if (view === 'stock') { startStoreData(); screen.innerHTML = stock.stockHtml(); const sc = $('tk-scan'); if (sc && !document.activeElement.closest('#screen')) sc.focus(); return; }
   if (view === 'returns') { startStoreData(); screen.innerHTML = returns.returnsHtml(); const q = $('rt-q'); if (q && !document.activeElement.closest('#screen')) q.focus(); return; }
   if (view === 'admin') {
@@ -235,13 +237,14 @@ function paint() {
   }
   else if (view === 'products') { screen.innerHTML = products.productsHtml(prData()); const q = $('pr-q'); if (q && prFilter.q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
   else if (view === 'me') screen.innerHTML = meHtml();
-  else screen.innerHTML = homeHtml();
+  else { screen.innerHTML = homeHtml(); reports.dashboardHtml(screen); }
 }
 function goSub(sub) { adminSub = sub; editId = ''; paint(); }
 
 function homeHtml() {
   const u = auth.session.user, d = auth.session.device;
   return `<div class="page-head"><h1>Home</h1></div>
+    ${auth.atLeast('manager') ? '<div id="dash" class="dash"><p class="muted">Loading today’s figures…</p></div>' : ''}
     <div class="grid two">
       <div class="card"><h2>Signed in</h2>
         <p><strong>${esc(u.name)}</strong> · ${esc(roleLabel(u.role))}${u.email ? ' · ' + esc(u.email) : ''}</p>
@@ -253,7 +256,7 @@ function homeHtml() {
           : `<p class="muted">Not an enrolled till. ${auth.atLeast('manager') ? 'Enrol it under Devices to let staff sign in here with a PIN.' : 'Staff sign in with a PIN only on an enrolled till.'}</p>`}
       </div>
     </div>
-    <p class="muted" style="margin-top:1rem">Selling and products come in the next steps. Version ${esc(APP_VERSION)}.</p>`;
+    <p class="muted" style="margin-top:1rem">Version ${esc(APP_VERSION)}.</p>`;
 }
 
 // ---------------------------------------------------------------- staff --
@@ -377,6 +380,7 @@ async function onAction(e) {
   if (b.dataset.act.startsWith('st-')) { e.preventDefault(); return stock.action(b.dataset.act, b); }
   if (b.dataset.act.startsWith('by-')) { e.preventDefault(); return buying.action(b.dataset.act, b); }
   if (b.dataset.act.startsWith('cu-')) return customersTab.action(b.dataset.act, b);
+  if (b.dataset.act.startsWith('rp-')) { e.preventDefault(); return reports.action(b.dataset.act, b); }
   if (b.dataset.act === 'sync-now') return sync.syncNow().then(reloadOffsets);
   if (b.dataset.act === 'sync-failed') return showFailed();
   if (b.dataset.act === 'sync-drop') { if (confirm('Drop this refused sale from the till? It was never written; ring it up again if it should be.')) sync.dropFailed(id).then(showFailed); return; }
@@ -426,12 +430,13 @@ $('screen').addEventListener('change', (e) => {
 
 $('screen').addEventListener('input', (e) => { if (e.target.id === 'pr-q') { prFilter.q = e.target.value; paint(); } if (e.target.id === 'sl-q') sell.onSearchInput(e.target.value); if (e.target.id === 'sa-q') { salesTab.view.q = e.target.value; paint(); const q = $('sa-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } } });
 $('screen').addEventListener('keydown', (e) => { if (e.target.id === 'sl-q' && e.key === 'Enter') { e.preventDefault(); sell.onSearchEnter(e.target.value); } if (e.key === 'Enter' && returns.onEnter(e.target.id, e.target.value)) e.preventDefault(); if (e.key === 'Enter' && view === 'stock' && stock.onEnter(e.target.id, e.target.value)) e.preventDefault(); if (e.key === 'Enter' && view === 'buying' && buying.onEnter(e.target.id, e.target.value)) e.preventDefault(); });
-$('screen').addEventListener('change', (e) => { if (view === 'returns') returns.onChange(e); if (view === 'laybys') laybys.onChange(e); if (view === 'orders') specials.onChange(e); if (view === 'stock') stock.onChange(e); if (view === 'buying') buying.onChange(e); if (view === 'customers') customersTab.onChange(e); });
+$('screen').addEventListener('change', (e) => { if (view === 'returns') returns.onChange(e); if (view === 'laybys') laybys.onChange(e); if (view === 'orders') specials.onChange(e); if (view === 'stock') stock.onChange(e); if (view === 'buying') buying.onChange(e); if (view === 'customers') customersTab.onChange(e); if (view === 'reports') reports.onChange(e); });
 $('screen').addEventListener('input', (e) => { if (view === 'returns') returns.onInput(e.target.id, e.target.value); if (view === 'laybys') laybys.onInput(e.target.id, e.target.value); if (view === 'orders') specials.onInput(e.target.id, e.target.value); if (view === 'stock') stock.onInput(e.target.id, e.target.value); if (view === 'buying') buying.onInput(e.target.id, e.target.value); if (view === 'customers') customersTab.onInput(e.target.id, e.target.value); });
 returns.setContext({ repaint: () => { if (view === 'returns') paint(); }, data: sellData, onDone: () => { register.reg.stale = true; } });
 laybys.setContext({ repaint: () => { if (view === 'laybys') paint(); }, data: () => ({ ...sellData(), laybys: storeLaybys }), onChange: () => { register.reg.stale = true; if (view === 'laybys') paint(); } });
 // a lay-by's own buttons sit in its modal, outside the screen
 document.addEventListener('click', (e) => { const b = e.target.closest('#modal [data-act^="lb-"], #modal [data-act^="so-"], #modal [data-act^="by-"], #modal [data-act^="cu-"]'); if (!b) return; if (b.dataset.act.startsWith('lb-')) laybys.action(b.dataset.act, b); else if (b.dataset.act.startsWith('so-')) specials.action(b.dataset.act, b); else if (b.dataset.act.startsWith('cu-')) customersTab.action(b.dataset.act, b); else buying.action(b.dataset.act, b); });
+reports.setContext({ repaint: () => { if (view === 'reports') paint(); }, data: () => ({ ...sellData(), entities, stores, users }) });
 customersTab.setContext({ repaint: () => { if (view === 'customers') paint(); }, data: () => ({ ...sellData() }) });
 buying.setContext({ repaint: () => { if (view === 'buying') paint(); }, data: () => ({ ...sellData(), stores, suppliers, pos: storePOs, grvs: storeGrvs, transfers: [...transfersOut, ...transfersIn.filter(t => !transfersOut.some(o => o.id === t.id))] }), onChange: () => { reloadOffsets(); if (view === 'buying') paint(); } });
 stock.setContext({ repaint: () => { if (view === 'stock') paint(); }, data: () => ({ ...sellData(), takes: storeTakes }), onChange: () => { reloadOffsets(); if (view === 'stock') paint(); } });

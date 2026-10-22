@@ -309,3 +309,12 @@ small { font-size: 12px; }
 /* ---- customers ---- */
 .cu-consent { display: flex; gap: .8rem; flex-wrap: wrap; align-items: center; margin: .4rem 0; } .cu-consent .muted { flex: 1 1 100%; font-size: 12px; }
 .cu-h4 { font-family: var(--font-ui); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: .8rem 0 .2rem; }
+
+/* ---- reports and the dashboard ---- */
+.rp-wrap { display: grid; grid-template-columns: 200px 1fr; gap: 1rem; align-items: start; } @media (max-width: 860px) { .rp-wrap { grid-template-columns: 1fr; } }
+.rp-side { display: flex; flex-direction: column; gap: 2px; } @media (max-width: 860px) { .rp-side { flex-direction: row; flex-wrap: wrap; } }
+.rp-item { text-align: left; font: inherit; font-size: 13px; padding: .45rem .7rem; border: 1px solid transparent; border-radius: 4px; background: transparent; cursor: pointer; } .rp-item.on { background: var(--ink); color: #fff; } .rp-item:hover:not(.on) { border-color: var(--line-2); }
+.rp-filters .grid { margin-bottom: .3rem; } .rp-title { padding: .7rem .8rem; border-bottom: 1px solid var(--line); } .rp-tbl td, .rp-tbl th { white-space: nowrap; } .rp-tbl td:first-child { white-space: normal; min-width: 120px; }
+.dash { margin-bottom: 1rem; } .dash-h2 { font-family: var(--font-ui); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 0 0 .5rem; }
+.dash-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: .7rem; } .dash-card h3 { font-family: var(--font-ui); font-size: 12px; margin: 0 0 .3rem; }
+.dash-big { font-family: var(--font-ui); font-weight: 700; font-size: 22px; margin-bottom: .2rem; } .dash-delta { font-size: 12px; font-weight: 600; margin-left: .4rem; color: var(--muted); } .dash-delta.up { color: #1f5f2f; } .dash-delta.down { color: var(--red); }

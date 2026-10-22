@@ -107,6 +107,15 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   consent, the Customers tab and profile, a sale earning points and the
   receipt line, points as payment, a merge and an anonymisation by a
   manager. `node pos/test/customers.test.mjs`
+- `report-api.test.mjs` — step 16: the `pos-report` and `pos-xero` functions
+  over HTTP: the dashboard against last week, daily sales with tenders and
+  refunds, the VAT report, sales by product with gross profit, by staff,
+  discounts, voids, refunds, stock value, low and dead stock, movements,
+  lay-bys, customers, the filters, and a balanced Xero journal with its
+  CSV. `node pos/test/report-api.test.mjs`
+- `reports.test.mjs` — step 16 in the browser: the dashboard on Home, the
+  Reports tab running daily sales, the CSV and the print, the Xero journal
+  built and downloaded. `node pos/test/reports.test.mjs`
 - `money.test.mjs` — the shared cents and VAT maths; needs no emulator.
   `node pos/test/money.test.mjs`
   Set `FIREBASE_SDK_DIR` to a local copy of the `firebase` package's browser

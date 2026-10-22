@@ -22,6 +22,7 @@ export const blockId = (entityId, series, deviceId, from) => `${entityId}_${seri
 
 // who and where: the cashier (by token) and the till (by secret); an office login sells as 'web:<uid>'
 // opts.noShift: the till's register need not have an open shift (customers, stock, buying: no money changes hands)
+// opts.shiftOptional: use the open shift if there is one (a refund at a till lands on its shift), otherwise none
 export async function whoAndWhere(event, b, opts = {}) {
   const login = await loginOf(event);
   if (!login) throw new Reject(401, 'Sign in first.');
@@ -41,8 +42,8 @@ export async function whoAndWhere(event, b, opts = {}) {
     const reg = await getDoc('registers', registerId);
     if (!reg || reg.storeId !== storeId) throw new Reject(400, 'That register is not in this store.');
     const sh = reg.currentShiftId ? await getDoc('shifts', reg.currentShiftId) : null;
-    if (!sh || sh.status !== 'open') throw new Reject(409, 'The register is closed: open it under Register first.');
-    shiftId = sh.id;
+    if (!sh || sh.status !== 'open') { if (!opts.shiftOptional) throw new Reject(409, 'The register is closed: open it under Register first.'); }
+    else shiftId = sh.id;
   }
   return { user, device, deviceId: device ? device.id : 'web:' + login.sub, entityId, storeId, registerId, shiftId, entity, store, settings: settings || {} };
 }

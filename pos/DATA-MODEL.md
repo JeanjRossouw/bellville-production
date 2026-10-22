@@ -174,6 +174,7 @@ layby { minDepositPct, termDays (the longest), penaltyPct (≤ 1), frequency, re
 specialOrder { minDepositPct, leadDays }
 buying { updateCostsOnReceive }
 loyalty { enabled, pointsPerRand, pointValueCents, minRedeemPoints, expiryMonths, tiers }
+xero { autoDaily, accounts {…} }
 session { idleLogoutMinutes, pinLength (4..6) }
 numbering { blockSize, refillBelow }
 reports { phone, email }                                               // where the daily summary goes (the owner)
@@ -495,6 +496,36 @@ at the sender's cost, into the receiver's average), in part if need be;
 closing short records `lostQty` — the stock already left the sender, so
 nothing is invented at the receiver. Cancelling before anything arrived
 puts the stock back at the sender.
+
+### Reports and Xero
+
+Reports are not stored: `pos-report` aggregates them on the server from
+the finished documents (sales, saleLines, payments, creditNotes, shifts'
+Z-reports, stockLevels, stockMovements, auditLog, laybys, specialOrders,
+customers) for a company, a store or all its stores, a date range, a
+member of staff (`cashierUid`) and a channel (`sales.source`: till, office,
+online). The owner's dashboard is today against the same weekday last
+week, per store. Date ranges use the indexes `(entityId, storeId, <date>)`
+on each collection.
+
+**`xeroJournals/{entityId}_{date}`** — the daily sales journal (`pos-xero`)
+```
+entityId, storeId (''), date, narration, lines [ { key, account, description, cents (+ debit, − credit) } ],
+debitsCents, creditsCents, counts { sales, creditNotes, payments }, unbalanced (bool), accounts { the codes used },
+status ('built'|'posted'|'failed'), xeroId, error, postedAt, postedBy, builtAt, + stamps, updatedAt
+```
+R: managers and the owner of the entity. W: server only. Built from the
+day's sales (revenue ex VAT and VAT output credited, cash rounding),
+credit notes (reversed), every tender by method (bank and clearing
+accounts debited; store credit, vouchers, points, lay-by and custom-order
+deposits and the account book as liabilities), cancelled lay-bys and
+orders (deposits released, penalties as income) and vouchers sold (a
+liability, not revenue). Rebuilt until posted. Exported as Xero's
+manual-journal CSV; posted through the Accounting API when the company is
+connected (tokens under `pos-<entityId>` in the Xero token store, OAuth
+through `XERO_POS_REDIRECT_URI`); a schedule at 01:30 UTC builds and posts
+yesterday's for every company with `settings.xero.autoDaily`.
+`settings.xero { autoDaily, accounts { sales, vat, cash, card, eft, qr, account, storeCredit, voucher, layby, specialOrder, points, exchange, rounding, penalty }, connectedTenant, connectedAt, lastPushAt, lastError }`.
 
 ### Audit
 

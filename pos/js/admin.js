@@ -23,6 +23,7 @@ export const defaultSettings = () => ({
   layby: { minDepositPct: 20, termDays: 90, penaltyPct: 1, frequency: 'monthly', reminderDays: 3 },
   specialOrder: { minDepositPct: 50, leadDays: 21 },
   buying: { updateCostsOnReceive: true },
+  xero: { autoDaily: false, accounts: {} },
   loyalty: { enabled: false, pointsPerRand: 1, pointValueCents: 5, minRedeemPoints: 100, expiryMonths: 12, tiers: [{ name: 'Bronze', fromCents: 0, multiplier: 1 }, { name: 'Silver', fromCents: 1000000, multiplier: 1.25 }, { name: 'Gold', fromCents: 5000000, multiplier: 1.5 }] },
   session: { idleLogoutMinutes: 10, pinLength: 6 },
   numbering: { blockSize: 50, refillBelow: 10 },
@@ -228,6 +229,11 @@ export function settingsHtml(d) {
         <p class="muted">Tiers by lifetime spend: the multiplier scales what is earned.</p>
         <div class="grid three">${[0, 1, 2].map(i => { const t = ((s.loyalty || {}).tiers || [])[i] || {}; return `<div class="card" style="padding:.5rem .7rem">${field('Tier ' + (i + 1), 'se-tier-name-' + i, { value: t.name == null ? ['Bronze', 'Silver', 'Gold'][i] : t.name })}${field('From spend (R)', 'se-tier-from-' + i, { value: t.fromCents == null ? [0, 10000, 50000][i] : t.fromCents / 100, type: 'number', min: 0 })}${field('Multiplier', 'se-tier-mult-' + i, { value: t.multiplier == null ? [1, 1.25, 1.5][i] : t.multiplier, type: 'number', min: 0, step: '0.05' })}</div>`; }).join('')}</div>
       </div>
+      <div class="card"><h2>Xero: the daily sales journal</h2>
+        <label class="chk"><input type="checkbox" id="se-xero-auto"${(s.xero || {}).autoDaily ? ' checked' : ''}> Build yesterday’s journal every morning and post it when Xero is connected</label>
+        <p class="muted">One balanced manual journal per company per day. The account codes are Xero’s: sales (ex VAT), VAT output, the bank or clearing account for each tender, and the liabilities for deposits, store credit, vouchers and points. Connect Xero under Reports → Xero.</p>
+        <div class="grid four">${[['sales', 'Sales (ex VAT)', '200'], ['vat', 'VAT output', '820'], ['cash', 'Cash takings', '090'], ['card', 'Card takings', '091'], ['eft', 'EFT', '090'], ['qr', 'QR payments', '091'], ['account', 'Customer accounts', '610'], ['storeCredit', 'Store credit owed', '860'], ['voucher', 'Vouchers outstanding', '861'], ['layby', 'Lay-by deposits', '862'], ['specialOrder', 'Custom order deposits', '863'], ['points', 'Loyalty points owed', '864'], ['exchange', 'Exchange clearing', '865'], ['rounding', 'Cash rounding', '260'], ['penalty', 'Cancellation penalties', '270']].map(([k, l, dflt]) => field(l, 'se-xa-' + k, { value: ((s.xero || {}).accounts || {})[k] || dflt })).join('')}</div>
+      </div>
       <div class="card"><h2>Buying</h2>
         <label class="chk"><input type="checkbox" id="se-buy-cost"${(s.buying || {}).updateCostsOnReceive === false ? '' : ' checked'}> When stock is received, set the product’s cost to the new weighted average (landed)</label>
       </div>
@@ -260,6 +266,7 @@ export function settingsRead(w) {
     layby: { minDepositPct: num('se-lb-dep', 0, 100, 20), termDays: num('se-lb-term', 7, 3650, 90), penaltyPct: num('se-lb-pen', 0, 1, 1), frequency: val(w, 'se-lb-freq') || 'monthly', reminderDays: num('se-lb-rem', 0, 60, 3) },
     specialOrder: { minDepositPct: num('se-so-dep', 0, 100, 50), leadDays: num('se-so-lead', 1, 365, 21) },
     buying: { updateCostsOnReceive: !!w.querySelector('#se-buy-cost').checked },
+    xero: { autoDaily: !!w.querySelector('#se-xero-auto').checked, accounts: Object.fromEntries(['sales', 'vat', 'cash', 'card', 'eft', 'qr', 'account', 'storeCredit', 'voucher', 'layby', 'specialOrder', 'points', 'exchange', 'rounding', 'penalty'].map(k => [k, val(w, 'se-xa-' + k)])) },
     loyalty: { enabled: !!w.querySelector('#se-loy-on').checked, pointsPerRand: Number(val(w, 'se-loy-rate')) || 0, pointValueCents: num('se-loy-value', 1, 100000, 5), minRedeemPoints: num('se-loy-min', 0, 1000000, 100), expiryMonths: num('se-loy-exp', 0, 120, 12), tiers: [0, 1, 2].map(i => ({ name: val(w, 'se-tier-name-' + i) || 'Tier ' + (i + 1), fromCents: Math.round((Number(val(w, 'se-tier-from-' + i)) || 0) * 100), multiplier: Number(val(w, 'se-tier-mult-' + i)) || 1 })) },
     session: { idleLogoutMinutes: num('se-idle', 1, 1440, 10), pinLength: num('se-pinlen', 4, 6, 6) },
     numbering: { blockSize: num('se-block', 10, 500, 50), refillBelow: 10 },
@@ -272,6 +279,7 @@ export async function settingsSave(w, d) {
   const data = settingsRead(w);
   if (!data.vat.rates.length) return toast('Keep at least one VAT rate with a date.', 'warn');
   const before = d.settings[eid] || null;
+  data.xero = { ...((before || {}).xero || {}), ...data.xero };   // the connection fields stay
   try {
     if (before) await patchOne('settings', eid, { ...data, ...auth.touch() });
     else await setOne('settings', eid, { ...data, ...auth.stamp(eid, '') });

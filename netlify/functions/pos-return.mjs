@@ -53,7 +53,8 @@ const actions = {
   },
 
   async credit(event, b) {
-    const ctx = await whoAndWhere(event, { ...b, registerId: b.exchange ? b.registerId : '' });
+    // a refund lands on the till's open shift so the cash-up is right; without one it is an office refund
+    const ctx = await whoAndWhere(event, b, { shiftOptional: !b.exchange });
     const when = clean(b.clientCreatedAt, 40) || nowIso();
     const rs = returnsSettings(ctx.settings);
     const inLines = Array.isArray(b.lines) ? b.lines : [];

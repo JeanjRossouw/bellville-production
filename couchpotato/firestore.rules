@@ -419,6 +419,7 @@ service cloud.firestore {
       }
       match /customerPhones/{id} { allow read, write: if false; }
       match /loyaltyLedger/{id}  { allow read: if pReadsEntity(gid); allow write: if false; }
+      match /xeroJournals/{id}   { allow read: if pReadsEntity(gid) && pAtLeast(gid, 'manager'); allow write: if false; }
 
       // ---- buying ---------------------------------------------------------
       match /suppliers/{id} {
