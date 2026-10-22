@@ -23,9 +23,10 @@ export function openReceipt(o) {
       ${m.copy ? '<p class="muted">A reprint: it is marked COPY.</p>' : ''}
     </div></div>`, { okLabel: 'Done', cancelLabel: '', onOk: () => true });
   wrap.querySelector('.modal-card').classList.add('wide');
-  const audit = (how) => setOne('auditLog', newId('auditLog'), { action: 'receipt.print', docType: 'sale', docId: o.sale.id, docNo: m.docNo, actorUid: auth.session.uid, actorName: auth.session.user.name, overrideUid: '', overrideName: '', details: { kind: m.kind, copy: m.copy, how }, ...auth.stamp(o.entity.id, store.id || '') }).catch(() => {});
+  const audit = (how) => setOne('auditLog', newId('auditLog'), { action: 'receipt.print', docType: o.sale.series === 'LB' ? 'layby' : o.sale.series === 'CN' ? 'creditNote' : 'sale', docId: o.sale.id, docNo: m.docNo, actorUid: auth.session.uid, actorName: auth.session.user.name, overrideUid: '', overrideName: '', details: { kind: m.kind, copy: m.copy, how }, ...auth.stamp(o.entity.id, store.id || '') }).catch(() => {});
   let link = null;
-  const getLink = async () => { if (link) return link; const r = await auth.api('link', { saleId: o.sale.id, ...where(o) }, API.doc); link = r; return r; };
+  // lay-by documents have no public page: the share is the text itself
+  const getLink = async () => { if (link) return link; const r = o.sale.series === 'LB' ? { text: shareText(m, ''), url: '' } : await auth.api('link', { saleId: o.sale.id, ...where(o) }, API.doc); link = r; return r; };
   wrap.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-rc]'); if (!b) return;
     const how = b.dataset.rc;
@@ -40,7 +41,7 @@ export function openReceipt(o) {
       }
       else if (how === 'wa') { const r = await getLink(); const phone = prompt('WhatsApp number', (m.customer && m.customer.phone) || ''); if (phone) { window.open(whatsappUrl(phone, r.text), '_blank'); audit('whatsapp'); } }
       else if (how === 'mail') { const r = await getLink(); const email = prompt('Email address', (o.sale.customerSnapshot && o.sale.customerSnapshot.email) || ''); if (email) { window.open(mailtoUrl(email, m.title.replace(' · COPY', '') + ' ' + m.docNo + ' from ' + m.company.name, r.text), '_blank'); audit('email'); } }
-      else if (how === 'copy') { const r = await getLink(); await navigator.clipboard.writeText(r.url).catch(() => {}); toast('Link copied'); wrap.querySelector('.rc-acts').insertAdjacentHTML('beforeend', `<p class="muted" style="word-break:break-all;font-size:11px" id="rc-link">${esc(r.url)}</p>`); }
+      else if (how === 'copy') { const r = await getLink(); if (!r.url) { toast('No link for this document: share the text by WhatsApp or email.', 'warn'); return; } await navigator.clipboard.writeText(r.url).catch(() => {}); toast('Link copied'); wrap.querySelector('.rc-acts').insertAdjacentHTML('beforeend', `<p class="muted" style="word-break:break-all;font-size:11px" id="rc-link">${esc(r.url)}</p>`); }
     } catch (err) { toast(err.message, 'warn'); }
   });
   return { close, model: m };

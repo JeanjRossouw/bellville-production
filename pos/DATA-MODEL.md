@@ -169,7 +169,7 @@ vat {
 receipt { header, footer, returnPolicy }
 discounts { maxPctByRole { cashier, supervisor, manager, owner } }    // whole percents
 cash { varianceLimitCents }                                            // beyond this a close needs a manager
-layby { minDepositPct, termDays, penaltyPct }
+layby { minDepositPct, termDays (the longest), penaltyPct (≤ 1), frequency, reminderDays }
 session { idleLogoutMinutes, pinLength (4..6) }
 numbering { blockSize, refillBelow }
 reports { phone, email }                                               // where the daily summary goes (the owner)
@@ -211,7 +211,7 @@ variants, else the product. `itemId` = `variantId || productId`.
 ```
 entityId, storeId, productId, variantId ('' when none), onHandQty (int),
 quarantineQty (int: returns kept apart until inspected; its own movement bucket),
-reservedQty (int: open lay-bys and special orders holding stock),
+reservedQty (int: open lay-bys and special orders holding stock; its own movement bucket `reserved`; the till sells on hand less reserved),
 lastMovementAt, lastCountedAt, rebuiltAt, + stamps (createdBy 'server')
 ```
 R: members of the store. W: server only, in the same batch as the movement.
@@ -251,6 +251,7 @@ totalCents, vatCents, vatRateBp, vatRegistered (bool),
 tenderedCents, changeCents, roundingCents (cash rounded to 10c: the difference, recorded, never hidden), paymentMethods [string],
 cashierUid, cashierName, overrideUid, overrideName, overrideReason,
 note, source ('till'|'online'|'import'), clientCreatedAt, serverReceivedAt, verified: true,
+exchangeOf (the credit note an exchange spent), laybyOf (the lay-by a collection completes),
 + stamps
 ```
 R: members of the store. W: server only.
@@ -269,8 +270,8 @@ R: members of the store. W: server only.
 ```
 entityId, storeId, registerId, shiftId,
 docType ('sale'|'layby'|'specialOrder'|'refund'|'account'), docId, docNo,
-method ('cash'|'card'|'eft'|'qr'|'voucher'|'storeCredit'|'account'),
-amountCents (int; a refund is negative), ref (card slip no., EFT ref, voucher code),
+method ('cash'|'card'|'eft'|'qr'|'voucher'|'storeCredit'|'account'|'creditNote'|'layby'), instalment (lay-bys: 0 = the deposit),
+amountCents (int; a refund is negative), ref (card slip no., EFT ref, voucher code, the credit note or lay-by number),
 + stamps, serverReceivedAt
 ```
 R: members of the store. W: server only.
@@ -311,18 +312,36 @@ R: members of the store. W: server only. It also writes the matching negative
 `payments` row (so a shift's cash is one sum) and, for `storeCredit`, moves
 the customer's `storeCreditCents`.
 
-**`laybys/{id}`** — live until closed, series `LB`
+**`laybys/{id}`** — series `LB`, numbered from the entity's counter inside the transaction (the `pos-layby` function; online only)
 ```
-entityId, storeId, registerId, seq, docNo, blockId, customerId (required),
-lines [ as saleLines, plus itemId ], totalCents, vatCents,
-depositCents, minDepositCents, paidCents, balanceCents,
-termDays, dueAt, penaltyPct, status ('open'|'completed'|'cancelled'|'expired'),
-completedSaleId ('' until the goods go out), cancelledAt, cancelReason, refundedCents,
-+ stamps, updatedAt
+entityId, storeId, registerId, shiftId (where opened), seq, docNo, customerId (required), customerSnapshot,
+lines [ as saleLines: prices and discounts checked at opening, then fixed ], lineCount, subtotalCents, lineDiscountCents,
+saleDiscountCents, totalCents, vatCents, vatRateBp, vatRegistered,
+minDepositPct, minDepositCents, depositCents, paidCents, balanceCents, paymentCount, lastPaidAt,
+history [ { n (0 = the deposit), at, amountCents, methods, storeId, byName } ],
+termDays, frequency ('weekly'|'fortnightly'|'monthly'), openedAt, dueAt, schedule [ { n, dueAt, amountCents } ],
+penaltyPct (≤ 1), penaltyCapCents (1% of the full price),
+agreement { text, acceptedAt, signedBy, signature (PNG data URL), cashierUid, cashierName },
+status ('open'|'completed'|'cancelled'), reminders [ { at, kind ('due'|'overdue'|'ready'), how, byUid, byName } ], lastReminderAt,
+completedAt, completedSaleId, completedDocNo, completedByUid, completedByName,
+cancelledAt, cancelKind ('customer'|'lapsed'|'death'|'hospitalisation'|'store'), cancelReason, penaltyCents,
+penaltyBreakdown { fullPriceCents, paidCents, penaltyPct, computedCents, capPct, capCents, chargedCents, waivedWhy, refundCents },
+refunds [ { method, amountCents, ref } ], refundedCents, cashierUid, cashierName, approvers, note, + stamps, updatedAt
 ```
-R: members of the store. W: server only (opening, a payment, completion,
-cancellation each go through the function). Completion writes the final
-`sales` document and the stock movements.
+R: members of the store. W: server only. Section 62 of the Consumer
+Protection Act and regulation 35, as `pos/js/layby-terms.js` applies them:
+the penalty is at most 1% of the full price, is written into the agreement
+before the customer signs, and is never charged on death or hospitalisation
+(nor when the store cannot supply). Opening reserves the goods (`stockMovements`
+bucket `reserved`, `stockLevels.reservedQty`); the deposit and every
+instalment are `payments` rows (`docType 'layby'`, the till and shift that
+took the money, at any till of the company). Collection writes the final
+`sales` document paid by one `layby` tender (so no cash is counted twice),
+with the sale's own stock movement and the reservation released; the sale
+carries `laybyOf`. Cancellation releases the stock, writes `refunds` and
+negative `payments` (`docType 'refund'`) for what goes back, and keeps the
+written penalty breakdown. Reminders are logged here and sent from the
+till by WhatsApp.
 
 **`specialOrders/{id}`** — live until closed, series `SO`
 ```

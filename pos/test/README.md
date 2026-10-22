@@ -57,6 +57,17 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   transaction; credit notes numbered without a gap. `node pos/test/return-api.test.mjs`
 - `returns.test.mjs` — step 10 in the browser: the Returns tab on a till.
   `node pos/test/returns.test.mjs`
+- `layby-api.test.mjs` — step 11: the `pos-layby` function over HTTP: opening
+  needs the customer, the minimum deposit, a signed agreement and no
+  made-to-order goods; stock reserved; the settings' penalty capped at 1%;
+  instalments at another store; collection into a tax invoice paid by the
+  lay-by with the stock moved; cancellation with the breakdown, a refund that
+  must add up, none on death (a manager); reminders; the report.
+  `node pos/test/layby-api.test.mjs`
+- `laybys.test.mjs` — step 11 in the browser: a lay-by from the cart with the
+  signature drawn on the screen, the Lay-bys tab, an instalment and its
+  receipt, collection, a cancellation with a manager's PIN.
+  `node pos/test/laybys.test.mjs`
 - `money.test.mjs` — the shared cents and VAT maths; needs no emulator.
   `node pos/test/money.test.mjs`
   Set `FIREBASE_SDK_DIR` to a local copy of the `firebase` package's browser

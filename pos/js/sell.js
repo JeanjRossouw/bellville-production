@@ -45,7 +45,7 @@ const myLimit = () => maxPct(auth.session.user.role);
 // the lowest role allowed to give this much
 const roleFor = (pct) => ROLE_ORDER.find(r => maxPct(r) >= pct) || 'owner';
 const variantsOf = (pid) => d().variants.filter(v => v.productId === pid && !v.archived);
-const stockOf = (itemId) => { const s = store(); const lv = (d().stockLevels || []).find(x => x.storeId === (s && s.id) && (x.variantId === itemId || (!x.variantId && x.productId === itemId))); return (lv ? Number(lv.onHandQty) || 0 : 0) + ((d().stockOffsets || {})[itemId] || 0); };
+const stockOf = (itemId) => { const s = store(); const lv = (d().stockLevels || []).find(x => x.storeId === (s && s.id) && (x.variantId === itemId || (!x.variantId && x.productId === itemId))); return (lv ? (Number(lv.onHandQty) || 0) - (Number(lv.reservedQty) || 0) : 0) + ((d().stockOffsets || {})[itemId] || 0); };
 // what an item sells for here: the store's price, else the variant's, else the product's
 function priceOf(p, v) {
   const s = store();
@@ -158,6 +158,7 @@ export function sellHtml() {
         <button data-act="sl-recall"${park.length ? '' : ' disabled'}>${icon('list')}Recall${park.length ? ' (' + park.length + ')' : ''}</button>
         <button data-act="sl-void"${c.lines.length ? '' : ' disabled'}>${icon('undo')}Void sale</button>
         <button data-act="sl-custom">${icon('plus')}Custom item</button>
+        <button data-act="sl-layby"${c.lines.length && ctx.onLayby ? '' : ' disabled'} title="Put this sale on lay-by">${icon('box')}Lay-by</button>
       </div>
     </div></div>
     <div class="pos-mbar"><button class="${sale.mobileCart ? '' : 'on'}" data-act="sl-mview" data-to="shop">${icon('search')} Shop</button><button class="${sale.mobileCart ? 'on' : ''}" data-act="sl-mview" data-to="cart">${icon('cart')} Cart${t.pieces ? ' (' + t.pieces + ')' : ''}<b>${esc(money(t.totalCents))}</b></button></div>
@@ -183,6 +184,11 @@ export async function action(act, b) {
     case 'sl-recall': return recallSale();
     case 'sl-void': return voidSale();
     case 'sl-custom': return customItem();
+    case 'sl-layby': {
+      if (!c.lines.length || !ctx.onLayby) return;
+      if (d().registerId && !d().shiftOpen) return toast('The register is closed: open it under Register first.', 'warn');
+      return ctx.onLayby(c, totals(), () => { sale.cart = freshCart(); persist(); ctx.repaint(); });
+    }
     case 'sl-pay': {
       if (!c.lines.length) return;
       if (d().registerId && !d().shiftOpen) return toast('The register is closed: open it under Register first.', 'warn');

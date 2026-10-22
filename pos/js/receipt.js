@@ -16,13 +16,15 @@ import { barcodeSvg, code128Widths, encodable } from './barcode.js';
 
 export const SLIP_MAX = 5000, ABRIDGED_MAX = 500000;
 export function receiptKind(sale, entity) {
+  if (sale.series === 'LB') return 'layby-' + (sale.docKind || 'agreement');
   if (sale.series === 'CN') return 'creditnote';
   if (!entity.vatRegistered) return 'invoice';
   if (sale.totalCents <= SLIP_MAX) return 'slip';
   if (sale.totalCents <= ABRIDGED_MAX) return 'abridged';
   return 'full';
 }
-export const kindTitle = (kind) => kind === 'slip' ? 'Till slip' : kind === 'abridged' ? 'Tax invoice' : kind === 'full' ? 'Tax invoice' : kind === 'creditnote' ? 'Credit note' : 'Invoice';
+const LB_TITLES = { 'layby-agreement': 'Lay-by agreement', 'layby-payment': 'Lay-by payment', 'layby-collection': 'Collection slip', 'layby-cancel': 'Lay-by cancellation' };
+export const kindTitle = (kind) => LB_TITLES[kind] || (kind === 'slip' ? 'Till slip' : kind === 'abridged' ? 'Tax invoice' : kind === 'full' ? 'Tax invoice' : kind === 'creditnote' ? 'Credit note' : 'Invoice');
 // what a full tax invoice needs from the customer; '' when all is there
 export function fullInvoiceGap(customer) {
   if (!customer || !String(customer.name || '').trim()) return 'the customer’s name';
@@ -31,7 +33,7 @@ export function fullInvoiceGap(customer) {
   return '';
 }
 const addr = (a) => [a && a.line1, a && a.line2, a && a.city, a && a.code].filter(Boolean).join(', ');
-const methodLabel = (m) => ({ cash: 'Cash', card: 'Card', eft: 'EFT', qr: 'QR', voucher: 'Gift voucher', storeCredit: 'Store credit', account: 'On account' })[m] || m;
+const methodLabel = (m) => ({ cash: 'Cash', card: 'Card', eft: 'EFT', qr: 'QR', voucher: 'Gift voucher', storeCredit: 'Store credit', account: 'On account', layby: 'Lay-by', creditNote: 'Credit note' })[m] || m;
 
 // the facts every rendering shares
 export function receiptModel({ sale, lines, payments, entity, store, settings, copy }) {
@@ -52,8 +54,10 @@ export function receiptModel({ sale, lines, payments, entity, store, settings, c
     creditNote: sale.series === 'CN' ? { saleDocNo: sale.saleDocNo || '', noReceipt: !!sale.noReceipt, exchangeSaleId: sale.exchangeSaleId || '', exchangeUsedCents: sale.exchangeUsedCents || 0 } : null,
     subtotalCents: sale.subtotalCents, discountCents: (sale.lineDiscountCents || 0) + (sale.saleDiscountCents || 0), totalCents: sale.totalCents, vatCents: sale.vatCents, vatRateBp: sale.vatRateBp,
     exVatCents: sale.totalCents - sale.vatCents, roundingCents: sale.roundingCents || 0, changeCents: sale.changeCents || 0,
-    payments: (payments || []).map(p => ({ label: (sale.series === 'CN' ? 'Refund: ' : '') + (p.method === 'creditNote' ? 'Credit note' : methodLabel(p.method)) + (p.cardLast4 ? ' ••' + p.cardLast4 : '') + (p.status === 'awaiting' ? ' (awaiting)' : ''), amountCents: Math.abs(p.amountCents), tenderedCents: p.tenderedCents, ref: p.ref || p.approvalCode || '' })),
-    awaiting: sale.paidStatus === 'awaiting', vouchers: sale.vouchersSold || [], pending: !!sale.pending
+    payments: (payments || []).map(p => ({ label: (sale.series === 'CN' || p.amountCents < 0 ? 'Refund: ' : '') + methodLabel(p.method) + (p.cardLast4 ? ' ••' + p.cardLast4 : '') + (p.status === 'awaiting' ? ' (awaiting)' : ''), amountCents: Math.abs(p.amountCents), tenderedCents: p.tenderedCents, ref: p.ref || p.approvalCode || '' })),
+    awaiting: sale.paidStatus === 'awaiting', vouchers: sale.vouchersSold || [], pending: !!sale.pending,
+    // lay-by documents: facts in rows, the agreement's terms, the customer's signature, a line to sign on collection
+    totals: sale.noTotals ? false : true, sections: sale.sections || [], terms: sale.terms || '', signature: sale.signature || '', signedBy: sale.signedBy || '', signLine: sale.signLine || '', refLabel: sale.refLabel || ''
   };
 }
 
@@ -69,9 +73,11 @@ export function slipHtml(m) {
     <div class="hr"></div>
     ${m.lines.map(l => `<div class="ln"><div>${esc(l.name)}${m.vat && l.zero ? ' <i>*</i>' : ''}</div><div class="r"><span>${l.qty} × ${esc(money(l.unitPriceCents))}${l.discountCents ? ' − ' + esc(money(l.discountCents)) : ''}</span><span>${esc(money(l.lineTotalCents))}</span></div>${l.note ? `<div class="s">${esc(l.note)}</div>` : ''}</div>`).join('')}
     <div class="hr"></div>
-    ${m.discountCents ? row('Discount', '− ' + esc(money(m.discountCents))) : ''}
-    ${m.vat ? row('Excl. VAT', esc(money(m.exVatCents))) + row('VAT ' + (m.vatRateBp / 100) + '%', esc(money(m.vatCents))) : ''}
-    ${row('TOTAL', '<b>' + esc(money(m.totalCents)) + '</b>', 'tot')}
+    ${m.refLabel ? `<div class="s c">${esc(m.refLabel)}</div>` : ''}
+    ${m.totals && m.discountCents ? row('Discount', '− ' + esc(money(m.discountCents))) : ''}
+    ${m.totals && m.vat ? row('Excl. VAT', esc(money(m.exVatCents))) + row('VAT ' + (m.vatRateBp / 100) + '%', esc(money(m.vatCents))) : ''}
+    ${m.totals ? row('TOTAL', '<b>' + esc(money(m.totalCents)) + '</b>', 'tot') : ''}
+    ${m.sections.map(sec => `<div class="hr"></div>${sec.title ? `<div class="c"><b>${esc(sec.title)}</b></div>` : ''}${sec.rows.map(r => row(esc(r[0]), r[2] ? '<b>' + esc(r[1]) + '</b>' : esc(r[1]))).join('')}`).join('')}
     ${m.roundingCents ? row('Cash rounding', esc(money(m.roundingCents))) : ''}
     ${m.payments.map(p => row(esc(p.label), esc(money(p.tenderedCents && p.tenderedCents !== p.amountCents ? p.tenderedCents : p.amountCents)))).join('')}
     ${m.changeCents ? row('Change', esc(money(m.changeCents))) : ''}
@@ -79,6 +85,9 @@ export function slipHtml(m) {
     ${m.pending ? '<div class="c s">Rung up offline: sent to the office when the line is back</div>' : ''}
     ${m.vat && m.lines.some(l => l.zero) ? '<div class="s">* zero-rated or exempt</div>' : ''}
     ${m.vouchers.map(v => `<div class="box c">Gift voucher ${esc(money(v.amountCents))}<br><b>${esc(v.code)}</b></div>`).join('')}
+    ${m.terms ? `<div class="s pol">${esc(m.terms).replace(/\n/g, '<br>')}</div>` : ''}
+    ${m.signature ? `<div class="sig"><img src="${m.signature}" alt="signature"><div class="s">Signed: ${esc(m.signedBy)}</div></div>` : m.signedBy ? `<div class="s">Signed: ${esc(m.signedBy)}</div>` : ''}
+    ${m.signLine ? `<div class="sigline"><div class="s">${esc(m.signLine)}</div><div class="s">Name: ______________________</div><div class="s">Signature: __________________</div><div class="s">Date: ______________</div></div>` : ''}
     <div class="c bar">${encodable(m.docNo) ? barcodeSvg(m.docNo, 40) : ''}<div class="s">${esc(m.docNo)}</div></div>
     ${m.footer ? `<div class="c s">${esc(m.footer).replace(/\n/g, '<br>')}</div>` : ''}
     ${m.policy ? `<div class="s pol">${esc(m.policy)}</div>` : ''}
@@ -91,7 +100,8 @@ export const SLIP_CSS = `
   .slip .s { font-size: 10px; } .slip .r { display: flex; justify-content: space-between; gap: 6px; } .slip .r span:last-child { white-space: nowrap; }
   .slip .hr { border-top: 1px dashed #000; margin: 4px 0; } .slip .ln { margin: 2px 0; } .slip .tot { font-size: 13.5px; font-weight: 700; margin: 3px 0; }
   .slip .box { border: 1px solid #000; padding: 3px 5px; margin: 4px 0; } .slip .bar { margin: 6px 0 2px; } .slip .bar svg { width: 60mm; height: 12mm; display: block; margin: 0 auto; }
-  .slip .pol { margin-top: 6px; border-top: 1px dashed #000; padding-top: 4px; }`;
+  .slip .pol { margin-top: 6px; border-top: 1px dashed #000; padding-top: 4px; white-space: normal; }
+  .slip .sig img { display: block; max-width: 60mm; max-height: 20mm; margin: 4px auto 0; } .slip .sigline { margin-top: 10px; line-height: 2.2; }`;
 
 // -------------------------------------------------------------- A4 --
 export function a4Html(m) {
@@ -101,10 +111,15 @@ export function a4Html(m) {
     ${m.customer ? `<div class="to"><div class="s">${m.kind === 'full' ? 'Invoice to' : 'Customer'}</div><b>${esc(m.customer.name)}</b>${m.customer.address ? '<br>' + esc(m.customer.address) : ''}${m.customer.vatNo ? '<br>VAT no ' + esc(m.customer.vatNo) : ''}${m.customer.phone ? '<br>' + esc(m.customer.phone) : ''}</div>` : ''}
     <table><thead><tr><th>Item</th><th class="n">Qty</th><th class="n">Each</th><th class="n">Discount</th>${m.vat ? '<th class="n">VAT</th>' : ''}<th class="n">Total</th></tr></thead>
       <tbody>${m.lines.map(l => `<tr><td>${esc(l.name)}${l.note ? '<div class="s">' + esc(l.note) + '</div>' : ''}</td><td class="n">${l.qty}</td><td class="n">${esc(money(l.unitPriceCents))}</td><td class="n">${l.discountCents ? '− ' + esc(money(l.discountCents)) : ''}</td>${m.vat ? `<td class="n">${l.zero ? '0%' : esc(money(l.vatCents))}</td>` : ''}<td class="n">${esc(money(l.lineTotalCents))}</td></tr>`).join('')}</tbody>
-      <tfoot>${m.vat ? `<tr><td colspan="${m.vat ? 5 : 4}" class="n">Excl. VAT</td><td class="n">${esc(money(m.exVatCents))}</td></tr><tr><td colspan="5" class="n">VAT ${m.vatRateBp / 100}%</td><td class="n">${esc(money(m.vatCents))}</td></tr>` : ''}
-        <tr class="tot"><td colspan="${m.vat ? 5 : 4}" class="n">Total</td><td class="n">${esc(money(m.totalCents))}</td></tr></tfoot></table>
+      <tfoot>${m.totals && m.vat ? `<tr><td colspan="${m.vat ? 5 : 4}" class="n">Excl. VAT</td><td class="n">${esc(money(m.exVatCents))}</td></tr><tr><td colspan="5" class="n">VAT ${m.vatRateBp / 100}%</td><td class="n">${esc(money(m.vatCents))}</td></tr>` : ''}
+        ${m.totals ? `<tr class="tot"><td colspan="${m.vat ? 5 : 4}" class="n">Total</td><td class="n">${esc(money(m.totalCents))}</td></tr>` : ''}</tfoot></table>
+    ${m.refLabel ? `<div class="pay">${esc(m.refLabel)}</div>` : ''}
+    ${m.sections.map(sec => `<div class="sec">${sec.title ? `<div class="s st">${esc(sec.title)}</div>` : ''}<table class="kv">${sec.rows.map(r => `<tr><td>${esc(r[0])}</td><td class="n">${r[2] ? '<b>' + esc(r[1]) + '</b>' : esc(r[1])}</td></tr>`).join('')}</table></div>`).join('')}
     <div class="pay">${m.payments.map(p => `<div>${esc(p.label)}${p.ref ? ' · ' + esc(p.ref) : ''}: ${esc(money(p.amountCents))}</div>`).join('')}${m.roundingCents ? `<div>Cash rounding ${esc(money(m.roundingCents))}</div>` : ''}${m.changeCents ? `<div>Change ${esc(money(m.changeCents))}</div>` : ''}${m.awaiting ? '<div><b>Payment awaited: this invoice is not yet paid.</b></div>' : ''}</div>
     ${m.vouchers.length ? `<div class="pay">${m.vouchers.map(v => `<div>Gift voucher ${esc(money(v.amountCents))}: <b>${esc(v.code)}</b></div>`).join('')}</div>` : ''}
+    ${m.terms ? `<div class="foot terms">${esc(m.terms).replace(/\n/g, '<br><br>')}</div>` : ''}
+    ${m.signature ? `<div class="sig"><img src="${m.signature}" alt="signature"><div class="s">Signed: ${esc(m.signedBy)} · ${esc(niceDate(m.date))}</div></div>` : m.signedBy ? `<div class="sig s">Signed: ${esc(m.signedBy)}</div>` : ''}
+    ${m.signLine ? `<div class="sigline"><div>${esc(m.signLine)}</div><div>Name: ____________________________ &nbsp; Signature: ____________________________ &nbsp; Date: ______________</div></div>` : ''}
     ${m.footer ? `<div class="foot">${esc(m.footer).replace(/\n/g, '<br>')}</div>` : ''}${m.policy ? `<div class="foot s">${esc(m.policy)}</div>` : ''}
     ${m.copy ? '<div class="stamp">COPY</div>' : ''}
   </div>`;
@@ -118,7 +133,9 @@ export const A4_CSS = `
   .a4 .to { margin: 0 0 12px; padding: 8px 10px; border: 1px solid #000; display: inline-block; min-width: 60mm; }
   .a4 table { width: 100%; border-collapse: collapse; } .a4 th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; border-bottom: 1px solid #000; padding: 6px 6px; }
   .a4 td { padding: 6px; border-bottom: 1px solid #ddd; vertical-align: top; } .a4 .n { text-align: right; white-space: nowrap; } .a4 tfoot td { border: 0; padding: 4px 6px; } .a4 .tot td { font-size: 15px; font-weight: 700; border-top: 2px solid #000; }
-  .a4 .pay { margin-top: 10px; } .a4 .foot { margin-top: 18px; border-top: 1px solid #000; padding-top: 8px; }
+  .a4 .pay { margin-top: 10px; } .a4 .foot { margin-top: 18px; border-top: 1px solid #000; padding-top: 8px; } .a4 .terms { font-size: 11px; line-height: 1.5; }
+  .a4 .sec { margin-top: 10px; } .a4 .st { font-weight: 700; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 2px; } .a4 .kv { width: auto; min-width: 90mm; } .a4 .kv td { padding: 3px 8px 3px 0; border: 0; }
+  .a4 .sig { margin-top: 14px; } .a4 .sig img { display: block; max-width: 70mm; max-height: 28mm; border-bottom: 1px solid #000; } .a4 .sigline { margin-top: 24px; line-height: 2.4; }
   .a4 .stamp { position: absolute; top: 40mm; left: 50%; transform: translateX(-50%) rotate(-20deg); font-size: 64px; font-weight: 900; color: rgba(180, 0, 0, .25); border: 6px solid rgba(180, 0, 0, .25); padding: 4px 24px; letter-spacing: .3em; }`;
 
 // --------------------------------------------------------- ESC/POS --
@@ -141,9 +158,11 @@ export function escposBytes(m) {
   line('-'.repeat(W));
   for (const l of m.lines) { line(l.name.slice(0, W) + (m.vat && l.zero ? '*' : '')); line(lr(`  ${l.qty} x ${rand(l.unitPriceCents)}${l.discountCents ? ' -' + rand(l.discountCents) : ''}`, rand(l.lineTotalCents))); if (l.note) line('  ' + l.note.slice(0, W - 2)); }
   line('-'.repeat(W));
-  if (m.discountCents) line(lr('Discount', '-' + rand(m.discountCents)));
-  if (m.vat) { line(lr('Excl. VAT', rand(m.exVatCents))); line(lr('VAT ' + (m.vatRateBp / 100) + '%', rand(m.vatCents))); }
-  bold(true); size(1, 2); line(lr('TOTAL', rand(m.totalCents))); size(1, 1); bold(false);
+  if (m.refLabel) line(m.refLabel.slice(0, W));
+  if (m.totals && m.discountCents) line(lr('Discount', '-' + rand(m.discountCents)));
+  if (m.totals && m.vat) { line(lr('Excl. VAT', rand(m.exVatCents))); line(lr('VAT ' + (m.vatRateBp / 100) + '%', rand(m.vatCents))); }
+  if (m.totals) { bold(true); size(1, 2); line(lr('TOTAL', rand(m.totalCents))); size(1, 1); bold(false); }
+  for (const sec of m.sections) { line('-'.repeat(W)); if (sec.title) { bold(true); line(sec.title); bold(false); } for (const r of sec.rows) line(lr(r[0], r[1])); }
   if (m.roundingCents) line(lr('Cash rounding', rand(m.roundingCents)));
   for (const p of m.payments) line(lr(p.label, rand(p.tenderedCents && p.tenderedCents !== p.amountCents ? p.tenderedCents : p.amountCents)));
   if (m.changeCents) line(lr('Change', rand(m.changeCents)));
@@ -152,6 +171,8 @@ export function escposBytes(m) {
   for (const v of m.vouchers) { align(1); line('Gift voucher ' + rand(v.amountCents)); bold(true); line(v.code); bold(false); align(0); }
   line(); align(1);
   if (encodable(m.docNo)) { push(29, 104, 60); push(29, 119, 2); push(29, 72, 2); push(29, 107, 73, m.docNo.length + 2, 123, 66); text(m.docNo); push(10); }
+  if (m.terms) { align(0); line(); m.terms.split('\n').forEach(p => { wrap(p, W).forEach(l => line(l)); line(); }); if (m.signedBy) line('Signed: ' + m.signedBy); align(1); }
+  if (m.signLine) { align(0); line(); line(m.signLine.slice(0, W)); line(); line('Name: ' + '_'.repeat(W - 6)); line(); line('Signature: ' + '_'.repeat(W - 11)); align(1); }
   if (m.footer) m.footer.split('\n').forEach(l => line(l)); if (m.policy) { line(); wrap(m.policy, W).forEach(l => line(l)); }
   line(); line(); line(); push(29, 86, 66, 0);
   return new Uint8Array(out);
@@ -160,7 +181,8 @@ function wrap(s, w) { const words = String(s).split(/\s+/), lines = []; let cur 
 
 // ------------------------------------------------------------ share --
 export function shareText(m, link) {
-  return `${m.company.name}: ${m.title.replace(' · COPY', '')} ${m.docNo}, ${niceDate(m.date)}. Total ${money(m.totalCents)}.${m.awaiting ? ' Payment awaited.' : ''}${link ? '\n' + link : ''}`;
+  const facts = m.sections.flatMap(sec => sec.rows.map(r => r[0] + ' ' + r[1])).join('; ');
+  return `${m.company.name}: ${m.title.replace(' · COPY', '')} ${m.docNo}, ${niceDate(m.date)}.${m.totals ? ' Total ' + money(m.totalCents) + '.' : ''}${facts ? ' ' + facts + '.' : ''}${m.awaiting ? ' Payment awaited.' : ''}${link ? '\n' + link : ''}`;
 }
 export const whatsappUrl = (phone, text) => 'https://wa.me/' + String(phone || '').replace(/\D/g, '').replace(/^0/, '27') + '?text=' + encodeURIComponent(text);
 export const mailtoUrl = (email, subject, text) => 'mailto:' + encodeURIComponent(email || '') + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(text);

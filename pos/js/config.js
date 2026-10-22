@@ -21,7 +21,7 @@ export const API = {
   sale: '/.netlify/functions/pos-sale',
   doc: '/.netlify/functions/pos-doc',
   shift: '/.netlify/functions/pos-shift',
-  return: '/.netlify/functions/pos-return'
+  return: '/.netlify/functions/pos-return', layby: '/.netlify/functions/pos-layby'
 };
 export const ROLES = [
   { key: 'cashier', label: 'Cashier' },

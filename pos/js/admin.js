@@ -20,7 +20,7 @@ export const defaultSettings = () => ({
   receipt: { header: '', footer: 'Thank you for your support.', returnPolicy: 'Goods may be returned within 7 days with this receipt, unused and in their packaging.' },
   discounts: { maxPctByRole: { cashier: 5, supervisor: 15, manager: 50, owner: 100 } },
   cash: { varianceLimitCents: 5000 },
-  layby: { minDepositPct: 20, termDays: 90, penaltyPct: 10 },
+  layby: { minDepositPct: 20, termDays: 90, penaltyPct: 1, frequency: 'monthly', reminderDays: 3 },
   session: { idleLogoutMinutes: 10, pinLength: 6 },
   numbering: { blockSize: 50, refillBelow: 10 },
   reports: { phone: '', email: '' },
@@ -211,7 +211,9 @@ export function settingsHtml(d) {
         <p class="muted">A difference between expected and counted cash beyond this needs a manager’s note.</p>
       </div>
       <div class="card"><h2>Lay-bys</h2>
-        <div class="grid three">${field('Minimum deposit %', 'se-lb-dep', { value: s.layby.minDepositPct, type: 'number', min: 0, max: 100 })}${field('Term (days)', 'se-lb-term', { value: s.layby.termDays, type: 'number', min: 1 })}${field('Cancellation penalty %', 'se-lb-pen', { value: s.layby.penaltyPct, type: 'number', min: 0, max: 100 })}</div>
+        <div class="grid three">${field('Minimum deposit %', 'se-lb-dep', { value: s.layby.minDepositPct, type: 'number', min: 0, max: 100 })}${field('Longest term (days)', 'se-lb-term', { value: s.layby.termDays, type: 'number', min: 7 })}${field('Cancellation penalty % (at most 1)', 'se-lb-pen', { value: s.layby.penaltyPct, type: 'number', min: 0, max: 1, step: '0.1' })}</div>
+        <div class="grid two">${field('Instalments', 'se-lb-freq', { type: 'select', value: s.layby.frequency || 'monthly', options: [{ value: 'weekly', label: 'Weekly' }, { value: 'fortnightly', label: 'Every two weeks' }, { value: 'monthly', label: 'Monthly' }] })}${field('Remind days before an instalment', 'se-lb-rem', { value: s.layby.reminderDays == null ? 3 : s.layby.reminderDays, type: 'number', min: 0 })}</div>
+        <p class="muted">Section 62 of the Consumer Protection Act: the penalty is at most 1% of the full price, is disclosed on the agreement before the customer signs, and is never charged on death or hospitalisation.</p>
       </div>
       <div class="card"><h2>Returns</h2>
         <div class="grid two">${field('Return window (days)', 'se-ret-days', { value: (s.returns || {}).windowDays, type: 'number', min: 0 })}${field('Reason codes (comma separated)', 'se-ret-reasons', { value: ((s.returns || {}).reasons || []).join(', ') })}</div>
@@ -239,7 +241,7 @@ export function settingsRead(w) {
     receipt: { header: val(w, 'se-rhead'), footer: val(w, 'se-rfoot'), returnPolicy: val(w, 'se-policy') },
     discounts: { maxPctByRole: { cashier: num('se-disc-cashier', 0, 100, 5), supervisor: num('se-disc-supervisor', 0, 100, 15), manager: num('se-disc-manager', 0, 100, 50), owner: num('se-disc-owner', 0, 100, 100) } },
     cash: { varianceLimitCents: centsOf(val(w, 'se-variance')) },
-    layby: { minDepositPct: num('se-lb-dep', 0, 100, 20), termDays: num('se-lb-term', 1, 3650, 90), penaltyPct: num('se-lb-pen', 0, 100, 10) },
+    layby: { minDepositPct: num('se-lb-dep', 0, 100, 20), termDays: num('se-lb-term', 7, 3650, 90), penaltyPct: num('se-lb-pen', 0, 1, 1), frequency: val(w, 'se-lb-freq') || 'monthly', reminderDays: num('se-lb-rem', 0, 60, 3) },
     session: { idleLogoutMinutes: num('se-idle', 1, 1440, 10), pinLength: num('se-pinlen', 4, 6, 6) },
     numbering: { blockSize: num('se-block', 10, 500, 50), refillBelow: 10 },
     reports: { phone: val(w, 'se-rep-phone'), email: val(w, 'se-rep-email') },

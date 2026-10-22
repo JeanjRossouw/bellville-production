@@ -111,7 +111,7 @@ export async function prepareSale(ctx, b, opts = {}) {
       if (!name || !(listPrice >= 0)) throw new Reject(400, `Line ${n}: a custom item needs a name and a price.`);
     } else {
       p = await getDoc('products', clean(l.productId, 60));
-      if (!p || p.entityId !== ctx.entityId || p.archived) throw new Reject(400, `Line ${n}: that product is not for sale here.`);
+      if (!p || p.entityId !== ctx.entityId || (p.archived && !opts.trusted)) throw new Reject(400, `Line ${n}: that product is not for sale here.`);
       if (l.variantId) { v = await getDoc('variants', clean(l.variantId, 60)); if (!v || v.productId !== p.id || v.archived) throw new Reject(400, `Line ${n}: that variant is not for sale.`); }
       else if (p.hasVariants) throw new Reject(400, `Line ${n}: ${p.name} needs a variant.`);
       listPrice = await priceOf(ctx, p, v); name = p.name + (v ? ' · ' + v.name : ''); vatClass = p.vatClass || 'standard'; type = p.type || 'stock';
@@ -120,7 +120,8 @@ export async function prepareSale(ctx, b, opts = {}) {
     // the price: the list price, or an override a manager approved
     let unit = int(l.unitPriceCents), override = null;
     if (!(unit >= 0)) throw new Reject(400, `Line ${n}: the price is wrong.`);
-    if (unit !== listPrice) {
+    if (unit !== listPrice && opts.trusted) override = { fromCents: listPrice, reason: opts.trusted, by: null };   // fixed when the lay-by was opened
+    else if (unit !== listPrice) {
       const t = verifyOverrideToken(l.priceOverride && l.priceOverride.token);
       const self = rank(ctx.user.role) >= rank('manager');
       if (!self && (!t || t.action !== 'override.price' || t.entityId !== ctx.entityId)) throw new Reject(403, `Line ${n}: the price of ${name} was changed without a manager's approval.`);
@@ -130,7 +131,7 @@ export async function prepareSale(ctx, b, opts = {}) {
     const disc = int(l.discountCents) || 0;
     if (disc < 0 || disc > qty * unit) throw new Reject(400, `Line ${n}: the discount is wrong.`);
     const pct = disc ? Math.round(disc / (qty * unit) * 1000) / 10 : 0;
-    const dOk = disc ? discountOk(ctx, pct, l.discountToken, name) : { by: null };
+    const dOk = disc && !opts.trusted ? discountOk(ctx, pct, l.discountToken, name) : { by: null };
     if (dOk.by) approvers.set(dOk.by.uid, dOk.by.name);
     const lr = rateFor(vatClass, rateBp, !!ctx.entity.vatRegistered);
     const t = lineTotals({ qty, unitPriceCents: unit, discountCents: disc, rateBp: lr });
@@ -146,12 +147,12 @@ export async function prepareSale(ctx, b, opts = {}) {
   const saleDisc = Math.min(sub, int(b.saleDiscountCents) || 0);
   if (saleDisc < 0) throw new Reject(400, 'The sale discount is wrong.');
   let saleBy = null;
-  if (saleDisc) { const pct = Math.round(saleDisc / sub * 1000) / 10; saleBy = discountOk(ctx, pct, b.saleDiscountToken, 'the sale').by; if (saleBy) approvers.set(saleBy.uid, saleBy.name); }
+  if (saleDisc && !opts.trusted) { const pct = Math.round(saleDisc / sub * 1000) / 10; saleBy = discountOk(ctx, pct, b.saleDiscountToken, 'the sale').by; if (saleBy) approvers.set(saleBy.uid, saleBy.name); }
   let left = saleDisc, vat = 0;
   lines.forEach((l, i) => { const share = i === lines.length - 1 ? left : (sub ? Math.round(saleDisc * l.lineTotalCents / sub) : 0); left -= share; l.saleDiscountCents = share; l.netCents = l.lineTotalCents - share; l.vatCents = vatIn(l.netCents, l.vatRateBp); vat += l.vatCents; });
   const total = sub - saleDisc;
   const told = b.totals || {};
-  if (int(told.totalCents) !== total || int(told.vatCents) !== vat) throw new Reject(409, `The till’s total (${told.totalCents}) does not match the server’s (${total}). Reopen the sale and try again.`);
+  if (!opts.trusted && (int(told.totalCents) !== total || int(told.vatCents) !== vat)) throw new Reject(409, `The till’s total (${told.totalCents}) does not match the server’s (${total}). Reopen the sale and try again.`);
   // over R 5 000 a VAT-registered company must issue a full tax invoice: the customer's name and address go on it
   if (ctx.entity.vatRegistered && total > 500000) {
     const a = customer && customer.address;
@@ -159,9 +160,21 @@ export async function prepareSale(ctx, b, opts = {}) {
     if (!a || !String(a.line1 || a.city || '').trim()) throw new Reject(400, `Over R 5 000 a full tax invoice is needed: add ${customer.name}’s address.`);
   }
 
-  // ---- the tenders (an exchange's credit note goes first)
-  const tenders = Array.isArray(b.tenders) ? [...b.tenders] : [];
-  if (opts.creditNote) tenders.unshift({ method: 'creditNote', amountCents: Math.min(opts.creditNote.amountCents, total), ref: opts.creditNote.docNo });
+  // ---- the tenders: a sale is paid in full; a lay-by's deposit or instalment is a part (opts.noTenders: none at all)
+  const base = { when, at, rateBp, customer, lines, moves, vouchersSold, approvers, saleBy, gross, lineDisc, saleDisc, sub, total, vat };
+  if (opts.noTenders) return { ...base, voucherUse: [], pays: [], paid: 0, rounding: 0, cashTendered: 0, cashPay: null, creditUsed: 0, accountUsed: 0 };
+  const prepaid = opts.prepaid || (opts.creditNote ? { method: 'creditNote', ...opts.creditNote } : null);
+  return { ...base, ...prepareTenders(ctx, b.tenders, { total, customer, prepaid }) };
+}
+
+// The tenders of a document: each method against the store's, one cash tender rounded to 10c with the
+// change worked out, store credit and the account against the customer, vouchers looked up later inside
+// the transaction. opts.prepaid { method: 'creditNote'|'layby', docNo, amountCents } pays first (an exchange's
+// credit, a lay-by collected). opts.partial takes less than the total (a lay-by's deposit or instalment):
+// cash is then whatever was given less change, with no rounding.
+export function prepareTenders(ctx, inTenders, { total, customer, prepaid, partial } = {}) {
+  const tenders = Array.isArray(inTenders) ? [...inTenders] : [];
+  if (prepaid) tenders.unshift({ method: prepaid.method, amountCents: Math.min(prepaid.amountCents, total), ref: prepaid.docNo });
   if (!tenders.length || tenders.length > 10) throw new Reject(400, 'No payment.');
   const allowed = ctx.store.paymentMethods || ['cash', 'card'];
   let paid = 0, cashTendered = 0, cashCount = 0, creditUsed = 0, accountUsed = 0, rounding = 0;
@@ -169,9 +182,9 @@ export async function prepareSale(ctx, b, opts = {}) {
   const pays = [];
   for (const t of tenders) {
     const method = clean(t.method, 20); const amount = int(t.amountCents);
-    if (method === 'creditNote') { if (!opts.creditNote || t !== tenders[0]) throw new Reject(400, 'A credit note pays only through an exchange.'); }
+    if (method === 'creditNote' || method === 'layby') { if (!prepaid || method !== prepaid.method || t !== tenders[0]) throw new Reject(400, method === 'layby' ? 'A lay-by pays only when it is collected.' : 'A credit note pays only through an exchange.'); }
     else if (!METHODS.includes(method) || !allowed.includes(method)) throw new Reject(400, `${method || 'That'} is not a payment method at this store.`);
-    if (!(amount > 0)) { if (method === 'creditNote') continue; throw new Reject(400, 'A payment must be more than nothing.'); }
+    if (!(amount > 0)) { if (prepaid && method === prepaid.method) continue; throw new Reject(400, 'A payment must be more than nothing.'); }
     const pay = { method, amountCents: amount, ref: clean(t.ref, 60), status: 'paid' };
     if (method === 'cash') { cashCount++; pay.tenderedCents = int(t.tenderedCents) || amount; if (pay.tenderedCents < amount) throw new Reject(400, 'Cash given is less than the cash part.'); cashTendered += pay.tenderedCents; }
     if (method === 'card') { pay.cardLast4 = clean(t.cardLast4, 4).replace(/\D/g, ''); pay.approvalCode = clean(t.approvalCode, 20); }
@@ -184,9 +197,14 @@ export async function prepareSale(ctx, b, opts = {}) {
   if (cashCount > 1) throw new Reject(400, 'One cash payment per sale: add the notes together.');
   if (creditUsed > (customer ? customer.storeCreditCents || 0 : 0)) throw new Reject(400, 'Not enough store credit.');
   if (accountUsed && accountUsed + (customer.accountBalanceCents || 0) > (customer.creditLimitCents || 0)) throw new Reject(400, 'That takes the account past its limit.');
-  // cash may be rounded to 10c: the cash part due is total less the other tenders
-  const others = paid - pays.filter(p => p.method === 'cash').reduce((n, p) => n + p.amountCents, 0);
   const cashPay = pays.find(p => p.method === 'cash');
+  if (partial) {
+    if (paid > total) throw new Reject(400, `Payments (${paid}) are more than what is owed (${total}).`);
+    if (cashPay) cashPay.changeCents = cashPay.tenderedCents - cashPay.amountCents;
+    return { voucherUse, pays, paid, rounding: 0, cashTendered, cashPay, creditUsed, accountUsed };
+  }
+  // cash may be rounded to 10c: the cash part due is total less the other tenders
+  const others = paid - (cashPay ? cashPay.amountCents : 0);
   if (cashPay) {
     const due = total - others;
     if (due < 0) throw new Reject(400, 'The other payments already cover the sale: take the cash off.');
@@ -198,7 +216,7 @@ export async function prepareSale(ctx, b, opts = {}) {
     paid = others + cashPay.amountCents;
   }
   if (paid !== total + rounding) throw new Reject(400, `Payments (${paid}) do not cover the sale (${total + rounding}).`);
-  return { when, at, rateBp, customer, lines, moves, vouchersSold, voucherUse, pays, approvers, saleBy, gross, lineDisc, saleDisc, sub, total, vat, rounding, cashTendered, cashPay, creditUsed, accountUsed };
+  return { voucherUse, pays, paid, rounding, cashTendered, cashPay, creditUsed, accountUsed };
 }
 
 // inside a transaction: the number, the vouchers, the stock levels; the writes for a sale and what to answer
@@ -223,7 +241,7 @@ export async function saleWrites(tx, ctx, s, saleId, b, levels = new Map()) {
     totalCents: s.total, vatCents: s.vat, vatRateBp: s.rateBp, vatRegistered: !!ctx.entity.vatRegistered, roundingCents: s.rounding,
     tenderedCents: s.cashTendered, changeCents: s.cashPay ? s.cashPay.changeCents : 0, paymentMethods: [...new Set(s.pays.map(p => p.method))], paidStatus: s.pays.some(p => p.status === 'awaiting') ? 'awaiting' : 'paid',
     cashierUid: ctx.user.id, cashierName: ctx.user.name, approvers: [...s.approvers].map(([uid, name]) => ({ uid, name })),
-    note: clean(b.note, 300), source: ctx.device ? 'till' : 'office', clientCreatedAt: s.when, verified: true, exchangeOf: b.exchangeOf || '', ...stamp, serverReceivedAt: now
+    note: clean(b.note, 300), source: ctx.device ? 'till' : 'office', clientCreatedAt: s.when, verified: true, exchangeOf: b.exchangeOf || '', laybyOf: b.laybyOf || '', ...stamp, serverReceivedAt: now
   };
   writes.push({ create: true, coll: 'sales', id: saleId, data: sale });
   s.lines.forEach(l => writes.push({ create: true, coll: 'saleLines', id: saleId + '_' + l.lineNo, data: { saleId, docNo, ...l, ...stamp } }));
@@ -241,17 +259,19 @@ export async function saleWrites(tx, ctx, s, saleId, b, levels = new Map()) {
 }
 
 // a stock movement and the level it moves, kept in the `levels` map for the next one in the same transaction.
-// bucket 'onHand' (default) is sellable stock; 'quarantine' is kept apart (a return to be inspected)
+// bucket 'onHand' (default) is sellable stock; 'quarantine' is kept apart (a return to be inspected);
+// 'reserved' is held for a lay-by or special order and counts against what may be sold
 export function moveWrites(ctx, levels, m, doc, stamp, now) {
   const id = ctx.storeId + '_' + m.itemId; const lv = levels.get(id);
   const bucket = m.bucket || 'onHand';
   const onHand = (lv ? lv.onHandQty || 0 : 0) + (bucket === 'onHand' ? m.qty : 0);
   const quarantine = (lv ? lv.quarantineQty || 0 : 0) + (bucket === 'quarantine' ? m.qty : 0);
-  const next = { ...(lv || {}), onHandQty: onHand, quarantineQty: quarantine };
+  const reserved = (lv ? lv.reservedQty || 0 : 0) + (bucket === 'reserved' ? m.qty : 0);
+  const next = { ...(lv || {}), onHandQty: onHand, quarantineQty: quarantine, reservedQty: reserved };
   levels.set(id, next);
   return [
     { create: true, coll: 'stockMovements', id: randomId('mv_'), data: { productId: m.productId, variantId: m.variantId, qty: m.qty, bucket, reason: m.reason, docType: doc.docType, docId: doc.docId, docNo: doc.docNo, unitCostCents: m.unitCostCents, note: m.name, onHandAfter: onHand, ...stamp, serverReceivedAt: now } },
-    { set: true, coll: 'stockLevels', id, data: { productId: m.productId, variantId: m.variantId, onHandQty: onHand, quarantineQty: quarantine, reservedQty: lv ? lv.reservedQty || 0 : 0, lastMovementAt: now, lastCountedAt: lv ? lv.lastCountedAt || '' : '', rebuiltAt: lv ? lv.rebuiltAt || '' : '', negative: onHand < 0, ...(lv ? {} : serverStamp(ctx.entityId, ctx.storeId, 'server', 'server')), entityId: ctx.entityId, storeId: ctx.storeId } }
+    { set: true, coll: 'stockLevels', id, data: { productId: m.productId, variantId: m.variantId, onHandQty: onHand, quarantineQty: quarantine, reservedQty: reserved, lastMovementAt: now, lastCountedAt: lv ? lv.lastCountedAt || '' : '', rebuiltAt: lv ? lv.rebuiltAt || '' : '', negative: onHand < 0, ...(lv ? {} : serverStamp(ctx.entityId, ctx.storeId, 'server', 'server')), entityId: ctx.entityId, storeId: ctx.storeId } }
   ];
 }
 
@@ -264,7 +284,7 @@ export async function runSale(ctx, b, { saleId, prep, more } = {}) {
       const levels = new Map();
       const extra = more ? await more(tx, levels) : { writes: [], result: {} };
       const s = prep ? await saleWrites(tx, ctx, prep, saleId, b, levels) : { writes: [], result: {} };
-      await commit([...extra.writes, ...s.writes], tx); done = true;
+      await commit(squash([...extra.writes, ...s.writes]), tx); done = true;
       return { ...s.result, ...extra.result, ok: true };
     } catch (e) {
       if (e instanceof Reject && e.status === 409 && /moment ago/.test(e.message) && attempt < 4) continue;   // the transaction lost a race: again
@@ -276,4 +296,11 @@ export async function runSale(ctx, b, { saleId, prep, more } = {}) {
     }
   }
   throw new Reject(409, 'The till was busy writing: try once more.');
+}
+
+// a document set twice in one transaction keeps the last write (the levels map carries the earlier one's figures)
+function squash(writes) {
+  const last = new Map();
+  writes.forEach((w, i) => { if (w.set) last.set(w.coll + '/' + w.id, i); });
+  return writes.filter((w, i) => !w.set || last.get(w.coll + '/' + w.id) === i);
 }
