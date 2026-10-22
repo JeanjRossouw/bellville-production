@@ -5,8 +5,11 @@
 // refund), the click & collect list, discount codes shared with the till,
 // consented customers pushed, and the sync log.
 //
-//   connect     { entityId, domain, clientId, clientSecret }   the owner; the keys are proven and kept server-side
-//   disconnect  { entityId }                                   the owner
+//   connect     { entityId, domain, clientId, clientSecret, siteUrl }   the owner; the keys are proven and kept server-side, then
+//                                                               setup runs: webhooks registered on the app, stores mapped to
+//                                                               locations by name, products linked by SKU, stock pushed, codes pulled
+//   setup       { entityId, siteUrl? }                         the owner: run those steps again (each one is safe to repeat)
+//   disconnect  { entityId }                                   the owner; our webhooks are removed from the app
 //   status      { entityId }                                   managers: connected? locations? the queue and the last error
 //   settings    { entityId, locationByStore, defaultStoreId, pushStock, pullOrders, syncCodes, syncCustomers }   the owner
 //   locations   { entityId }                                   the shop's locations, to map
@@ -35,6 +38,78 @@ async function who(event, b, minRole = 'manager') {
 }
 async function cfgOf(entityId) { const c = await secretsOf(entityId); if (!c) throw new Reject(409, 'Shopify is not connected for this company: the owner connects it under Admin → Settings → Shopify.'); return c; }
 const money = (c) => 'R ' + (c / 100).toFixed(2);
+// the scopes the Dev Dashboard app needs; shown on the card with a Copy button
+export const SCOPES = ['read_products', 'write_inventory', 'read_inventory', 'read_locations', 'read_orders', 'write_orders', 'write_merchant_managed_fulfillment_orders', 'read_discounts', 'read_customers', 'write_customers'];
+const TOPICS = { 'orders/create': 'ORDERS_CREATE', 'orders/cancelled': 'ORDERS_CANCELLED', 'refunds/create': 'REFUNDS_CREATE' };
+const hookPath = (entityId) => '/.netlify/functions/pos-shopify?hook=1&e=' + entityId;
+// where the webhooks must call: the site the owner is on (sent by the page), else the host this request came to
+function siteOf(event, b, sh = {}) {
+  const given = clean(b.siteUrl, 200).replace(/\/+$/, '');
+  if (/^https?:\/\/[a-z0-9.-]+(:\d+)?$/i.test(given)) return given;
+  if (sh.siteUrl) return sh.siteUrl;
+  const h = event.headers || {};
+  const host = h['x-forwarded-host'] || h.host || '';
+  return host ? `${h['x-forwarded-proto'] || 'https'}://${host}` : '';
+}
+
+// ---- the webhooks on the app: ours found, moved or created, one per topic; safe to run again
+async function ourWebhooks(cfg) {
+  const d = await gql(cfg, `query { webhookSubscriptions(first: 100) { nodes { id topic endpoint { __typename ... on WebhookHttpEndpoint { callbackUrl } } } } }`);
+  return d.webhookSubscriptions.nodes.map(n => ({ id: n.id, topic: n.topic, url: (n.endpoint && n.endpoint.callbackUrl) || '' })).filter(n => /\/pos-shopify\?hook=1&e=/.test(n.url));
+}
+async function registerWebhooks(entityId, cfg, siteUrl) {
+  if (!siteUrl) throw new Error('No site address to register the webhooks to.');
+  const url = siteUrl + hookPath(entityId);
+  const have = await ourWebhooks(cfg);
+  const out = [];
+  for (const [name, topic] of Object.entries(TOPICS)) {
+    const mine = have.filter(h => h.topic === topic);
+    const exact = mine.find(h => h.url === url);
+    if (exact) { out.push({ topic: name, id: exact.id, url }); continue; }
+    if (mine.length) { await gql(cfg, `mutation($id: ID!, $w: WebhookSubscriptionInput!) { webhookSubscriptionUpdate(id: $id, webhookSubscription: $w) { webhookSubscription { id } userErrors { field message } } }`, { id: mine[0].id, w: { callbackUrl: url } }); out.push({ topic: name, id: mine[0].id, url }); continue; }
+    const m = await gql(cfg, `mutation($topic: WebhookSubscriptionTopic!, $w: WebhookSubscriptionInput!) { webhookSubscriptionCreate(topic: $topic, webhookSubscription: $w) { webhookSubscription { id } userErrors { field message } } }`, { topic, w: { callbackUrl: url, format: 'JSON' } });
+    out.push({ topic: name, id: m.webhookSubscriptionCreate.webhookSubscription.id, url });
+  }
+  return out;
+}
+async function removeWebhooks(cfg) {
+  let n = 0;
+  for (const h of await ourWebhooks(cfg)) { await gql(cfg, `mutation($id: ID!) { webhookSubscriptionDelete(id: $id) { deletedWebhookSubscriptionId userErrors { field message } } }`, { id: h.id }); n++; }
+  return n;
+}
+// ---- stores to locations without asking: a location whose name matches the store's, or the only location for the only store
+const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+async function autoMap(entityId, locations) {
+  const sh = await settingsOf(entityId);
+  const stores = (await query('stores', [{ field: 'entityId', value: entityId }], 100)).filter(s => s.active !== false);
+  const map = { ...(sh.locationByStore || {}) };
+  const used = new Set(Object.values(map));
+  const mapped = [];
+  for (const s of stores) {
+    if (map[s.id]) continue;
+    const byName = locations.find(l => !used.has(l.id) && norm(l.name) && norm(s.name) && (norm(l.name).includes(norm(s.name)) || norm(s.name).includes(norm(l.name))));
+    const pick = byName || (locations.length === 1 && stores.length === 1 && !used.size ? locations[0] : null);
+    if (pick) { map[s.id] = pick.id; used.add(pick.id); mapped.push(`${s.name} → ${pick.name}`); }
+  }
+  const defaultStoreId = sh.defaultStoreId && stores.some(s => s.id === sh.defaultStoreId) ? sh.defaultStoreId : (stores.length === 1 ? stores[0].id : (Object.keys(map)[0] || ''));
+  await patchShopify(entityId, { locationByStore: map, defaultStoreId });
+  return { mapped, unmapped: stores.filter(s => !map[s.id]).map(s => s.name) };
+}
+// ---- the whole setup after Connect, every step on its own so one failure does not stop the rest; the outcome kept for the card
+async function runSetup(entityId, cfg, siteUrl, w) {
+  const setup = { at: nowIso(), siteUrl, webhooks: 0, mapped: [], unmapped: [], linked: 0, seen: 0, unmatched: 0, queued: 0, pushed: 0, codes: 0, errors: [] };
+  const step = async (what, fn) => { try { await fn(); } catch (e) { setup.errors.push(what + ': ' + String(e.message).slice(0, 200)); await logSync(entityId, 'setup', 'failed', what + ': ' + e.message); } };
+  await step('webhooks', async () => { const hooks = await registerWebhooks(entityId, cfg, siteUrl); setup.webhooks = hooks.length; await patchShopify(entityId, { webhooks: hooks, siteUrl }); });
+  await step('locations', async () => { const sh = await settingsOf(entityId); const r = await autoMap(entityId, sh.locations || []); setup.mapped = r.mapped; setup.unmapped = r.unmapped; });
+  await step('link', async () => { const r = await linkBySku(entityId, cfg); setup.linked = r.linked; setup.seen = r.seen; setup.unmatched = r.unmatched.length; await patchShopify(entityId, { linkedAt: nowIso() }); await logSync(entityId, 'link', 'ok', `${r.linked} of ${r.seen} Shopify variants linked by SKU`); });
+  await step('stock', async () => { setup.queued = await queueAll(entityId); const r = await flushStock(entityId, { budgetMs: 8000, max: 200 }); setup.pushed = r.pushed || 0; });
+  await step('codes', async () => { setup.codes = await pullCodes(entityId, cfg); });
+  await patchShopify(entityId, { setup, lastSyncAt: nowIso() });
+  await logSync(entityId, 'setup', setup.errors.length ? 'retry' : 'ok', `webhooks ${setup.webhooks}, ${setup.mapped.length} store(s) mapped, ${setup.linked} of ${setup.seen} linked, ${setup.pushed} stock figures pushed, ${setup.codes} codes${setup.errors.length ? ' · ' + setup.errors.join(' · ') : ''}`);
+  await audit({ action: 'shopify.setup', docType: 'settings', docId: entityId, docNo: '', actorUid: w.user.id, actorName: w.user.name, details: { webhooks: setup.webhooks, mapped: setup.mapped.length, linked: setup.linked, pushed: setup.pushed, errors: setup.errors }, entityId, storeId: '', deviceId: 'office' });
+  return setup;
+}
+
 const cents = (s) => Math.round(Number(s || 0) * 100);
 
 // ---- linking by SKU: every variant on Shopify against the POS catalogue
@@ -212,14 +287,23 @@ const actions = {
     const locations = d.locations.nodes.filter(l => l.isActive).map(l => ({ id: l.id, name: l.name }));
     await patchShopify(w.entityId, { connected: true, domain, shopName: d.shop.name, locations, connectedAt: nowIso(), lastError: '', pushStock: true, pullOrders: true, syncCodes: true, syncCustomers: true });
     await audit({ action: 'shopify.connect', docType: 'settings', docId: w.entityId, docNo: '', actorUid: w.user.id, actorName: w.user.name, details: { domain }, entityId: w.entityId, storeId: '', deviceId: 'office' });
-    return { ok: true, shopName: d.shop.name, locations };
+    const setup = await runSetup(w.entityId, cfg, siteOf(event, b), w);
+    return { ok: true, shopName: d.shop.name, locations, setup };
+  },
+  async setup(event, b) {
+    const w = await who(event, b, 'owner');
+    const cfg = await cfgOf(w.entityId);
+    const sh = await settingsOf(w.entityId);
+    return { ok: true, setup: await runSetup(w.entityId, cfg, siteOf(event, b, sh), w) };
   },
   async disconnect(event, b) {
     const w = await who(event, b, 'owner');
+    let removed = 0;
+    try { const cfg = await secretsOf(w.entityId); if (cfg) removed = await removeWebhooks(cfg); } catch (e) { await logSync(w.entityId, 'setup', 'failed', 'webhooks not removed: ' + e.message); }
     await deleteDoc('shopifySecrets', w.entityId).catch(() => {});
-    await patchShopify(w.entityId, { connected: false, lastError: '' });
-    await audit({ action: 'shopify.disconnect', docType: 'settings', docId: w.entityId, docNo: '', actorUid: w.user.id, actorName: w.user.name, details: {}, entityId: w.entityId, storeId: '', deviceId: 'office' });
-    return { ok: true };
+    await patchShopify(w.entityId, { connected: false, lastError: '', webhooks: [], setup: null });
+    await audit({ action: 'shopify.disconnect', docType: 'settings', docId: w.entityId, docNo: '', actorUid: w.user.id, actorName: w.user.name, details: { webhooksRemoved: removed }, entityId: w.entityId, storeId: '', deviceId: 'office' });
+    return { ok: true, webhooksRemoved: removed };
   },
   async status(event, b) {
     const w = await who(event, b);
@@ -228,7 +312,7 @@ const actions = {
     const [products, variants] = await Promise.all([query('products', [{ field: 'entityId', value: w.entityId }], 5000), query('variants', [{ field: 'entityId', value: w.entityId }], 10000)]);
     const linked = products.filter(p => p.shopifyVariantId && !p.hasVariants).length + variants.filter(v => v.shopifyVariantId).length;
     const codes = await query('discountCodes', [{ field: 'entityId', value: w.entityId }], 500);
-    return { ok: true, connected: !!sh.connected && !!(await secretsOf(w.entityId)), shopName: sh.shopName || '', domain: sh.domain || '', locations: sh.locations || [], locationByStore: sh.locationByStore || {}, defaultStoreId: sh.defaultStoreId || '', pickupByTitle: sh.pickupByTitle || {}, pushStock: sh.pushStock !== false, pullOrders: sh.pullOrders !== false, syncCodes: sh.syncCodes !== false, syncCustomers: sh.syncCustomers !== false, lastSyncAt: sh.lastSyncAt || '', lastError: sh.lastError || '', queue: { count: queue.length, failing: queue.filter(q => q.attempts > 0).length, oldest: queue.map(q => q.queuedAt).sort()[0] || '' }, linked, codes: codes.filter(c => c.active).map(c => c.code), webhookUrl: '/.netlify/functions/pos-shopify?hook=1&e=' + w.entityId };
+    return { ok: true, connected: !!sh.connected && !!(await secretsOf(w.entityId)), shopName: sh.shopName || '', domain: sh.domain || '', locations: sh.locations || [], locationByStore: sh.locationByStore || {}, defaultStoreId: sh.defaultStoreId || '', pickupByTitle: sh.pickupByTitle || {}, pushStock: sh.pushStock !== false, pullOrders: sh.pullOrders !== false, syncCodes: sh.syncCodes !== false, syncCustomers: sh.syncCustomers !== false, lastSyncAt: sh.lastSyncAt || '', lastError: sh.lastError || '', queue: { count: queue.length, failing: queue.filter(q => q.attempts > 0).length, oldest: queue.map(q => q.queuedAt).sort()[0] || '' }, linked, codes: codes.filter(c => c.active).map(c => c.code), webhookUrl: hookPath(w.entityId), webhooks: sh.webhooks || [], siteUrl: sh.siteUrl || '', setup: sh.setup || null, scopes: SCOPES.join(',') };
   },
   async settings(event, b) {
     const w = await who(event, b, 'owner');

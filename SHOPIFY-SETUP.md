@@ -98,14 +98,29 @@ tracked, and online orders for them don't decrement anything.
 ## Retail POS (`/pos/`)
 
 The retail POS connects each company to its own shop from Admin → Settings →
-Shopify (the owner enters the shop domain, the Dev Dashboard app's Client ID
-and Client secret; they stay on the server). The app needs the scopes
-`read_products, write_inventory, read_inventory, read_locations, read_orders,
-write_orders, write_merchant_managed_fulfillment_orders, read_discounts,
-read_customers, write_customers`. Register three webhooks (JSON) on the app:
-`orders/create`, `orders/cancelled` and `refunds/create`, all to
-`https://<site>/.netlify/functions/pos-shopify?hook=1&e=<entityId>`.
-Then on the Online tab: Link products by SKU (the shop's titles, descriptions
-and pictures come across), map each store to a Shopify location under Settings,
-and Push all stock once. From there every stock movement is pushed as it
-happens; the schedule `pos-shopify-sync` retries anything that failed.
+Shopify, and the card walks the owner through it in three steps:
+
+1. **Make the app on Shopify.** On dev.shopify.com/dashboard (the shop
+   owner's account) create an app, paste the scopes the card shows (there is
+   a Copy button: `read_products, write_inventory, read_inventory,
+   read_locations, read_orders, write_orders,
+   write_merchant_managed_fulfillment_orders, read_discounts, read_customers,
+   write_customers`), release it and install it on the shop.
+2. **Paste the app's keys** (shop domain, Client ID, Client secret) on the
+   card. They stay on the server (`shopifySecrets`) and are never shown again.
+3. **Press Connect.** The till then does the rest by itself, each step on its
+   own so one failure does not stop the others:
+   - registers the three order webhooks (`orders/create`, `orders/cancelled`,
+     `refunds/create`, JSON) on the app, pointed at
+     `https://<site>/.netlify/functions/pos-shopify?hook=1&e=<entityId>`
+     (an existing one at an old address is pointed back; nothing is duplicated);
+   - matches each store to a Shopify location whose name matches the store's
+     (or the only location to the only store), and picks the default store;
+   - links the products by SKU (the shop's titles, descriptions and pictures
+     come across), pushes every mapped store's stock, and pulls the discount codes.
+
+The card then shows what was done and what is still for the owner: a store
+with no location matched by name (choose one and save), shop variants with no
+matching SKU here, a step that failed (press *Run setup again*). From there
+every stock movement is pushed as it happens; the schedule `pos-shopify-sync`
+retries anything that failed. *Disconnect* removes the till's webhooks from the app.

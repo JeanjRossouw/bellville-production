@@ -33,6 +33,7 @@ const R = {}, fails = [], errs = [];
 const check = (n, c, x) => { if (!c) fails.push(n + (x !== undefined ? ' — ' + JSON.stringify(x).slice(0, 300) : '')); };
 const b = await chromium.launch({ ...(process.env.CHROME ? { executablePath: process.env.CHROME } : {}), args: ['--no-sandbox'] });
 const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://localhost:8788' });
 await ctx.route(/fonts\.googleapis|fonts\.gstatic/, r => r.abort());
 if (FBDIR) await ctx.route(/www\.gstatic\.com\/firebasejs\/10\.13\.0\/(firebase-[\w-]+\.js)/, r => r.fulfill({ path: FBDIR + '/' + r.request().url().split('/').pop(), contentType: 'text/javascript' }));
 const p = await ctx.newPage();
@@ -45,6 +46,13 @@ await p.fill('#login-email', 'owner@shop.co.za'); await p.fill('#login-pass', 's
 await p.waitForSelector('#nav [data-view=admin]', { timeout: 20000 }); await p.waitForTimeout(800);
 await p.click('#nav [data-view=admin]'); await p.waitForTimeout(300); await p.click('[data-sub=settings]'); await p.waitForTimeout(800);
 await p.waitForSelector('#sh-domain', { timeout: 15000 });
+const shot = async (n) => { if (process.env.SHOT_DIR) await p.locator('#se-shop').screenshot({ path: process.env.SHOT_DIR + '/' + n + '.png' }); };
+await shot('shopify-1-before-connect');
+// before connecting: the three steps, the scopes to copy
+R.steps = await p.locator('.sh-steps li').count(); check('three steps on the card before Connect', R.steps === 3, R.steps);
+await p.click('[data-act=on-copy-scopes]'); R.copy = await toast();
+R.clip = await p.evaluate(() => navigator.clipboard.readText()).catch(e => 'ERR ' + e.message);
+check('Copy puts the scopes on the clipboard', /Scopes copied/.test(R.copy) && /^read_products, write_inventory, .*write_customers$/.test(R.clip), [R.copy, R.clip]);
 // a person clicks into the fields first
 await p.click('#sh-domain'); await p.keyboard.type('bellville-furniture.myshopify.com');
 await p.click('#sh-id'); await p.keyboard.type('a1b2c3d4e5f6');
@@ -52,6 +60,13 @@ await p.click('#sh-secret'); await p.keyboard.type('shpss_secret');
 await p.click('[data-act=on-connect]'); R.connect = await toast(); await p.waitForTimeout(2500);
 check('Connect works after clicking into the fields', /Connected to Bellville Online/.test(R.connect), R.connect);
 await p.waitForSelector('#sh-default', { timeout: 15000 }); await p.waitForTimeout(2500);
+// Connect did the setup: the webhooks on the app, the store matched by name, products linked, stock pushed
+await shot('shopify-2-after-connect');
+R.setup = await p.locator('.sh-setup li').allInnerTexts();
+check('the card shows what Connect did: webhooks, every store matched, 3 of 3 linked, 3 stock figures pushed', R.setup.length >= 4 && /webhooks registered/i.test(R.setup[0]) && /Every store is matched/.test(R.setup[1]) && /3 of 3 shop variants linked/.test(R.setup[2]) && /3 stock figures pushed/.test(R.setup[3]), R.setup);
+check('no step needing the owner', (await p.locator('.sh-setup li.warn').count()) === 0, R.setup);
+check('the webhooks are on the mock app, pointed at this site', mock.state.webhooks.length === 3 && mock.state.webhooks.every(h => h.callbackUrl === 'http://localhost:8788/.netlify/functions/pos-shopify?hook=1&e=BF'), mock.state.webhooks);
+check('Bellville was matched to the Bellville shop location by name', (await p.inputValue('#sh-loc-BF-BELL')) === 'gid://shopify/Location/11' && (await p.inputValue('#sh-default')) === 'BF-BELL');
 // the select is clicked (the card's listener must survive it), then saved
 await p.click('#sh-loc-BF-BELL'); await p.selectOption('#sh-loc-BF-BELL', 'gid://shopify/Location/11'); await p.selectOption('#sh-default', 'BF-BELL');
 await p.click('[data-act=on-settings]'); R.save = await toast(); await p.waitForTimeout(2500);
