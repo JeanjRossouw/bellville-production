@@ -5,8 +5,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8085';
 process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
-process.env.POS_FACTORY_KEY = process.env.POS_FACTORY_KEY || 'test-factory-key';
-process.env.SHOPIFY_API_BASE = process.env.SHOPIFY_API_BASE || 'http://127.0.0.1:8799';   // the tests' mock Shopify   // the factory app's key for the special-order endpoints
+// the factory's helpers read the project id from the key; on the emulator no key is used
+process.env.FACTORY_SERVICE_ACCOUNT = process.env.FACTORY_SERVICE_ACCOUNT || JSON.stringify({ project_id: 'factory-manager-ece82', client_email: 'emulator@test', private_key: '' });
+process.env.SHOPIFY_API_BASE = process.env.SHOPIFY_API_BASE || 'http://127.0.0.1:8799';   // the tests' mock Shopify
 const ROOT = process.argv[2];
 const fns = {};
 async function fn(name) { if (!fns[name]) fns[name] = (await import(path.join(ROOT, 'netlify/functions', name + '.mjs'))).handler; return fns[name]; }

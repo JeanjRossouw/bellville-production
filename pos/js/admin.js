@@ -222,8 +222,12 @@ export function settingsHtml(d) {
       </div>
       <div class="card"><h2>Special orders (made to order)</h2>
         <div class="grid two">${field('Minimum deposit %', 'se-so-dep', { value: (s.specialOrder || {}).minDepositPct == null ? 50 : s.specialOrder.minDepositPct, type: 'number', min: 0, max: 100 })}${field('Usual lead time (days)', 'se-so-lead', { value: (s.specialOrder || {}).leadDays == null ? 21 : s.specialOrder.leadDays, type: 'number', min: 1 })}</div>
-        <p class="muted">The customer signs the specification off; no change of mind once it is in production. The factory app updates the status through the pos-special endpoint with the POS_FACTORY_KEY.</p>
+        <p class="muted">The customer signs the specification off; no change of mind once it is in production.</p>
       </div>
+      ${owner ? `<div class="card"><h2>Factory</h2>
+        <p class="muted">The Factory Manager company that builds this company's custom orders. Once a deposit is paid the order goes into that factory's orders by itself, with the <em>store</em> as the customer: the factory sees what to make, for which store and by when, never the retail customer. The factory's status comes back to the till.</p>
+        <div id="se-factory" data-entity="${esc(eid)}"><p class="muted">Loading…</p></div>
+      </div>` : ''}
       ${owner ? `<div class="card"><h2>Shopify</h2>
         <p class="muted">The online shop. The POS is master for stock and pushes what is available per store to the shop's location after every movement; the shop is master for content; orders come in by webhook and take stock; discount codes and consented customers are shared. The app's keys are kept on the server and never shown again.</p>
         <div id="se-shop" data-entity="${esc(eid)}"><p class="muted">Loading…</p></div>
