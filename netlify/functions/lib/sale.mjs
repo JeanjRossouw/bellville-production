@@ -12,6 +12,7 @@ import {
 } from './pos.mjs';
 import { vatIn, rateOn, rateFor, lineTotals, roundTo10c } from '../../../pos/js/money.js';
 
+export const PREPAID = ['creditNote', 'layby', 'specialOrder'];   // a document that already holds the money pays first
 export const METHODS = ['cash', 'card', 'eft', 'qr', 'voucher', 'storeCredit', 'account'];
 export const BLOCK_SIZE_DEFAULT = 50;
 export const int = (v) => Number.isInteger(v) ? v : (Number.isInteger(Number(v)) ? Number(v) : NaN);
@@ -169,7 +170,7 @@ export async function prepareSale(ctx, b, opts = {}) {
 
 // The tenders of a document: each method against the store's, one cash tender rounded to 10c with the
 // change worked out, store credit and the account against the customer, vouchers looked up later inside
-// the transaction. opts.prepaid { method: 'creditNote'|'layby', docNo, amountCents } pays first (an exchange's
+// the transaction. opts.prepaid { method: 'creditNote'|'layby'|'specialOrder', docNo, amountCents } pays first (an exchange's
 // credit, a lay-by collected). opts.partial takes less than the total (a lay-by's deposit or instalment):
 // cash is then whatever was given less change, with no rounding.
 export function prepareTenders(ctx, inTenders, { total, customer, prepaid, partial } = {}) {
@@ -182,7 +183,7 @@ export function prepareTenders(ctx, inTenders, { total, customer, prepaid, parti
   const pays = [];
   for (const t of tenders) {
     const method = clean(t.method, 20); const amount = int(t.amountCents);
-    if (method === 'creditNote' || method === 'layby') { if (!prepaid || method !== prepaid.method || t !== tenders[0]) throw new Reject(400, method === 'layby' ? 'A lay-by pays only when it is collected.' : 'A credit note pays only through an exchange.'); }
+    if (PREPAID.includes(method)) { if (!prepaid || method !== prepaid.method || t !== tenders[0]) throw new Reject(400, method === 'layby' ? 'A lay-by pays only when it is collected.' : method === 'specialOrder' ? 'A special order pays only when it is handed over.' : 'A credit note pays only through an exchange.'); }
     else if (!METHODS.includes(method) || !allowed.includes(method)) throw new Reject(400, `${method || 'That'} is not a payment method at this store.`);
     if (!(amount > 0)) { if (prepaid && method === prepaid.method) continue; throw new Reject(400, 'A payment must be more than nothing.'); }
     const pay = { method, amountCents: amount, ref: clean(t.ref, 60), status: 'paid' };
@@ -241,7 +242,7 @@ export async function saleWrites(tx, ctx, s, saleId, b, levels = new Map()) {
     totalCents: s.total, vatCents: s.vat, vatRateBp: s.rateBp, vatRegistered: !!ctx.entity.vatRegistered, roundingCents: s.rounding,
     tenderedCents: s.cashTendered, changeCents: s.cashPay ? s.cashPay.changeCents : 0, paymentMethods: [...new Set(s.pays.map(p => p.method))], paidStatus: s.pays.some(p => p.status === 'awaiting') ? 'awaiting' : 'paid',
     cashierUid: ctx.user.id, cashierName: ctx.user.name, approvers: [...s.approvers].map(([uid, name]) => ({ uid, name })),
-    note: clean(b.note, 300), source: ctx.device ? 'till' : 'office', clientCreatedAt: s.when, verified: true, exchangeOf: b.exchangeOf || '', laybyOf: b.laybyOf || '', ...stamp, serverReceivedAt: now
+    note: clean(b.note, 300), source: ctx.device ? 'till' : 'office', clientCreatedAt: s.when, verified: true, exchangeOf: b.exchangeOf || '', laybyOf: b.laybyOf || '', specialOrderOf: b.specialOrderOf || '', ...stamp, serverReceivedAt: now
   };
   writes.push({ create: true, coll: 'sales', id: saleId, data: sale });
   s.lines.forEach(l => writes.push({ create: true, coll: 'saleLines', id: saleId + '_' + l.lineNo, data: { saleId, docNo, ...l, ...stamp } }));

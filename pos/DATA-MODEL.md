@@ -170,6 +170,7 @@ receipt { header, footer, returnPolicy }
 discounts { maxPctByRole { cashier, supervisor, manager, owner } }    // whole percents
 cash { varianceLimitCents }                                            // beyond this a close needs a manager
 layby { minDepositPct, termDays (the longest), penaltyPct (≤ 1), frequency, reminderDays }
+specialOrder { minDepositPct, leadDays }
 session { idleLogoutMinutes, pinLength (4..6) }
 numbering { blockSize, refillBelow }
 reports { phone, email }                                               // where the daily summary goes (the owner)
@@ -251,7 +252,7 @@ totalCents, vatCents, vatRateBp, vatRegistered (bool),
 tenderedCents, changeCents, roundingCents (cash rounded to 10c: the difference, recorded, never hidden), paymentMethods [string],
 cashierUid, cashierName, overrideUid, overrideName, overrideReason,
 note, source ('till'|'online'|'import'), clientCreatedAt, serverReceivedAt, verified: true,
-exchangeOf (the credit note an exchange spent), laybyOf (the lay-by a collection completes),
+exchangeOf (the credit note an exchange spent), laybyOf (the lay-by a collection completes), specialOrderOf (the special order a hand-over completes),
 + stamps
 ```
 R: members of the store. W: server only.
@@ -270,7 +271,7 @@ R: members of the store. W: server only.
 ```
 entityId, storeId, registerId, shiftId,
 docType ('sale'|'layby'|'specialOrder'|'refund'|'account'), docId, docNo,
-method ('cash'|'card'|'eft'|'qr'|'voucher'|'storeCredit'|'account'|'creditNote'|'layby'), instalment (lay-bys: 0 = the deposit),
+method ('cash'|'card'|'eft'|'qr'|'voucher'|'storeCredit'|'account'|'creditNote'|'layby'|'specialOrder'), instalment (lay-bys and special orders: 0 = the deposit),
 amountCents (int; a refund is negative), ref (card slip no., EFT ref, voucher code, the credit note or lay-by number),
 + stamps, serverReceivedAt
 ```
@@ -343,15 +344,36 @@ negative `payments` (`docType 'refund'`) for what goes back, and keeps the
 written penalty breakdown. Reminders are logged here and sent from the
 till by WhatsApp.
 
-**`specialOrders/{id}`** — live until closed, series `SO`
+**`specialOrders/{id}`** — made-to-order goods, series `SO` from the entity's counter (the `pos-special` function; online only)
 ```
-entityId, storeId, registerId, seq, docNo, blockId, customerId (required),
-lines [ { productId, variantId, itemId, name, qty, unitPriceCents, lineTotalCents, vatRateBp, vatCents, source ('supplier'|'factory') } ],
-totalCents, depositCents, paidCents, balanceCents,
-supplierId, purchaseOrderId, factoryOrderRef, expectedAt,
-status ('ordered'|'received'|'collected'|'cancelled'), completedSaleId, + stamps, updatedAt
+entityId, storeId, registerId, shiftId, seq, docNo, customerId (required), customerSnapshot,
+lines [ as saleLines (made-to-order and non-stock items only), plus spec { model, size, fabric, colour, legs, notes, photo (JPEG data URL, shrunk by the till) } ],
+lineCount, subtotalCents, lineDiscountCents, saleDiscountCents, totalCents, vatCents, vatRateBp, vatRegistered,
+minDepositPct, minDepositCents, leadDays, depositCents, paidCents, balanceCents, paymentCount, lastPaidAt,
+history [ { n (0 = the deposit), at, amountCents, methods, storeId, byName } ],
+signoff { text (the specification read back and the no-change-of-mind clause), acceptedAt, signedBy, signature (PNG data URL), cashierUid, cashierName },
+status ('quoted'|'depositPaid'|'inProduction'|'ready'|'delivered'|'collected'|'cancelled'),
+statusHistory [ { status, at, byName, source ('till'|'factory'), note } ], updateDue (bool: a status changed and no message went yet),
+updates [ { at, status, how, byName } ], lastUpdateAt, factoryRef, expectedAt (date), openedAt,
+delivery { kind ('deliver'|'collect'), date, slot, address, phone, note, driverName, bookedAt, bookedBy } | null,
+deliveryNote { signedBy, signature, at, byName, note, kind } | null,
+completedAt, completedSaleId, completedDocNo, completedByUid, completedByName,
+cancelledAt, cancelKind ('customer'|'store'|'other'), cancelReason, feeCents, feeReason, refunds [ { method, amountCents, ref } ], refundedCents,
+cashierUid, cashierName, approvers, note, + stamps, updatedAt
 ```
-R: members of the store. W: server only.
+R: members of the store. W: server only. The flow is quoted → deposit
+paid (the deposit reaches the minimum; the order goes to the factory) →
+in production → ready → delivered or collected; cancelled from any open
+state by a manager (no fee before production starts; after it the deposit
+covers the work, as the sign-off says). The deposit and the balance are
+`payments` rows (`docType 'specialOrder'`), taken at any till. The
+hand-over writes the final `sales` document paid by one `specialOrder`
+tender (the sale carries `specialOrderOf`) and keeps the signed delivery
+note. Nothing is reserved: the goods do not exist until made. The factory
+production app reads the queue and sets `inProduction`/`ready` through
+`pos-special` (`factoryQueue`, `factoryStatus`) with the header
+`X-Factory-Key: <POS_FACTORY_KEY>`; every status change marks `updateDue`
+until the till sends the customer the WhatsApp update.
 
 **`shifts/{id}`** — one register session (the `pos-shift` function)
 ```

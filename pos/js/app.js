@@ -13,6 +13,7 @@ import * as register from './register.js';
 import * as sync from './sync.js';
 import * as returns from './returns.js';
 import * as laybys from './laybys.js';
+import * as specials from './specials.js';
 import { EMULATOR } from './db.js';
 
 const $ = (id) => document.getElementById(id);
@@ -20,7 +21,7 @@ let view = '';                       // the tab on screen; a till starts on Sell
 let adminSub = 'companies';          // the Admin tab's sub-screen
 let editId = '', settingsEntity = '';  // what the admin forms are on
 let entities = [], stores = [], registers = [], users = [], devices = [], settings = {};
-let catalogue = [], variants = [], stockLevels = [], customers = [], storeSales = [], storeLaybys = [], stockOffsets = {};
+let catalogue = [], variants = [], stockLevels = [], customers = [], storeSales = [], storeLaybys = [], storeSpecials = [], stockOffsets = {};
 let sellStore = '';                 // the store being sold from: the till's, else chosen
 let prEntity = '', prFilter = { q: '', category: '', brand: '', type: '', archived: false };
 const unwatch = [];
@@ -75,7 +76,7 @@ function startData() {
 }
 function stopData() {
   while (unwatch.length) { try { unwatch.pop()(); } catch (e) {} }
-  if (unwatchStore) { try { unwatchStore(); } catch (e) {} unwatchStore = null; } watchedStore = ''; storeSales = []; storeLaybys = []; stockLevels = [];   // or it would go on listening as the next person
+  if (unwatchStore) { try { unwatchStore(); } catch (e) {} unwatchStore = null; } watchedStore = ''; storeSales = []; storeLaybys = []; storeSpecials = []; stockLevels = [];   // or it would go on listening as the next person
   entities = []; stores = []; registers = []; users = []; devices = []; settings = {}; catalogue = []; variants = []; stockLevels = []; customers = [];
 }
 // the store sold from: the till's own, else the person's default, else their first
@@ -91,7 +92,7 @@ function startStoreData() {
   const sid = sellStoreId();
   if (sid === watchedStore) return;
   if (unwatchStore) { try { unwatchStore(); } catch (e) {} unwatchStore = null; }
-  watchedStore = sid; stockLevels = []; storeSales = []; storeLaybys = [];
+  watchedStore = sid; stockLevels = []; storeSales = []; storeLaybys = []; storeSpecials = [];
   if (!sid) return;
   const st = stores.find(x => x.id === sid);
   const eid = st ? st.entityId : (auth.session.device && auth.session.device.entityId) || '';
@@ -99,7 +100,8 @@ function startStoreData() {
   const u1 = watch('stockLevels', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { stockLevels = rows; if (view === 'sell') paint(); });
   const u2 = watch('sales', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeSales = rows; if (view === 'sales') paint(); });
   const u3 = watch('laybys', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeLaybys = rows; if (view === 'laybys') paint(); });
-  unwatchStore = () => { u1(); u2(); u3(); };
+  const u4 = watch('specialOrders', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeSpecials = rows; if (view === 'orders') paint(); });
+  unwatchStore = () => { u1(); u2(); u3(); u4(); };
   sell.loadCart(sid);
   reloadOffsets();
 }
@@ -172,7 +174,7 @@ const storeName = (id) => (stores.find(s => s.id === id) || {}).name || '';
 const entityName = (id) => { const e = entities.find(x => x.id === id); return e ? (e.tradingName || e.legalName) : id; };
 function navItems() {
   const out = [];
-  if (sellStoreId()) out.push({ key: 'sell', label: 'Sell' }, { key: 'sales', label: 'Sales' }, { key: 'returns', label: 'Returns' }, { key: 'laybys', label: 'Lay-bys' });
+  if (sellStoreId()) out.push({ key: 'sell', label: 'Sell' }, { key: 'sales', label: 'Sales' }, { key: 'returns', label: 'Returns' }, { key: 'laybys', label: 'Lay-bys' }, { key: 'orders', label: 'Custom orders' });
   if (register.registerId()) out.push({ key: 'register', label: 'Register' });
   out.push({ key: 'home', label: 'Home' }, { key: 'products', label: 'Products' });
   if (auth.atLeast('manager')) out.push({ key: 'admin', label: 'Admin' });
@@ -206,6 +208,7 @@ function paint() {
   if (view === 'sales') { startStoreData(); screen.innerHTML = salesTab.salesHtml({ ...sellData(), sales: storeSales }); return; }
   if (view === 'register') { startStoreData(); screen.innerHTML = register.registerHtml(); return; }
   if (view === 'laybys') { startStoreData(); screen.innerHTML = laybys.laybysHtml(); return; }
+  if (view === 'orders') { startStoreData(); screen.innerHTML = specials.specialsHtml(); return; }
   if (view === 'returns') { startStoreData(); screen.innerHTML = returns.returnsHtml(); const q = $('rt-q'); if (q && !document.activeElement.closest('#screen')) q.focus(); return; }
   if (view === 'admin') {
     const subs = adminSubs();
@@ -355,6 +358,7 @@ async function onAction(e) {
   if (b.dataset.act.startsWith('rg-')) return register.action(b.dataset.act, b);
   if (b.dataset.act.startsWith('rt-')) return returns.action(b.dataset.act, b);
   if (b.dataset.act.startsWith('lb-')) return laybys.action(b.dataset.act, b);
+  if (b.dataset.act.startsWith('so-')) return specials.action(b.dataset.act, b);
   if (b.dataset.act === 'sync-now') return sync.syncNow().then(reloadOffsets);
   if (b.dataset.act === 'sync-failed') return showFailed();
   if (b.dataset.act === 'sync-drop') { if (confirm('Drop this refused sale from the till? It was never written; ring it up again if it should be.')) sync.dropFailed(id).then(showFailed); return; }
@@ -404,15 +408,16 @@ $('screen').addEventListener('change', (e) => {
 
 $('screen').addEventListener('input', (e) => { if (e.target.id === 'pr-q') { prFilter.q = e.target.value; paint(); } if (e.target.id === 'sl-q') sell.onSearchInput(e.target.value); if (e.target.id === 'sa-q') { salesTab.view.q = e.target.value; paint(); const q = $('sa-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } } });
 $('screen').addEventListener('keydown', (e) => { if (e.target.id === 'sl-q' && e.key === 'Enter') { e.preventDefault(); sell.onSearchEnter(e.target.value); } if (e.key === 'Enter' && returns.onEnter(e.target.id, e.target.value)) e.preventDefault(); });
-$('screen').addEventListener('change', (e) => { if (view === 'returns') returns.onChange(e); if (view === 'laybys') laybys.onChange(e); });
-$('screen').addEventListener('input', (e) => { if (view === 'returns') returns.onInput(e.target.id, e.target.value); if (view === 'laybys') laybys.onInput(e.target.id, e.target.value); });
+$('screen').addEventListener('change', (e) => { if (view === 'returns') returns.onChange(e); if (view === 'laybys') laybys.onChange(e); if (view === 'orders') specials.onChange(e); });
+$('screen').addEventListener('input', (e) => { if (view === 'returns') returns.onInput(e.target.id, e.target.value); if (view === 'laybys') laybys.onInput(e.target.id, e.target.value); if (view === 'orders') specials.onInput(e.target.id, e.target.value); });
 returns.setContext({ repaint: () => { if (view === 'returns') paint(); }, data: sellData, onDone: () => { register.reg.stale = true; } });
 laybys.setContext({ repaint: () => { if (view === 'laybys') paint(); }, data: () => ({ ...sellData(), laybys: storeLaybys }), onChange: () => { register.reg.stale = true; if (view === 'laybys') paint(); } });
 // a lay-by's own buttons sit in its modal, outside the screen
-document.addEventListener('click', (e) => { const b = e.target.closest('#modal [data-act^="lb-"]'); if (b) laybys.action(b.dataset.act, b); });
+document.addEventListener('click', (e) => { const b = e.target.closest('#modal [data-act^="lb-"], #modal [data-act^="so-"]'); if (!b) return; if (b.dataset.act.startsWith('lb-')) laybys.action(b.dataset.act, b); else specials.action(b.dataset.act, b); });
+specials.setContext({ repaint: () => { if (view === 'orders') paint(); }, data: () => ({ ...sellData(), specials: storeSpecials }), onChange: () => { register.reg.stale = true; if (view === 'orders') paint(); } });
 document.addEventListener('keydown', (e) => { if (view === 'sell' && auth.session.user) sell.onDocumentKey(e); }, true);
 $('screen').addEventListener('change', (e) => { if (e.target.id === 'sl-store') { sellStore = e.target.value; startStoreData(); paint(); } });
-sell.setContext({ repaint: () => { if (view === 'sell') paint(); }, data: sellData, onSold: (r) => { register.reg.stale = true; reloadOffsets(); if (!r.offline) sync.refreshBlocks(); }, onLayby: (cart, t, clear) => laybys.openNew(cart, t, () => { clear(); register.reg.stale = true; }) });
+sell.setContext({ repaint: () => { if (view === 'sell') paint(); }, data: sellData, onSold: (r) => { register.reg.stale = true; reloadOffsets(); if (!r.offline) sync.refreshBlocks(); }, onLayby: (cart, t, clear) => laybys.openNew(cart, t, () => { clear(); register.reg.stale = true; }), onSpecial: (cart, t, clear) => specials.openNew(cart, t, () => { clear(); register.reg.stale = true; }) });
 register.setContext({ repaint: () => { if (view === 'register' || view === 'sell') paint(); }, data: sellData });
 register.wireScreen($('screen'));
 // the register's state is read once a till signs in, and forgotten on sign-out

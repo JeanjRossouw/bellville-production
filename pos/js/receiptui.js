@@ -23,10 +23,10 @@ export function openReceipt(o) {
       ${m.copy ? '<p class="muted">A reprint: it is marked COPY.</p>' : ''}
     </div></div>`, { okLabel: 'Done', cancelLabel: '', onOk: () => true });
   wrap.querySelector('.modal-card').classList.add('wide');
-  const audit = (how) => setOne('auditLog', newId('auditLog'), { action: 'receipt.print', docType: o.sale.series === 'LB' ? 'layby' : o.sale.series === 'CN' ? 'creditNote' : 'sale', docId: o.sale.id, docNo: m.docNo, actorUid: auth.session.uid, actorName: auth.session.user.name, overrideUid: '', overrideName: '', details: { kind: m.kind, copy: m.copy, how }, ...auth.stamp(o.entity.id, store.id || '') }).catch(() => {});
+  const audit = (how) => setOne('auditLog', newId('auditLog'), { action: 'receipt.print', docType: o.sale.series === 'LB' ? 'layby' : o.sale.series === 'SO' ? 'specialOrder' : o.sale.series === 'CN' ? 'creditNote' : 'sale', docId: o.sale.id, docNo: m.docNo, actorUid: auth.session.uid, actorName: auth.session.user.name, overrideUid: '', overrideName: '', details: { kind: m.kind, copy: m.copy, how }, ...auth.stamp(o.entity.id, store.id || '') }).catch(() => {});
   let link = null;
   // lay-by documents have no public page: the share is the text itself
-  const getLink = async () => { if (link) return link; const r = o.sale.series === 'LB' ? { text: shareText(m, ''), url: '' } : await auth.api('link', { saleId: o.sale.id, ...where(o) }, API.doc); link = r; return r; };
+  const getLink = async () => { if (link) return link; const r = /^(LB|SO)$/.test(o.sale.series) ? { text: shareText(m, ''), url: '' } : await auth.api('link', { saleId: o.sale.id, ...where(o) }, API.doc); link = r; return r; };
   wrap.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-rc]'); if (!b) return;
     const how = b.dataset.rc;

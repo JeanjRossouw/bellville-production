@@ -289,3 +289,9 @@ small { font-size: 12px; }
 .lb-cols .x-row.done { color: var(--muted); } .lb-cols .x-row.late { color: var(--red); } .lb-cols .tot { border-top: 1px solid var(--ink); margin-top: .3rem; padding-top: .4rem; font-weight: 600; }
 .lb-acts { flex-wrap: wrap; } .ok { color: #1f5f2f; }
 .lb-report h3 { font-family: var(--font-ui); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: .8rem 0 .3rem; }
+
+/* ---- custom orders ---- */
+.chip.prod { color: #1d4ed8; border-color: #1d4ed8; }
+.so-spec { padding: .6rem .8rem; margin: .5rem 0; } .so-spec h3 { font-family: var(--font-ui); font-size: 12px; margin: 0 0 .4rem; }
+.so-photo { display: inline-flex; align-items: center; gap: .6rem; cursor: pointer; } .spec-thumb { max-width: 120px; max-height: 90px; border-radius: 4px; border: 1px solid var(--line); display: block; margin-top: .3rem; }
+.so-line { padding: .4rem 0; border-bottom: 1px solid var(--line); } .so-line .x-row { padding: 0; }

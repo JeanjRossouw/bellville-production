@@ -68,6 +68,18 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   signature drawn on the screen, the Lay-bys tab, an instalment and its
   receipt, collection, a cancellation with a manager's PIN.
   `node pos/test/laybys.test.mjs`
+- `special-api.test.mjs` — step 12: the `pos-special` function over HTTP:
+  opening needs the customer and a signed-off spec and takes made-to-order
+  items only; a deposit under the minimum leaves it quoted, reaching it
+  sends it to the factory; the factory endpoints with their key (the queue
+  with specs, status by SO number or factory ref); the till's status step;
+  updates logged; a delivery booking; the hand-over into a tax invoice paid
+  by the order with the signed note; cancellation by a manager, no fee
+  before production and the deposit after. `node pos/test/special-api.test.mjs`
+- `specials.test.mjs` — step 12 in the browser: a custom order from the
+  cart with a photo and the sign-off signed on the screen, the tab, the
+  WhatsApp update, the balance, the hand-over with a signed delivery note,
+  a quotation cancelled with a manager's PIN. `node pos/test/specials.test.mjs`
 - `money.test.mjs` — the shared cents and VAT maths; needs no emulator.
   `node pos/test/money.test.mjs`
   Set `FIREBASE_SDK_DIR` to a local copy of the `firebase` package's browser

@@ -17,13 +17,15 @@ import { barcodeSvg, code128Widths, encodable } from './barcode.js';
 export const SLIP_MAX = 5000, ABRIDGED_MAX = 500000;
 export function receiptKind(sale, entity) {
   if (sale.series === 'LB') return 'layby-' + (sale.docKind || 'agreement');
+  if (sale.series === 'SO') return 'so-' + (sale.docKind || 'order');
   if (sale.series === 'CN') return 'creditnote';
   if (!entity.vatRegistered) return 'invoice';
   if (sale.totalCents <= SLIP_MAX) return 'slip';
   if (sale.totalCents <= ABRIDGED_MAX) return 'abridged';
   return 'full';
 }
-const LB_TITLES = { 'layby-agreement': 'Lay-by agreement', 'layby-payment': 'Lay-by payment', 'layby-collection': 'Collection slip', 'layby-cancel': 'Lay-by cancellation' };
+const LB_TITLES = { 'layby-agreement': 'Lay-by agreement', 'layby-payment': 'Lay-by payment', 'layby-collection': 'Collection slip', 'layby-cancel': 'Lay-by cancellation',
+  'so-order': 'Special order', 'so-quote': 'Quotation', 'so-payment': 'Special order payment', 'so-delivery': 'Delivery note', 'so-cancel': 'Special order cancellation' };
 export const kindTitle = (kind) => LB_TITLES[kind] || (kind === 'slip' ? 'Till slip' : kind === 'abridged' ? 'Tax invoice' : kind === 'full' ? 'Tax invoice' : kind === 'creditnote' ? 'Credit note' : 'Invoice');
 // what a full tax invoice needs from the customer; '' when all is there
 export function fullInvoiceGap(customer) {
@@ -32,8 +34,10 @@ export function fullInvoiceGap(customer) {
   if (!String(a.line1 || a.city || '').trim()) return 'the customer’s address';
   return '';
 }
+// the made-to-order spec as lines of text
+export const specLines = (sp) => sp ? [['Model', sp.model], ['Size', sp.size], ['Fabric', sp.fabric], ['Colour', sp.colour], ['Legs', sp.legs], ['Notes', sp.notes]].filter(x => x[1]).map(x => x[0] + ': ' + x[1]) : [];
 const addr = (a) => [a && a.line1, a && a.line2, a && a.city, a && a.code].filter(Boolean).join(', ');
-const methodLabel = (m) => ({ cash: 'Cash', card: 'Card', eft: 'EFT', qr: 'QR', voucher: 'Gift voucher', storeCredit: 'Store credit', account: 'On account', layby: 'Lay-by', creditNote: 'Credit note' })[m] || m;
+const methodLabel = (m) => ({ cash: 'Cash', card: 'Card', eft: 'EFT', qr: 'QR', voucher: 'Gift voucher', storeCredit: 'Store credit', account: 'On account', layby: 'Lay-by', specialOrder: 'Special order', creditNote: 'Credit note' })[m] || m;
 
 // the facts every rendering shares
 export function receiptModel({ sale, lines, payments, entity, store, settings, copy }) {
@@ -50,7 +54,7 @@ export function receiptModel({ sale, lines, payments, entity, store, settings, c
     header, footer, policy,
     docNo: sale.docNo, date: sale.clientCreatedAt || sale.createdAt, cashier: sale.cashierName || '', register: sale.registerId || '',
     customer: cust ? { name: cust.name, vatNo: cust.vatNo || '', address: addr(cust.address), phone: cust.phone || '' } : null,
-    lines: (lines || []).map(l => ({ name: l.name, qty: l.qty, unitPriceCents: l.unitPaidCents != null ? l.unitPaidCents : l.unitPriceCents, discountCents: l.unitPaidCents != null ? 0 : (l.discountCents || 0) + (l.saleDiscountCents || 0), lineTotalCents: l.netCents != null ? l.netCents : l.lineTotalCents, vatCents: l.vatCents || 0, vatRateBp: l.vatRateBp || 0, zero: !l.vatRateBp, note: l.note || (l.reason ? l.reason + (l.disposition ? ' · ' + l.disposition : '') : '') })),
+    lines: (lines || []).map(l => ({ name: l.name, qty: l.qty, unitPriceCents: l.unitPaidCents != null ? l.unitPaidCents : l.unitPriceCents, discountCents: l.unitPaidCents != null ? 0 : (l.discountCents || 0) + (l.saleDiscountCents || 0), lineTotalCents: l.netCents != null ? l.netCents : l.lineTotalCents, vatCents: l.vatCents || 0, vatRateBp: l.vatRateBp || 0, zero: !l.vatRateBp, note: l.note || (l.reason ? l.reason + (l.disposition ? ' · ' + l.disposition : '') : ''), spec: l.spec || null })),
     creditNote: sale.series === 'CN' ? { saleDocNo: sale.saleDocNo || '', noReceipt: !!sale.noReceipt, exchangeSaleId: sale.exchangeSaleId || '', exchangeUsedCents: sale.exchangeUsedCents || 0 } : null,
     subtotalCents: sale.subtotalCents, discountCents: (sale.lineDiscountCents || 0) + (sale.saleDiscountCents || 0), totalCents: sale.totalCents, vatCents: sale.vatCents, vatRateBp: sale.vatRateBp,
     exVatCents: sale.totalCents - sale.vatCents, roundingCents: sale.roundingCents || 0, changeCents: sale.changeCents || 0,
@@ -71,7 +75,7 @@ export function slipHtml(m) {
     ${m.creditNote ? `<div class="s c">${m.creditNote.noReceipt ? 'Returned without a receipt · store credit' : 'Against ' + esc(m.creditNote.saleDocNo)}${m.creditNote.exchangeSaleId ? ' · exchanged' : ''}</div>` : ''}
     ${m.customer ? `<div class="box"><div>${esc(m.customer.name)}</div>${m.kind === 'full' && m.customer.address ? `<div class="s">${esc(m.customer.address)}</div>` : ''}${m.customer.vatNo ? `<div class="s">VAT no ${esc(m.customer.vatNo)}</div>` : ''}</div>` : ''}
     <div class="hr"></div>
-    ${m.lines.map(l => `<div class="ln"><div>${esc(l.name)}${m.vat && l.zero ? ' <i>*</i>' : ''}</div><div class="r"><span>${l.qty} × ${esc(money(l.unitPriceCents))}${l.discountCents ? ' − ' + esc(money(l.discountCents)) : ''}</span><span>${esc(money(l.lineTotalCents))}</span></div>${l.note ? `<div class="s">${esc(l.note)}</div>` : ''}</div>`).join('')}
+    ${m.lines.map(l => `<div class="ln"><div>${esc(l.name)}${m.vat && l.zero ? ' <i>*</i>' : ''}</div><div class="r"><span>${l.qty} × ${esc(money(l.unitPriceCents))}${l.discountCents ? ' − ' + esc(money(l.discountCents)) : ''}</span><span>${esc(money(l.lineTotalCents))}</span></div>${l.note ? `<div class="s">${esc(l.note)}</div>` : ''}${specLines(l.spec).map(x => `<div class="s">${esc(x)}</div>`).join('')}${l.spec && l.spec.photo ? `<img class="spec-img" src="${l.spec.photo}" alt="">` : ''}</div>`).join('')}
     <div class="hr"></div>
     ${m.refLabel ? `<div class="s c">${esc(m.refLabel)}</div>` : ''}
     ${m.totals && m.discountCents ? row('Discount', '− ' + esc(money(m.discountCents))) : ''}
@@ -101,6 +105,7 @@ export const SLIP_CSS = `
   .slip .hr { border-top: 1px dashed #000; margin: 4px 0; } .slip .ln { margin: 2px 0; } .slip .tot { font-size: 13.5px; font-weight: 700; margin: 3px 0; }
   .slip .box { border: 1px solid #000; padding: 3px 5px; margin: 4px 0; } .slip .bar { margin: 6px 0 2px; } .slip .bar svg { width: 60mm; height: 12mm; display: block; margin: 0 auto; }
   .slip .pol { margin-top: 6px; border-top: 1px dashed #000; padding-top: 4px; white-space: normal; }
+  .slip .spec-img { display: block; max-width: 40mm; max-height: 30mm; margin: 2px 0; }
   .slip .sig img { display: block; max-width: 60mm; max-height: 20mm; margin: 4px auto 0; } .slip .sigline { margin-top: 10px; line-height: 2.2; }`;
 
 // -------------------------------------------------------------- A4 --
@@ -110,7 +115,7 @@ export function a4Html(m) {
       <div class="doc"><div class="t">${esc(m.title)}</div><div><b>${esc(m.docNo)}</b></div><div>${esc(niceDate(m.date))} ${esc(niceTime(m.date))}</div>${m.cashier ? `<div class="s">Served by ${esc(m.cashier)}</div>` : ''}<div class="bar">${encodable(m.docNo) ? barcodeSvg(m.docNo, 40) : ''}</div></div></div>
     ${m.customer ? `<div class="to"><div class="s">${m.kind === 'full' ? 'Invoice to' : 'Customer'}</div><b>${esc(m.customer.name)}</b>${m.customer.address ? '<br>' + esc(m.customer.address) : ''}${m.customer.vatNo ? '<br>VAT no ' + esc(m.customer.vatNo) : ''}${m.customer.phone ? '<br>' + esc(m.customer.phone) : ''}</div>` : ''}
     <table><thead><tr><th>Item</th><th class="n">Qty</th><th class="n">Each</th><th class="n">Discount</th>${m.vat ? '<th class="n">VAT</th>' : ''}<th class="n">Total</th></tr></thead>
-      <tbody>${m.lines.map(l => `<tr><td>${esc(l.name)}${l.note ? '<div class="s">' + esc(l.note) + '</div>' : ''}</td><td class="n">${l.qty}</td><td class="n">${esc(money(l.unitPriceCents))}</td><td class="n">${l.discountCents ? '− ' + esc(money(l.discountCents)) : ''}</td>${m.vat ? `<td class="n">${l.zero ? '0%' : esc(money(l.vatCents))}</td>` : ''}<td class="n">${esc(money(l.lineTotalCents))}</td></tr>`).join('')}</tbody>
+      <tbody>${m.lines.map(l => `<tr><td>${esc(l.name)}${l.note ? '<div class="s">' + esc(l.note) + '</div>' : ''}${specLines(l.spec).map(x => '<div class="s">' + esc(x) + '</div>').join('')}${l.spec && l.spec.photo ? `<img class="spec-img" src="${l.spec.photo}" alt="">` : ''}</td><td class="n">${l.qty}</td><td class="n">${esc(money(l.unitPriceCents))}</td><td class="n">${l.discountCents ? '− ' + esc(money(l.discountCents)) : ''}</td>${m.vat ? `<td class="n">${l.zero ? '0%' : esc(money(l.vatCents))}</td>` : ''}<td class="n">${esc(money(l.lineTotalCents))}</td></tr>`).join('')}</tbody>
       <tfoot>${m.totals && m.vat ? `<tr><td colspan="${m.vat ? 5 : 4}" class="n">Excl. VAT</td><td class="n">${esc(money(m.exVatCents))}</td></tr><tr><td colspan="5" class="n">VAT ${m.vatRateBp / 100}%</td><td class="n">${esc(money(m.vatCents))}</td></tr>` : ''}
         ${m.totals ? `<tr class="tot"><td colspan="${m.vat ? 5 : 4}" class="n">Total</td><td class="n">${esc(money(m.totalCents))}</td></tr>` : ''}</tfoot></table>
     ${m.refLabel ? `<div class="pay">${esc(m.refLabel)}</div>` : ''}
@@ -135,6 +140,7 @@ export const A4_CSS = `
   .a4 td { padding: 6px; border-bottom: 1px solid #ddd; vertical-align: top; } .a4 .n { text-align: right; white-space: nowrap; } .a4 tfoot td { border: 0; padding: 4px 6px; } .a4 .tot td { font-size: 15px; font-weight: 700; border-top: 2px solid #000; }
   .a4 .pay { margin-top: 10px; } .a4 .foot { margin-top: 18px; border-top: 1px solid #000; padding-top: 8px; } .a4 .terms { font-size: 11px; line-height: 1.5; }
   .a4 .sec { margin-top: 10px; } .a4 .st { font-weight: 700; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 2px; } .a4 .kv { width: auto; min-width: 90mm; } .a4 .kv td { padding: 3px 8px 3px 0; border: 0; }
+  .a4 .spec-img { display: block; max-width: 50mm; max-height: 40mm; margin: 4px 0; }
   .a4 .sig { margin-top: 14px; } .a4 .sig img { display: block; max-width: 70mm; max-height: 28mm; border-bottom: 1px solid #000; } .a4 .sigline { margin-top: 24px; line-height: 2.4; }
   .a4 .stamp { position: absolute; top: 40mm; left: 50%; transform: translateX(-50%) rotate(-20deg); font-size: 64px; font-weight: 900; color: rgba(180, 0, 0, .25); border: 6px solid rgba(180, 0, 0, .25); padding: 4px 24px; letter-spacing: .3em; }`;
 
@@ -156,7 +162,7 @@ export function escposBytes(m) {
   align(0); line(lr('No', m.docNo)); line(lr('Date', niceDate(m.date) + ' ' + niceTime(m.date))); if (m.cashier) line(lr('Served by', m.cashier));
   if (m.customer) { line(m.customer.name); if (m.kind === 'full' && m.customer.address) line(m.customer.address); if (m.customer.vatNo) line('VAT no ' + m.customer.vatNo); }
   line('-'.repeat(W));
-  for (const l of m.lines) { line(l.name.slice(0, W) + (m.vat && l.zero ? '*' : '')); line(lr(`  ${l.qty} x ${rand(l.unitPriceCents)}${l.discountCents ? ' -' + rand(l.discountCents) : ''}`, rand(l.lineTotalCents))); if (l.note) line('  ' + l.note.slice(0, W - 2)); }
+  for (const l of m.lines) { line(l.name.slice(0, W) + (m.vat && l.zero ? '*' : '')); line(lr(`  ${l.qty} x ${rand(l.unitPriceCents)}${l.discountCents ? ' -' + rand(l.discountCents) : ''}`, rand(l.lineTotalCents))); if (l.note) line('  ' + l.note.slice(0, W - 2)); for (const x of specLines(l.spec)) line('  ' + x.slice(0, W - 2)); }
   line('-'.repeat(W));
   if (m.refLabel) line(m.refLabel.slice(0, W));
   if (m.totals && m.discountCents) line(lr('Discount', '-' + rand(m.discountCents)));

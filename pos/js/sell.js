@@ -159,6 +159,7 @@ export function sellHtml() {
         <button data-act="sl-void"${c.lines.length ? '' : ' disabled'}>${icon('undo')}Void sale</button>
         <button data-act="sl-custom">${icon('plus')}Custom item</button>
         <button data-act="sl-layby"${c.lines.length && ctx.onLayby ? '' : ' disabled'} title="Put this sale on lay-by">${icon('box')}Lay-by</button>
+        <button data-act="sl-special"${c.lines.some(l => l.type === 'mto') && ctx.onSpecial ? '' : ' disabled'} title="A made-to-order item: the spec, the deposit, the sign-off">${icon('truck')}Custom order</button>
       </div>
     </div></div>
     <div class="pos-mbar"><button class="${sale.mobileCart ? '' : 'on'}" data-act="sl-mview" data-to="shop">${icon('search')} Shop</button><button class="${sale.mobileCart ? 'on' : ''}" data-act="sl-mview" data-to="cart">${icon('cart')} Cart${t.pieces ? ' (' + t.pieces + ')' : ''}<b>${esc(money(t.totalCents))}</b></button></div>
@@ -184,6 +185,11 @@ export async function action(act, b) {
     case 'sl-recall': return recallSale();
     case 'sl-void': return voidSale();
     case 'sl-custom': return customItem();
+    case 'sl-special': {
+      if (!c.lines.length || !ctx.onSpecial) return;
+      if (d().registerId && !d().shiftOpen) return toast('The register is closed: open it under Register first.', 'warn');
+      return ctx.onSpecial(c, totals(), () => { sale.cart = freshCart(); persist(); ctx.repaint(); });
+    }
     case 'sl-layby': {
       if (!c.lines.length || !ctx.onLayby) return;
       if (d().registerId && !d().shiftOpen) return toast('The register is closed: open it under Register first.', 'warn');
