@@ -12,6 +12,7 @@ export function startMockShopify(port = 8799, seed = {}) {
     customers: seed.customers || [],
     inventory: {},   // inventoryItemId|locationId → qty
     fulfilled: [],
+    webhooks: seed.webhooks || [],   // { id, topic, callbackUrl }
     orders: seed.orders || {}
   };
   const calls = [];
@@ -29,7 +30,7 @@ export function startMockShopify(port = 8799, seed = {}) {
       if (!req.url.endsWith('/graphql.json')) return send(404, { error: 'no' });
       if (req.headers['x-shopify-access-token'] !== 'shpat_mock') return send(401, { errors: [{ message: 'no token' }] });
       const { query, variables } = JSON.parse(body || '{}');
-      const op = /productVariants\(/.test(query) ? 'variants' : /inventorySetQuantities/.test(query) ? 'setStock' : /codeDiscountNodes/.test(query) ? 'codes' : /customerCreate/.test(query) ? 'customerCreate' : /customerUpdate/.test(query) ? 'customerUpdate' : /customers\(first: 1/.test(query) ? 'customerFind' : /fulfillmentCreateV2/.test(query) ? 'fulfil' : /fulfillmentOrders/.test(query) ? 'fulfillmentOrders' : /locations\(/.test(query) && /shop \{/.test(query) ? 'shop' : /locations\(/.test(query) ? 'locations' : 'unknown';
+      const op = /productVariants\(/.test(query) ? 'variants' : /inventorySetQuantities/.test(query) ? 'setStock' : /codeDiscountNodes/.test(query) ? 'codes' : /customerCreate/.test(query) ? 'customerCreate' : /customerUpdate/.test(query) ? 'customerUpdate' : /customers\(first: 1/.test(query) ? 'customerFind' : /fulfillmentCreateV2/.test(query) ? 'fulfil' : /fulfillmentOrders/.test(query) ? 'fulfillmentOrders' : /webhookSubscriptionCreate/.test(query) ? 'hookCreate' : /webhookSubscriptionUpdate/.test(query) ? 'hookUpdate' : /webhookSubscriptionDelete/.test(query) ? 'hookDelete' : /webhookSubscriptions\(/.test(query) ? 'hooks' : /locations\(/.test(query) && /shop \{/.test(query) ? 'shop' : /locations\(/.test(query) ? 'locations' : 'unknown';
       calls.push({ op, variables });
       if (op === 'shop') return send(200, { data: { shop: { name: state.shop.name, primaryDomain: { host: state.shop.host } }, locations: { nodes: state.locations } } });
       if (op === 'locations') return send(200, { data: { locations: { nodes: state.locations } } });
@@ -40,6 +41,10 @@ export function startMockShopify(port = 8799, seed = {}) {
       if (op === 'customerCreate') { const id = 'gid://shopify/Customer/' + (900 + state.customers.length); state.customers.push({ id, ...variables.input }); return send(200, { data: { customerCreate: { customer: { id }, userErrors: [] } } }); }
       if (op === 'customerUpdate') { const c = state.customers.find(x => x.id === variables.input.id); if (c) Object.assign(c, variables.input); return send(200, { data: { customerUpdate: { customer: { id: variables.input.id }, userErrors: [] } } }); }
       if (op === 'fulfillmentOrders') return send(200, { data: { order: { fulfillmentOrders: { nodes: [{ id: 'gid://shopify/FulfillmentOrder/' + variables.id.split('/').pop(), status: 'OPEN' }] } } } });
+      if (op === 'hooks') return send(200, { data: { webhookSubscriptions: { nodes: state.webhooks.map(h => ({ id: h.id, topic: h.topic, endpoint: { __typename: 'WebhookHttpEndpoint', callbackUrl: h.callbackUrl } })) } } });
+      if (op === 'hookCreate') { if (!/^https?:\/\//.test(variables.w.callbackUrl)) return send(200, { data: { webhookSubscriptionCreate: { webhookSubscription: null, userErrors: [{ field: ['callbackUrl'], message: 'Address is not a valid URL' }] } } }); const id = 'gid://shopify/WebhookSubscription/' + (500 + state.webhooks.length); state.webhooks.push({ id, topic: variables.topic, callbackUrl: variables.w.callbackUrl }); return send(200, { data: { webhookSubscriptionCreate: { webhookSubscription: { id }, userErrors: [] } } }); }
+      if (op === 'hookUpdate') { const h = state.webhooks.find(x => x.id === variables.id); if (h) h.callbackUrl = variables.w.callbackUrl; return send(200, { data: { webhookSubscriptionUpdate: { webhookSubscription: { id: variables.id }, userErrors: [] } } }); }
+      if (op === 'hookDelete') { state.webhooks = state.webhooks.filter(x => x.id !== variables.id); return send(200, { data: { webhookSubscriptionDelete: { deletedWebhookSubscriptionId: variables.id, userErrors: [] } } }); }
       if (op === 'fulfil') { state.fulfilled.push(variables.f.lineItemsByFulfillmentOrder[0].fulfillmentOrderId); return send(200, { data: { fulfillmentCreateV2: { fulfillment: { id: 'gid://shopify/Fulfillment/1' }, userErrors: [] } } }); }
       return send(200, { errors: [{ message: 'mock: unknown operation' }] });
     });
