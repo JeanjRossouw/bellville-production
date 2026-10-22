@@ -741,7 +741,7 @@ function headHtml() {
   const on = (key) => posTab === key || (posTab === 'stock' && ({ receive: 'receive', count: 'take', catalogue: 'catalogue', po: 'order' })[key] === stockView);
   const nav = (key, ico, label, title) => `<button class="pos-nav-btn${on(key) ? ' on' : ''}" data-act="pos-tab" data-to="${key}" title="${esc(title || '')}">${icon(ico)}<span>${label}</span></button>`;
   const pend = store.shopifyPendingCount();
-  const pill = (dot, text, title) => `<span class="pos-pill"${title ? ` title="${esc(title)}"` : ''}>${dot ? `<i class="pos-dot ${dot}"></i>` : ''}${text}</span>`;
+  const pill = (dot, text, title, cls = '') => `<span class="pos-pill${cls ? ' ' + cls : ''}"${title ? ` title="${esc(title)}"` : ''}>${dot ? `<i class="pos-dot ${dot}"></i>` : ''}${text}</span>`;
   return `<div class="pos-head">
     <div class="pos-head-top">
       <div class="pos-brand"><span class="pos-brand-name">${esc(settings.name || 'Shop')}</span><span class="pos-brand-tag">Point of sale</span></div>
@@ -751,7 +751,7 @@ function headHtml() {
         ${pill('', n + ' product' + (n === 1 ? '' : 's') + (till.catalogueLoading() ? ' · reading the shop…' : till.catalogueAt() && till.shopOn() ? ' · stock at ' + esc(new Date(till.catalogueAt()).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })) : ''))}
         ${till.openShift() ? pill('ok', 'Register open') : pill('warn', 'Register closed', 'Open it under Register for the day’s cash-up')}
         ${pend ? pill('bad', pend + ' sale' + (pend === 1 ? '' : 's') + ' still to reach the shop') : ''}
-        ${till.catalogueError() ? pill('bad', esc(till.catalogueError())) : ''}
+        ${till.catalogueError() ? pill('bad', esc(till.catalogueError()), 'The shop could not be read', 'msg') : ''}
       </div>
       <div class="pos-user">
         ${till.shopOn() ? `<button class="pos-icon-btn" data-act="till-refresh" title="Read the shop’s stock again">${icon('refresh')}</button>` : ''}

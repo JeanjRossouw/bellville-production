@@ -124,3 +124,18 @@ with no location matched by name (choose one and save), shop variants with no
 matching SKU here, a step that failed (press *Run setup again*). From there
 every stock movement is pushed as it happens; the schedule `pos-shopify-sync`
 retries anything that failed. *Disconnect* removes the till's webhooks from the app.
+
+### Moving a shop that ran on Shopify (ReptiCube) onto the till
+
+Once connected, **Bring in the shop's catalogue** on the same card pulls every
+product and variant from the shop into the till: titles, descriptions,
+pictures, prices (as they are on the shop, VAT included), costs, barcodes and
+options. Products already in the till are matched by Shopify id, handle, SKU
+or name and updated; the rest are created; every item is linked. Tick *Take
+the shop's stock as the opening stock here* and the shop's available quantity
+at each mapped location becomes the opening stock of items that have never
+moved in the till, written as movements the stock report can show; items that
+already have stock here are left alone. It is safe to run again: nothing is
+duplicated and no opening stock is taken twice. From then on the till is
+master for stock and pushes after every movement; stop selling on the old
+system first, or the two will fight over the figures.
