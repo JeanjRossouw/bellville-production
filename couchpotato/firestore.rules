@@ -457,6 +457,7 @@ service cloud.firestore {
       match /stockTakes/{id}     { allow read: if pReadsStore(gid); allow write: if false; }
       match /specialOrders/{id}  { allow read: if pReadsStore(gid); allow write: if false; }
       match /salesOrders/{id}    { allow read: if pReadsStore(gid); allow write: if false; }
+      match /tasks/{id}          { allow read: if pReadsStore(gid); allow write: if false; }
       match /shifts/{id}         { allow read: if pReadsStore(gid); allow write: if false; }
       match /cashMovements/{id}  { allow read: if pReadsStore(gid); allow write: if false; }
       match /goodsReceived/{id}  { allow read: if pReadsStore(gid) && pAtLeast(gid, 'supervisor'); allow write: if false; }
@@ -468,6 +469,7 @@ service cloud.firestore {
       match /counters/{id}       { allow read, write: if false; }
       match /assistantUse/{uid}  { allow read, write: if false; }
       match /usedTokens/{id}     { allow read, write: if false; }
+      match /assistantProposals/{id} { allow read, write: if false; }
 
       // ---- audit: anyone appends in their own name; nobody edits ------------
       match /auditLog/{id} {

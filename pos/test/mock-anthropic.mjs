@@ -17,10 +17,16 @@ export function startMockAnthropic(port = 8798) {
         if (String(j.model || '').includes('fail')) { res.writeHead(500, { 'content-type': 'application/json' }); res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'mock failure' } })); return; }
         const msgs = j.messages || [];
         const lastUser = msgs.length ? msgs[msgs.length - 1] : { content: '' };
-        const q = typeof lastUser.content === 'string' ? lastUser.content : (lastUser.content || []).map(b => b.text || '').join(' ');
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ id: 'msg_mock', type: 'message', role: 'assistant', model: j.model, content: [{ type: 'text', text: 'Mock answer to: ' + q.replace(/^\([^)]*\)\s*/, '') }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 100, output_tokens: 10 } }));
-        return;
+        const blocks = Array.isArray(lastUser.content) ? lastUser.content : [];
+        const reply = (content, stop) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ id: 'msg_mock', type: 'message', role: 'assistant', model: j.model, content, stop_reason: stop, stop_sequence: null, usage: { input_tokens: 100, output_tokens: 10 } })); };
+        // after a tool round: a text answer that quotes the results, so a test can see what the tool returned
+        const results = blocks.filter(b => b.type === 'tool_result');
+        if (results.length) return reply([{ type: 'text', text: 'Mock answer after tools: ' + results.map(r => (r.is_error ? 'ERROR ' : '') + String(r.content).slice(0, 400)).join(' | ') }], 'end_turn');
+        const q = typeof lastUser.content === 'string' ? lastUser.content : blocks.map(b => b.text || '').join(' ');
+        // "[tool:NAME {json}]" in the question: the mock calls that tool, the way the model would
+        const m = /\[tool:(\w+)\s*(\{[\s\S]*\})?\]/.exec(q);
+        if (m && Array.isArray(j.tools) && j.tools.some(t => t.name === m[1])) { let input = {}; try { input = m[2] ? JSON.parse(m[2]) : {}; } catch {} return reply([{ type: 'text', text: 'Let me look.' }, { type: 'tool_use', id: 'toolu_mock_' + Date.now().toString(36), name: m[1], input }], 'tool_use'); }
+        return reply([{ type: 'text', text: 'Mock answer to: ' + q.replace(/^\([^)]*\)\s*/, '') }], 'end_turn');
       }
       res.writeHead(404); res.end();
     });

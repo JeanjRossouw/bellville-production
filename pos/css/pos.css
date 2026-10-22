@@ -343,3 +343,19 @@ small { font-size: 12px; }
 .as-form textarea { flex: 1; resize: none; font: inherit; padding: .5rem; border: 1px solid var(--line-2); border-radius: 6px; }
 body:has(.pos-mbar) .as-fab { bottom: 84px; }
 @media print { .as-fab, .as-panel { display: none !important; } }
+
+/* ---- the assistant's cards: a proposal to confirm, customers to message ---- */
+.as-card { margin-top: .6rem; padding: .6rem .7rem; background: #fff; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+.as-card ul { margin: .3rem 0 .5rem 1.1rem; padding: 0; } .as-card li { margin: .15rem 0; }
+.as-done { color: var(--green); font-weight: 600; }
+.as-upd { display: flex; gap: .6rem; align-items: flex-start; justify-content: space-between; padding: .45rem 0; border-top: 1px solid var(--line); }
+.as-upd:first-of-type { border-top: 0; } .as-upd-text { font-size: 12px; margin-top: .15rem; white-space: pre-wrap; }
+/* ---- tasks on Home ---- */
+.tk-card { margin-bottom: 1rem; } .tk-head { display: flex; justify-content: space-between; align-items: center; gap: .6rem; } .tk-head h2 { margin: 0; }
+.tk-list { list-style: none; margin: .6rem 0 0; padding: 0; }
+.tk-row { display: flex; gap: .7rem; align-items: flex-start; padding: .55rem 0; border-top: 1px solid var(--line); } .tk-row.off { opacity: .6; } .tk-row.late strong { color: var(--red); }
+.tk-tick { flex: 0 0 30px; width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--line-2); background: #fff; color: transparent; cursor: pointer; font-weight: 700; }
+.tk-tick:hover { border-color: var(--green); color: var(--green); } .tk-tick.on { border-color: var(--green); color: var(--green); display: inline-flex; align-items: center; justify-content: center; cursor: default; }
+.tk-body { flex: 1; min-width: 0; } .tk-meta { font-size: 12px; margin-top: .15rem; }
+.tk-done { margin-top: .6rem; } .tk-done summary { cursor: pointer; font-size: 12.5px; }
+button.link { background: none; border: 0; padding: 0; color: var(--ink-2); text-decoration: underline; cursor: pointer; font: inherit; font-size: 12px; }

@@ -79,7 +79,18 @@ R.log1 = await p.locator('#as-log').innerText(); check('the starter asked and an
 const L = mock.last(); check('the till sent the tab and the store', /Tab open now: sell/.test(L.body.messages[0].content) && /Store: Bellville/.test(L.body.system[1].text), L.body.messages[0].content);
 await p.fill('#as-q', 'How do I park a sale?'); await p.keyboard.press('Enter'); await p.waitForTimeout(1500);
 R.log2 = await p.locator('#as-log').innerText(); check('a typed question answered', /Mock answer to: How do I park a sale\?/.test(R.log2), R.log2);
+await p.fill('#as-q', '[tool:propose_tasks {"tasks":[{"title":"Count the cushions","note":"","due":"","assigneeName":""}]}]'); await p.keyboard.press('Enter'); await p.waitForTimeout(2000);
+R.card = await p.locator('#as-log .as-card').last().innerText().catch(() => ''); check('a proposal card with a button', /1 task to add/.test(R.card) && /Count the cushions/.test(R.card) && (await p.locator('#as-log [data-confirm]').count()) === 1, R.card);
+await p.click('#as-log [data-confirm]'); await p.waitForTimeout(2000);
+R.log4 = await p.locator('#as-log').innerText(); check('confirmed from the card', /1 task added to the store/.test(R.log4), R.log4.slice(-300));
 await p.click('#as-close'); check('closed', await p.locator('#as-panel').isHidden());
+await p.click('#nav [data-view=home]'); await p.waitForTimeout(1200);
+R.home = await p.locator('#screen').innerText(); check('the task is on Home, from the assistant', /Count the cushions/.test(R.home) && /assistant/i.test(R.home), R.home.slice(0, 400));
+await p.click('[data-act=tk-done]'); await p.waitForTimeout(1200);
+R.home2 = await p.locator('#screen').innerText(); check('ticked off', /done lately/i.test(R.home2) && /No open tasks/i.test(R.home2), R.home2.slice(0, 400));
+await p.click('[data-act=tk-add]'); await p.waitForSelector('#modal #tk-title'); await p.fill('#tk-title', 'Sweep the floor'); await p.click('#modal-ok'); await p.waitForTimeout(1200);
+R.home3 = await p.locator('#screen').innerText(); check('a task by hand', /Sweep the floor/.test(R.home3), R.home3.slice(0, 300));
+await p.click('#as-fab'); await p.waitForTimeout(300);
 await p.click('#as-fab'); await p.waitForTimeout(200); R.log3 = await p.locator('#as-log').innerText(); check('the chat is kept', /How do I park a sale\?/.test(R.log3), R.log3);
 await p.click('#sign-out'); await p.waitForTimeout(800);
 check('gone at sign-out, and the chat with it', (await p.locator('#as-fab').count()) === 0 && (await p.evaluate(() => sessionStorage.getItem('pos-assist-chat'))) === null);

@@ -468,6 +468,20 @@ transaction. A second request with the same token is refused. Nobody reads
 or writes these but the server; they can be cleared by a Firestore TTL on
 `expiresAt`.
 
+**`tasks/{id}`** — the store's task list (`pos-tasks`, and the assistant's
+confirmed proposals): `title, note, due (date or ''), assigneeUid, assigneeName,
+status ('open'|'done'), source ('assistant'|'person'), doneAt, doneBy, createdByName,
++ stamps, updatedAt`. R: members of the store. W: server only. Shown on Home.
+
+**`assistantProposals/{id}`** — what the assistant proposed and the person has
+not confirmed: `kind ('purchaseOrders'|'tasks'), uid, entityId, storeId, payload,
+summary, createdAt, expiresAt (30 minutes), used, usedAt`. Nobody reads or
+writes these but the server. The assistant's tools (`lib/assist-tools.mjs`)
+never write documents themselves: a proposal comes back to the till as a card,
+and `pos-assist confirm` carries it out in the name of the person who tapped
+(purchase orders need a manager). Customer messages are drafted with the
+existing templates and sent by the existing one-tap WhatsApp actions.
+
 **`assistantUse/{uid}`** — the assistant's daily allowance per login
 (`pos-assist`): `day, count, name, lastAt, entityId, storeId`. Nobody reads
 or writes it but the server. The assistant answers from `lib/pos-guide.mjs`

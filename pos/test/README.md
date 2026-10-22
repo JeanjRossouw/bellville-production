@@ -141,10 +141,14 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   collect list and a shop discount code applied on the till.
   `node pos/test/online.test.mjs`
 - `assist-api.test.mjs` — the assistant: `pos-assist` over HTTP against a
-  mock Anthropic API in the test (`mock-anthropic.mjs`): sign-in needed, the
-  store needed, the guide and the store's live snapshot in the system prompt,
-  money for a supervisor and not for a cashier, the day's count, a failed
-  model call. `node pos/test/assist-api.test.mjs`
+  mock Anthropic API in the test (`mock-anthropic.mjs`, which calls a tool
+  when the question says `[tool:name {…}]`): sign-in needed, the store
+  needed, the guide and the store's live snapshot in the system prompt,
+  money for a supervisor and not for a cashier, the day's count; the hands:
+  low stock by supplier, a purchase order proposed and confirmed into a
+  draft (a manager only, once, by the person who asked), the customers to
+  message with the words written, tasks proposed and confirmed, and
+  `pos-tasks` by hand. `node pos/test/assist-api.test.mjs`
 - `assist.test.mjs` — the assistant in the browser: the "?" button, a starter
   question, the answer, the chat cleared at sign-out. `node pos/test/assist.test.mjs`
 - `auth-api.test.mjs` — `pos-auth` and the approvals over HTTP: a till locked
