@@ -44,11 +44,11 @@ export const nowIso = () => new Date().toISOString();
 // The owner designs the roles (Settings → Roles): each one says, per screen,
 // hidden, view or edit. They live at companies/<id>/roles/<key>; a member's
 // role is one of those keys, or 'owner'.
-let roles = {};               // key -> { name, perms }
+let roles = {};               // key -> { name, perms, clientMode, clientGroups }
 const roleWatchers = [];
 export function roleList() {
   return [{ key: 'owner', label: 'Owner', perms: OWNER_PERMS, fixed: true }]
-    .concat(Object.keys(roles).map(k => ({ key: k, label: roles[k].name || k, perms: roles[k].perms || {} }))
+    .concat(Object.keys(roles).map(k => ({ key: k, label: roles[k].name || k, perms: roles[k].perms || {}, clientMode: roles[k].clientMode || 'all', clientGroups: roles[k].clientGroups || [] }))
       .sort((a, b) => a.label.localeCompare(b.label)));
 }
 export const roleLabel = (key) => key === 'owner' ? 'Owner' : ((roles[key] && roles[key].name) || key);
@@ -58,6 +58,13 @@ export function myPerms() {
   return (roles[currentUser.role] && roles[currentUser.role].perms) || {};
 }
 export const can = (area, level) => level === 'edit' ? canEdit(myPerms(), area) : canSee(myPerms(), area);
+// Which clients this person sees by name: { mode: 'all' } or
+// { mode: 'groups', groups: [...] } (see clientgroups.js).
+export function myClientRule() {
+  if (!currentUser || currentUser.role === 'owner') return { mode: 'all', groups: [] };
+  const r = roles[currentUser.role] || {};
+  return r.clientMode === 'groups' ? { mode: 'groups', groups: r.clientGroups || [] } : { mode: 'all', groups: [] };
+}
 
 // Live: an owner's change to a role reaches everyone with it at once.
 export function watchRoles(cb) {
@@ -65,15 +72,17 @@ export function watchRoles(cb) {
   let first = true;
   return watch('roles', rows => {
     roles = {};
-    rows.forEach(r => { roles[r.id] = { name: r.name, perms: r.perms || {} }; });
+    rows.forEach(r => { roles[r.id] = { name: r.name, perms: r.perms || {}, clientMode: r.clientMode || 'all', clientGroups: r.clientGroups || [] }; });
     // a company from before roles existed gets the starting set, once
     if (first && !rows.length && currentUser && currentUser.role === 'owner') { first = false; seedRoles(); return; }
     first = false;
     roleWatchers.forEach(w => { try { w(roles); } catch (e) { console.error(e); } });
   });
 }
+// a starting role as saved: its name, screens and which clients it sees
+const roleSeed = (r) => ({ name: r.name, perms: r.perms, ...(r.clientMode ? { clientMode: r.clientMode, clientGroups: r.clientGroups || [] } : {}) });
 async function seedRoles() {
-  for (const [key, r] of Object.entries(DEFAULT_ROLES)) await setWithId('roles', key, { name: r.name, perms: r.perms });
+  for (const [key, r] of Object.entries(DEFAULT_ROLES)) await setWithId('roles', key, roleSeed(r));
 }
 // A signed delivery note (a picture) for an order, saved under the order's id.
 export async function saveDeliveryNote(orderId, note) { await setWithId('deliveryNotes', orderId, note); }
@@ -586,7 +595,7 @@ async function createCompanyFor(u, companyName, name) {
   b.set(doc(cloud.db, 'companies', cid, 'members', u.uid), { email, name: who, role: 'owner', joinedAt: nowIso() });
   b.set(doc(cloud.db, 'users', u.uid), { email, name: who, companyId: cid, companies: { [cid]: companyName } }, { merge: true });
   b.set(doc(cloud.db, 'companies', cid, 'settings', 'factory'), { name: companyName, legalName: companyName, orderPrefix: prefixFor(companyName), email, updatedAt: nowIso() });
-  Object.entries(DEFAULT_ROLES).forEach(([key, r]) => b.set(doc(cloud.db, 'companies', cid, 'roles', key), { name: r.name, perms: r.perms }));
+  Object.entries(DEFAULT_ROLES).forEach(([key, r]) => b.set(doc(cloud.db, 'companies', cid, 'roles', key), roleSeed(r)));
   await b.commit();
   company = { id: cid, name: companyName, ownerUid: u.uid, plan: 'trial', status: 'trial', createdAt: nowIso() };
   return { uid: u.uid, email, name: who, role: 'owner', companyId: cid, companies: { [cid]: companyName } };
@@ -941,7 +950,7 @@ function demoCreateCompany(email, companyName, name) {
   localStorage.setItem('cp-demo-companies', JSON.stringify(m));
   demoMemberSet(cid, 'demo-' + email, { email, name: name || email, role: 'owner' });
   localStorage.setItem(demoPrefix(cid) + 'settings', JSON.stringify({ factory: { name: companyName, legalName: companyName, orderPrefix: prefixFor(companyName), email, updatedAt: nowIso() } }));
-  localStorage.setItem(demoPrefix(cid) + 'roles', JSON.stringify(Object.fromEntries(Object.entries(DEFAULT_ROLES).map(([k, r]) => [k, { name: r.name, perms: r.perms }]))));
+  localStorage.setItem(demoPrefix(cid) + 'roles', JSON.stringify(Object.fromEntries(Object.entries(DEFAULT_ROLES).map(([k, r]) => [k, roleSeed(r)]))));
   return { uid: 'demo-' + email, name: name || email, companyId: cid, role: 'owner', companies: { [cid]: companyName } };
 }
 function demoJoin(email, inv, name) {

@@ -10,6 +10,7 @@
 // Records are matched to ones already there by name (products also by
 // barcode, orders and invoices by their number), and written in batches.
 import * as store from './store.js';
+import { limited } from './clientgroups.js';
 import { allProducts, allMaterials, UNITS } from './costing.js';
 import { allCustomers } from './customers.js';
 import { allOrders } from './orders.js';
@@ -69,9 +70,10 @@ const KINDS = {
       { k: 'address', label: 'Delivery address', syn: ['address', 'delivery address', 'street', 'physical address'] },
       { k: 'area', label: 'Area', syn: ['area', 'suburb', 'city', 'town', 'region'] },
       { k: 'termsDays', label: 'Payment terms (days)', num: true, syn: ['terms', 'payment terms', 'days', 'terms days'] },
+      { k: 'group', label: 'Group', syn: ['group', 'client group', 'customer group', 'type', 'category', 'segment'] },
       { k: 'notes', label: 'Notes', syn: ['notes', 'note', 'comment', 'comments'] }
     ],
-    template: [['Customer', 'Contact', 'Cell', 'Email', 'Address', 'Area', 'Terms'], ['Cape Living Interiors', 'Lindiwe', '021 000 0000', 'orders@capeliving.co.za', '12 Main Road', 'Parow', '30']]
+    template: [['Customer', 'Contact', 'Cell', 'Email', 'Address', 'Area', 'Terms', 'Group'], ['Cape Living Interiors', 'Lindiwe', '021 000 0000', 'orders@capeliving.co.za', '12 Main Road', 'Parow', '30', 'Trade']]
   },
   orders: {
     label: 'Orders', area: 'orders', coll: 'orders',
@@ -594,7 +596,8 @@ async function invoiceOps(p, settings) {
 // ------------------------------------------------------------ the window ----
 
 export function openImport(kind, settings) {
-  const kinds = Object.keys(KINDS).filter(k => store.can(KINDS[k].area, 'edit'));
+  // a role that sees clients by group only cannot bring in customers or orders (the names would be wrong)
+  const kinds = Object.keys(KINDS).filter(k => store.can(KINDS[k].area, 'edit') && !(limited() && (k === 'customers' || k === 'orders')));
   if (!kinds.length) { toast('Your role cannot add these', 'warn'); return; }
   let K = kinds.includes(kind) ? kind : kinds[0];
   let sheets = null, sheetIx = 0, headerRow = 0, map = {}, fileName = '';

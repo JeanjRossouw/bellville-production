@@ -5,6 +5,7 @@
 // so there is always an answer to "who changed this and when".
 import * as store from './store.js';
 import { allCustomers, customerById } from './customers.js';
+import { nameOf, seesClient, hiddenLabel, visibleCustomers, allGroups, groupOf } from './clientgroups.js';
 import { allProducts, productByName } from './costing.js';
 import { consumeForOrder, returnForOrder } from './stock.js';
 import { toXlsx, toCsv, download } from './exporter.js';
@@ -38,9 +39,11 @@ export const orderById = (id) => orders.find(o => o.id === id) || null;
 
 function form(o) {
   o = o || {};
-  const custs = allCustomers();
+  const custs = visibleCustomers();
   const custOptions = [{ value: '', label: custs.length ? 'Choose a customer…' : 'No customers yet — add one first' }]
-    .concat(custs.map(c => ({ value: c.id, label: c.name })));
+    .concat(custs.map(c => ({ value: c.id, label: c.name })))
+    // a client this role sees by group only keeps its customer, shown by group
+    .concat(o.customerId && !seesClient(o) ? [{ value: o.customerId, label: hiddenLabel(o) }] : []);
   const paid = o.paidDate || today();
   return row(
     field('Customer', 'o-cust', { type: 'select', options: custOptions, value: o.customerId || '' }),
@@ -206,7 +209,7 @@ export function orderRows(list) {
     'Date paid', 'Due date', 'Status', 'Fabric status', 'Planned week', 'Dispatched', 'Invoice no', 'Notes', 'Captured', 'Captured by'];
   const rows = list.map(o => {
     const qty = Number(o.qty) || 1, price = Number(o.priceEach) || 0;
-    return [o.orderNo || '', o.customerName || '', o.product || '', qty, o.fabric || '', price, Math.round(price * qty * 100) / 100, o.externalRef || '',
+    return [o.orderNo || '', nameOf(o), o.product || '', qty, o.fabric || '', price, Math.round(price * qty * 100) / 100, o.externalRef || '',
       o.paidDate || '', o.dueDate || '', statusMeta(o.status).label, o.fabric ? fab(o.fabricStatus) : '', o.planWeek || '',
       o.dispatchedAt ? String(o.dispatchedAt).slice(0, 10) : '', o.invoiceNo || '', o.notes || '',
       o.createdAt ? String(o.createdAt).slice(0, 10) : '', o.createdBy || ''];
@@ -252,10 +255,11 @@ export const getFilter = () => filter;
 function matches(o) {
   if (filter.status === 'open' && (o.status === 'invoiced' || o.status === 'cancelled')) return false;
   if (filter.status !== 'open' && filter.status !== 'all' && o.status !== filter.status) return false;
-  if (filter.customer && o.customerId !== filter.customer) return false;
+  if (filter.customer && filter.customer.startsWith('g:')) { if (groupOf(o) !== filter.customer.slice(2)) return false; }
+  else if (filter.customer && o.customerId !== filter.customer) return false;
   const q = String(filter.q || '').toLowerCase().trim();
   if (!q) return true;
-  return [o.orderNo, o.externalRef, o.product, o.fabric, o.customerName, o.notes]
+  return [o.orderNo, o.externalRef, o.product, o.fabric, nameOf(o), o.notes]
     .some(v => String(v || '').toLowerCase().includes(q));
 }
 
@@ -283,7 +287,7 @@ function orderCard(o) {
           </div>
           <h2>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' <span class="qty">× ' + esc(o.qty) + '</span>' : ''}</h2>
           <div class="meta">
-            <div>${esc(o.customerName || 'No customer')}${o.externalRef ? ' · their ref ' + esc(o.externalRef) : ''}</div>
+            <div>${esc(nameOf(o) || 'No customer')}${o.externalRef ? ' · their ref ' + esc(o.externalRef) : ''}</div>
             ${o.fabric ? `<div>${esc(o.fabric)}${o.fabricPo ? ' <span class="muted">· ' + esc(o.fabricStatus === 'received' ? 'in the stock room' : 'on order') + ', ' + esc(o.fabricPo) + '</span>' : ''}</div>` : ''}
             ${o.paidDate ? `<div class="muted">Paid ${esc(niceDate(o.paidDate))}</div>` : ''}
             ${o.priceEach ? `<div class="muted">${esc(money(o.priceEach, cur))} each · ${esc(money(o.priceEach * (o.qty || 1), cur))} total</div>` : ''}
@@ -353,7 +357,8 @@ export function renderOrders(host) {
       <input id="o-search" class="search" type="search" placeholder="Order no., product, fabric, customer…" value="${esc(filter.q)}">
       <select id="o-filter-cust">
         <option value="">All customers</option>
-        ${allCustomers().map(c => `<option value="${esc(c.id)}"${c.id === filter.customer ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}
+        ${visibleCustomers().map(c => `<option value="${esc(c.id)}"${c.id === filter.customer ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}
+        ${allGroups().length ? `<optgroup label="Groups">${allGroups().map(g => `<option value="g:${esc(g)}"${'g:' + g === filter.customer ? ' selected' : ''}>Group: ${esc(g)}</option>`).join('')}</optgroup>` : ''}
       </select>
       <select id="o-filter-status">
         <option value="open"${filter.status === 'open' ? ' selected' : ''}>Open orders</option>

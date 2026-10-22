@@ -257,6 +257,17 @@ password; the owner invites the team under Settings and gives each person a role
 ## Customers
 - The customer list with contact details, area and payment terms, their open orders and
   what they owe.
+- Client groups: give a customer a Group (Customers → Edit → Group, e.g. Trade, Retail,
+  Showroom; or a Group column when importing customers). The buttons above the list filter
+  by group, and Orders → the customer filter has "Group: …" choices.
+- Hiding clients from the factory: Settings → Roles → "Clients they see". Set a role to
+  "Only some groups", then "Choose groups" to tick the groups it may see by name. Every
+  other client shows on that role's screens (orders, floor, job cards, scan, Today,
+  deliveries, stock room) by its group name only, with no phone, email or address, and it
+  cannot WhatsApp those clients, book their deliveries or import customers or orders. New
+  companies start with the Factory floor role on "Only some groups" with none ticked.
+  Printed delivery notes and the driver's run still carry the real name and address,
+  because they go out with the goods. The owner always sees everyone.
 
 ## Costing (Buying → Costing)
 - Products: each product's bill of materials (materials × quantity), labour hours × the

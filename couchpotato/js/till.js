@@ -93,7 +93,7 @@ export async function unlockWith(pin) {
 export function lockHtml() {
   return `<div class="till-lock">
     <div class="till-lock-card">
-      <h2>🔒 Till locked</h2>
+      <h2>Till locked</h2>
       <p class="muted">Enter your PIN to ring up sales.</p>
       <input id="till-pin" class="till-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="••••" aria-label="PIN">
       <div class="till-pad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫'].map(k => `<button type="button" data-act="till-key" data-k="${k}">${k}</button>`).join('')}</div>

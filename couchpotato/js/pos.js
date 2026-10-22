@@ -53,6 +53,7 @@ import { esc, money, field, row, val, openModal, toast, today, addDays, niceDate
 import * as till from './till.js';
 import * as shopstock from './shopstock.js';
 import { allQuotes, totals as quoteTotals } from './quotes.js';
+import { icon } from './icons.js';
 
 let settings = {};
 let sales = [];
@@ -78,7 +79,9 @@ export function startPos(cb, cfg) {
   if (!netOn) { netOn = true; window.addEventListener('online', () => { online = true; rerender(); }); window.addEventListener('offline', () => { online = false; rerender(); }); }
   if (unwatch) unwatch();
   unwatch = store.watch('sales', rows => { sales = rows.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))); if (onChange) onChange(); });
-  try { const saved = JSON.parse(localStorage.getItem('cp-pos-cart') || 'null'); if (saved && Array.isArray(saved.lines)) cart = saved; } catch (e) {}
+  // the half-rung sale survives a reload, but stays with its own company
+  cart = emptyCart();
+  try { const saved = JSON.parse(localStorage.getItem(cartKey()) || 'null'); if (saved && Array.isArray(saved.lines)) cart = saved; } catch (e) {}
 }
 export const setPosSettings = (cfg) => { settings = cfg || {}; till.setTillSettings(cfg); shopstock.setShopStockSettings(cfg); };
 let quickEdit = false;      // tapping a tile stars it instead of selling it
@@ -90,7 +93,8 @@ const sendToXero = (saleId) => { if (xero && xero.connected) store.xeroPushSale(
 const emptyCart = () => ({ lines: [], customerId: '', discount: 0, discountPct: 0, note: '' });
 export const allSales = () => sales;
 export const setPosTab = (t) => { posTab = t; };
-const persist = () => { try { localStorage.setItem('cp-pos-cart', JSON.stringify(cart)); } catch (e) {} };
+const cartKey = () => 'cp-pos-cart-' + ((store.getUser() || {}).companyId || 'demo');
+const persist = () => { try { localStorage.setItem(cartKey(), JSON.stringify(cart)); } catch (e) {} };
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const vatRate = () => settings.vatRegistered ? (Number(settings.vatRate) || 0) : 0;
 const leadDays = () => Number(settings.leadDays) || 28;
@@ -574,7 +578,7 @@ function saleDone(sale, c) {
       ${(sale.lines || []).filter(l => l.giftCode).map(l => `<div><span>Gift card ${esc(money(l.net, cur))}</span><strong>${esc(l.giftCode)}</strong></div>`).join('')}
       ${sale.pointsEarned ? `<div><span>Points earned</span><strong>${esc(sale.pointsEarned)} (now ${esc(sale.pointsBalance)})</strong></div>` : ''}</div>
     <div class="pay-kinds" style="grid-template-columns:1fr 1fr">
-      <button type="button" class="btn primary" data-slip="print">🖨 Print slip</button>
+      <button type="button" class="btn primary" data-slip="print">Print slip</button>
       <button type="button" class="btn" data-slip="invoice">A4 invoice</button>
       <button type="button" class="btn" data-slip="wa">WhatsApp</button>
       <button type="button" class="btn" data-slip="mail">Email</button>
@@ -735,30 +739,35 @@ function headHtml() {
   const n = tiles().length;
   const stockView = shopstock.currentView();
   const on = (key) => posTab === key || (posTab === 'stock' && ({ receive: 'receive', count: 'take', catalogue: 'catalogue', po: 'order' })[key] === stockView);
-  const nav = (key, label, title) => `<button class="pos-nav-btn${on(key) ? ' on' : ''}" data-act="pos-tab" data-to="${key}" title="${esc(title || '')}">${label}</button>`;
+  const nav = (key, ico, label, title) => `<button class="pos-nav-btn${on(key) ? ' on' : ''}" data-act="pos-tab" data-to="${key}" title="${esc(title || '')}">${icon(ico)}<span>${label}</span></button>`;
   const pend = store.shopifyPendingCount();
+  const pill = (dot, text, title) => `<span class="pos-pill"${title ? ` title="${esc(title)}"` : ''}>${dot ? `<i class="pos-dot ${dot}"></i>` : ''}${text}</span>`;
   return `<div class="pos-head">
-    <div class="pos-brand">${esc(settings.name || 'Shop')} <span>· POS</span></div>
-    <div class="pos-status">
-      ${till.shopOn() ? `<span title="The online shop">🏪 ${esc(till.shopName() || 'Online shop')}</span>` : ''}
-      <span><i class="pos-dot${online ? '' : ' off'}"></i> ${online ? 'online' : 'offline'}</span>
-      <span>${n} product${n === 1 ? '' : 's'}${till.catalogueLoading() ? ' · reading the shop…' : till.catalogueAt() && till.shopOn() ? ' · stock as at ' + esc(new Date(till.catalogueAt()).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })) : ''}</span>
-      ${pend ? `<span class="chip late">${pend} sale(s) still to reach the shop</span>` : ''}
-      ${till.catalogueError() ? `<span class="chip late">${esc(till.catalogueError())}</span>` : ''}
-      ${!till.openShift() ? '<span class="chip calm" title="Open it under Register for the day’s cash-up">register closed</span>' : ''}
+    <div class="pos-head-top">
+      <div class="pos-brand"><span class="pos-brand-name">${esc(settings.name || 'Shop')}</span><span class="pos-brand-tag">Point of sale</span></div>
+      <div class="pos-status">
+        ${pill(online ? 'ok' : 'bad', online ? 'Online' : 'Offline')}
+        ${till.shopOn() ? pill('', icon('shop') + esc(till.shopName() || 'Online shop'), 'The online shop') : ''}
+        ${pill('', n + ' product' + (n === 1 ? '' : 's') + (till.catalogueLoading() ? ' · reading the shop…' : till.catalogueAt() && till.shopOn() ? ' · stock at ' + esc(new Date(till.catalogueAt()).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })) : ''))}
+        ${till.openShift() ? pill('ok', 'Register open') : pill('warn', 'Register closed', 'Open it under Register for the day’s cash-up')}
+        ${pend ? pill('bad', pend + ' sale' + (pend === 1 ? '' : 's') + ' still to reach the shop') : ''}
+        ${till.catalogueError() ? pill('bad', esc(till.catalogueError())) : ''}
+      </div>
+      <div class="pos-user">
+        ${till.shopOn() ? `<button class="pos-icon-btn" data-act="till-refresh" title="Read the shop’s stock again">${icon('refresh')}</button>` : ''}
+        ${me ? `<span class="pos-staff" title="Who is ringing">${icon('user')}${esc(me.name)}${till.isManager(me) ? ' <small>manager</small>' : ''}</span><button class="pos-icon-btn" data-act="till-lock" title="Lock the till">${icon('lock')}</button>` : ''}
+      </div>
     </div>
-    <div class="pos-nav">
-      ${nav('sale', '🛒 Sell', 'Ring up a sale')}
-      ${nav('dash', '📈 Dashboard', 'How the shop is doing')}
-      ${nav('clients', '👥 Clients', 'Customers, accounts and laybys')}
-      ${nav('orders', '📋 Orders', 'Sales orders, laybys and quotes')}
-      ${till.shopOn() ? nav('receive', '📥 Receive', 'Book in a delivery (GRV)') + nav('count', '📦 Count', 'Stock take') + nav('catalogue', '🗂 Catalogue', 'Products, prices and cost prices') + nav('po', '🧾 PO Order', 'Purchase orders and what to order') : ''}
-      ${nav('sales', '📊 Sales', 'Sales history')}
-      ${nav('refund', '↩ Refund', 'A return or refund')}
-      ${nav('register', '🧾 Register', 'Open, cash up and close the till')}
-      ${till.shopOn() ? '<button class="pos-nav-btn" data-act="till-refresh" title="Read the shop’s stock again">↻</button>' : ''}
-      ${me ? `<span class="pos-staff" title="Who is ringing">👤 ${esc(me.name)}${till.isManager(me) ? ' · manager' : ''}</span><button class="pos-nav-btn" data-act="till-lock" title="Lock the till">🔒</button>` : ''}
-    </div>
+    <nav class="pos-nav">
+      ${nav('sale', 'cart', 'Sell', 'Ring up a sale')}
+      ${nav('dash', 'chart', 'Dashboard', 'How the shop is doing')}
+      ${nav('clients', 'users', 'Clients', 'Customers, accounts and laybys')}
+      ${nav('orders', 'list', 'Orders', 'Sales orders, laybys and quotes')}
+      ${till.shopOn() ? nav('receive', 'inbox', 'Receive', 'Book in a delivery (GRV)') + nav('count', 'box', 'Count', 'Stock take') + nav('catalogue', 'grid', 'Catalogue', 'Products, prices and cost prices') + nav('po', 'file', 'PO Order', 'Purchase orders and what to order') : ''}
+      ${nav('sales', 'receipt', 'Sales', 'Sales history')}
+      ${nav('refund', 'undo', 'Refund', 'A return or refund')}
+      ${nav('register', 'till', 'Register', 'Open, cash up and close the till')}
+    </nav>
   </div>`;
 }
 
@@ -782,16 +791,32 @@ const keyOf = (t) => t.shop ? t.id.slice(2) : 'p-' + t.id;
 const catList = (prods) => [...new Set(prods.flatMap(p => p.cats))].sort((a, b) => a.localeCompare(b));
 const outOf = (p) => p.stock === 'stock' && p.tracked && !(p.qty > 0);
 const stockText = (p) => p.stock === 'order' ? 'made to order' : p.stock === 'untracked' ? (p.shop ? 'in the shop' : '') : p.qty > 0 ? 'stock ' + p.qty : 'out of stock · sales order';
-const thumb = (p) => productImg({ imageUrl: p.image }, 'pos-tile-img', 400) || '<span class="pos-tile-img none">📦</span>';
+// no picture: the product's initials on a quiet panel
+const initials = (name) => String(name || '?').split(/\s+/).filter(w => /[a-z0-9]/i.test(w)).slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?';
+const thumb = (p) => productImg({ imageUrl: p.image }, 'pos-tile-img', 400) || `<span class="pos-tile-img none">${esc(initials(p.name))}</span>`;
 function tileHtml(p, cur, star) {
   const starred = shopstock.isQuickKey(keyOf(p));
   return `<button class="pos-tile${outOf(p) ? ' out' : ''}${starred ? ' starred' : ''}" data-act="pos-add" data-id="${esc(p.id)}" data-key="${esc(keyOf(p))}" data-name="${esc(p.name)}" title="${outOf(p) ? 'Out of stock: tap to sell as a sales order' : ''}">
-    ${star ? `<span class="pos-star">${starred ? '⭐' : '☆'}</span>` : ''}
+    ${star ? `<span class="pos-star${starred ? ' on' : ''}">${icon('star')}</span>` : ''}
     ${thumb(p)}
     <span class="pos-tile-name">${esc(p.name)}</span>
     <span class="pos-tile-price">${esc(money(p.price || 0, cur))}</span>
     <span class="pos-tile-stock">${stockText(p)}</span>
   </button>`;
+}
+// A till with nothing to sell yet: say where products come from.
+function noProductsHtml() {
+  const owner = (store.getUser() || {}).role === 'owner';
+  return `<div class="pos-empty">
+    <div class="pos-empty-ico">${icon('box')}</div>
+    <h3>No products on the till yet</h3>
+    <p>The till sells the products set up under Costing, and the products in your online shop once it is connected. A one-off item can be rung up with Custom item.</p>
+    <div class="btn-row">
+      ${store.can('costing') ? '<button class="btn primary" data-act="today-do" data-do="go" data-to="costing">Add products</button>' : ''}
+      ${owner ? '<button class="btn ghost" data-act="today-do" data-do="go" data-to="settings">Connect the online shop</button>' : ''}
+      <button class="btn ghost" data-act="pos-custom">Custom item</button>
+    </div>
+  </div>`;
 }
 function saleHtml(cur) {
   const prods = tiles();
@@ -801,41 +826,42 @@ function saleHtml(cur) {
   const t = totals();
   const chip = (label, val) => `<button class="cat-chip${cat === val ? ' on' : ''}" data-act="pos-cat" data-to="${esc(val)}">${esc(label)}</button>`;
   const quick = prods.filter(p => shopstock.isQuickKey(keyOf(p)));
-  const strip = quick.length ? `<div class="pos-quick"><div class="pos-grid-cat">⭐ Quick keys</div>${quick.map(p => tileHtml(p, cur, false)).join('')}<div class="pos-grid-rule"></div></div>` : '';
+  const strip = quick.length ? `<div class="pos-quick"><div class="pos-grid-cat">${icon('star')} Quick keys</div>${quick.map(p => tileHtml(p, cur, false)).join('')}<div class="pos-grid-rule"></div></div>` : '';
   let grid;
   if (quickEdit) {
-    grid = `<div class="pos-grid-cat warn">Quick keys: tap ☆ on a product to pin it, ⭐ above when you are done</div>` + prods.filter(p => matchesTile(p, q)).slice(0, 300).map(p => tileHtml(p, cur, true)).join('');
+    grid = `<div class="pos-grid-cat warn">Quick keys: tap the star on a product to pin it, then the star button above when you are done</div>` + prods.filter(p => matchesTile(p, q)).slice(0, 300).map(p => tileHtml(p, cur, true)).join('');
   } else if (cat === '__home__' && !q && cats.length) {
     // the landing: one picture tile per category, like the online shop
     grid = strip + cats.map(x => {
       const inCat = prods.filter(p => p.cats.includes(x));
       const withImg = inCat.find(p => p.image);
-      return `<button class="pos-tile cat-tile" data-act="pos-cat" data-to="${esc(x)}">${withImg ? thumb(withImg) : '<span class="pos-tile-img none">🗂</span>'}<span class="pos-tile-name">${esc(x)}</span><span class="pos-tile-stock">${inCat.length} item${inCat.length === 1 ? '' : 's'}</span></button>`;
+      return `<button class="pos-tile cat-tile" data-act="pos-cat" data-to="${esc(x)}">${withImg ? thumb(withImg) : `<span class="pos-tile-img none">${icon('tag')}</span>`}<span class="pos-tile-name">${esc(x)}</span><span class="pos-tile-stock">${inCat.length} item${inCat.length === 1 ? '' : 's'}</span></button>`;
     }).join('');
   } else {
     const shown = prods.filter(p => q ? matchesTile(p, q) : (!cat || cat === '__home__' || p.cats.includes(cat)));
     grid = (!q && (!cat || cat === '__home__') ? strip : '') + (shown.length ? shown.slice(0, 300).map(p => tileHtml(p, cur, false)).join('')
-      : `<div class="pos-grid-empty">${prods.length ? 'No matches' + (cat && cat !== '__home__' && !q ? ' in ' + esc(cat) : '') : till.shopOn() ? 'Reading the shop’s products…' : 'Add products under Costing first.'}</div>`);
+      : prods.length || till.shopOn() ? `<div class="pos-grid-empty">${prods.length ? 'No matches' + (cat && cat !== '__home__' && !q ? ' in ' + esc(cat) : '') : 'Reading the shop’s products…'}</div>`
+      : noProductsHtml());
   }
   return `<div class="pos${mCart ? ' m-cart' : ''}">
     <div class="pos-left">
       <div class="pos-scan-row">
-        <input id="pos-search" class="pos-in" placeholder="🔍 Scan barcode or search by name / SKU…" value="${esc(search)}" autocomplete="off" autocapitalize="off" spellcheck="false">
-        <button class="pos-sq" data-act="pos-scan" title="Scan a barcode with the camera">📷</button>
-        <button class="pos-sq${quickEdit ? ' on' : ''}" data-act="pos-quick-edit" title="Edit quick keys (pin favourites)">⭐</button>
+        <label class="pos-search-wrap">${icon('search')}<input id="pos-search" class="pos-in" placeholder="Scan a barcode or search by name or SKU" value="${esc(search)}" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+        <button class="pos-sq" data-act="pos-scan" title="Scan a barcode with the camera">${icon('camera')}</button>
+        <button class="pos-sq${quickEdit ? ' on' : ''}" data-act="pos-quick-edit" title="Edit quick keys (pin favourites)">${icon('star')}</button>
       </div>
-      ${cats.length ? `<div class="cat-bar">${chip('🗂 Categories', '__home__')}${chip('All', '')}${cats.map(x => chip(x, x)).join('')}</div>` : ''}
+      ${cats.length ? `<div class="cat-bar">${chip('Categories', '__home__')}${chip('All', '')}${cats.map(x => chip(x, x)).join('')}</div>` : ''}
       <div class="pos-grid">${grid}</div>
     </div>
     <div class="pos-right">
       <div class="card pos-cart">
-        <button class="pos-cust" data-act="pos-customer">${c ? `<strong>${esc(c.name)}</strong><span>${esc([c.phone, c.area].filter(Boolean).join(' · ') || 'tap to change')}</span>${Number(c.points) > 0 || Number(c.storeCredit) > 0 ? `<span>${Number(c.points) > 0 ? '⭐ ' + esc(Math.round(Number(c.points))) + ' points' : ''}${Number(c.points) > 0 && Number(c.storeCredit) > 0 ? ' · ' : ''}${Number(c.storeCredit) > 0 ? 'store credit ' + esc(money(c.storeCredit, cur)) : ''}</span>` : ''}` : '<strong>Customer</strong><span>Tap to pick or add (needed for made-to-order, layby, on account)</span>'}</button>
-        <div class="pos-cart-head"><span>Cart</span><button class="btn ghost sm" data-act="pos-clear">Clear</button></div>
+        <div class="pos-cart-title"><span>Current sale</span>${cart.lines.length ? '<button class="pos-link" data-act="pos-clear">Clear</button>' : ''}</div>
+        <button class="pos-cust${c ? ' set' : ''}" data-act="pos-customer"><span class="pos-cust-ico">${icon('user')}</span><span class="pos-cust-txt">${c ? `<strong>${esc(c.name)}</strong><span>${esc([c.phone, c.area].filter(Boolean).join(' · ') || 'tap to change')}</span>${Number(c.points) > 0 || Number(c.storeCredit) > 0 ? `<span>${Number(c.points) > 0 ? esc(Math.round(Number(c.points))) + ' points' : ''}${Number(c.points) > 0 && Number(c.storeCredit) > 0 ? ' · ' : ''}${Number(c.storeCredit) > 0 ? 'store credit ' + esc(money(c.storeCredit, cur)) : ''}</span>` : ''}` : '<strong>Add a customer</strong><span>Needed for made to order, layby and on account</span>'}</span></button>
         <div class="pos-lines">${cart.lines.length ? cart.lines.map((l, i) => `
           <div class="pos-line">
             <div class="pos-line-top">
               <strong>${esc(l.name)}</strong>
-              <button class="icon-btn" data-act="pos-remove" data-i="${i}" title="Remove">✕</button>
+              <button class="pos-icon-btn light" data-act="pos-remove" data-i="${i}" title="Remove">${icon('x')}</button>
             </div>
             <div class="pos-line-ctl">
               <span class="qty"><button class="btn ghost sm" data-act="pos-qty" data-i="${i}" data-d="-1">−</button><b>${esc(l.qty)}</b><button class="btn ghost sm" data-act="pos-qty" data-i="${i}" data-d="1">+</button></span>
@@ -849,26 +875,26 @@ function saleHtml(cur) {
             </div>
             ${l.kind === 'order' ? `<input class="pos-in" data-field="fabric" data-i="${i}" value="${esc(l.fabric)}" placeholder="Fabric / colour" list="fabric-list">` : ''}`}
             <input class="pos-in" data-field="note" data-i="${i}" value="${esc(l.note)}" placeholder="Note (optional)">
-          </div>`).join('') : '<div class="muted" style="padding:1.2rem .4rem; text-align:center">Tap a product to start a sale.</div>'}
+          </div>`).join('') : `<div class="pos-cart-empty">${icon('cart')}<span>No items yet</span><small>Scan a barcode or tap a product</small></div>`}
         </div>
         <div class="pos-totals">
           <div><span>Items (${t.pieces})</span><strong>${esc(money(t.subtotalRaw, cur))}</strong></div>
           ${t.lineDiscs ? `<div><span>Line discounts</span><strong>− ${esc(money(t.lineDiscs, cur))}</strong></div>` : ''}
           <div><span>Discount on the sale</span><button class="btn ghost sm" data-act="pos-cart-disc">${t.cartDisc ? '− ' + esc(money(t.cartDisc, cur)) + (cart.discountPct ? ' (' + esc(cart.discountPct) + '%)' : '') : 'none'}</button></div>
           ${vatRate() ? `<div class="muted"><span>Includes VAT ${Math.round(vatRate() * 100)}%</span><strong>${esc(money(t.vat, cur))}</strong></div>` : ''}
-          <div class="tot"><span>TOTAL</span><strong>${esc(money(t.total, cur))}</strong></div>
+          <div class="tot"><span>Total</span><strong>${esc(money(t.total, cur))}</strong></div>
         </div>
-        <button class="btn primary pos-charge" data-act="pos-charge">Pay · ${t.pieces} item${t.pieces === 1 ? '' : 's'}</button>
+        <button class="btn primary pos-charge" data-act="pos-charge"${t.pieces ? '' : ' disabled'}><span>Pay</span><span>${esc(money(t.total, cur))}</span></button>
         <div class="pos-extra">
-          <button data-act="pos-salesorder" title="Order an item that is not in stock: paid on a layby, collected when it arrives">📋 Sales order</button>
-          <button data-act="pos-quote" title="Save this cart as a quote for the customer">📝 Quote</button>
-          <button data-act="pos-giftcard" title="Sell a gift card">🎁 Gift card</button>
-          <button data-act="pos-custom" title="One-off item: a description and a price">➕ Custom item</button>
-          <button data-act="pos-delivery" title="Add a delivery fee and where it goes">🚚 Delivery</button>
+          <button data-act="pos-salesorder" title="Order an item that is not in stock: paid on a layby, collected when it arrives">${icon('list')}Sales order</button>
+          <button data-act="pos-quote" title="Save this cart as a quote for the customer">${icon('quote')}Quote</button>
+          <button data-act="pos-giftcard" title="Sell a gift card">${icon('gift')}Gift card</button>
+          <button data-act="pos-custom" title="One-off item: a description and a price">${icon('plus')}Custom item</button>
+          <button data-act="pos-delivery" title="Add a delivery fee and where it goes">${icon('truck')}Delivery</button>
         </div>
       </div>
     </div>
-    <div class="pos-mbar"><button class="${mCart ? '' : 'on'}" data-act="pos-mview" data-to="shop">🔍 Shop</button><button class="${mCart ? 'on' : ''}" data-act="pos-mview" data-to="cart">🛒 Cart · ${esc(money(t.total, cur))}${t.pieces ? ' (' + t.pieces + ')' : ''}</button></div>
+    <div class="pos-mbar"><button class="${mCart ? '' : 'on'}" data-act="pos-mview" data-to="shop">${icon('search')} Shop</button><button class="${mCart ? 'on' : ''}" data-act="pos-mview" data-to="cart">${icon('cart')} Cart${t.pieces ? ' (' + t.pieces + ')' : ''}<b>${esc(money(t.total, cur))}</b></button></div>
   </div>`;
 }
 
@@ -885,9 +911,9 @@ function clientsHtml(cur) {
   const rowsAll = allCustomers().map(c => ({ c, f: clientFigures(c) }));
   const rows = q ? rowsAll.filter(({ c }) => [c.name, c.phone, c.email].some(v => String(v || '').toLowerCase().replace(/\s/g, '').includes(q.replace(/\s/g, '')))).slice(0, 60)
     : rowsAll.filter(({ f }) => f.owing > 0 || f.deposits > 0 || f.credit > 0 || f.points > 0).sort((a, b) => b.f.owing - a.f.owing || b.f.deposits - a.f.deposits);
-  const right = (f) => f.owing ? `<div class="muted">owing</div><strong class="late-ink">${esc(money(f.owing, cur))}</strong>` : f.deposits ? `<div class="muted">deposit</div><strong>${esc(money(f.deposits, cur))}</strong>` : f.credit ? `<div class="muted">store credit</div><strong>${esc(money(f.credit, cur))}</strong>` : f.points ? `<div class="muted">points</div><strong>⭐ ${f.points}</strong>` : '<span class="muted">view ›</span>';
+  const right = (f) => f.owing ? `<div class="muted">owing</div><strong class="late-ink">${esc(money(f.owing, cur))}</strong>` : f.deposits ? `<div class="muted">deposit</div><strong>${esc(money(f.deposits, cur))}</strong>` : f.credit ? `<div class="muted">store credit</div><strong>${esc(money(f.credit, cur))}</strong>` : f.points ? `<div class="muted">points</div><strong>${f.points}</strong>` : '<span class="muted">view ›</span>';
   return `<div class="card">
-    <div class="toolbar" style="margin-bottom:.6rem"><input id="cl-q" class="search pos-in" placeholder="🔍 Search clients by name / phone / email" value="${esc(clientQ)}" autocomplete="off"><button class="btn ghost" data-act="pos-client-new">＋ New client</button></div>
+    <div class="toolbar" style="margin-bottom:.6rem"><input id="cl-q" class="search pos-in" placeholder="Search clients by name, phone or email" value="${esc(clientQ)}" autocomplete="off"><button class="btn ghost" data-act="pos-client-new">＋ New client</button></div>
     <div class="cat">${q ? 'Matches' : 'Accounts with balances, deposits, credit or points'}</div>
     <div class="pk-list" style="max-height:none">${rows.length ? rows.map(({ c, f }) => `<button type="button" class="pk-row pos-client" data-act="pos-client" data-id="${esc(c.id)}"><div><strong>${esc(c.name)}</strong><span>${esc([c.phone, c.email].filter(Boolean).join(' · '))}${f.open ? ' · ' + f.open + ' open' : ''}${f.sales ? ' · ' + f.sales + ' sale(s)' : ''}</span></div><div class="r">${right(f)}</div></button>`).join('') : `<div class="muted" style="padding:.8rem">${q ? 'No matches — tap ＋ New client to add them.' : 'No outstanding accounts — search above to find any client.'}</div>`}</div>
   </div>`;
@@ -903,11 +929,11 @@ function openClient(id) {
       <div class="tile"><div class="tile-n">${esc(money(f.owing, cur))}</div><div class="tile-l">Owing</div></div>
       <div class="tile"><div class="tile-n">${esc(money(f.deposits, cur))}</div><div class="tile-l">Deposits held</div></div>
       <div class="tile"><div class="tile-n">${esc(money(f.credit, cur))}</div><div class="tile-l">Store credit</div></div>
-      <div class="tile"><div class="tile-n">⭐ ${f.points}</div><div class="tile-l">Points (${esc(money(f.points, cur))})</div></div>
+      <div class="tile"><div class="tile-n">${f.points}</div><div class="tile-l">Points (${esc(money(f.points, cur))})</div></div>
     </div>
     <div class="btn-row" style="margin-bottom:.8rem">
-      <button class="btn primary" data-pick="use">🛒 Use in this sale</button>
-      ${f.owing > 0 ? '<button class="btn ghost" data-pick="pay">💵 Account payment</button>' : ''}
+      <button class="btn primary" data-pick="use">Use in this sale</button>
+      ${f.owing > 0 ? '<button class="btn ghost" data-pick="pay">Account payment</button>' : ''}
       ${c.phone ? `<a class="btn ghost" target="_blank" rel="noopener" href="https://wa.me/${esc(String(c.phone).replace(/\D/g, '').replace(/^0/, '27'))}">WhatsApp</a>` : ''}
     </div>
     ${mine.length ? `<div class="cat">Sales</div><div class="pk-list" style="max-height:34vh">${mine.map(s => `<div class="pk-row" style="cursor:default"><div><strong>${esc(s.saleNo)}</strong> <span>${esc(niceDate(s.date))} · ${esc((s.lines || []).map(l => l.qty + '× ' + l.name).join(', ')).slice(0, 80)}</span></div><div class="r"><strong>${esc(money(s.total, cur))}</strong>${Number(s.balance) > 0.005 ? '<span class="chip late">owes ' + esc(money(s.balance, cur)) + '</span>' : s.kind === 'layby' && !s.collectedAt ? '<span class="chip calm">to collect</span>' : ''}</div></div>`).join('')}</div>` : '<p class="muted">No sales yet.</p>'}`, { okLabel: 'Close', onOk: () => {} });

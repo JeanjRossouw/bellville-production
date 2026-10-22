@@ -93,3 +93,19 @@ tracked, and online orders for them don't decrement anything.
 - Matching online-order lines to catalogue items is by `shopifyVariantId` first,
   then SKU. Products created outside the POS won't match until synced.
 - Local development needs `netlify dev` for the functions + Blobs.
+
+
+## Retail POS (`/pos/`)
+
+The retail POS connects each company to its own shop from Admin → Settings →
+Shopify (the owner enters the shop domain, the Dev Dashboard app's Client ID
+and Client secret; they stay on the server). The app needs the scopes
+`read_products, write_inventory, read_inventory, read_locations, read_orders,
+write_orders, write_merchant_managed_fulfillment_orders, read_discounts,
+read_customers, write_customers`. Register three webhooks (JSON) on the app:
+`orders/create`, `orders/cancelled` and `refunds/create`, all to
+`https://<site>/.netlify/functions/pos-shopify?hook=1&e=<entityId>`.
+Then on the Online tab: Link products by SKU (the shop's titles, descriptions
+and pictures come across), map each store to a Shopify location under Settings,
+and Push all stock once. From there every stock movement is pushed as it
+happens; the schedule `pos-shopify-sync` retries anything that failed.

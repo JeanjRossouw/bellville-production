@@ -286,5 +286,194 @@ service cloud.firestore {
                      && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'xeroPushes', 'attendance', 'staff', 'wageRuns', 'tillStaff', 'tillShifts', 'giftCards', 'grvs', 'stockTakes', 'shopProducts', 'suppliers', 'shopPos']);
       }
     }
+
+    // ======================================================================
+    // Retail POS: pos/{gid}/...  (see pos/DATA-MODEL.md)
+    //
+    // One group per deployment, several legal entities inside it. A person's
+    // reach is their users record: role (cashier < supervisor < manager <
+    // owner), entityIds and storeIds. Finished documents (sales, credit notes,
+    // payments, stock movements, shifts, ...) are written only by the server
+    // functions, which check totals, VAT and the document number first; the
+    // browser can read them and never write them.
+    // ======================================================================
+    function pUserDoc(gid) { return get(/databases/$(database)/documents/pos/$(gid)/users/$(request.auth.uid)).data; }
+    function pMember(gid) {
+      return signedIn() && exists(/databases/$(database)/documents/pos/$(gid)/users/$(request.auth.uid)) && pUserDoc(gid).active == true;
+    }
+    function pRole(gid) { return pUserDoc(gid).role; }
+    function pRank(r) { return r == 'owner' ? 4 : (r == 'manager' ? 3 : (r == 'supervisor' ? 2 : (r == 'cashier' ? 1 : 0))); }
+    function pAtLeast(gid, r) { return pMember(gid) && pRank(pRole(gid)) >= pRank(r); }
+    function pOwner(gid) { return pMember(gid) && pRole(gid) == 'owner'; }
+    function pInEntity(gid, eid) { return pRole(gid) == 'owner' || eid in pUserDoc(gid).entityIds; }
+    function pInStore(gid, sid) { return pRole(gid) == 'owner' || sid in pUserDoc(gid).storeIds; }
+    // reads: a record of one of my entities; a record of one of my stores.
+    // The owner is settled before resource.data is touched, so an owner's
+    // unfiltered list works; everyone else's query must filter the fields.
+    function pReadsEntity(gid) { return pMember(gid) && (pRole(gid) == 'owner' || resource.data.entityId in pUserDoc(gid).entityIds); }
+    function pReadsStore(gid) {
+      return pMember(gid) && (pRole(gid) == 'owner'
+        || (resource.data.entityId in pUserDoc(gid).entityIds && resource.data.storeId in pUserDoc(gid).storeIds));
+    }
+    // writes: at least this role, into one of my entities
+    function pWritesEntity(gid, r) { return pAtLeast(gid, r) && pInEntity(gid, request.resource.data.entityId); }
+    // the five stamps every record carries (rule 6), on a browser create ...
+    function pStamped() {
+      let d = request.resource.data;
+      return d.keys().hasAll(['entityId', 'storeId', 'createdBy', 'createdAt', 'deviceId'])
+        && d.entityId is string && d.entityId != '' && d.storeId is string
+        && d.createdBy == request.auth.uid && d.createdAt is string && d.deviceId is string;
+    }
+    // ... and unchanged on a browser update
+    function pStampsKept() {
+      let a = request.resource.data;
+      let b = resource.data;
+      return a.entityId == b.entityId && a.storeId == b.storeId && a.createdBy == b.createdBy && a.createdAt == b.createdAt && a.deviceId == b.deviceId;
+    }
+    // money is whole cents (rule 1): an int, or null where the model allows it
+    function pCents(v) { return v == null || v is int; }
+    // who may write a users record with these contents
+    function pUserWrite(gid, d) {
+      return d.role in ['cashier', 'supervisor', 'manager', 'owner'] && d.entityIds is list && d.storeIds is list && d.active is bool
+        && (pOwner(gid)
+            || (pAtLeast(gid, 'manager') && d.role in ['cashier', 'supervisor']
+                && pUserDoc(gid).entityIds.hasAll(d.entityIds) && pUserDoc(gid).storeIds.hasAll(d.storeIds)));
+    }
+
+    match /pos/{gid} {
+      allow read: if pMember(gid);
+      allow write: if false;
+
+      // ---- people -------------------------------------------------------
+      match /users/{uid} {
+        allow read: if signedIn() && (request.auth.uid == uid || pAtLeast(gid, 'manager'));
+        allow create: if pStamped() && pUserWrite(gid, request.resource.data) && request.auth.uid != uid;
+        // anyone may change their own name and default store, nothing else of their own record;
+        // a manager may only touch cashiers and supervisors within their reach, before and after
+        allow update: if pStampsKept() && (
+                        (request.auth.uid == uid && pMember(gid)
+                          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'defaultStoreId', 'updatedAt', 'updatedBy']))
+                        || (request.auth.uid != uid && pUserWrite(gid, request.resource.data) && pUserWrite(gid, resource.data)));
+        allow delete: if false;
+      }
+      match /pinHashes/{uid} { allow read, write: if false; }
+      match /devices/{id} {
+        allow read: if pReadsStore(gid);
+        allow write: if false;                     // enrolment is a server function
+      }
+
+      // ---- entities, stores, registers, settings --------------------------
+      match /entities/{id} {
+        allow read: if pReadsEntity(gid);
+        allow create: if pOwner(gid) && pStamped() && request.resource.data.entityId == id && request.resource.data.storeId == '';
+        allow update: if pOwner(gid) && pStampsKept();
+        allow delete: if false;
+      }
+      match /stores/{id} {
+        allow read: if pReadsStore(gid);
+        allow create: if pOwner(gid) && pStamped() && request.resource.data.storeId == id;
+        allow update: if pOwner(gid) && pStampsKept();
+        allow delete: if false;
+      }
+      match /registers/{id} {
+        allow read: if pReadsStore(gid);
+        allow create: if pWritesEntity(gid, 'manager') && pStamped() && pInStore(gid, request.resource.data.storeId)
+                      && request.resource.data.currentShiftId == '';
+        // the open shift is the server's to move
+        allow update: if pWritesEntity(gid, 'manager') && pStampsKept() && pInStore(gid, resource.data.storeId)
+                      && request.resource.data.currentShiftId == resource.data.currentShiftId;
+        allow delete: if false;
+      }
+      match /settings/{eid} {
+        allow read: if pReadsEntity(gid);
+        allow create: if pAtLeast(gid, 'manager') && pInEntity(gid, eid) && pStamped()
+                      && request.resource.data.entityId == eid && request.resource.data.storeId == '';
+        allow update: if pAtLeast(gid, 'manager') && pInEntity(gid, eid) && pStampsKept();
+        allow delete: if false;
+      }
+
+      // ---- catalogue ------------------------------------------------------
+      match /products/{id} {
+        allow read: if pReadsEntity(gid);
+        allow create: if pWritesEntity(gid, 'manager') && pStamped() && request.resource.data.storeId == ''
+                      && request.resource.data.priceCents is int && request.resource.data.costCents is int;
+        allow update: if pWritesEntity(gid, 'manager') && pStampsKept()
+                      && request.resource.data.priceCents is int && request.resource.data.costCents is int;
+        allow delete: if false;                    // archive instead
+      }
+      match /variants/{id} {
+        allow read: if pReadsEntity(gid);
+        allow create: if pWritesEntity(gid, 'manager') && pStamped() && request.resource.data.storeId == ''
+                      && request.resource.data.productId is string && pCents(request.resource.data.priceCents) && pCents(request.resource.data.costCents);
+        allow update: if pWritesEntity(gid, 'manager') && pStampsKept()
+                      && request.resource.data.productId == resource.data.productId && pCents(request.resource.data.priceCents) && pCents(request.resource.data.costCents);
+        allow delete: if false;
+      }
+
+      // ---- customers ------------------------------------------------------
+      match /customers/{id} {
+        allow read: if pReadsEntity(gid);
+        // the server alone writes customers: the cell number is one profile per company, store credit,
+        // the account, consent and points all move under its hand (pos-customer, pos-sale)
+        allow write: if false;
+      }
+      match /customerPhones/{id} { allow read, write: if false; }
+      match /loyaltyLedger/{id}  { allow read: if pReadsEntity(gid); allow write: if false; }
+      match /xeroJournals/{id}   { allow read: if pReadsEntity(gid) && pAtLeast(gid, 'manager'); allow write: if false; }
+      // Shopify: the keys never leave the server; orders, codes, the queue and the log are read-only here
+      match /shopifySecrets/{id} { allow read, write: if false; }
+      match /shopifyQueue/{id}   { allow read: if pReadsEntity(gid) && pAtLeast(gid, 'supervisor'); allow write: if false; }
+      match /shopifySync/{id}    { allow read: if pReadsEntity(gid) && pAtLeast(gid, 'supervisor'); allow write: if false; }
+      match /onlineOrders/{id}   { allow read: if pReadsStore(gid) && pAtLeast(gid, 'supervisor'); allow write: if false; }
+      match /discountCodes/{id}  { allow read: if pReadsEntity(gid); allow write: if false; }
+
+      // ---- buying ---------------------------------------------------------
+      match /suppliers/{id} {
+        allow read: if pReadsEntity(gid) && pAtLeast(gid, 'supervisor');
+        allow create: if pWritesEntity(gid, 'manager') && pStamped() && request.resource.data.storeId == '';
+        allow update: if pWritesEntity(gid, 'manager') && pStampsKept();
+        allow delete: if false;
+      }
+      match /purchaseOrders/{id} {
+        allow read: if pReadsStore(gid) && pAtLeast(gid, 'supervisor');
+        // a draft is the manager's; sending it (the number) and receiving against it are the server's
+        allow create: if pWritesEntity(gid, 'manager') && pStamped() && pInStore(gid, request.resource.data.storeId)
+                      && request.resource.data.status == 'draft' && request.resource.data.get('docNo', '') == '';
+        allow update: if pWritesEntity(gid, 'manager') && pStampsKept() && pInStore(gid, resource.data.storeId)
+                      && resource.data.status == 'draft' && request.resource.data.status == 'draft'
+                      && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['seq', 'docNo']);
+        allow delete: if false;
+      }
+
+      // ---- finished documents and stock: the server's alone -----------------
+      match /stockLevels/{id}    { allow read: if pReadsStore(gid); allow write: if false; }
+      match /stockMovements/{id} { allow read: if pReadsStore(gid); allow write: if false; }
+      match /sales/{id}          { allow read: if pReadsStore(gid); allow write: if false; }
+      match /saleLines/{id}      { allow read: if pReadsStore(gid); allow write: if false; }
+      match /payments/{id}       { allow read: if pReadsStore(gid); allow write: if false; }
+      match /creditNotes/{id}    { allow read: if pReadsStore(gid); allow write: if false; }
+      match /refunds/{id}        { allow read: if pReadsStore(gid); allow write: if false; }
+      match /laybys/{id}         { allow read: if pReadsStore(gid); allow write: if false; }
+      match /stockTakes/{id}     { allow read: if pReadsStore(gid); allow write: if false; }
+      match /specialOrders/{id}  { allow read: if pReadsStore(gid); allow write: if false; }
+      match /shifts/{id}         { allow read: if pReadsStore(gid); allow write: if false; }
+      match /cashMovements/{id}  { allow read: if pReadsStore(gid); allow write: if false; }
+      match /goodsReceived/{id}  { allow read: if pReadsStore(gid) && pAtLeast(gid, 'supervisor'); allow write: if false; }
+      // a transfer is read at both ends
+      match /transfers/{id}      { allow read: if pReadsEntity(gid) && pAtLeast(gid, 'supervisor') && (pInStore(gid, resource.data.fromStoreId) || pInStore(gid, resource.data.toStoreId)); allow write: if false; }
+      match /numberBlocks/{id}   { allow read: if pReadsStore(gid); allow write: if false; }
+      match /voidedNumbers/{id}  { allow read: if pReadsEntity(gid) && pAtLeast(gid, 'manager'); allow write: if false; }
+      match /vouchers/{code}     { allow read: if pReadsEntity(gid); allow write: if false; }
+      match /counters/{id}       { allow read, write: if false; }
+
+      // ---- audit: anyone appends in their own name; nobody edits ------------
+      match /auditLog/{id} {
+        allow read: if pReadsEntity(gid) && pAtLeast(gid, 'manager');
+        allow create: if pWritesEntity(gid, 'cashier') && pStamped() && request.resource.data.actorUid == request.auth.uid
+                      && request.resource.data.action is string;
+        allow update, delete: if false;
+      }
+    }
+
   }
 }

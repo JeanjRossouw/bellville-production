@@ -19,6 +19,7 @@ import * as store from './store.js';
 import { allMaterials, materialById } from './costing.js';
 import { allPurchaseOrders, receivePurchaseOrder, logMove, allMoves, levels } from './stock.js';
 import { esc, money, field, row, val, openModal, toast, empty, today, niceDate, addDays } from './ui.js';
+import { nameOf } from './clientgroups.js';
 
 let staff = [];
 let assets = [];
@@ -85,7 +86,7 @@ function renderReceive(openPos, waiting) {
       <h2>Client fabric to come in (${waiting.length})</h2>
       <p class="muted">When a client's fabric arrives, book it to the order: the order then shows the fabric as received, for the factory floor.</p>
       ${waiting.length ? waiting.map(o => `<div class="sr-row">
-        <div><strong>${esc(o.orderNo || '')}</strong> · ${esc(o.product || '')}<div class="muted">${esc(o.fabric)} · ${esc(o.customerName || '')}${o.fabricStatus === 'ordered' ? ' · ordered' : ''}</div></div>
+        <div><strong>${esc(o.orderNo || '')}</strong> · ${esc(o.product || '')}<div class="muted">${esc(o.fabric)} · ${esc(nameOf(o))}${o.fabricStatus === 'ordered' ? ' · ordered' : ''}</div></div>
         <button class="btn primary sm" data-act="sr-fabric" data-id="${esc(o.id)}">Fabric arrived</button></div>`).join('')
         : '<p class="muted">Every open order has its fabric.</p>'}
     </div>`;
@@ -115,7 +116,7 @@ export function receiveDirect() {
 export function fabricArrived(id, orders) {
   const o = (orders || []).find(x => x.id === id); if (!o) return;
   openModal('Fabric for ' + (o.orderNo || ''), `
-    <p><strong>${esc(o.product || '')}</strong> for ${esc(o.customerName || '')}<br><span class="muted">Fabric on the order: ${esc(o.fabric || '')}</span></p>
+    <p><strong>${esc(o.product || '')}</strong> for ${esc(nameOf(o))}<br><span class="muted">Fabric on the order: ${esc(o.fabric || '')}</span></p>
     ${row(field('Metres received', 'fa-m', { type: 'number', min: 0, step: '0.1' }), field('Rolls / pieces', 'fa-r', { type: 'number', min: 0, step: '1' }))}
     ${field('Note', 'fa-note', { placeholder: 'Colour checked, roll number, shelf…' })}`, {
     okLabel: 'Fabric received',

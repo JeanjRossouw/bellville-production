@@ -8,6 +8,7 @@ import { allOrders, orderById, setStatus } from './orders.js';
 import { customerById } from './customers.js';
 import { esc, openModal, toast, niceDate, today, money, empty } from './ui.js';
 import { orderIdFromCode } from './qr.js';
+import { nameOf, seesClient } from './clientgroups.js';
 
 let settings = {};
 export const setScanSettings = (cfg) => { settings = cfg || {}; };
@@ -35,7 +36,7 @@ export function confirmDispatch(id) {
       <div class="scan-hit">
         <div class="scan-no">${esc(o.orderNo || '')}</div>
         <h2>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' × ' + esc(o.qty) : ''}</h2>
-        <p>${esc(o.customerName || '')}</p>
+        <p>${esc(nameOf(o))}</p>
         <p class="muted">Left the factory ${esc(niceDate(o.dispatchedAt))}${o.dispatchedBy ? ' · sent out by ' + esc(o.dispatchedBy) : ''}${o.status === 'invoiced' ? ' · invoiced' : ''}.</p>
       </div>`, { okLabel: 'Close', cancelLabel: '', onOk: () => true });
     return;
@@ -46,15 +47,15 @@ export function confirmDispatch(id) {
       <div class="scan-no">${esc(o.orderNo || '')}</div>
       <h2>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' × ' + esc(o.qty) : ''}</h2>
       ${o.fabric ? `<p>${esc(o.fabric)}</p>` : ''}
-      <p>${esc(o.customerName || '')}${o.externalRef ? ' · their ref ' + esc(o.externalRef) : ''}</p>
-      ${c.address || c.area ? `<p>${esc([c.address, c.area].filter(Boolean).join(', '))}</p>` : ''}
+      <p>${esc(nameOf(o))}${o.externalRef ? ' · their ref ' + esc(o.externalRef) : ''}</p>
+      ${seesClient(o) && (c.address || c.area) ? `<p>${esc([c.address, c.area].filter(Boolean).join(', '))}</p>` : ''}
       ${o.priceEach ? `<p class="muted">${esc(money(o.priceEach * (o.qty || 1), cur))} to invoice</p>` : ''}
       ${notReady ? `<div class="notice-inline">This order is not marked Done yet (it is <strong>${esc(o.status)}</strong>). Dispatching it anyway will mark it done.</div>` : ''}
     </div>`, {
     okLabel: 'Yes, it has left',
     onOk: async () => {
       await setStatus(id, 'dispatched');
-      setTimeout(() => notifyCustomer(id), 80);
+      if (seesClient(o)) setTimeout(() => notifyCustomer(id), 80);
     }
   });
 }
@@ -78,6 +79,7 @@ export function messageFor(o) {
 export function notifyCustomer(id) {
   const o = orderById(id);
   if (!o) return;
+  if (!seesClient(o)) { toast('The office lets this client know: your role sees it by group only.'); return; }
   const c = customerById(o.customerId) || {};
   const msg = messageFor(o);
   const wa = digits(c.phone);
@@ -180,7 +182,7 @@ export function renderScan(host) {
       <div>
         <div class="order-no">${esc(o.orderNo || '')}</div>
         <strong>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' × ' + esc(o.qty) : ''}</strong>
-        <div class="muted">${esc(o.customerName || '')}${o.fabric ? ' · ' + esc(o.fabric) : ''}${o.dispatchedAt ? ' · out ' + esc(String(o.dispatchedAt).slice(11, 16)) + (o.dispatchedBy ? ' by ' + esc(o.dispatchedBy) : '') : ''}${o.notifiedAt ? ' · ✓ customer told' : ''}</div>
+        <div class="muted">${esc(nameOf(o))}${o.fabric ? ' · ' + esc(o.fabric) : ''}${o.dispatchedAt ? ' · out ' + esc(String(o.dispatchedAt).slice(11, 16)) + (o.dispatchedBy ? ' by ' + esc(o.dispatchedBy) : '') : ''}${o.notifiedAt ? ' · ✓ customer told' : ''}</div>
       </div>
       <div class="btn-row">${action}</div>
     </div>`;
@@ -216,7 +218,7 @@ export function renderScan(host) {
     ${ready.length ? ready.map(o => line(o, `<button class="btn primary sm" data-act="dispatch" data-id="${esc(o.id)}">Dispatch</button>`)).join('')
       : '<div class="card muted">Nothing is marked Done on the floor.</div>'}
     <h2 class="cat">Dispatched today (${todayOut.length})</h2>
-    ${todayOut.length ? todayOut.map(o => line(o, `<button class="btn ghost sm" data-act="notify" data-id="${esc(o.id)}">Tell customer</button>`)).join('')
+    ${todayOut.length ? todayOut.map(o => line(o, seesClient(o) ? `<button class="btn ghost sm" data-act="notify" data-id="${esc(o.id)}">Tell customer</button>` : '')).join('')
       : '<div class="card muted">Nothing has gone out yet today.</div>'}
     ${toInvoice.length ? `<p class="muted" style="margin-top:.8rem">${toInvoice.length} dispatched order${toInvoice.length === 1 ? '' : 's'} waiting under <strong>Invoices</strong>.</p>` : ''}`;
 }

@@ -3,10 +3,13 @@
 // copy of any one customer's workflow.
 import * as store from './store.js';
 import { esc, field, row, val, openModal, toast, empty, niceDate } from './ui.js';
+import { allGroups, seesCustomer, limited } from './clientgroups.js';
 
 let customers = [];
 let unwatch = null;
 let onChange = null;
+let groupFilter = '';                 // the Customers screen: one group, '-' for none, '' for all
+export const setCustomerGroup = (g) => { groupFilter = groupFilter === g ? '' : g; };
 
 export function startCustomers(cb) {
   onChange = cb;
@@ -31,7 +34,10 @@ function form(c) {
   ) + row(
     field('Area', 'cu-area', { value: c.area, placeholder: 'e.g. Durbanville' }),
     field('Payment terms (days)', 'cu-terms', { value: c.termsDays == null ? 30 : c.termsDays, type: 'number', min: 0 })
-  ) + field('Delivery address', 'cu-address', { value: c.address, type: 'textarea', placeholder: 'Street, suburb, city' })
+  ) + field('Group', 'cu-group', { value: c.group, placeholder: 'e.g. Trade, Retail, Showroom', list: 'cu-groups' })
+    + `<datalist id="cu-groups">${allGroups().map(g => `<option value="${esc(g)}">`).join('')}</datalist>`
+    + '<p class="muted" style="margin:-.3rem 0 .6rem;font-size:12.5px">Roles that see only some groups (Settings → Roles) show this client by its group name.</p>'
+    + field('Delivery address', 'cu-address', { value: c.address, type: 'textarea', placeholder: 'Street, suburb, city' })
     + field('Notes', 'cu-notes', { value: c.notes, type: 'textarea', placeholder: 'Anything worth remembering about this customer' });
 }
 
@@ -42,6 +48,7 @@ function read(wrap) {
     phone: val(wrap, 'cu-phone'),
     email: val(wrap, 'cu-email'),
     area: val(wrap, 'cu-area'),
+    group: val(wrap, 'cu-group').trim(),
     termsDays: parseInt(val(wrap, 'cu-terms'), 10) || 0,
     address: val(wrap, 'cu-address'),
     notes: val(wrap, 'cu-notes')
@@ -87,6 +94,10 @@ export async function deleteCustomer(id, orderCount) {
 }
 
 export function renderCustomers(host, orders) {
+  const groups = allGroups();
+  const mine = customers.filter(seesCustomer);
+  if (groupFilter && groupFilter !== '-' && !groups.includes(groupFilter)) groupFilter = '';
+  const shown = mine.filter(c => !groupFilter || (groupFilter === '-' ? !String(c.group || '').trim() : String(c.group || '').trim() === groupFilter));
   const counts = {};
   (orders || []).forEach(o => { counts[o.customerId] = (counts[o.customerId] || 0) + 1; });
   const openCounts = {};
@@ -98,19 +109,21 @@ export function renderCustomers(host, orders) {
     <div class="page-head">
       <div>
         <h1>Customers</h1>
-        <p class="sub">${customers.length} customer${customers.length === 1 ? '' : 's'} on the books</p>
+        <p class="sub">${mine.length} customer${mine.length === 1 ? '' : 's'} on the books${limited() && mine.length < customers.length ? ' · your role sees only some groups' : ''}</p>
       </div>
       <div class="btn-row">
         ${store.can('customers', 'edit') ? '<button class="btn ghost" data-act="import" data-kind="customers" title="Bring customers in from Excel or CSV">Import</button>' : ''}
         <button class="btn primary" data-act="new-customer">＋ New customer</button>
       </div>
     </div>
-    ${customers.length ? `<div class="grid cards">${customers.map(c => `
+    ${groups.length ? `<div class="btn-row cust-groups" style="flex-wrap:wrap;margin-bottom:.8rem">${[['', 'All'], ...groups.map(g => [g, g]), ['-', 'No group']].map(([k, l]) => `<button class="btn ${groupFilter === k ? 'primary' : 'ghost'} sm" data-act="cust-group" data-g="${esc(k)}">${esc(l)} · ${k === '' ? mine.length : mine.filter(c => k === '-' ? !String(c.group || '').trim() : String(c.group || '').trim() === k).length}</button>`).join('')}</div>` : ''}
+    ${shown.length ? `<div class="grid cards">${shown.map(c => `
       <div class="card cust">
         <div class="cust-top">
           <h2>${esc(c.name)}</h2>
           <span class="count">${openCounts[c.id] || 0} open</span>
         </div>
+        ${c.group ? `<div class="cust-group">${esc(c.group)}</div>` : ''}
         <div class="meta">
           ${c.contact ? `<div>${esc(c.contact)}</div>` : ''}
           ${c.phone ? `<div>${esc(c.phone)}</div>` : ''}
@@ -127,6 +140,7 @@ export function renderCustomers(host, orders) {
           <button class="btn danger sm" data-act="del-customer" data-id="${esc(c.id)}" data-n="${counts[c.id] || 0}">Remove</button>
         </div>
       </div>`).join('')}</div>`
+      : mine.length ? empty('', 'No customers in this group', 'Pick another group above, or All.')
       : empty('', 'No customers yet', 'Add the factory’s first customer to start capturing orders against it.')}
   `;
 }

@@ -7,7 +7,8 @@ import { esc, field, row, toast, money, daysUntil, openModal, today, niceDate } 
 import { download } from './exporter.js';
 import { startAssistant } from './assistant.js';
 import { openImport } from './importer.js';
-import { startCustomers, renderCustomers, newCustomer, editCustomer, deleteCustomer, allCustomers } from './customers.js';
+import { startCustomers, renderCustomers, newCustomer, editCustomer, deleteCustomer, allCustomers, setCustomerGroup } from './customers.js';
+import { allGroups } from './clientgroups.js';
 import {
   startOrders, renderOrders, newOrder, editOrder, cancelOrder, reopenOrder, setStatus, setFabric,
   setDue, setFilter, getFilter, setOrderSettings, allOrders, exportOrders
@@ -872,6 +873,9 @@ function rolesCard() {
         <div class="role-acts"><button class="btn ghost xs" data-act="role-rename" data-id="${esc(r.key)}">Rename</button><button class="btn ghost xs" data-act="role-del" data-id="${esc(r.key)}">Delete</button></div></th>`).join('')}</tr></thead>
       <tbody>${AREAS.map(a => `<tr><td><strong>${esc(a.label)}</strong><div class="muted">${esc(a.hint)}</div></td><td class="c muted">Edit</td>
         ${list.map(r => `<td class="c"><select class="lvl lvl-${levelOf(r.perms, a.key)}" data-act="role-perm" data-id="${esc(r.key)}" data-area="${a.key}">${lvl(r, a.key)}</select></td>`).join('')}</tr>`).join('')}
+      <tr><td><strong>Clients they see</strong><div class="muted">Give each customer a group (Customers → Edit → Group). A role on <em>Only some groups</em> sees other clients by their group name only: no name, phone or address.</div></td><td class="c muted">All</td>
+        ${list.map(r => `<td class="c"><select class="lvl" data-act="role-clients" data-id="${esc(r.key)}"><option value="all"${r.clientMode !== 'groups' ? ' selected' : ''}>All clients</option><option value="groups"${r.clientMode === 'groups' ? ' selected' : ''}>Only some groups</option></select>
+          ${r.clientMode === 'groups' ? `<div class="muted role-groups" style="font-size:12px;margin-top:.3rem">${r.clientGroups.length ? esc(r.clientGroups.join(', ')) : 'No groups: every client by group name'}</div><button class="btn ghost xs" data-act="role-groups" data-id="${esc(r.key)}">Choose groups</button>` : ''}</td>`).join('')}</tr>
       <tr><td><strong>Team and billing</strong><div class="muted">Invite people, change roles, the subscription</div></td><td class="c muted">Edit</td>${list.map(() => '<td class="c muted">Owner only</td>').join('')}</tr>
       </tbody>
     </table></div>
@@ -883,6 +887,29 @@ async function rolePerm(key, area, level) {
   const r = store.roleList().find(x => x.key === key); if (!r) return;
   try { await store.saveRole(key, { perms: { ...r.perms, [area]: level } }); toast(r.label + ': ' + (AREAS.find(a => a.key === area) || {}).label + ' → ' + (LEVELS.find(l => l.key === level) || {}).label); }
   catch (e) { toast('Could not save: ' + e.message, 'warn'); paint(); }
+}
+async function roleClients(key, mode) {
+  const r = store.roleList().find(x => x.key === key); if (!r) return;
+  try {
+    await store.saveRole(key, { clientMode: mode === 'groups' ? 'groups' : 'all', clientGroups: r.clientGroups || [] });
+    toast(r.label + (mode === 'groups' ? ' now sees clients by group — choose which groups it may see by name' : ' sees all clients'));
+    if (mode === 'groups') roleGroups(key);
+  } catch (e) { toast('Could not save: ' + e.message, 'warn'); paint(); }
+}
+function roleGroups(key) {
+  const r = store.roleList().find(x => x.key === key); if (!r) return;
+  const groups = allGroups();
+  const on = new Set((r.clientGroups || []).map(g => g.toLowerCase()));
+  openModal(r.label + ': clients it sees by name', `
+    <p class="muted">Tick the groups whose clients ${esc(r.label)} may see by name. Every other client shows only as its group name (or “Client” when it has no group).</p>
+    ${groups.length ? `<div class="role-group-list">${groups.map((g, i) => `<label class="chk" style="display:flex;gap:.5rem;align-items:center;padding:.3rem 0"><input type="checkbox" id="rg-${i}" value="${esc(g)}"${on.has(g.toLowerCase()) ? ' checked' : ''}> ${esc(g)}</label>`).join('')}</div>`
+      : '<p class="notice-inline">No customer has a group yet. Open Customers, edit a customer and fill in Group (e.g. Trade or Retail).</p>'}`, {
+    okLabel: 'Save', onOk: async (w) => {
+      const picked = groups.filter((g, i) => { const c = w.querySelector('#rg-' + i); return c && c.checked; });
+      try { await store.saveRole(key, { clientMode: 'groups', clientGroups: picked }); toast(r.label + (picked.length ? ' sees ' + picked.join(', ') + ' by name' : ' sees every client by group name only')); return true; }
+      catch (e) { toast('Could not save: ' + e.message, 'warn'); return false; }
+    }
+  });
 }
 async function roleNew() {
   const name = prompt('Name the new role (e.g. Bookkeeper, Driver, Upholsterer):', '');
@@ -1148,6 +1175,8 @@ async function onAction(e) {
     case 'client-free': return clientFree(id);
     case 'invite': return sendInvite();
     case 'role-new': return roleNew();
+    case 'role-groups': return roleGroups(id);
+    case 'cust-group': setCustomerGroup(b.dataset.g || ''); return paint();
     case 'role-rename': return roleRename(id);
     case 'role-del': return roleDelete(id);
     case 'member-remove': return memberRemove(id);
@@ -1231,6 +1260,7 @@ function onChangeEvent(e) {
   if (act === 'wg-period') { setWagePeriod(t.value); return paint(); }
   if (act === 'member-role') return memberRole(t.dataset.id, t.value);
   if (act === 'role-perm') return rolePerm(t.dataset.id, t.dataset.area, t.value);
+  if (act === 'role-clients') return roleClients(t.dataset.id, t.value);
   if (t.id === 'pf-month') { setProfitMonth(t.value); return paint(); }
   if (act === 'dl-day-pick' && t.value) { setDeliveryDay(t.value); return paint(); }
   if (act === 'fabric') return setFabric(t.dataset.id, t.value);

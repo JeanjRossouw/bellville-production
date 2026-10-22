@@ -21,6 +21,7 @@ import { allMaterials, materialById, productByName, isFabric } from './costing.j
 import { allOrders } from './orders.js';
 import { suppliersTabHtml, supplierByName, allSuppliers } from './suppliers.js';
 import { esc, money, field, row, val, openModal, toast, empty, today, niceDate, addDays, openPrint, docHeader, waDigits } from './ui.js';
+import { nameOf } from './clientgroups.js';
 
 let pos = [];
 let moves = [];
@@ -265,7 +266,7 @@ function poLineRow(l, i) {
     <button type="button" class="icon-btn po-del" title="Remove">✕</button>
     <select class="po-for" title="Fabric for one customer's order: the stock room books it in against that order">
       <option value="">For stock</option>
-      ${openForFabric(l.forOrderId).map(o => `<option value="${esc(o.id)}"${o.id === l.forOrderId ? ' selected' : ''}>For order ${esc(o.orderNo || '')} · ${esc(o.customerName || '')}${o.fabric ? ' · ' + esc(o.fabric) : ''}</option>`).join('')}
+      ${openForFabric(l.forOrderId).map(o => `<option value="${esc(o.id)}"${o.id === l.forOrderId ? ' selected' : ''}>For order ${esc(o.orderNo || '')} · ${esc(nameOf(o))}${o.fabric ? ' · ' + esc(o.fabric) : ''}</option>`).join('')}
     </select>
   </div>`;
 }
