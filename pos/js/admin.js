@@ -13,7 +13,7 @@ export const PAYMENT_METHODS = [
 export const SERIES = [
   { key: 'invoicePrefix', label: 'Invoice', suffix: '' }, { key: 'creditNotePrefix', label: 'Credit note', suffix: '-CN' },
   { key: 'laybyPrefix', label: 'Lay-by', suffix: '-LB' }, { key: 'specialOrderPrefix', label: 'Special order', suffix: '-SO' },
-  { key: 'poPrefix', label: 'Purchase order', suffix: '-PO' }, { key: 'grvPrefix', label: 'Goods received', suffix: '-GRV' }
+  { key: 'poPrefix', label: 'Purchase order', suffix: '-PO' }, { key: 'grvPrefix', label: 'Goods received', suffix: '-GRV' }, { key: 'transferPrefix', label: 'Transfer', suffix: '-TR' }
 ];
 export const defaultSettings = () => ({
   vat: { rates: [{ rateBp: 1500, effectiveFrom: '2018-04-01' }] },
@@ -22,6 +22,7 @@ export const defaultSettings = () => ({
   cash: { varianceLimitCents: 5000 },
   layby: { minDepositPct: 20, termDays: 90, penaltyPct: 1, frequency: 'monthly', reminderDays: 3 },
   specialOrder: { minDepositPct: 50, leadDays: 21 },
+  buying: { updateCostsOnReceive: true },
   session: { idleLogoutMinutes: 10, pinLength: 6 },
   numbering: { blockSize: 50, refillBelow: 10 },
   reports: { phone: '', email: '' },
@@ -220,6 +221,9 @@ export function settingsHtml(d) {
         <div class="grid two">${field('Minimum deposit %', 'se-so-dep', { value: (s.specialOrder || {}).minDepositPct == null ? 50 : s.specialOrder.minDepositPct, type: 'number', min: 0, max: 100 })}${field('Usual lead time (days)', 'se-so-lead', { value: (s.specialOrder || {}).leadDays == null ? 21 : s.specialOrder.leadDays, type: 'number', min: 1 })}</div>
         <p class="muted">The customer signs the specification off; no change of mind once it is in production. The factory app updates the status through the pos-special endpoint with the POS_FACTORY_KEY.</p>
       </div>
+      <div class="card"><h2>Buying</h2>
+        <label class="chk"><input type="checkbox" id="se-buy-cost"${(s.buying || {}).updateCostsOnReceive === false ? '' : ' checked'}> When stock is received, set the product’s cost to the new weighted average (landed)</label>
+      </div>
       <div class="card"><h2>Returns</h2>
         <div class="grid two">${field('Return window (days)', 'se-ret-days', { value: (s.returns || {}).windowDays, type: 'number', min: 0 })}${field('Reason codes (comma separated)', 'se-ret-reasons', { value: ((s.returns || {}).reasons || []).join(', ') })}</div>
         <p class="muted">After the window a manager’s PIN is needed. A return without a receipt is store credit only, with a manager’s PIN. A made-to-order item always needs a manager.</p>
@@ -248,6 +252,7 @@ export function settingsRead(w) {
     cash: { varianceLimitCents: centsOf(val(w, 'se-variance')) },
     layby: { minDepositPct: num('se-lb-dep', 0, 100, 20), termDays: num('se-lb-term', 7, 3650, 90), penaltyPct: num('se-lb-pen', 0, 1, 1), frequency: val(w, 'se-lb-freq') || 'monthly', reminderDays: num('se-lb-rem', 0, 60, 3) },
     specialOrder: { minDepositPct: num('se-so-dep', 0, 100, 50), leadDays: num('se-so-lead', 1, 365, 21) },
+    buying: { updateCostsOnReceive: !!w.querySelector('#se-buy-cost').checked },
     session: { idleLogoutMinutes: num('se-idle', 1, 1440, 10), pinLength: num('se-pinlen', 4, 6, 6) },
     numbering: { blockSize: num('se-block', 10, 500, 50), refillBelow: 10 },
     reports: { phone: val(w, 'se-rep-phone'), email: val(w, 'se-rep-email') },

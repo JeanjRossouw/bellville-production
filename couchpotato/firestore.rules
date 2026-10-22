@@ -455,6 +455,8 @@ service cloud.firestore {
       match /shifts/{id}         { allow read: if pReadsStore(gid); allow write: if false; }
       match /cashMovements/{id}  { allow read: if pReadsStore(gid); allow write: if false; }
       match /goodsReceived/{id}  { allow read: if pReadsStore(gid) && pAtLeast(gid, 'supervisor'); allow write: if false; }
+      // a transfer is read at both ends
+      match /transfers/{id}      { allow read: if pReadsEntity(gid) && pAtLeast(gid, 'supervisor') && (pInStore(gid, resource.data.fromStoreId) || pInStore(gid, resource.data.toStoreId)); allow write: if false; }
       match /numberBlocks/{id}   { allow read: if pReadsStore(gid); allow write: if false; }
       match /voidedNumbers/{id}  { allow read: if pReadsEntity(gid) && pAtLeast(gid, 'manager'); allow write: if false; }
       match /vouchers/{code}     { allow read: if pReadsEntity(gid); allow write: if false; }

@@ -53,8 +53,8 @@ writable by its own login, so a POS role could never safely live there.
 | Role | Rank | May |
 |---|---|---|
 | `cashier` | 1 | Ring up sales, refunds within their discount limit, take lay-by payments, add customers |
-| `supervisor` | 2 | All of the above, plus overrides (bigger discounts, voids before completion), opening and closing a register, stock counts, viewing suppliers and purchase orders |
-| `manager` | 3 | All of the above, plus products, prices, suppliers, purchase orders, receiving stock, staff who are cashiers or supervisors, settings of their entities, enrolling devices |
+| `supervisor` | 2 | All of the above, plus overrides (bigger discounts, voids before completion), opening and closing a register, stock counts, quarantine moves, receiving stock, transfers between stores, viewing suppliers and purchase orders |
+| `manager` | 3 | All of the above, plus products, prices, suppliers, purchase orders (sending, cancelling), stock adjustments and posting stock takes, staff who are cashiers or supervisors, settings of their entities, enrolling devices |
 | `owner` | 4 | Everything in every entity and store, plus entities, stores, registers and staff of any role |
 
 A user's reach is `entityIds` and `storeIds` on their `users` record. An owner
@@ -87,6 +87,7 @@ fields present. On every browser update: the five stamps unchanged.
 | `SO` | special order | `specialOrderPrefix` |
 | `PO` | purchase order | `poPrefix` |
 | `GRV` | goods received | `grvPrefix` |
+| `TR` | stock transfer | `transferPrefix` |
 
 `docNo` = prefix + `-` + the sequence padded to 6 digits (`BF-000123`). The
 sequence `seq` is also stored as a number so gaps can be audited with a query.
@@ -141,7 +142,7 @@ types a one-time code on the device).
 **`entities/{entityId}`** (`entityId` = its own id, `storeId` = '')
 ```
 legalName, tradingName, regNo, vatRegistered (bool), vatNo ('' when not registered),
-invoicePrefix, creditNotePrefix, laybyPrefix, specialOrderPrefix, poPrefix, grvPrefix,
+invoicePrefix, creditNotePrefix, laybyPrefix, specialOrderPrefix, poPrefix, grvPrefix, transferPrefix,
 address { line1, line2, city, code }, phone, email, website,
 bank { name, accountName, accountNo, branchCode }, logoUrl, active, + stamps
 ```
@@ -171,6 +172,7 @@ discounts { maxPctByRole { cashier, supervisor, manager, owner } }    // whole p
 cash { varianceLimitCents }                                            // beyond this a close needs a manager
 layby { minDepositPct, termDays (the longest), penaltyPct (≤ 1), frequency, reminderDays }
 specialOrder { minDepositPct, leadDays }
+buying { updateCostsOnReceive }
 session { idleLogoutMinutes, pinLength (4..6) }
 numbering { blockSize, refillBelow }
 reports { phone, email }                                               // where the daily summary goes (the owner)
@@ -420,29 +422,54 @@ R: members of the store. W: server only.
 
 **`suppliers/{id}`** (`storeId` = '')
 ```
-entityId, name, contact, phone, email, accountNo, termsDays, notes, archived, + stamps, updatedBy, updatedAt
+entityId, name, contact, phone, email, accountNo, termsDays, leadDays, notes, archived, + stamps, updatedBy, updatedAt
 ```
 R: supervisor and up, in the entity. W: manager or owner.
 
 **`purchaseOrders/{id}`** — series `PO`
 ```
-entityId, storeId (the store it is for), seq, docNo, supplierId, supplierName,
-lines [ { productId, variantId, itemId, sku, name, qty, unitCostCents, receivedQty } ],
-totalCostCents, status ('draft'|'sent'|'part'|'received'|'cancelled'),
-expectedAt, sentAt, note, + stamps, updatedBy, updatedAt
+entityId, storeId (the store it is for), seq, docNo, supplierId, supplierName, supplierSnapshot { contact, phone, email },
+lines [ { productId, variantId, itemId, sku, name, barcode, qty, unitCostCents (ex VAT), receivedQty } ],
+subtotalCents, vatRateBp, vatCents, totalCents, status ('draft'|'sent'|'part'|'received'|'cancelled'),
+expectedAt, note, sentAt, sentBy, sentHow, grvs [ { id, docNo, at } ], receivedAt, cancelledAt, cancelledBy, cancelReason, + stamps, updatedBy, updatedAt
 ```
-R: supervisor and up, in the store. W: manager or owner may create and edit
-while `status` is `draft`; the number is issued by the server when it is
-sent; `part`, `received`, `receivedQty` are server only.
+R: supervisor and up, in the store. W: manager or owner write the draft
+(no number); `pos-buy` sends it (the number from the entity's counter,
+`onOrderQty` up on each line's level), receives against it (`receivedQty`,
+`part`/`received`) and cancels it (what was still open comes off order).
+A sent order is served to the supplier from a signed `pos-doc` link as an
+A4 page to print or save as PDF, sent by email or WhatsApp. Lines can be
+suggested from the low-stock list: available + on order ≤ reorder level,
+the reorder quantity each, the supplier's products only.
 
-**`goodsReceived/{id}`** — immutable, series `GRV`
+**`goodsReceived/{id}`** — immutable, series `GRV` (`pos-buy receive`)
 ```
-entityId, storeId, seq, docNo, purchaseOrderId, purchaseOrderDocNo, supplierId,
-supplierInvoiceNo, lines [ { productId, variantId, itemId, name, qty, unitCostCents } ],
-totalCostCents, receivedBy, + stamps, serverReceivedAt
+entityId, storeId, seq, docNo, purchaseOrderId, purchaseOrderDocNo ('' for a direct receipt), supplierId, supplierName,
+supplierInvoiceNo, invoiceDate, lines [ { productId, variantId, itemId, name, sku, barcode, qty, unitCostCents, landedShareCents, landedCents, landedUnitCents } ],
+lineCount, subtotalCents, landed { freightCents, dutyCents, otherCents, totalCents, method ('value'|'qty') }, totalCostCents,
+updateCosts (bool), costChanges [ { itemId, name, fromCents, toCents } ], receivedBy, note, + stamps, serverReceivedAt
 ```
-R: supervisor and up. W: server only (writes the stock movements, moves the
-PO's `receivedQty`, and updates `costCents` on the item when the setting says so).
+R: supervisor and up. W: server only. One `receive` movement per line at
+the landed unit cost (freight, duty and other charges spread over the
+lines by value or by quantity), which moves the level's weighted average
+cost; with `updateCosts` the product's or variant's `costCents` becomes
+that average. Against a PO never more than is still open; the rest is a
+direct receipt. Labels print for what came in.
+
+**`transfers/{id}`** — series `TR` (`pos-buy`)
+```
+entityId, storeId (= fromStoreId), fromStoreId, toStoreId, fromStoreName, toStoreName, seq, docNo,
+lines [ { productId, variantId, itemId, name, sku, barcode, qty, receivedQty, lostQty, unitCostCents (the sender's average) } ],
+lineCount, units, valueCents, status ('inTransit'|'received'|'cancelled'), sentAt, sentBy, receivedAt, receivedBy,
+closedShort (bool), lostUnits, note, cancelledAt, cancelledBy, + stamps, serverReceivedAt, updatedAt
+```
+R: supervisor and up at either store. W: server only. Sending writes
+`transferOut` at the sender at once (never more than available); the
+goods are in transit until the other store receives them (`transferIn`
+at the sender's cost, into the receiver's average), in part if need be;
+closing short records `lostQty` — the stock already left the sender, so
+nothing is invented at the receiver. Cancelling before anything arrived
+puts the stock back at the sender.
 
 ### Audit
 

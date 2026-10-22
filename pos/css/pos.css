@@ -302,3 +302,6 @@ small { font-size: 12px; }
 .tk-scan { padding: .7rem .9rem; } .tk-scanrow { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; } .tk-scanrow select { font: inherit; font-size: 13px; padding: .55rem .6rem; border: 1px solid var(--line-2); border-radius: 4px; background: #fff; }
 .tk-video { width: 100%; max-width: 480px; border-radius: 6px; margin-top: .6rem; background: #000; } .tk-last { font-family: var(--font-ui); font-weight: 600; font-size: 16px; margin-top: .5rem; min-height: 1.4em; }
 .tk-tbl tr.done td { background: #f3faf4; } .tk-tbl tr.neg td strong { color: var(--red); } .tk-tbl tr.pos td strong { color: #1f5f2f; }
+
+/* ---- buying ---- */
+.po-lines input.in-sm { text-align: right; } .grid.four { display: grid; grid-template-columns: repeat(4, 1fr); gap: .6rem; } @media (max-width: 760px) { .grid.four { grid-template-columns: 1fr 1fr; } }

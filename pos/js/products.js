@@ -331,15 +331,19 @@ export function printLabels(d, ids, eid) {
     if (!vs.length) items.push({ name: p.name, code: (p.barcodes || [])[0] || p.sku || '', priceCents: p.priceCents });
     else vs.forEach(v => items.push({ name: p.name + ' · ' + v.name, code: (v.barcodes || [])[0] || v.sku || '', priceCents: v.priceCents == null ? p.priceCents : v.priceCents }));
   }
+  printLabelItems(items);
+}
+// labels for a list of { name, code, priceCents, copies? }: 3 across on A4, 70 × 37 mm
+export function printLabelItems(items, dflt = 1) {
   const missing = items.filter(i => !i.code || !encodable(i.code));
-  if (!items.length) return toast('Tick the products to print labels for.', 'warn');
+  if (!items.length) return toast('Nothing to print labels for.', 'warn');
   if (missing.length) toast(missing.length + ' item(s) have no barcode or SKU to print; give them one first.', 'warn');
   const list = items.filter(i => i.code && encodable(i.code));
   if (!list.length) return;
-  openModal('Print labels', field('Copies of each', 'lb-copies', { type: 'number', value: 1, min: 1, max: 50 }) + `<p class="muted">${list.length} label${list.length === 1 ? '' : 's'}, 3 across on A4 (70 × 37 mm).</p>`, {
+  openModal('Print labels', field('Copies of each (blank = as received)', 'lb-copies', { type: 'number', value: dflt, min: 1, max: 500 }) + `<p class="muted">${list.length} label${list.length === 1 ? '' : 's'}, 3 across on A4 (70 × 37 mm).</p>`, {
     okLabel: 'Print', onOk: (wrap) => {
-      const copies = Math.max(1, Math.min(50, Number(val(wrap, 'lb-copies')) || 1));
-      const cells = list.flatMap(i => Array.from({ length: copies }, () => `<div class="lbl"><div class="lbl-name">${esc(i.name)}</div><div class="lbl-price">${esc(money(i.priceCents))}</div><div class="lbl-bar">${barcodeSvg(i.code, 40)}</div><div class="lbl-code">${esc(i.code)}</div></div>`));
+      const copies = Math.max(1, Math.min(500, Number(val(wrap, 'lb-copies')) || 1));
+      const cells = list.flatMap(i => Array.from({ length: Math.min(500, i.copies || copies) }, () => `<div class="lbl"><div class="lbl-name">${esc(i.name)}</div><div class="lbl-price">${esc(money(i.priceCents))}</div><div class="lbl-bar">${barcodeSvg(i.code, 40)}</div><div class="lbl-code">${esc(i.code)}</div></div>`));
       openPrint('Labels', `<div class="lbl-sheet">${cells.join('')}</div>`, `
         @page { size: A4; margin: 10mm 5mm; } .lbl-sheet { display: grid; grid-template-columns: repeat(3, 70mm); gap: 0; }
         .lbl { width: 70mm; height: 37mm; padding: 2mm 3mm; box-sizing: border-box; text-align: center; overflow: hidden; font-family: Arial, sans-serif; break-inside: avoid; }

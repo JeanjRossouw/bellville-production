@@ -15,6 +15,7 @@ import * as returns from './returns.js';
 import * as laybys from './laybys.js';
 import * as specials from './specials.js';
 import * as stock from './stock.js';
+import * as buying from './buying.js';
 import { EMULATOR } from './db.js';
 
 const $ = (id) => document.getElementById(id);
@@ -22,7 +23,7 @@ let view = '';                       // the tab on screen; a till starts on Sell
 let adminSub = 'companies';          // the Admin tab's sub-screen
 let editId = '', settingsEntity = '';  // what the admin forms are on
 let entities = [], stores = [], registers = [], users = [], devices = [], settings = {};
-let catalogue = [], variants = [], stockLevels = [], customers = [], storeSales = [], storeLaybys = [], storeSpecials = [], storeTakes = [], stockOffsets = {};
+let catalogue = [], variants = [], stockLevels = [], customers = [], storeSales = [], storeLaybys = [], storeSpecials = [], storeTakes = [], suppliers = [], storePOs = [], storeGrvs = [], transfersOut = [], transfersIn = [], stockOffsets = {};
 let sellStore = '';                 // the store being sold from: the till's, else chosen
 let prEntity = '', prFilter = { q: '', category: '', brand: '', type: '', archived: false };
 const unwatch = [];
@@ -65,6 +66,7 @@ function startData() {
     // a store-scoped query must name both the entity and the store for the rules to allow it
     if (ents.length && sts.length) { w('stores', [['entityId', 'in', ents.slice(0, 10)], ['storeId', 'in', sts.slice(0, 10)]], r => { stores = r; }); w('registers', [['entityId', 'in', ents.slice(0, 10)], ['storeId', 'in', sts.slice(0, 10)]], r => { registers = r; }); }
   }
+  if (auth.atLeast('supervisor')) { if (owner) w('suppliers', [], r => { suppliers = r; if (view === 'buying') paint(); }); else if (ents.length) w('suppliers', [['entityId', 'in', ents.slice(0, 30)]], r => { suppliers = r; if (view === 'buying') paint(); }); }
   if (auth.atLeast('manager')) {
     w('users', [], r => { users = r; });
     if (owner) w('devices', [], r => { devices = r; });
@@ -77,7 +79,7 @@ function startData() {
 }
 function stopData() {
   while (unwatch.length) { try { unwatch.pop()(); } catch (e) {} }
-  if (unwatchStore) { try { unwatchStore(); } catch (e) {} unwatchStore = null; } watchedStore = ''; storeSales = []; storeLaybys = []; storeSpecials = []; storeTakes = []; stockLevels = [];   // or it would go on listening as the next person
+  if (unwatchStore) { try { unwatchStore(); } catch (e) {} unwatchStore = null; } watchedStore = ''; storeSales = []; storeLaybys = []; storeSpecials = []; storeTakes = []; storePOs = []; storeGrvs = []; transfersOut = []; transfersIn = []; suppliers = []; stockLevels = [];   // or it would go on listening as the next person
   entities = []; stores = []; registers = []; users = []; devices = []; settings = {}; catalogue = []; variants = []; stockLevels = []; customers = [];
 }
 // the store sold from: the till's own, else the person's default, else their first
@@ -93,17 +95,22 @@ function startStoreData() {
   const sid = sellStoreId();
   if (sid === watchedStore) return;
   if (unwatchStore) { try { unwatchStore(); } catch (e) {} unwatchStore = null; }
-  watchedStore = sid; stockLevels = []; storeSales = []; storeLaybys = []; storeSpecials = []; storeTakes = [];
+  watchedStore = sid; stockLevels = []; storeSales = []; storeLaybys = []; storeSpecials = []; storeTakes = []; storePOs = []; storeGrvs = []; transfersOut = []; transfersIn = [];
   if (!sid) return;
   const st = stores.find(x => x.id === sid);
   const eid = st ? st.entityId : (auth.session.device && auth.session.device.entityId) || '';
   if (!eid) return;
-  const u1 = watch('stockLevels', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { stockLevels = rows; if (view === 'sell' || view === 'stock') paint(); });
+  const u1 = watch('stockLevels', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { stockLevels = rows; if (view === 'sell' || view === 'stock' || view === 'buying') paint(); });
   const u2 = watch('sales', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeSales = rows; if (view === 'sales') paint(); });
   const u3 = watch('laybys', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeLaybys = rows; if (view === 'laybys') paint(); });
   const u4 = watch('specialOrders', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeSpecials = rows; if (view === 'orders') paint(); });
   const u5 = auth.atLeast('supervisor') ? watch('stockTakes', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeTakes = rows; if (view === 'stock') paint(); }) : () => {};
-  unwatchStore = () => { u1(); u2(); u3(); u4(); u5(); };
+  const sup = auth.atLeast('supervisor');
+  const u6 = sup ? watch('purchaseOrders', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storePOs = rows; if (view === 'buying') paint(); }) : () => {};
+  const u7 = sup ? watch('goodsReceived', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeGrvs = rows; if (view === 'buying') paint(); }) : () => {};
+  const u8 = sup ? watch('transfers', [['entityId', '==', eid], ['fromStoreId', '==', sid]], rows => { transfersOut = rows; if (view === 'buying') paint(); }) : () => {};
+  const u9 = sup ? watch('transfers', [['entityId', '==', eid], ['toStoreId', '==', sid]], rows => { transfersIn = rows; if (view === 'buying') paint(); }) : () => {};
+  unwatchStore = () => { u1(); u2(); u3(); u4(); u5(); u6(); u7(); u8(); u9(); };
   sell.loadCart(sid);
   reloadOffsets();
 }
@@ -177,7 +184,7 @@ const entityName = (id) => { const e = entities.find(x => x.id === id); return e
 function navItems() {
   const out = [];
   if (sellStoreId()) out.push({ key: 'sell', label: 'Sell' }, { key: 'sales', label: 'Sales' }, { key: 'returns', label: 'Returns' }, { key: 'laybys', label: 'Lay-bys' }, { key: 'orders', label: 'Custom orders' });
-  if (sellStoreId() && auth.atLeast('supervisor')) out.push({ key: 'stock', label: 'Stock' });
+  if (sellStoreId() && auth.atLeast('supervisor')) out.push({ key: 'stock', label: 'Stock' }, { key: 'buying', label: 'Buying' });
   if (register.registerId()) out.push({ key: 'register', label: 'Register' });
   out.push({ key: 'home', label: 'Home' }, { key: 'products', label: 'Products' });
   if (auth.atLeast('manager')) out.push({ key: 'admin', label: 'Admin' });
@@ -212,6 +219,7 @@ function paint() {
   if (view === 'register') { startStoreData(); screen.innerHTML = register.registerHtml(); return; }
   if (view === 'laybys') { startStoreData(); screen.innerHTML = laybys.laybysHtml(); return; }
   if (view === 'orders') { startStoreData(); screen.innerHTML = specials.specialsHtml(); return; }
+  if (view === 'buying') { startStoreData(); screen.innerHTML = buying.buyingHtml(); return; }
   if (view === 'stock') { startStoreData(); screen.innerHTML = stock.stockHtml(); const sc = $('tk-scan'); if (sc && !document.activeElement.closest('#screen')) sc.focus(); return; }
   if (view === 'returns') { startStoreData(); screen.innerHTML = returns.returnsHtml(); const q = $('rt-q'); if (q && !document.activeElement.closest('#screen')) q.focus(); return; }
   if (view === 'admin') {
@@ -364,6 +372,7 @@ async function onAction(e) {
   if (b.dataset.act.startsWith('lb-')) return laybys.action(b.dataset.act, b);
   if (b.dataset.act.startsWith('so-')) return specials.action(b.dataset.act, b);
   if (b.dataset.act.startsWith('st-')) { e.preventDefault(); return stock.action(b.dataset.act, b); }
+  if (b.dataset.act.startsWith('by-')) { e.preventDefault(); return buying.action(b.dataset.act, b); }
   if (b.dataset.act === 'sync-now') return sync.syncNow().then(reloadOffsets);
   if (b.dataset.act === 'sync-failed') return showFailed();
   if (b.dataset.act === 'sync-drop') { if (confirm('Drop this refused sale from the till? It was never written; ring it up again if it should be.')) sync.dropFailed(id).then(showFailed); return; }
@@ -412,13 +421,14 @@ $('screen').addEventListener('change', (e) => {
 });
 
 $('screen').addEventListener('input', (e) => { if (e.target.id === 'pr-q') { prFilter.q = e.target.value; paint(); } if (e.target.id === 'sl-q') sell.onSearchInput(e.target.value); if (e.target.id === 'sa-q') { salesTab.view.q = e.target.value; paint(); const q = $('sa-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } } });
-$('screen').addEventListener('keydown', (e) => { if (e.target.id === 'sl-q' && e.key === 'Enter') { e.preventDefault(); sell.onSearchEnter(e.target.value); } if (e.key === 'Enter' && returns.onEnter(e.target.id, e.target.value)) e.preventDefault(); if (e.key === 'Enter' && view === 'stock' && stock.onEnter(e.target.id, e.target.value)) e.preventDefault(); });
-$('screen').addEventListener('change', (e) => { if (view === 'returns') returns.onChange(e); if (view === 'laybys') laybys.onChange(e); if (view === 'orders') specials.onChange(e); if (view === 'stock') stock.onChange(e); });
-$('screen').addEventListener('input', (e) => { if (view === 'returns') returns.onInput(e.target.id, e.target.value); if (view === 'laybys') laybys.onInput(e.target.id, e.target.value); if (view === 'orders') specials.onInput(e.target.id, e.target.value); if (view === 'stock') stock.onInput(e.target.id, e.target.value); });
+$('screen').addEventListener('keydown', (e) => { if (e.target.id === 'sl-q' && e.key === 'Enter') { e.preventDefault(); sell.onSearchEnter(e.target.value); } if (e.key === 'Enter' && returns.onEnter(e.target.id, e.target.value)) e.preventDefault(); if (e.key === 'Enter' && view === 'stock' && stock.onEnter(e.target.id, e.target.value)) e.preventDefault(); if (e.key === 'Enter' && view === 'buying' && buying.onEnter(e.target.id, e.target.value)) e.preventDefault(); });
+$('screen').addEventListener('change', (e) => { if (view === 'returns') returns.onChange(e); if (view === 'laybys') laybys.onChange(e); if (view === 'orders') specials.onChange(e); if (view === 'stock') stock.onChange(e); if (view === 'buying') buying.onChange(e); });
+$('screen').addEventListener('input', (e) => { if (view === 'returns') returns.onInput(e.target.id, e.target.value); if (view === 'laybys') laybys.onInput(e.target.id, e.target.value); if (view === 'orders') specials.onInput(e.target.id, e.target.value); if (view === 'stock') stock.onInput(e.target.id, e.target.value); if (view === 'buying') buying.onInput(e.target.id, e.target.value); });
 returns.setContext({ repaint: () => { if (view === 'returns') paint(); }, data: sellData, onDone: () => { register.reg.stale = true; } });
 laybys.setContext({ repaint: () => { if (view === 'laybys') paint(); }, data: () => ({ ...sellData(), laybys: storeLaybys }), onChange: () => { register.reg.stale = true; if (view === 'laybys') paint(); } });
 // a lay-by's own buttons sit in its modal, outside the screen
-document.addEventListener('click', (e) => { const b = e.target.closest('#modal [data-act^="lb-"], #modal [data-act^="so-"]'); if (!b) return; if (b.dataset.act.startsWith('lb-')) laybys.action(b.dataset.act, b); else specials.action(b.dataset.act, b); });
+document.addEventListener('click', (e) => { const b = e.target.closest('#modal [data-act^="lb-"], #modal [data-act^="so-"], #modal [data-act^="by-"]'); if (!b) return; if (b.dataset.act.startsWith('lb-')) laybys.action(b.dataset.act, b); else if (b.dataset.act.startsWith('so-')) specials.action(b.dataset.act, b); else buying.action(b.dataset.act, b); });
+buying.setContext({ repaint: () => { if (view === 'buying') paint(); }, data: () => ({ ...sellData(), stores, suppliers, pos: storePOs, grvs: storeGrvs, transfers: [...transfersOut, ...transfersIn.filter(t => !transfersOut.some(o => o.id === t.id))] }), onChange: () => { reloadOffsets(); if (view === 'buying') paint(); } });
 stock.setContext({ repaint: () => { if (view === 'stock') paint(); }, data: () => ({ ...sellData(), takes: storeTakes }), onChange: () => { reloadOffsets(); if (view === 'stock') paint(); } });
 specials.setContext({ repaint: () => { if (view === 'orders') paint(); }, data: () => ({ ...sellData(), specials: storeSpecials }), onChange: () => { register.reg.stale = true; if (view === 'orders') paint(); } });
 document.addEventListener('keydown', (e) => { if (view === 'sell' && auth.session.user) sell.onDocumentKey(e); }, true);

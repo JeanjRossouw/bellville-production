@@ -89,6 +89,15 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
 - `stock.test.mjs` — step 13 in the browser: the Stock tab as a manager —
   levels, the low-stock list, an adjustment, the item card, a stock take
   counted by scanning, reviewed and posted. `node pos/test/stock.test.mjs`
+- `buy-api.test.mjs` — step 14: the `pos-buy` function over HTTP: a PO sent
+  (the number, stock on order, the signed link page for the supplier), a
+  part receipt with landed costs spread by value at the landed cost into
+  the average and the product's cost, the rest, a direct receipt by
+  quantity, a cancelled PO, a transfer sent, part received and closed
+  short, a cancelled transfer. `node pos/test/buy-api.test.mjs`
+- `buying.test.mjs` — step 14 in the browser: a supplier, a PO suggested
+  from low stock and sent (email link, print), received with freight, the
+  GRV and labels, a transfer sent. `node pos/test/buying.test.mjs`
 - `money.test.mjs` — the shared cents and VAT maths; needs no emulator.
   `node pos/test/money.test.mjs`
   Set `FIREBASE_SDK_DIR` to a local copy of the `firebase` package's browser
