@@ -12,6 +12,7 @@ import {
 } from './pos.mjs';
 import { vatIn, rateOn, rateFor, lineTotals, roundTo10c } from '../../../pos/js/money.js';
 import { loyaltySettings, tierFor, earnPoints, pointsFor, sweep, earnLot, redeem, compactLots, blankLoyalty, blankStats } from '../../../pos/js/loyalty-terms.js';
+import { afterStock } from './shopify-pos.mjs';
 
 export const PREPAID = ['creditNote', 'layby', 'specialOrder'];   // a document that already holds the money pays first
 export const METHODS = ['cash', 'card', 'eft', 'qr', 'voucher', 'storeCredit', 'account', 'points'];
@@ -151,7 +152,19 @@ export async function prepareSale(ctx, b, opts = {}) {
   const saleDisc = Math.min(sub, int(b.saleDiscountCents) || 0);
   if (saleDisc < 0) throw new Reject(400, 'The sale discount is wrong.');
   let saleBy = null;
-  if (saleDisc && !opts.trusted) { const pct = Math.round(saleDisc / sub * 1000) / 10; saleBy = discountOk(ctx, pct, b.saleDiscountToken, 'the sale').by; if (saleBy) approvers.set(saleBy.uid, saleBy.name); }
+  let saleCode = '';
+  if (saleDisc && !opts.trusted) {
+    // a Shopify discount code the server knows needs no PIN; anything else goes by the role limits
+    const code = clean(b.saleDiscountCode, 40).toUpperCase();
+    const dc = code ? await getDoc('discountCodes', ctx.entityId + '_' + code) : null;
+    const day = when.slice(0, 10);
+    if (dc && dc.entityId === ctx.entityId && dc.active && (!dc.startsAt || dc.startsAt.slice(0, 10) <= day) && (!dc.endsAt || dc.endsAt.slice(0, 10) >= day)) {
+      const allowed = dc.kind === 'percentage' ? Math.round(sub * dc.value / 100) : dc.valueCents || 0;
+      if (saleDisc > allowed) throw new Reject(400, `Code ${code} gives at most ${(allowed / 100).toFixed(2)} off this sale.`);
+      saleCode = code;
+    } else if (code) throw new Reject(400, `Discount code ${code} is not valid today.`);
+    else { const pct = Math.round(saleDisc / sub * 1000) / 10; saleBy = discountOk(ctx, pct, b.saleDiscountToken, 'the sale').by; if (saleBy) approvers.set(saleBy.uid, saleBy.name); }
+  }
   let left = saleDisc, vat = 0;
   lines.forEach((l, i) => { const share = i === lines.length - 1 ? left : (sub ? Math.round(saleDisc * l.lineTotalCents / sub) : 0); left -= share; l.saleDiscountCents = share; l.netCents = l.lineTotalCents - share; l.vatCents = vatIn(l.netCents, l.vatRateBp); vat += l.vatCents; });
   const total = sub - saleDisc;
@@ -165,7 +178,7 @@ export async function prepareSale(ctx, b, opts = {}) {
   }
 
   // ---- the tenders: a sale is paid in full; a lay-by's deposit or instalment is a part (opts.noTenders: none at all)
-  const base = { when, at, rateBp, customer, lines, moves, vouchersSold, approvers, saleBy, gross, lineDisc, saleDisc, sub, total, vat };
+  const base = { when, at, rateBp, customer, lines, moves, vouchersSold, approvers, saleBy, saleCode, gross, lineDisc, saleDisc, sub, total, vat };
   if (opts.noTenders) return { ...base, voucherUse: [], pays: [], paid: 0, rounding: 0, cashTendered: 0, cashPay: null, creditUsed: 0, accountUsed: 0, pointsUsed: 0, pointsCents: 0 };
   const prepaid = opts.prepaid || (opts.creditNote ? { method: 'creditNote', ...opts.creditNote } : null);
   return { ...base, ...prepareTenders(ctx, b.tenders, { total, customer, prepaid }) };
@@ -245,7 +258,7 @@ export async function saleWrites(tx, ctx, s, saleId, b, levels = new Map()) {
   const sale = {
     series: 'INV', seq, docNo, blockId: block.id, registerId: ctx.registerId || '', shiftId: ctx.shiftId || '',
     customerId: customer ? customer.id : '', customerSnapshot: customer ? { name: customer.name, phone: customer.phone || '', email: customer.email || '', vatNo: customer.vatNo || '', address: customer.address || {} } : null,
-    lineCount: s.lines.length, subtotalCents: s.gross, lineDiscountCents: s.lineDisc, saleDiscountCents: s.saleDisc, saleDiscountPct: Number(b.saleDiscountPct) || 0, saleDiscountReason: clean(b.saleDiscountReason, 120), saleDiscountBy: s.saleBy,
+    lineCount: s.lines.length, subtotalCents: s.gross, lineDiscountCents: s.lineDisc, saleDiscountCents: s.saleDisc, saleDiscountPct: Number(b.saleDiscountPct) || 0, saleDiscountReason: clean(b.saleDiscountReason, 120), saleDiscountBy: s.saleBy, saleDiscountCode: s.saleCode || '',
     totalCents: s.total, vatCents: s.vat, vatRateBp: s.rateBp, vatRegistered: !!ctx.entity.vatRegistered, roundingCents: s.rounding,
     tenderedCents: s.cashTendered, changeCents: s.cashPay ? s.cashPay.changeCents : 0, paymentMethods: [...new Set(s.pays.map(p => p.method))], paidStatus: s.pays.some(p => p.status === 'awaiting') ? 'awaiting' : 'paid',
     cashierUid: ctx.user.id, cashierName: ctx.user.name, approvers: [...s.approvers].map(([uid, name]) => ({ uid, name })),
@@ -302,7 +315,7 @@ export function moveWrites(ctx, levels, m, doc, stamp, now) {
   const oldOnHand = lv ? lv.onHandQty || 0 : 0;
   const oldAvg = lv && lv.avgCostCents > 0 ? lv.avgCostCents : (m.baseCostCents || m.unitCostCents || 0);
   const avg = m.wac && bucket === 'onHand' && m.qty > 0 && m.unitCostCents >= 0 ? (oldOnHand > 0 ? Math.round((oldOnHand * oldAvg + m.qty * m.unitCostCents) / (oldOnHand + m.qty)) : m.unitCostCents) : oldAvg;
-  const next = { ...(lv || {}), onHandQty: onHand, quarantineQty: quarantine, reservedQty: reserved, onOrderQty: onOrder, avgCostCents: avg, lastCountedAt: m.countedAt || (lv ? lv.lastCountedAt || '' : '') };
+  const next = { ...(lv || {}), storeId: ctx.storeId, productId: m.productId, variantId: m.variantId, onHandQty: onHand, quarantineQty: quarantine, reservedQty: reserved, onOrderQty: onOrder, avgCostCents: avg, lastCountedAt: m.countedAt || (lv ? lv.lastCountedAt || '' : '') };
   levels.set(id, next);
   return [
     { create: true, coll: 'stockMovements', id: randomId('mv_'), data: { productId: m.productId, variantId: m.variantId, qty: m.qty, bucket, reason: m.reason, code: m.code || '', docType: doc.docType, docId: doc.docId, docNo: doc.docNo, unitCostCents: m.unitCostCents || 0, note: m.note || m.name || '', byName: m.byName || '', onHandAfter: onHand, ...stamp, serverReceivedAt: now } },
@@ -320,6 +333,7 @@ export async function runSale(ctx, b, { saleId, prep, more } = {}) {
       const extra = more ? await more(tx, levels) : { writes: [], result: {} };
       const s = prep ? await saleWrites(tx, ctx, prep, saleId, b, levels) : { writes: [], result: {} };
       await commit(squash([...extra.writes, ...s.writes]), tx); done = true;
+      if (levels.size) await afterStock(ctx, levels);   // the POS is master for stock: Shopify hears of every movement
       return { ...s.result, ...extra.result, ok: true };
     } catch (e) {
       if (e instanceof Reject && e.status === 409 && /moment ago/.test(e.message) && attempt < 4) continue;   // the transaction lost a race: again

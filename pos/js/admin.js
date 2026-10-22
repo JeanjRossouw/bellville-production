@@ -189,6 +189,7 @@ export function settingsHtml(d) {
   const eid = mine.some(e => e.id === d.settingsEntity) ? d.settingsEntity : mine[0].id;
   const s = { ...defaultSettings(), ...(d.settings[eid] || {}) };
   const ent = mine.find(e => e.id === eid);
+  const owner = auth.session.user.role === 'owner';
   const pct = (role) => (s.discounts && s.discounts.maxPctByRole && s.discounts.maxPctByRole[role]) ?? defaultSettings().discounts.maxPctByRole[role];
   return `<div class="page-head"><h1>Settings</h1>
       <div class="fld" style="margin:0;min-width:220px"><select id="se-entity">${mine.map(e => `<option value="${esc(e.id)}"${e.id === eid ? ' selected' : ''}>${esc(e.tradingName || e.legalName)}</option>`).join('')}</select></div></div>
@@ -223,6 +224,10 @@ export function settingsHtml(d) {
         <div class="grid two">${field('Minimum deposit %', 'se-so-dep', { value: (s.specialOrder || {}).minDepositPct == null ? 50 : s.specialOrder.minDepositPct, type: 'number', min: 0, max: 100 })}${field('Usual lead time (days)', 'se-so-lead', { value: (s.specialOrder || {}).leadDays == null ? 21 : s.specialOrder.leadDays, type: 'number', min: 1 })}</div>
         <p class="muted">The customer signs the specification off; no change of mind once it is in production. The factory app updates the status through the pos-special endpoint with the POS_FACTORY_KEY.</p>
       </div>
+      ${owner ? `<div class="card"><h2>Shopify</h2>
+        <p class="muted">The online shop. The POS is master for stock and pushes what is available per store to the shop's location after every movement; the shop is master for content; orders come in by webhook and take stock; discount codes and consented customers are shared. The app's keys are kept on the server and never shown again.</p>
+        <div id="se-shop" data-entity="${esc(eid)}"><p class="muted">Loading…</p></div>
+      </div>` : ''}
       <div class="card"><h2>Loyalty points</h2>
         <label class="chk"><input type="checkbox" id="se-loy-on"${(s.loyalty || {}).enabled ? ' checked' : ''}> Customers on a sale earn points, and pay with them</label>
         <div class="grid four">${field('Points per rand spent', 'se-loy-rate', { value: (s.loyalty || {}).pointsPerRand == null ? 1 : s.loyalty.pointsPerRand, type: 'number', min: 0, step: '0.1' })}${field('A point is worth (cents)', 'se-loy-value', { value: (s.loyalty || {}).pointValueCents == null ? 5 : s.loyalty.pointValueCents, type: 'number', min: 1 })}${field('Fewest points to redeem', 'se-loy-min', { value: (s.loyalty || {}).minRedeemPoints == null ? 100 : s.loyalty.minRedeemPoints, type: 'number', min: 0 })}${field('Points expire after (months, 0 = never)', 'se-loy-exp', { value: (s.loyalty || {}).expiryMonths == null ? 12 : s.loyalty.expiryMonths, type: 'number', min: 0 })}</div>

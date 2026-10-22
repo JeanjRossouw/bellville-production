@@ -226,7 +226,7 @@ R: members of the store. W: server only, in the same batch as the movement.
 **`stockMovements/{id}`** — append only
 ```
 entityId, storeId, productId, variantId, qty (int, signed: +in, −out),
-reason ('sale'|'creditNote'|'receive'|'adjust'|'count'|'quarantine'|'transferOut'|'transferIn'|'layby'|'specialOrder'|'bundle'),
+reason ('sale'|'creditNote'|'receive'|'adjust'|'count'|'quarantine'|'transferOut'|'transferIn'|'layby'|'specialOrder'|'bundle'|'online'|'onlineRefund'),
 code (adjustments: 'damaged'|'stolen'|'found'|'correction'|'sample'|'writeoff'|'other'), bucket ('onHand'|'quarantine'|'reserved'),
 docType, docId, docNo, unitCostCents, note, byName (the approver), onHandAfter, + stamps, serverReceivedAt
 ```
@@ -526,6 +526,21 @@ connected (tokens under `pos-<entityId>` in the Xero token store, OAuth
 through `XERO_POS_REDIRECT_URI`); a schedule at 01:30 UTC builds and posts
 yesterday's for every company with `settings.xero.autoDaily`.
 `settings.xero { autoDaily, accounts { sales, vat, cash, card, eft, qr, account, storeCredit, voucher, layby, specialOrder, points, exchange, rounding, penalty }, connectedTenant, connectedAt, lastPushAt, lastError }`.
+
+### Shopify
+
+The POS is master for stock; the shop is master for content; the link
+between them is the SKU. `pos-shopify` holds it all; the schedule
+`pos-shopify-sync` pushes what is still queued every ten minutes.
+
+- **`shopifySecrets/{entityId}`** — `domain, clientId, clientSecret` (a Dev Dashboard app; the client-credentials grant mints short-lived tokens). No client access at all. Webhooks are verified against the client secret.
+- `settings.shopify { connected, domain, shopName, locations [ { id, name } ], locationByStore { storeId: locationGid }, defaultStoreId, pickupByTitle { shippingTitle: storeId }, pushStock, pullOrders, syncCodes, syncCustomers, linkedAt, lastSyncAt, lastError, customersPushedAt }`.
+- Products and variants gain `shopifyProductId, shopifyVariantId, shopifyInventoryItemId, linkedAt`; `link` matches the shop's variants by SKU (the variant's, else the product's) and pulls title, description and images (`contentFrom: 'shopify'`); prices stay the till's.
+- **`shopifyQueue/{entityId}_{storeId}_{itemId}`** — `availableQty (on hand − reserved), attempts, nextAt, lastError`: written by the sale core after every commit that moved a level, flushed at once within a short budget and by the schedule with back-off (`inventorySetQuantities`, name `available`, per mapped location).
+- **`onlineOrders/{entityId}_{shopifyOrderId}`** (store members, supervisors and up read) — `orderNo, orderedAt, financialStatus, fulfillmentStatus, pickup (the shipping line says pick up / collect, or is mapped), storeId, customer, address, lines [ { title, sku, qty, priceCents, lineId, productId, variantId, itemId, tracked } ], totalCents, unmapped, status ('new'|'ready'|'collected'|'cancelled'|'refunded'), stock ('deducted'|'reserved'|'released'|'none'), refunds [ { id, at, lines } ]`. `orders/create` deducts (paid) or reserves (unpaid) at the mapped store with `online` movements; `orders/cancelled` puts it back; `refunds/create` restocks the refunded lines (`onlineRefund`); marking collected fulfils the order on Shopify.
+- **`discountCodes/{entityId}_{CODE}`** (entity members read) — `code, title, kind ('percentage'|'fixed'), value, valueCents, startsAt, endsAt, active, wholeSale`: pulled from the shop's active code discounts; the till applies one to a sale (`sales.saleDiscountCode`) and the server honours it without a PIN, never more than the code gives.
+- Customers who opted in to email or SMS marketing are pushed with that consent (`customerCreate`/`customerUpdate`, matched by email or phone) and gain `shopifyCustomerId, shopifyPushedAt`.
+- **`shopifySync/{id}`** — the log: `kind ('stock'|'order'|'cancel'|'refund'|'codes'|'customers'|'link'), status ('ok'|'retry'|'failed'), message, count, docNo`.
 
 ### Audit
 

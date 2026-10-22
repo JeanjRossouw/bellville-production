@@ -116,6 +116,16 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
 - `reports.test.mjs` — step 16 in the browser: the dashboard on Home, the
   Reports tab running daily sales, the CSV and the print, the Xero journal
   built and downloaded. `node pos/test/reports.test.mjs`
+- `shopify-api.test.mjs` — step 17: `pos-shopify` against a mock Shopify in
+  the test: connect, locations mapped, products linked by SKU with content
+  pulled, stock pushed after a sale and by "push all", a webhook order
+  (signed) deducting stock and one reserving it, a cancellation and a
+  refund restocking, click & collect marked and fulfilled, discount codes
+  pulled and honoured on a sale, consented customers pushed, the log.
+  `node pos/test/shopify-api.test.mjs`
+- `online.test.mjs` — step 17 in the browser: the Online tab's click &
+  collect list and a shop discount code applied on the till.
+  `node pos/test/online.test.mjs`
 - `money.test.mjs` — the shared cents and VAT maths; needs no emulator.
   `node pos/test/money.test.mjs`
   Set `FIREBASE_SDK_DIR` to a local copy of the `firebase` package's browser

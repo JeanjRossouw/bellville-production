@@ -275,8 +275,16 @@ function lineDiscount(i) {
 }
 function cartDiscount() {
   const c = sale.cart; const t = totals(); const sub = t.subtotalCents;
-  openModal('Discount on the sale', discountForm('Sale', sub, { pct: c.discountPct, cents: c.discountCents, reason: c.discountReason }), {
+  const codes = (d().discountCodes || []).filter(x => x.active);
+  openModal('Discount on the sale', discountForm('Sale', sub, { pct: c.discountPct, cents: c.discountCents, reason: c.discountReason }) + (codes.length ? field('Or a discount code from the online shop', 'dc-code', { type: 'select', value: c.discountCode || '', options: [{ value: '', label: 'None' }, ...codes.map(x => ({ value: x.code, label: x.code + ' · ' + (x.kind === 'percentage' ? x.value + '% off' : money(x.valueCents) + ' off') }))] }) : ''), {
     okLabel: 'Apply', onOk: async (w) => {
+      const codeEl = w.querySelector('#dc-code'); const code = codeEl ? codeEl.value : '';
+      if (code) {
+        // a shop code: the discount it gives, no PIN; the server checks the code again
+        const x = codes.find(y => y.code === code); const cents = Math.min(sub, x.kind === 'percentage' ? pctOf(sub, x.value) : x.valueCents);
+        c.discountCents = cents; c.discountPct = x.kind === 'percentage' ? x.value : (sub ? Math.round(cents / sub * 1000) / 10 : 0); c.discountReason = 'Code ' + code; c.discountBy = null; c.discountToken = ''; c.discountCode = code; persist(); ctx.repaint(); return true;
+      }
+      c.discountCode = '';
       const r = readDiscount(w, sub);
       if (r.cents && !r.reason) { toast('Give a reason.', 'warn'); return false; }
       try { const by = r.cents ? await approveDiscount(r.pct, 'the sale') : null; c.discountCents = r.cents; c.discountPct = Number(val(w, 'dc-pct')) || 0; c.discountReason = r.reason; c.discountBy = by && by.uid !== auth.session.uid ? by : null; c.discountToken = by ? by.token : ''; persist(); ctx.repaint(); return true; }

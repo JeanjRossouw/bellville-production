@@ -138,6 +138,7 @@ export async function createDoc(coll, id, data) {
   if (res.status === 409 || /ALREADY_EXISTS|FAILED_PRECONDITION/.test(t)) return false;
   throw new Error(`Firestore create ${coll}/${id} failed: ${t}`);
 }
+export async function deleteDoc(coll, id) { await commit([{ delete: true, coll, id }]); }
 export async function addDoc(coll, data) {
   const id = randomId();
   if (!await createDoc(coll, id, data)) throw new Error('id clash on ' + coll);

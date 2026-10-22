@@ -420,6 +420,12 @@ service cloud.firestore {
       match /customerPhones/{id} { allow read, write: if false; }
       match /loyaltyLedger/{id}  { allow read: if pReadsEntity(gid); allow write: if false; }
       match /xeroJournals/{id}   { allow read: if pReadsEntity(gid) && pAtLeast(gid, 'manager'); allow write: if false; }
+      // Shopify: the keys never leave the server; orders, codes, the queue and the log are read-only here
+      match /shopifySecrets/{id} { allow read, write: if false; }
+      match /shopifyQueue/{id}   { allow read: if pReadsEntity(gid) && pAtLeast(gid, 'supervisor'); allow write: if false; }
+      match /shopifySync/{id}    { allow read: if pReadsEntity(gid) && pAtLeast(gid, 'supervisor'); allow write: if false; }
+      match /onlineOrders/{id}   { allow read: if pReadsStore(gid) && pAtLeast(gid, 'supervisor'); allow write: if false; }
+      match /discountCodes/{id}  { allow read: if pReadsEntity(gid); allow write: if false; }
 
       // ---- buying ---------------------------------------------------------
       match /suppliers/{id} {
