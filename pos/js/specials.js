@@ -391,12 +391,14 @@ export async function factoryCard(host, entityId) {
   el.innerHTML = `${linked ? `<p>Linked to <strong>${esc(linked.companyName)}</strong>.</p>` : '<p class="muted">Not linked: the till moves a custom order along by hand.</p>'}
     ${field('Factory company', 'fa-co', { type: 'select', value: linked ? linked.companyId : '', options: [{ value: '', label: 'None' }, ...(r.companies || []).map(c => ({ value: c.id, label: c.name }))] })}
     <div class="card-actions"><button class="btn primary" data-act="fa-link">Save factory link</button></div>`;
+  if (el.dataset.wired) return;    // one listener per card element: a click on the select must not use it up
+  el.dataset.wired = '1';
   el.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-act]'); if (!b || b.dataset.act !== 'fa-link') return; e.preventDefault();
     try { const x = await auth.api('factoryLink', { entityId, companyId: val(el, 'fa-co') }, API.special); toast(x.linked ? 'Custom orders go to ' + x.linked.companyName : 'Factory link removed'); }
     catch (err) { toast(err.message, 'warn'); }
     factoryCard(host, entityId);
-  }, { once: true });
+  });
 }
 async function status(id, to) {
   const o = one(id); if (!o) return;

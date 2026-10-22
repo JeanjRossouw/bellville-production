@@ -213,7 +213,7 @@ const actions = {
 
   // a reminder: the words to send, and a note on the lay-by that it was sent
   async remind(event, b) {
-    const ctx = await whoAndWhere(event, b);
+    const ctx = await whoAndWhere(event, b, { noShift: true });
     const lb = await loadLayby(ctx, b.laybyId);
     if (lb.status !== 'open') throw new Reject(409, `Lay-by ${lb.docNo} is ${lb.status}.`);
     const kind = ['due', 'overdue', 'ready'].includes(b.kind) ? b.kind : (lb.balanceCents <= 0 ? 'ready' : lb.paidCents < expectedBy(lb, today()) || lb.dueAt < today() ? 'overdue' : 'due');

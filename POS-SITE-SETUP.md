@@ -42,3 +42,16 @@ Same focused till, no extra Netlify setup.
   manager's dashboard and syncs to Xero/Shopify exactly as in-app.
 - Give cashiers the **`cashier`** role (Firebase `users/<uid>.role = "cashier"`)
   so they only ever see Dashboard + POS.
+
+## The schedules run on every site this repo deploys to
+
+Netlify fires every schedule in `netlify.toml` on every site built from this
+repo. A scheduled function first checks for the keys it needs and, where
+they are not set, answers "not configured on this site" and does nothing.
+So the POS and factory schedules (`pos-shopify-sync`, `pos-factory-sync`,
+`pos-xero-daily`, `factory-shopify-poll`) only work on the site that has
+`FACTORY_SERVICE_ACCOUNT`, and the Bellville → Couch Potato order feed
+(`couchpotato-feed`) only on the site that has `FIREBASE_SERVICE_ACCOUNT`,
+`COUCHPOTATO_SERVICE_ACCOUNT`, `COUCHPOTATO_COMPANY_ID` and
+`COUCHPOTATO_CUSTOMER_ID`. Keep each set of keys on one site only, or the
+job runs twice.

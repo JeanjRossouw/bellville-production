@@ -66,7 +66,10 @@ const openBody = (lines, total, deposit, o = {}) => ({ action: 'open', orderId: 
 await put('pos/retail/products/p_lamp', { name: 'Lamp', sku: 'LAMP', barcodes: [], category: 'Lighting', brand: '', type: 'stock', vatClass: 'standard', trackStock: true, costCents: 20000, priceCents: 50000, images: [], options: [], hasVariants: false, storePrices: {}, bundle: [], archived: false, reorderLevel: 5, reorderQty: 10, ...srv('BF') });
 await put('pos/retail/stockLevels/BF-BELL_p_lamp', { productId: 'p_lamp', variantId: '', onHandQty: 3, reservedQty: 0, onOrderQty: 0, ...srv('BF', 'BF-BELL') });
 await put('pos/retail/registers/BF-BELL-1', { entityId: 'BF', storeId: 'BF-BELL', name: 'Front till', active: true, currentShiftId: 'sh_x', ...srv('BF', 'BF-BELL') });
-await put('pos/retail/laybys/lb1', { docNo: 'BF-LB-000001', status: 'open', balanceCents: 69800, dueAt: new Date(Date.now() + 2 * 86400000).toISOString(), customerSnapshot: { name: 'Thandi Mokoena' }, ...srv('BF', 'BF-BELL') });
+const in2 = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
+await put('pos/retail/laybys/lb1', { docNo: 'BF-LB-000001', status: 'open', balanceCents: 69800, paidCents: 20000, dueAt: in2 + 'T00:00:00.000Z', openedAt: '2026-10-01T08:00:00.000Z', termDays: 60, schedule: [{ n: 1, dueAt: in2, amountCents: 23266 }], customerSnapshot: { name: 'Thandi Mokoena', phone: '0825550101' }, ...srv('BF', 'BF-BELL') });
+await put('pos/retail/suppliers/s1', { name: 'Lamp Co', contact: 'Piet', phone: '021 555 0199', email: '', accountNo: '', termsDays: 30, leadDays: 5, notes: '', archived: false, ...srv('BF') });
+await patchAt('pos/retail/products/p_lamp', { supplierId: 's1' });
 // a sale today, so the figures have something in them
 R.sale = await call('pos-sale', { action: 'commit', saleId: 'web-assist-' + Date.now().toString(36), clientCreatedAt: new Date().toISOString(), customerId: '', lines: [{ productId: 'p_lamp', variantId: '', qty: 1, unitPriceCents: 50000, discountCents: 0 }], saleDiscountCents: 0, totals: { totalCents: 50000, vatCents: vatIn(50000, 1500) }, tenders: [{ method: 'card', amountCents: 50000 }], ...bell }, own.idToken);
 check('a sale today', R.sale.ok && R.sale.sale.docNo === 'BF-000001', R.sale.error);
@@ -98,6 +101,41 @@ check('the chat history goes along, trimmed to turns', R.chat.ok && L.body.messa
 R.cas2 = await ask('Again?'); check('counted on', R.cas2.used === 2, R.cas2);
 
 const audit = await listColl('assistantUse'); check('one use row per login', audit.length === 2, audit.map(a => [a.name, a.count]));
+
+// ---- the hands: low stock by supplier
+const toolMsg = (L) => L.body.messages;
+R.low = await ask('[tool:low_stock_by_supplier {}]', own.idToken);
+L = mock.last();
+check('the tool ran and its result reached the model', R.low.ok && /Mock answer after tools/.test(R.low.answer) && toolMsg(L).length === 3 && toolMsg(L)[1].content.some(b => b.type === 'tool_use') && /Lamp Co/.test(toolMsg(L)[2].content[0].content) && /"suggestQty":10/.test(toolMsg(L)[2].content[0].content) && R.low.cards.length === 0, { answer: R.low.answer.slice(0, 200), n: toolMsg(L).length });
+check('the tools were sent, strict', Array.isArray(L.body.tools) && L.body.tools.length === 5 && L.body.tools.every(t => t.strict === true && t.input_schema.additionalProperties === false), L.body.tools && L.body.tools.map(t => t.name));
+// ---- a purchase order: proposed, confirmed into a draft, by a manager only
+const poCall = '[tool:propose_purchase_orders {"orders":[{"supplierId":"s1","lines":[{"itemId":"p_lamp","qty":10}]}],"note":"for the weekend"}]';
+R.poCas = await ask(poCall); L = mock.last();
+check('a cashier may not propose orders: the tool says so, the answer still comes', R.poCas.ok && R.poCas.cards.length === 0 && toolMsg(L)[2].content[0].is_error === true && /Only a manager/.test(toolMsg(L)[2].content[0].content), R.poCas);
+R.po = await ask(poCall, own.idToken);
+check('the owner gets a proposal card, nothing created yet', R.po.ok && R.po.cards.length === 1 && R.po.cards[0].type === 'proposal' && R.po.cards[0].kind === 'purchaseOrders' && /Lamp Co: 1 line, 10 units, R 2,000\.00 ex VAT/.test(R.po.cards[0].lines[0]) && (await listColl('purchaseOrders')).length === 0, R.po.cards);
+R.confirmCas = await call('pos-assist', { action: 'confirm', proposalId: R.po.cards[0].id, ...bell }); check('someone else cannot confirm it', R.confirmCas.status === 404, R.confirmCas);
+R.confirm = await call('pos-assist', { action: 'confirm', proposalId: R.po.cards[0].id, ...bell }, own.idToken);
+check('confirmed: a draft purchase order under Buying', R.confirm.ok && R.confirm.kind === 'purchaseOrders' && R.confirm.made.length === 1 && /draft purchase order created under Buying/.test(R.confirm.message), R.confirm);
+const pos = await listColl('purchaseOrders');
+check('the draft as the Buying tab makes it, stamped with the owner, noted as suggested', pos.length === 1 && pos[0].status === 'draft' && pos[0].supplierName === 'Lamp Co' && pos[0].lines[0].name === 'Lamp' && pos[0].lines[0].qty === 10 && pos[0].lines[0].unitCostCents === 20000 && pos[0].subtotalCents === 200000 && pos[0].createdBy === own.localId && /Suggested by the assistant/.test(pos[0].note) && /for the weekend/.test(pos[0].note) && pos[0].expectedAt, pos[0]);
+R.confirmAgain = await call('pos-assist', { action: 'confirm', proposalId: R.po.cards[0].id, ...bell }, own.idToken); check('a proposal is good once', R.confirmAgain.status === 409, R.confirmAgain);
+// ---- the customers to message, with the words written
+R.who = await ask('[tool:customers_to_contact {}]');
+check('the card lists the custom order and the lay-by due, each with its message and how to send it', R.who.ok && R.who.cards.length === 1 && R.who.cards[0].type === 'updates' && R.who.cards[0].items.some(x => x.kind === 'customOrder' && x.docNo === 'BF-SO-000001' && /Thank you for your deposit/.test(x.text) && x.send.api === 'special' && x.send.body.orderId) && R.who.cards[0].items.some(x => x.kind === 'layby' && x.docNo === 'BF-LB-000001' && /instalment of R 232\.66/.test(x.text) && x.send.action === 'remind' && x.send.body.kind === 'due'), R.who.cards[0] && R.who.cards[0].items.map(x => [x.kind, x.docNo, x.why]));
+R.sendLb = await call('pos-layby', { action: 'remind', laybyId: 'lb1', kind: 'due', how: 'whatsapp', ...bell }); check('the lay-by reminder goes from a till with no shift', R.sendLb.ok && R.sendLb.phone === '0825550101', R.sendLb);
+// ---- tasks: proposed and confirmed; by hand
+R.tk = await ask('[tool:propose_tasks {"tasks":[{"title":"Call Thandi about BF-SO-000001","note":"deposit paid","due":"2026-10-24","assigneeName":"Cathy"},{"title":"Count the lamps","note":"","due":"","assigneeName":"Nobody Known"}]}]');
+check('a task proposal card', R.tk.ok && R.tk.cards.length === 1 && R.tk.cards[0].kind === 'tasks' && R.tk.cards[0].lines.length === 2 && /Call Thandi about BF-SO-000001 · by 2026-10-24 · Cathy/.test(R.tk.cards[0].lines[0]), R.tk.cards);
+R.tkConfirm = await call('pos-assist', { action: 'confirm', proposalId: R.tk.cards[0].id, ...bell });
+let tasks = await listColl('tasks');
+check('confirmed: two tasks on the store, the assignee matched by name, the other kept as typed', R.tkConfirm.ok && tasks.length === 2 && tasks.some(t => t.title === 'Call Thandi about BF-SO-000001' && t.assigneeUid === cas.localId && t.assigneeName === 'Cathy' && t.due === '2026-10-24' && t.source === 'assistant' && t.status === 'open' && t.createdBy === cas.localId) && tasks.some(t => t.title === 'Count the lamps' && t.assigneeUid === '' && t.assigneeName === 'Nobody Known'), tasks);
+R.list = await ask('[tool:list_tasks {}]'); L = mock.last(); check('the open tasks are listed to the model', /Call Thandi/.test(toolMsg(L)[2].content[0].content) && /"open":2/.test(toolMsg(L)[2].content[0].content), toolMsg(L)[2].content[0].content.slice(0, 300));
+R.add = await call('pos-tasks', { action: 'add', title: 'Dust the lamps', due: '2026-10-25', assigneeUid: cas.localId, note: '', ...bell }, own.idToken); check('a task by hand', R.add.ok && R.add.task.assigneeName === 'Cathy' && R.add.task.source === 'person', R.add);
+R.noTitle = await call('pos-tasks', { action: 'add', title: '', ...bell }); check('a task needs a title', R.noTitle.status === 400, R.noTitle);
+R.done = await call('pos-tasks', { action: 'done', taskId: R.add.task.id, ...bell }); check('ticked by Cathy', R.done.ok && R.done.task.status === 'done' && R.done.task.doneBy === 'Cathy', R.done);
+R.reopen = await call('pos-tasks', { action: 'reopen', taskId: R.add.task.id, ...bell }); check('reopened', R.reopen.ok && R.reopen.task.status === 'open', R.reopen);
+const au = await listColl('auditLog'); check('audited: the orders and tasks via the assistant, the task by hand', ['assistant.purchaseOrders', 'assistant.tasks', 'task.add', 'task.done', 'task.reopen', 'layby.remind'].every(a => au.some(x => x.action === a)), au.map(a => a.action));
 console.log(JSON.stringify({ fails, ...R }, null, 1).slice(0, 6000));
 console.log(fails.length ? fails.length + ' FAILED' : 'assist-api: all passed');
 await mock.close();

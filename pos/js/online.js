@@ -69,6 +69,8 @@ export async function shopifyCard(host, entityId, stores) {
     : `<p class="muted">${st.lastError ? '<span class="warn">' + esc(st.lastError) + '</span> · ' : ''}A Dev Dashboard app on the shop with read_products, write_inventory, read_locations, read_orders, write_orders (fulfilment), read_discounts, write_customers, read_customers.</p>
       <div class="grid three">${field('Store domain', 'sh-domain', { value: st.domain || '', placeholder: 'name.myshopify.com' })}${field('Client ID', 'sh-id', { autocomplete: 'off' })}${field('Client secret', 'sh-secret', { type: 'password', autocomplete: 'new-password' })}</div>
       <div class="card-actions"><button class="btn primary" data-act="on-connect" data-entity="${esc(entityId)}">Connect Shopify</button></div>`;
+  if (el.dataset.wired) return;    // one listener per card element: a click into a field must not use it up
+  el.dataset.wired = '1';
   el.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-act]'); if (!b) return; e.preventDefault();
     const act = b.dataset.act; const w = el;
@@ -80,5 +82,5 @@ export async function shopifyCard(host, entityId, stores) {
       else return;
       shopifyCard(host, entityId, stores);
     } catch (err) { toast(err.message, 'warn'); }
-  }, { once: true });
+  });
 }

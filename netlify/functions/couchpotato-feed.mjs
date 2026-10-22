@@ -157,6 +157,9 @@ export const handler = async (event) => {
     const key = process.env.FEED_KEY;
     if (!key || (q.k || '') !== key) return { statusCode: 403, body: 'Forbidden: set FEED_KEY and pass ?k=' };
   }
+  // this repo deploys to more than one site; the feed only works where all its keys are set
+  const missing = ['FIREBASE_SERVICE_ACCOUNT', 'COUCHPOTATO_SERVICE_ACCOUNT', 'COUCHPOTATO_COMPANY_ID', 'COUCHPOTATO_CUSTOMER_ID'].filter(k => !String(process.env[k] || '').trim());
+  if (missing.length) return { statusCode: manual ? 503 : 200, headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: 'Feed not configured on this site: ' + missing.join(', ') + ' not set' };
   try {
     const r = await runSync({ dry: manual && q.dry === '1' });
     const text = (r.dry ? 'DRY RUN\n' : '') + `supplier orders: ${r.supplierOrders} · pushed: ${r.created} · already there: ${r.alreadyThere} · marked done back in Bellville: ${r.dispatchedBack}\n` + r.log.join('\n');

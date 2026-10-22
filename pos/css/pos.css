@@ -137,7 +137,9 @@ small { font-size: 12px; }
 /* ------------------------------------------------------------------- sell */
 .ico { flex: 0 0 auto; display: inline-block; vertical-align: -3px; }
 .sell-store { display: flex; align-items: center; gap: .5rem; margin-bottom: .7rem; color: var(--muted); } .sell-store select { font: inherit; font-size: 13px; padding: .4rem .6rem; border: 1px solid var(--line-2); border-radius: 4px; background: #fff; }
-.pos { display: grid; grid-template-columns: 1fr 400px; gap: 1rem; align-items: start; }
+.pos { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 400px); gap: 1rem; align-items: start; }
+/* a grid column's minimum is its content's width unless told otherwise: without this the tiles column keeps ~770px and pushes the cart off a tablet's screen */
+.pos-left, .pos-right { min-width: 0; }
 .pos-scan-row { display: flex; gap: .5rem; margin-bottom: .75rem; }
 .pos-search-wrap { flex: 1; min-width: 0; position: relative; display: block; }
 .pos-search-wrap .ico { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; color: var(--muted); pointer-events: none; }
@@ -161,7 +163,7 @@ small { font-size: 12px; }
 .pos-grid-cat { grid-column: 1 / -1; display: flex; align-items: center; gap: .4rem; font-family: var(--font-ui); font-weight: 600; font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-top: .2rem; }
 .pos-grid-rule { grid-column: 1 / -1; border-bottom: 1px solid var(--line); margin: .3rem 0; }
 .pos-grid-empty { grid-column: 1 / -1; color: var(--muted); text-align: center; padding: 2.5rem 1rem; }
-.pos-cart { position: sticky; top: 1rem; padding: 0; overflow: hidden; border-radius: 8px; }
+.pos-cart { position: sticky; top: 1rem; padding: 0; overflow: hidden auto; border-radius: 8px; max-height: calc(100vh - 2rem); }   /* on a short screen the cart scrolls itself, so Pay and the buttons under it stay reachable */
 .pos-cart > * { margin-left: 1rem; margin-right: 1rem; }
 .pos-cart-title { display: flex; justify-content: space-between; align-items: center; margin: 0; padding: .85rem 1rem; border-bottom: 1px solid var(--line); font-family: var(--font-ui); font-weight: 600; font-size: 11px; letter-spacing: .16em; text-transform: uppercase; }
 .pos-cust { display: flex; align-items: center; gap: .7rem; width: calc(100% - 2rem); margin-top: .85rem; margin-bottom: .4rem; background: #fff; border: 1px dashed var(--line-2); border-radius: 6px; padding: .65rem .75rem; cursor: pointer; font: inherit; text-align: left; }
@@ -169,7 +171,7 @@ small { font-size: 12px; }
 .pos-cust-ico { width: 34px; height: 34px; flex: 0 0 34px; border-radius: 50%; background: #efeeea; display: flex; align-items: center; justify-content: center; color: var(--ink-2); }
 .pos-cust.set .pos-cust-ico { background: var(--ink); color: #fff; }
 .pos-cust-txt { display: grid; gap: .1rem; min-width: 0; } .pos-cust-txt strong { font-size: 13.5px; } .pos-cust-txt span { font-size: 11.5px; color: var(--muted); }
-.pos-lines { max-height: 44vh; overflow: auto; }
+.pos-lines { max-height: max(160px, calc(100vh - 432px)); overflow: auto; }   /* the lines take what is left once the title, customer, totals and buttons have their room */
 .pos-line { border-top: 1px solid var(--line); padding: .6rem 0; display: grid; gap: .4rem; }
 .pos-line-top { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
 .pos-line-ctl { display: grid; grid-template-columns: auto 1fr auto; gap: .5rem; align-items: center; }
@@ -194,7 +196,8 @@ small { font-size: 12px; }
 .var-btn { font: inherit; background: #fff; border: 1px solid var(--line-2); border-radius: 6px; padding: .7rem .6rem; cursor: pointer; display: grid; gap: .15rem; text-align: left; } .var-btn:hover { border-color: var(--ink); } .var-btn span { font-size: 12px; color: var(--muted); }
 .pk-row { width: 100%; text-align: left; background: #fff; border: 0; border-bottom: 1px solid var(--line); cursor: pointer; font: inherit; } .pk-row:hover { background: var(--paper); }
 .pos-mbar { display: none; }
-@media (max-width: 760px) {
+/* up to a 10-inch tablet held upright: one column, the cart behind the bar at the bottom */
+@media (max-width: 900px) {
   .pos { display: block; padding-bottom: 4.5rem; }
   .pos-left, .pos-right { display: none; } .pos:not(.m-cart) .pos-left { display: block; } .pos.m-cart .pos-right { display: block; }
   .pos-cart { position: static; } .pos-lines { max-height: none; }
@@ -322,6 +325,8 @@ small { font-size: 12px; }
 /* ---- the assistant: a "?" button and a small chat ---- */
 .as-fab { position: fixed; right: 18px; bottom: 18px; z-index: 60; width: 48px; height: 48px; border-radius: 50%; border: 0; background: var(--ink); color: #fff; font: 700 22px/1 var(--font-ui); cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.25); }
 .as-fab:hover { transform: translateY(-1px); }
+.as-fab.in-bar { position: static; width: 38px; height: 38px; font-size: 18px; box-shadow: none; background: #333; margin-right: .5rem; vertical-align: middle; }
+.as-fab.in-bar:hover { background: #000; transform: none; }
 .as-panel { position: fixed; right: 18px; bottom: 78px; z-index: 61; width: min(420px, calc(100vw - 32px)); height: min(600px, calc(100vh - 110px)); background: #fff; border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 16px 40px rgba(0,0,0,.22); display: flex; flex-direction: column; }
 .as-panel[hidden] { display: none; }
 .as-head { display: flex; align-items: center; gap: .5rem; padding: .7rem .8rem; border-bottom: 1px solid var(--line); }
@@ -338,3 +343,19 @@ small { font-size: 12px; }
 .as-form textarea { flex: 1; resize: none; font: inherit; padding: .5rem; border: 1px solid var(--line-2); border-radius: 6px; }
 body:has(.pos-mbar) .as-fab { bottom: 84px; }
 @media print { .as-fab, .as-panel { display: none !important; } }
+
+/* ---- the assistant's cards: a proposal to confirm, customers to message ---- */
+.as-card { margin-top: .6rem; padding: .6rem .7rem; background: #fff; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+.as-card ul { margin: .3rem 0 .5rem 1.1rem; padding: 0; } .as-card li { margin: .15rem 0; }
+.as-done { color: var(--green); font-weight: 600; }
+.as-upd { display: flex; gap: .6rem; align-items: flex-start; justify-content: space-between; padding: .45rem 0; border-top: 1px solid var(--line); }
+.as-upd:first-of-type { border-top: 0; } .as-upd-text { font-size: 12px; margin-top: .15rem; white-space: pre-wrap; }
+/* ---- tasks on Home ---- */
+.tk-card { margin-bottom: 1rem; } .tk-head { display: flex; justify-content: space-between; align-items: center; gap: .6rem; } .tk-head h2 { margin: 0; }
+.tk-list { list-style: none; margin: .6rem 0 0; padding: 0; }
+.tk-row { display: flex; gap: .7rem; align-items: flex-start; padding: .55rem 0; border-top: 1px solid var(--line); } .tk-row.off { opacity: .6; } .tk-row.late strong { color: var(--red); }
+.tk-tick { flex: 0 0 30px; width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--line-2); background: #fff; color: transparent; cursor: pointer; font-weight: 700; }
+.tk-tick:hover { border-color: var(--green); color: var(--green); } .tk-tick.on { border-color: var(--green); color: var(--green); display: inline-flex; align-items: center; justify-content: center; cursor: default; }
+.tk-body { flex: 1; min-width: 0; } .tk-meta { font-size: 12px; margin-top: .15rem; }
+.tk-done { margin-top: .6rem; } .tk-done summary { cursor: pointer; font-size: 12.5px; }
+button.link { background: none; border: 0; padding: 0; color: var(--ink-2); text-decoration: underline; cursor: pointer; font: inherit; font-size: 12px; }
