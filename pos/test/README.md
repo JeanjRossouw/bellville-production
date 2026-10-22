@@ -147,6 +147,12 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   model call. `node pos/test/assist-api.test.mjs`
 - `assist.test.mjs` — the assistant in the browser: the "?" button, a starter
   question, the answer, the chat cleared at sign-out. `node pos/test/assist.test.mjs`
+- `auth-api.test.mjs` — `pos-auth` and the approvals over HTTP: a till locked
+  after 12 wrong PINs within 15 minutes (on top of each PIN's own lock-out),
+  the override refused while locked, unlocked again; a manager's approval
+  token good once on an action (`approvalToken`) and once on a sale line
+  (a discount over the limit), the same sale replayed still answered.
+  `node pos/test/auth-api.test.mjs`
 - `money.test.mjs` — the shared cents, VAT and loyalty-points maths; needs
   no emulator. `node pos/test/money.test.mjs`
 - Step 18 (hardening, see `pos/HARDENING.md`) is covered inside the suites

@@ -132,7 +132,7 @@ false`).
 **`devices/{deviceId}`**
 ```
 label, entityId, storeId, registerId, enrolledBy, enrolledAt, active,
-lastSeenAt, appVersion, + stamps
+lastSeenAt, appVersion, pinFailCount, pinFailWindowStart, pinLockedUntil (12 wrong PINs within 15 minutes lock the till for 15), + stamps
 ```
 R: members of the store. W: server (enrolment is a function: a manager
 types a one-time code on the device).
@@ -458,6 +458,15 @@ its status comes back the same way; the hand-over keeps the signed note
 here (the invoice was written with the sale). A credit note on a
 made-to-order line sets `cancelledQty`, cancels the sales order when every
 line is back, and calls the factory order off.
+
+**`usedTokens/{nonce}`** — a manager's override token spent: `action,
+overrideUid, actorUid, usedAt, expiresAt, + stamps`. A token (from
+`pos-auth override`, five minutes) is good once: `whoAndWhere` spends the
+request's `approvalToken` before anything is written, and the sale runner
+spends the tokens on sale lines (discounts, price changes) inside the sale's
+transaction. A second request with the same token is refused. Nobody reads
+or writes these but the server; they can be cleared by a Firestore TTL on
+`expiresAt`.
 
 **`assistantUse/{uid}`** — the assistant's daily allowance per login
 (`pos-assist`): `day, count, name, lastAt, entityId, storeId`. Nobody reads

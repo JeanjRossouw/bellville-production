@@ -36,8 +36,7 @@ with what was done.
 - Sync: `pos-sale commit` is idempotent on `saleId`; the outbox resends oldest first and marks refused sales for a manager; Shopify webhooks are idempotent per order/refund id; `inventorySetQuantities` sets absolute quantities so a double push is harmless; Xero journals are looked up by narration before posting.
 - Rules: finished documents, counters, customers, PIN hashes, Shopify secrets and the phone index are server-only; stamps are checked on every client write (`pStamped`/`pStampsKept` keep `entityId`, `storeId`, `createdBy`, `createdAt`, `deviceId`); store-scoped reads need both `entityId` and `storeId` filters; `rules.test.mjs` holds 104 cases.
 
-## Follow-ups (not done here)
+## Follow-ups
 
-- Single-use override tokens (a `usedTokens/{nonce}` create inside `approved()`).
-- Rate limiting on `pos-auth pinLogin` beyond the per-user lock-out (5 wrong → 15 min) — e.g. per device.
+- Done: override tokens are single-use (`usedTokens/{nonce}`: the request's `approvalToken` is spent in `whoAndWhere`, sale-line approvals inside the sale's transaction), and `pos-auth` locks a till for 15 minutes after 12 wrong PINs within 15 minutes, on top of the per-PIN lock-out.
 - The `pos-doc` share link for a sale could carry a shorter life for receipts under R 50.

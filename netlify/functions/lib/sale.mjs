@@ -6,11 +6,7 @@
 //   saleWrites(tx, ctx, prep, saleId, b)   inside a transaction: the number, stock, vouchers; → { writes, result }
 //   runSale(ctx, b, { more })    the transaction loop; `more(tx)` adds writes (an exchange's credit note) and a result
 import { SPEC_FIELDS } from '../../../pos/js/special-terms.js';
-import {
-  Reject, clean, randomId, nowIso, rank,
-  getDoc, query, commit, beginTransaction, rollback, serverStamp,
-  loginOf, loadUser, inEntity, inStore, verifyOverrideToken, loadDevice
-} from './pos.mjs';
+import { Reject, clean, randomId, nowIso, rank, getDoc, query, commit, beginTransaction, rollback, serverStamp, loginOf, loadUser, inEntity, inStore, verifyOverrideToken, loadDevice, createDoc } from './pos.mjs';
 import { vatIn, rateOn, rateFor, lineTotals, roundTo10c } from '../../../pos/js/money.js';
 import { loyaltySettings, tierFor, earnPoints, pointsFor, sweep, earnLot, redeem, compactLots, blankLoyalty, blankStats } from '../../../pos/js/loyalty-terms.js';
 import { afterStock } from './shopify-pos.mjs';
@@ -47,7 +43,10 @@ export async function whoAndWhere(event, b, opts = {}) {
     if (!sh || sh.status !== 'open') { if (!opts.shiftOptional) throw new Reject(409, 'The register is closed: open it under Register first.'); }
     else shiftId = sh.id;
   }
-  return { user, device, deviceId: device ? device.id : 'web:' + login.sub, entityId, storeId, registerId, shiftId, entity, store, settings: settings || {} };
+  const ctx = { user, device, deviceId: device ? device.id : 'web:' + login.sub, entityId, storeId, registerId, shiftId, entity, store, settings: settings || {}, lineNonces: new Set() };
+  // a manager's approval sent with the request is good once: it is spent here, before anything is written
+  if (b.approvalToken) { ctx.approvalToken = String(b.approvalToken); ctx.approval = await consumeToken(ctx, ctx.approvalToken); }
+  return ctx;
 }
 
 // the till's open block for a series, issuing one inside the transaction when it has none
@@ -76,17 +75,40 @@ export async function priceOf(ctx, p, v) {
 }
 export const limitOf = (settings, role) => { const m = (settings.discounts || {}).maxPctByRole || {}; const v = m[role]; return v == null ? ({ cashier: 5, supervisor: 15, manager: 50, owner: 100 })[role] || 0 : Number(v); };
 // a discount: within the cashier's limit, or carrying an approval token from pos-auth whose approver may give that much
+const rememberNonce = (ctx, t) => { if (!t || !t.nonce) return; if (!ctx.lineNonces) ctx.lineNonces = new Set(); if (!ctx.lineTokens) ctx.lineTokens = new Map(); ctx.lineNonces.add(t.nonce); ctx.lineTokens.set(t.nonce, t); };
 export function discountOk(ctx, pct, token, what) {
   if (pct <= limitOf(ctx.settings, ctx.user.role)) return { by: null };
   const t = verifyOverrideToken(token);
   if (!t || t.action !== 'override.discount' || t.entityId !== ctx.entityId) throw new Reject(403, `${pct}% off ${what} is over your limit and has no manager's approval.`);
   if (pct > limitOf(ctx.settings, t.role)) throw new Reject(403, `${pct}% off ${what}: the approver (${t.role}) may not give that much.`);
+  rememberNonce(ctx, t);
   return { by: { uid: t.overrideUid, name: t.overrideName } };
 }
-// an approval token from pos-auth for this action, by at least this role; the actor's own rank may do
+const USED = 'That approval has been used already: ask for the PIN again.';
+const usedRow = (ctx, t) => ({ action: t.action, overrideUid: t.overrideUid || '', actorUid: t.actorUid || '', usedAt: nowIso(), expiresAt: new Date(t.exp).toISOString(), ...serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId) });
+// an override token is spent the first time it is presented: usedTokens/{nonce} is created once, so a second
+// request with the same token is refused (the PIN must be typed again)
+export async function consumeToken(ctx, token) {
+  const t = verifyOverrideToken(token);
+  if (!t || !t.nonce) return null;
+  if (await getDoc('usedTokens', t.nonce)) throw new Reject(403, USED);
+  if (!(await createDoc('usedTokens', t.nonce, usedRow(ctx, t)))) throw new Reject(403, USED);
+  return t;
+}
+// the approvals on sale lines (discounts, price changes) are spent inside the sale's transaction
+export async function spendLineApprovals(ctx, tx) {
+  const writes = [];
+  for (const nonce of ctx.lineNonces || []) {
+    if (await getDoc('usedTokens', nonce, tx)) throw new Reject(403, 'A manager\'s approval on this sale has been used already: ask for the PIN again.');
+    writes.push({ create: true, coll: 'usedTokens', id: nonce, data: usedRow(ctx, ctx.lineTokens.get(nonce)) });
+  }
+  return writes;
+}
+// an approval token from pos-auth for this action, by at least this role; the actor's own rank may do.
+// Only the token spent at the door (whoAndWhere, b.approvalToken) counts.
 export function approved(ctx, token, action, minRole, what) {
   if (rank(ctx.user.role) >= rank(minRole)) return { uid: ctx.user.id, name: ctx.user.name, self: true };
-  const t = verifyOverrideToken(token);
+  const t = token && token === ctx.approvalToken ? ctx.approval : null;
   if (!t || t.action !== 'override.' + action || t.entityId !== ctx.entityId || rank(t.role) < rank(minRole)) throw new Reject(403, `${what} needs a ${minRole}'s PIN.`);
   return { uid: t.overrideUid, name: t.overrideName, self: false };
 }
@@ -131,6 +153,7 @@ export async function prepareSale(ctx, b, opts = {}) {
       const t = verifyOverrideToken(l.priceOverride && l.priceOverride.token);
       const self = rank(ctx.user.role) >= rank('manager');
       if (!self && (!t || t.action !== 'override.price' || t.entityId !== ctx.entityId)) throw new Reject(403, `Line ${n}: the price of ${name} was changed without a manager's approval.`);
+      if (!self) rememberNonce(ctx, t);
       override = { fromCents: listPrice, reason: clean(l.priceOverride && l.priceOverride.reason, 120), by: self ? { uid: ctx.user.id, name: ctx.user.name } : { uid: t.overrideUid, name: t.overrideName } };
       if (!self) approvers.set(t.overrideUid, t.overrideName);
     }
@@ -345,7 +368,8 @@ export async function runSale(ctx, b, { saleId, prep, more, after } = {}) {
       const extra = more ? await more(tx, levels) : { writes: [], result: {} };
       const s = prep ? await saleWrites(tx, ctx, prep, saleId, b, levels) : { writes: [], result: {} };
       const late = after ? await after(tx, levels, s.result) : { writes: [], result: {} };
-      await commit(squash([...extra.writes, ...s.writes, ...late.writes]), tx); done = true;
+      const spent = await spendLineApprovals(ctx, tx);
+      await commit(squash([...extra.writes, ...s.writes, ...late.writes, ...spent]), tx); done = true;
       if (levels.size) await afterStock(ctx, levels);   // the POS is master for stock: Shopify hears of every movement
       return { ...s.result, ...extra.result, ...late.result, ok: true };
     } catch (e) {

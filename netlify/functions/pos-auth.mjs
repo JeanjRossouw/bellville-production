@@ -25,6 +25,19 @@ import {
 } from './lib/pos.mjs';
 
 const MAX_FAILED = 5, LOCK_MINUTES = 15;
+// and per till: this many wrong PINs within the window lock the till itself for a while, whoever they were meant for
+const DEVICE_MAX = 12, DEVICE_WINDOW_MINUTES = 15;
+const tillLocked = (device) => !!(device.pinLockedUntil && device.pinLockedUntil > nowIso());
+const TILL_LOCKED = 'Too many wrong PINs on this till: it is locked for ' + LOCK_MINUTES + ' minutes.';
+async function countTillFailure(device, deviceId) {
+  const now = Date.now(), start = Date.parse(device.pinFailWindowStart || '') || 0;
+  const fresh = now - start > DEVICE_WINDOW_MINUTES * 60000;
+  const n = (fresh ? 0 : device.pinFailCount || 0) + 1;
+  const patch = { pinFailCount: n, pinFailWindowStart: fresh ? new Date(now).toISOString() : device.pinFailWindowStart };
+  if (n >= DEVICE_MAX) { patch.pinLockedUntil = later(LOCK_MINUTES); patch.pinFailCount = 0; patch.pinFailWindowStart = ''; await audit({ entityId: device.entityId, storeId: device.storeId, action: 'device.pinLocked', deviceId, docType: 'device', docId: deviceId, details: { wrong: n, minutes: LOCK_MINUTES } }); }
+  await patchDoc('devices', deviceId, patch);
+  return n >= DEVICE_MAX;
+}
 const later = (minutes) => new Date(Date.now() + minutes * 60000).toISOString();
 const publicUser = (u) => ({ uid: u.id, name: u.name, email: u.email || '', role: u.role, entityIds: u.entityIds || [], storeIds: u.storeIds || [], defaultStoreId: u.defaultStoreId || '', pinSet: !!u.pinSet });
 const publicDevice = (d) => ({ deviceId: d.id, label: d.label, entityId: d.entityId, storeId: d.storeId, registerId: d.registerId });
@@ -162,15 +175,17 @@ const actions = {
     if (!device) throw new Reject(403, 'This till is not enrolled. A manager signs in with an email and enrols it under Admin → Devices.');
     const pin = clean(b.pin, 6);
     if (!pinValid(pin)) throw new Reject(400, 'A PIN is 4 to 6 digits.');
+    if (tillLocked(device)) throw new Reject(423, TILL_LOCKED);
     const { user, locked } = await whosePin(pin, { storeId: device.storeId });
     if (!user) {
       await countFailure(device.storeId);
-      await audit({ entityId: device.entityId, storeId: device.storeId, action: 'login.pin.failed', deviceId: device.id, details: { locked } });
-      throw new Reject(locked ? 423 : 401, locked ? 'Too many wrong PINs: this PIN is locked for ' + LOCK_MINUTES + ' minutes.' : 'That PIN is not known at this till.');
+      const tillNow = await countTillFailure(device, device.id);
+      await audit({ entityId: device.entityId, storeId: device.storeId, action: 'login.pin.failed', deviceId: device.id, details: { locked, tillLocked: tillNow } });
+      throw new Reject(locked || tillNow ? 423 : 401, tillNow ? TILL_LOCKED : locked ? 'Too many wrong PINs: this PIN is locked for ' + LOCK_MINUTES + ' minutes.' : 'That PIN is not known at this till.');
     }
     const token = await customToken(user.id, { posRole: user.role });
     await Promise.all([
-      patchDoc('devices', device.id, { lastSeenAt: nowIso(), appVersion: clean(b.appVersion, 20) }),
+      patchDoc('devices', device.id, { lastSeenAt: nowIso(), appVersion: clean(b.appVersion, 20), ...(device.pinFailCount ? { pinFailCount: 0, pinFailWindowStart: '' } : {}) }),
       audit({ entityId: device.entityId, storeId: device.storeId, action: 'login.pin', actorUid: user.id, actorName: user.name, deviceId: device.id })
     ]);
     return { ok: true, token, user: publicUser(user), device: publicDevice(device), staff: await pinCacheFor(device) };
@@ -193,13 +208,15 @@ const actions = {
     const minRole = ROLES.includes(b.minRole) ? b.minRole : 'manager';
     const pin = clean(b.pin, 6);
     if (!pinValid(pin)) throw new Reject(400, 'A PIN is 4 to 6 digits.');
+    if (device && tillLocked(device)) throw new Reject(423, TILL_LOCKED);
     const { user, locked } = await whosePin(pin, storeId ? { storeId } : { entityId });
     const actorUid = actor ? actor.id : clean(b.actorUid, 60);
     const action = 'override.' + (clean(b.what, 40) || 'approve');
     if (!user || rank(user.role) < rank(minRole) || !inEntity(user, entityId) || (storeId && !inStore(user, storeId))) {
-      if (storeId) await countFailure(storeId);
-      await audit({ entityId, storeId, action: action + '.refused', actorUid, deviceId: device ? device.id : 'web', details: { minRole, matched: !!user, locked, docType: b.docType || '', docId: b.docId || '' } });
-      throw new Reject(403, user ? 'That PIN belongs to a ' + user.role + '; a ' + minRole + ' or higher must approve this.' : locked ? 'Too many wrong PINs: locked for ' + LOCK_MINUTES + ' minutes.' : 'That PIN is not known here.');
+      if (storeId && !user) await countFailure(storeId);
+      const tillNow = device && !user ? await countTillFailure(device, device.id) : false;
+      await audit({ entityId, storeId, action: action + '.refused', actorUid, deviceId: device ? device.id : 'web', details: { minRole, matched: !!user, locked, tillLocked: tillNow, docType: b.docType || '', docId: b.docId || '' } });
+      throw new Reject(tillNow ? 423 : 403, user ? 'That PIN belongs to a ' + user.role + '; a ' + minRole + ' or higher must approve this.' : tillNow ? TILL_LOCKED : locked ? 'Too many wrong PINs: locked for ' + LOCK_MINUTES + ' minutes.' : 'That PIN is not known here.');
     }
     if (user.id === actorUid) throw new Reject(403, 'You cannot approve your own action: ask a ' + minRole + '.');
     const actorName = actor ? actor.name : clean(b.actorName, 80);

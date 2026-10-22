@@ -467,6 +467,7 @@ service cloud.firestore {
       match /vouchers/{code}     { allow read: if pReadsEntity(gid); allow write: if false; }
       match /counters/{id}       { allow read, write: if false; }
       match /assistantUse/{uid}  { allow read, write: if false; }
+      match /usedTokens/{id}     { allow read, write: if false; }
 
       // ---- audit: anyone appends in their own name; nobody edits ------------
       match /auditLog/{id} {
