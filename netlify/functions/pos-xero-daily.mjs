@@ -1,6 +1,7 @@
 // Retail POS — the Xero schedule, on its own so pos-xero can still answer
 // HTTP: in the small hours, build yesterday's journal for every company
 // that asked for it and post it when the company is connected.
+import { runsHere, notHere } from './lib/product.mjs';
 import { json, query, getDoc } from './lib/pos.mjs';
 import { loadTokens, connectBlobs } from './lib/xero.mjs';
 import { buildDoc, pushDoc } from './pos-xero.mjs';
@@ -9,6 +10,7 @@ export const config = { schedule: '30 1 * * *' };   // 01:30 UTC = 03:30 in Sout
 
 // This repo deploys to more than one site; the schedule only works where the factory key is set.
 export const handler = async (event) => {
+  if (!runsHere('pos')) return notHere('pos');
   if (!process.env.FACTORY_SERVICE_ACCOUNT) return json(200, { ok: true, skipped: 'FACTORY_SERVICE_ACCOUNT is not set on this site: nothing to do here' });
   try {
     connectBlobs(event);

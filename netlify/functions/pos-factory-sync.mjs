@@ -3,6 +3,7 @@
 // open orders that are at the factory, and try again a send that a person
 // asked for and that failed. Nothing goes to the factory by itself: an order
 // that nobody has sent stays at the till.
+import { runsHere, notHere } from './lib/product.mjs';
 import { json, query, getDoc, nowIso } from './lib/pos.mjs';
 import { factoryCfg } from './lib/factory-link.mjs';
 import { pushForSchedule, syncFromFactory } from './lib/factory-bridge.mjs';
@@ -15,6 +16,7 @@ const WORK = [
 
 // This repo deploys to more than one site; the schedule only works where the factory key is set.
 export const handler = async (event) => {
+  if (!runsHere('pos')) return notHere('pos');
   if (!process.env.FACTORY_SERVICE_ACCOUNT) return json(200, { ok: true, skipped: 'FACTORY_SERVICE_ACCOUNT is not set on this site: nothing to do here' });
   try {
     const started = Date.now();

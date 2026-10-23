@@ -1,57 +1,98 @@
-# Dedicated POS site (the till) — setup
+# Factory Manager and Factory Manager POS — two sites
 
-The till is **the same app in "POS mode"** — a clean, full-screen, cashier-only
-view that reuses the same Firebase backend, the per-business POS docs, and the
-Netlify functions. No separate codebase.
+Two products come from this one codebase, each on its own Netlify site:
 
-## How POS mode activates
-Any of these boots the till instead of the full Production Manager:
-- a **`pos.` subdomain** (e.g. `pos.repticube.co.za`) — best for a dedicated site;
-- the **`/pos`** path on the main site (`bellville-production.netlify.app/pos`);
-- **`?pos=1`** on any URL.
+| Product | Address | Netlify site | `FM_PRODUCT` |
+|---|---|---|---|
+| **Factory Manager** (orders, the floor, costing, stock, dispatch, invoices) | factorymanager.co.za | `factorymanager-za` | `factory` |
+| **Factory Manager POS** (the shop's till: registers, lay-bys, returns, custom orders, stock, POs, Shopify, Xero) | pos.factorymanager.co.za | `factorymanager-pos` (new) | `pos` |
 
-It also **locks to one business** when the host/URL names it: a `?biz=repticube`
-param, or a host containing the business name (`pos.repticube.*`, `pos.pinkfoot.*`,
-`pos.bellville.*`). Otherwise it defaults to the current business and the cashier
-can switch.
+They share one Firebase project (`factory-manager-ece82`). A shop's custom
+order reaches the factory only when someone at the shop presses **Send to
+factory**; nothing crosses by itself.
 
-## Option A — a separate Netlify site (own domain), shared backend
-1. **Netlify → Add new site → Import an existing project → the same GitHub repo**,
-   branch `main`. Build settings are inherited from `netlify.toml` (publish `.`,
-   functions `netlify/functions`).
-2. **Copy the environment variables** onto this new site (`ANTHROPIC_API_KEY` too, for the assistant on the page) — the same Xero / Shopify
-   / Firebase vars as the main site, since this site runs its own copy of the
-   functions. (Same external apps + same Firebase project = shared data.)
-3. **Add a custom domain** like `pos.repticube.co.za`. Because the host starts
-   with `pos.` and contains `repticube`, it auto-boots POS mode locked to ReptiCube.
-   - Per store: `pos.bellville.…`, `pos.pinkfoot.…`, `pos.repticube.…`.
-4. Cashiers open that domain, sign in with a **`cashier`** account, and see only
-   the till.
+What `FM_PRODUCT` does:
 
-## Option B — no new site (quickest)
-Just bookmark the main site's till path:
-- `bellville-production.netlify.app/pos?biz=repticube`
-- `…/pos?biz=pinkfoot`, `…/pos?biz=bellville`
+- **Each scheduled job runs on its own product's site only** (`netlify/functions/lib/product.mjs`):
+  `pos-shopify-sync`, `pos-factory-sync` and `pos-xero-daily` on the POS site;
+  `factory-shopify-poll` on the factory site. Nothing runs twice.
+- **Each address opens its own app** (`netlify/edge-functions/product-split.js`):
+  on the POS site the root opens the till (`/pos/`) and the factory app's paths
+  go to factorymanager.co.za; on the factory site `/pos/…` goes to the POS site.
 
-Same focused till, no extra Netlify setup.
+Left unset, a site runs every job and redirects nothing — exactly as before
+the split — so nothing changes until both sites are set up.
 
-## Notes
-- Admins still get the **🛒 POS tab** inside the Production Manager — POS mode is
-  only a focused presentation of the same screen.
-- The till shares everything: a sale rung up on the dedicated site shows on the
-  manager's dashboard and syncs to Xero/Shopify exactly as in-app.
-- Give cashiers the **`cashier`** role (Firebase `users/<uid>.role = "cashier"`)
-  so they only ever see Dashboard + POS.
+## Do these in order
 
-## The schedules run on every site this repo deploys to
+### 1. Upgrade the database (once)
 
-Netlify fires every schedule in `netlify.toml` on every site built from this
-repo. A scheduled function first checks for the keys it needs and, where
-they are not set, answers "not configured on this site" and does nothing.
-So the POS and factory schedules (`pos-shopify-sync`, `pos-factory-sync`,
-`pos-xero-daily`, `factory-shopify-poll`) only work on the site that has
-`FACTORY_SERVICE_ACCOUNT`, and the Bellville → Couch Potato order feed
-(`couchpotato-feed`) only on the site that has `FIREBASE_SERVICE_ACCOUNT`,
-`COUCHPOTATO_SERVICE_ACCOUNT`, `COUCHPOTATO_COMPANY_ID` and
-`COUCHPOTATO_CUSTOMER_ID`. Keep each set of keys on one site only, or the
-job runs twice.
+On the free plan the project has a daily read allowance. When it runs out,
+every server job fails until it resets at 09:00 South African time (this is
+what showed as a red error on the till). Switch to pay-as-you-go:
+
+1. console.firebase.google.com → project **factory-manager-ece82**.
+2. Bottom left, next to *Spark*, press **Upgrade** → choose **Blaze** → pick or create a billing account.
+3. Set a **budget alert** when it asks (for example R200 a month). At your size the cost is a few rand a month; the free allowance still applies first.
+4. Authentication → Settings → **Authorized domains** → **Add domain** → `pos.factorymanager.co.za`.
+
+### 2. Make the POS site
+
+1. app.netlify.com → **Add new project** → **Import an existing project** → GitHub → **JeanjRossouw/bellville-production**, branch **main**.
+   Build settings come from `netlify.toml`; leave them. Name it **factorymanager-pos**. Deploy.
+2. Site configuration → **Environment variables** → add each of these (copy the values from the `factorymanager-za` site; tick *Contains secret values* for keys):
+
+   | Key | Value |
+   |---|---|
+   | `FM_PRODUCT` | `pos` |
+   | `FACTORY_SERVICE_ACCOUNT` | the same as on factorymanager-za |
+   | `POS_OVERRIDE_SECRET` | the same as on factorymanager-za |
+   | `ANTHROPIC_API_KEY` | the same as on factorymanager-za (the till's assistant) |
+   | `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET` | the same as on factorymanager-za |
+   | `XERO_POS_REDIRECT_URI` | `https://pos.factorymanager.co.za/.netlify/functions/pos-xero?action=callback` |
+   | `POS_GROUP_ID`, `POS_ASSIST_PER_DAY` | only if they are set on factorymanager-za |
+
+3. Domain management → **Add a domain** → `pos.factorymanager.co.za`. If the
+   domain's DNS is not on Netlify, add the record Netlify shows (a CNAME `pos`
+   → `factorymanager-pos.netlify.app`) where the domain is managed. Wait for
+   the HTTPS certificate (a few minutes).
+4. On the Xero developer app, add the redirect URI from the table above (keep the old one too).
+5. **Deploys → Trigger deploy → Deploy site.**
+6. Open **https://pos.factorymanager.co.za** — it opens the till. Sign in.
+
+### 3. Tell the factory site it is the factory
+
+1. On **factorymanager-za** → Environment variables → add `FM_PRODUCT` = `factory`.
+2. **Deploys → Trigger deploy → Deploy site.**
+
+From now on factorymanager.co.za/pos sends people to the POS site, and the
+POS schedules run only there.
+
+### 4. Point the shop's connections at the new address
+
+- **Shopify** (POS → Admin → Settings → Shopify): press **Run setup again** on
+  the new site; it moves the order webhooks to the new address.
+- **Xero** (POS → Reports → Xero): already connected companies keep working;
+  a new connection uses the new redirect address.
+
+### 5. Move a shop off the till inside Factory Manager
+
+A shop that used Factory Manager's own till (Sales → Point of sale), such as
+ReptiCube:
+
+1. In Factory Manager POS: set up the company, store, registers and staff
+   (Admin), link the factory (Admin → Settings → Factory), connect Shopify and
+   press **Bring in the shop's catalogue** with the opening stock ticked.
+2. Sell on Factory Manager POS from an agreed day.
+3. In Factory Manager → Settings → **Point of sale** → **Switch off the
+   built-in till**. Factory Manager is then the factory only; the till link
+   (`/app/?pos=1`) says where the till went; past till sales stay on record
+   and in Profit. It can be switched back on there.
+
+Open lay-bys, gift-card balances and account balances from the old till do not
+move by themselves: finish or note them before the switch.
+
+## The old Bellville till
+
+The older Production Manager on the `bellville-production` site keeps its own
+till on **/till** (`index.html?pos=1`). It is not Factory Manager POS.

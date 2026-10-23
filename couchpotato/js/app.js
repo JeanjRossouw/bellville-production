@@ -90,7 +90,7 @@ const GROUPS = [['sales', 'Sales'], ['production', 'Production'], ['buying', 'Bu
 // Settings → Roles. The owner sees everything, plus the team and billing.
 let seller = false;          // the seller's own login: sees every company under Clients
 const allowedViews = (user) => !user ? [] : NAV.map(n => n.key).filter(k =>
-  k === 'home' ? true : k === 'clients' ? seller : k === 'settings' ? (user.role === 'owner' || store.can('settings')) : k === 'online' ? store.can('orders') : store.can(k));
+  k === 'home' ? true : k === 'clients' ? seller : k === 'settings' ? (user.role === 'owner' || store.can('settings')) : k === 'online' ? store.can('orders') : k === 'pos' ? store.can('pos') && (!settings.tillMoved || TILL) : store.can(k));
 // A screen the role may only look at: nothing on it may change data.
 const viewOnly = (k) => store.getUser() && store.getUser().role !== 'owner' && k !== 'clients' && levelOf(store.myPerms(), k === 'online' ? 'orders' : k) === 'view';
 // Actions that only look, print or switch what is shown — allowed on a view-only screen.
@@ -580,6 +580,7 @@ function paintScreen() {
   if (view === 'wages') return renderWages(screen);
   if (view === 'scan') return renderScan(screen);
   if (view === 'invoices') return renderInvoices(screen);
+  if (view === 'pos' && settings.tillMoved) return renderTillMoved(screen);
   if (view === 'pos') return renderPos(screen);
   if (view === 'online') return renderOnline(screen, { shop, canEdit: store.getUser().role === 'owner' || levelOf(store.myPerms(), 'orders') === 'edit', fresh: entering });
   screen.innerHTML = '';
@@ -640,7 +641,7 @@ function renderSettings(host) {
       )}
       <div class="card-actions"><button class="btn primary" data-act="save-settings">Save settings</button></div>
     </div>
-    ${store.getUser().role === 'owner' ? moveCard() + billingCard() + shopCard() + xeroCard() + rolesCard() + teamCard() : ''}
+    ${store.getUser().role === 'owner' ? moveCard() + billingCard() + posCard() + shopCard() + xeroCard() + rolesCard() + teamCard() : ''}
     ${store.can('settings', 'edit') && store.can('pos') ? staffCardHtml() : ''}
     <div class="card">
       <h2>How this system is wired</h2>
@@ -700,6 +701,38 @@ function redrawXeroCard() {
 // Moving from the demo: the demo hands over one file, the real system takes it in.
 const MOVE_LABELS = { customers: 'Customers', orders: 'Orders', products: 'Products', materials: 'Materials', invoices: 'Invoices', quotes: 'Quotes', sales: 'Till sales', purchaseOrders: 'Purchase orders',
   suppliers: 'Suppliers', staff: 'Staff', wageRuns: 'Wage runs', drivers: 'Drivers', deliveryNotes: 'Signed delivery notes', stockMoves: 'Stock movements', settings: 'Business settings', counters: 'Numbering' };
+// Factory Manager POS: the shop's till is its own product, on its own site.
+// The till built into Factory Manager stays until the shop has moved; then the
+// owner switches it off here and Factory Manager is the factory only. Past
+// till sales stay where they are (Profit still counts them).
+const POS_SITE = 'https://pos.factorymanager.co.za';
+function posCard() {
+  const moved = !!settings.tillMoved;
+  return `<div class="card" id="pos-card">
+    <h2>Point of sale</h2>
+    <p>The shop's till is <strong>Factory Manager POS</strong>, its own system at <a href="${POS_SITE}" target="_blank" rel="noopener">${esc(POS_SITE.replace('https://', ''))}</a>: registers and cash-ups, lay-bys, returns, custom orders, stock and purchase orders, Shopify and Xero. Custom orders reach this factory only when the shop sends them.</p>
+    <p class="muted">${moved
+      ? 'The till built into Factory Manager is switched off: Factory Manager is the factory only. Past till sales stay on record and in Profit.'
+      : 'The till built into Factory Manager is still on, for shops that have not moved yet. Once your shop sells on Factory Manager POS, switch it off here.'}</p>
+    <div class="card-actions"><a class="btn primary" href="${POS_SITE}" target="_blank" rel="noopener">Open Factory Manager POS</a>
+      <button class="btn ghost" data-act="moved-till" data-on="${moved ? '0' : '1'}">${moved ? 'Switch the built-in till back on' : 'Switch off the built-in till'}</button></div>
+  </div>`;
+}
+function renderTillMoved(screen) {
+  screen.innerHTML = `<div class="card" style="max-width:560px;margin:2rem auto;text-align:center">
+    <h2>The till has moved</h2>
+    <p>${esc(settings.name || 'This shop')} sells on <strong>Factory Manager POS</strong> now.</p>
+    <div class="card-actions" style="justify-content:center"><a class="btn primary" href="${POS_SITE}">Open Factory Manager POS</a></div>
+  </div>`;
+}
+async function setTillMoved(on) {
+  if (on && !confirm('Switch off the till built into Factory Manager? Do this once your shop sells on Factory Manager POS. Past till sales stay on record, and you can switch it back on here.')) return;
+  await store.saveSettings({ tillMoved: !!on });
+  settings = { ...settings, tillMoved: !!on };
+  toast(on ? 'The built-in till is off: Factory Manager is the factory only' : 'The built-in till is back on');
+  setTimeout(() => location.reload(), 600);        // the menu is rebuilt without (or with) the till
+}
+
 function moveCard() {
   if (store.storeMode() === 'demo') return `<div class="card" id="move-card">
     <h2>Move to the real system</h2>
@@ -1217,6 +1250,7 @@ async function onAction(e) {
     case 'cancel-sub': return cancelSubscription();
     case 'shop-connect': return shopConnect();
     case 'xero-connect': return xeroConnect();
+    case 'moved-till': return setTillMoved(b.dataset.on === '1');
     case 'move-export': return moveExport();
     case 'move-import': return moveImport();
     case 'move-undo': return moveUndo();
