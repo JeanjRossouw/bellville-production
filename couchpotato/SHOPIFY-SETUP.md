@@ -7,12 +7,24 @@ kept on the server.
 
 ## What it does
 
-- **Online orders → factory orders.** Each order line becomes a factory order
+- **Online orders wait for a person.** Nothing goes to the factory by itself.
+  Each online order arrives in **Sales → Online orders** with its lines; someone
+  ticks the lines the factory builds and presses *Send ticked lines to the
+  factory*, or presses *Not for the factory* (bought in from a supplier, sent
+  from the shelf; it can be undone). A shop order cancelled before it is sent
+  cannot be sent. The owner can change this under Settings → Online shop →
+  *Online orders* to have them go to the factory by themselves (once paid, or
+  as soon as placed); a shop connected before this change waits too until the
+  owner picks that. Held orders live in `companies/<id>/shopifyOrders/<order id>`
+  (`status` waiting / sent / kept / cancelled, the lines, the customer, the
+  total, `sentLines`, `orderNos`, `sentBy`, `keptBy`), written and read only by
+  the server.
+- **Online orders → factory orders.** Each line that is sent becomes a factory order
   with the company's own order number. It carries the customer, the fabric or
   colour (the variant or a "Fabric"/"Colour" line property), the price the
   customer paid (incl. VAT) after discounts, the paid date, a due date from the lead time, and the
   delivery address. Orders show an **online #1001** tag.
-  - Comes in **once paid** (deposit, full, or paid and partly refunded) by default, or **as soon as
+  - When the owner has chosen to send them by themselves: comes in **once paid** (deposit, full, or paid and partly refunded), or **as soon as
     placed** if the owner picks that. An order taken in unpaid gets its paid
     date filled in when Shopify says it is paid.
   - If the product is linked and enough are on the shelf, the order is sent

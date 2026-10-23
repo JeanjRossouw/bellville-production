@@ -35,7 +35,7 @@ export function storeCustomer(entity, store) {
     contact: store.name || '', email: store.email || entity.email || '', phone: store.phone || entity.phone || '',
     address: addrLine(store.address || entity.address), area: (store.address && store.address.city) || (entity.address && entity.address.city) || '',
     termsDays: 0, group: STORE_GROUP, source: 'pos', posEntityId: entity.id, posStoreId: store.id,
-    notes: 'A retail POS store. Its custom orders come in from the till by themselves; the store hands the goods to its own customer.',
+    notes: 'A retail POS store. Its custom orders come in from the till when the store sends them; the store hands the goods to its own customer.',
     createdAt: t, createdBy: 'POS', updatedAt: t, updatedBy: 'POS'
   };
 }

@@ -5,6 +5,10 @@
 //   POST { action:'settings', importWhen }                                   owner
 //   POST { action:'products' }   bring the shop's products in                owner
 //   POST { action:'sync' }       bring new online orders in now              owner
+//   POST { action:'online' }     the online orders waiting for a person, and the last ones dealt with   who sees orders
+//   POST { action:'sendOnline', orderId, lines:[lineId] }   the ticked lines become factory orders        who edits orders
+//   POST { action:'keepOnline', orderId, note, undo? }      not for the factory (or back to waiting)       who edits orders
+//   Nothing goes to the factory by itself unless the owner chose sendToFactory 'auto' under Settings.
 //   POST { action:'pushSale', saleId }   a till sale took stock: tell Shopify  any member
 //                                        (a sale from the shop's stock becomes a Shopify order)
 //   POST { action:'catalogue' }          the shop's products and stock, for the till  any member
@@ -17,7 +21,7 @@
 // itself can never read the keys):
 //   companies/<cid>/secrets/shopify        store domain, Client ID and secret
 //   companies/<cid>/integrations/shopify   status the app shows (no secrets)
-//   companies/<cid>/shopifyOrders/<id>     each online order, once
+//   companies/<cid>/shopifyOrders/<id>     each online order, once: waiting / sent / kept / cancelled
 //   companies/<cid>/shopifyPushes/<sale>   each till sale sent, once
 //   shopifyLinks/<cid>                     which companies the 15-minute check visits
 import { verifyFirebaseToken } from './lib/auth.mjs';
@@ -76,36 +80,54 @@ export async function importOrder(cid, o, ctx) {
   const st = ctx.status || {};
   const parent = 'companies/' + cid;
   const marker = `${parent}/shopifyOrders/${o.id}`;
+  // Nothing goes to the factory by itself unless the owner chose that: the
+  // order waits in Online orders until someone sends the lines to build.
+  if (!autoSend(st)) {
+    const held = await getDoc(marker);
+    if (!held || held.status) return holdOrder(cid, o, held);
+    if (!held.done) return null;                         // an old claim: leave it be
+  }
   const paidNow = isPaid(o);
   const wanted = wantOrder(o, st.importWhen);
   if (!wanted && !paidNow) return null;               // nothing to do, and nothing to read
 
   let seen = await getDoc(marker);
+  if (seen && (seen.status === 'kept' || seen.status === 'cancelled')) return null;     // someone said not for the factory, or the shop cancelled it
   if (seen && seen.done) {
     // brought in before it was paid ("as soon as placed"): note the payment, dated today
     if (paidNow && !seen.paid) {
-      const day = nowIso().slice(0, 10);
-      for (const id of seen.orderIds || []) {
-        await patchDoc(`${parent}/orders/${id}`, { paidDate: day, updatedAt: nowIso(), updatedBy: 'Shopify' }).catch(() => {});
-      }
+      await notePaid(parent, seen);
       await patchDoc(marker, { paid: true, paidAt: nowIso() });
       return { order: o.name, paidLater: true };
     }
     return null;
   }
   if (!wanted) return null;
-  if (seen && Date.now() - Date.parse(seen.claimedAt || 0) < CLAIM_STALE_MS) {
+  if (seen && seen.claimedAt && Date.now() - Date.parse(seen.claimedAt) < CLAIM_STALE_MS) {
     // another run is bringing it in right now; if this one knows it is paid, try again shortly
     if (paidNow && !seen.paid) throw new Busy('order ' + (o.name || o.id) + ' is being brought in');
     return null;
   }
   const claim = { name: o.name || '', claimedAt: nowIso(), paid: paidNow, done: false };
-  if (seen) await patchDoc(marker, claim);                 // take over a stale claim
+  if (seen) await patchDoc(marker, claim);                 // take over a stale claim (or a waiting order, now sent by itself)
   else if (!await createDoc(marker, claim)) return null;   // someone else claimed it first
 
-  const { settings, vatRate } = ctx.vat || await vatOf(cid);
+  const vat = ctx.vat || await vatOf(cid);
+  const cust = await customerFor(cid, o, ctx);
+  const made = [];
+  for (const li of orderLines(o)) made.push(await makeLine(cid, o, li, cust, vat));
+  await patchDoc(marker, { done: true, status: 'sent', at: nowIso(), orderIds: made.map(m => m.id), sentLines: orderLines(o).map(li => String(li.id)), customerId: cust.customerId, paid: paidNow });
+  const fresh = made.filter(m => m.orderNo);
+  if (fresh.length) await countIn(cid, o);
+  return { order: o.name, orders: fresh.map(m => m.orderNo) };
+}
 
-  // the customer: the same email or cell number, however it was typed, or a new one
+// the owner's choice: 'auto' sends online orders to the factory by themselves; anything else (and unset) waits for a person
+export const autoSend = (st) => !!st && st.sendToFactory === 'auto';
+
+// the customer: the same email or cell number, however it was typed, or a new one
+async function customerFor(cid, o, ctx) {
+  const parent = 'companies/' + cid;
   const c = customerOf(o);
   const customer = findCustomer(ctx.customers || await query(parent, 'customers', {}, 5000), c);
   let customerId = customer ? customer.id : '';
@@ -115,29 +137,118 @@ export async function importOrder(cid, o, ctx) {
       createdAt: nowIso(), createdBy: 'Shopify', updatedAt: nowIso(), updatedBy: 'Shopify' });
     if (ctx.customers) ctx.customers.push({ id: customerId, ...c });
   }
-  const customerName = customer ? customer.name : c.name;
+  return { customerId, customerName: customer ? customer.name : c.name };
+}
+// one line of the shop order as one factory order, numbered from the company's own sequence; never made twice
+async function makeLine(cid, o, li, cust, { settings, vatRate }, by = 'Shopify') {
+  const parent = 'companies/' + cid;
+  const id = orderDocId(o, li);
+  if (await getDoc(`${parent}/orders/${id}`)) return { id };
+  const product = li.variant_id ? (await query(parent, 'products', { shopifyVariantId: String(li.variant_id) }, 1))[0] || null : null;
+  const qty = Number(li.current_quantity ?? li.quantity) || 1;
+  const fromStock = !!(product && Number(product.stock) >= qty && qty > 0);
+  const doc = mapLine(o, li, { customerId: cust.customerId, customerName: cust.customerName, product, fromStock, leadDays: settings.leadDays, vatRate });
+  if (by !== 'Shopify') { doc.createdBy = by; doc.updatedBy = by; }
+  const n = await nextNumber(cid, 'orderNo', settings.firstOrderNo || 1001);
+  doc.orderNo = (settings.orderPrefix || 'CP-') + n;
+  // the order and, from the shelf, the stock it takes: together or not at all
+  // (Shopify already took it off its own count)
+  if (await createWith(`${parent}/orders/${id}`, doc, fromStock ? [{ path: `${parent}/products/${product.id}`, inc: { stock: -qty } }] : [])) return { id, orderNo: doc.orderNo };
+  return { id };
+}
+async function notePaid(parent, seen) {
+  const day = nowIso().slice(0, 10);
+  for (const id of seen.orderIds || []) await patchDoc(`${parent}/orders/${id}`, { paidDate: day, updatedAt: nowIso(), updatedBy: 'Shopify' }).catch(() => {});
+}
+async function countIn(cid, o) {
+  await commitWrites([{ path: statusPath(cid), data: { lastOrderAt: nowIso(), lastOrderName: o.name || '' } }, { path: statusPath(cid), inc: { ordersIn: 1 } }]);
+}
 
+// ---- online orders that wait for a person ----
+// What is kept of a shop order while it waits: enough to show it and, later,
+// to make the factory orders exactly as the automatic way would.
+const O_KEYS = ['id', 'name', 'order_number', 'created_at', 'processed_at', 'financial_status', 'fulfillment_status', 'cancelled_at', 'taxes_included', 'email', 'contact_email', 'phone', 'note', 'tags', 'source_name', 'customer', 'shipping_address', 'billing_address', 'total_price', 'currency'];
+const LI_KEYS = ['id', 'product_id', 'variant_id', 'title', 'variant_title', 'name', 'sku', 'quantity', 'current_quantity', 'price', 'properties', 'tax_lines', 'taxable', 'total_discount', 'discount_allocations', 'gift_card', 'requires_shipping'];
+const pick = (x, keys) => Object.fromEntries(keys.filter(k => x && x[k] !== undefined).map(k => [k, x[k]]));
+export const trimOrder = (o) => ({ ...pick(o, O_KEYS), line_items: (o.line_items || []).map(li => pick(li, LI_KEYS)) });
+const lineSummary = (o) => orderLines(o).map(li => ({ id: String(li.id), title: [li.title, li.variant_title].filter(Boolean).join(' · '), qty: Number(li.current_quantity ?? li.quantity) || 1, price: String(li.price || ''), sku: li.sku || '' }));
+
+export async function holdOrder(cid, o, seen) {
+  const parent = 'companies/' + cid;
+  const marker = `${parent}/shopifyOrders/${o.id}`;
+  if (!seen) {
+    if (!wantOrder(o, 'placed')) return null;           // a till sale, already sent out, voided, nothing to build
+    const c = customerOf(o);
+    const rec = { status: 'waiting', name: o.name || '', placedAt: o.created_at || nowIso(), paid: isPaid(o), customer: { name: c.name || '', phone: c.phone || '', email: c.email || '' },
+      total: String(o.total_price || ''), currency: o.currency || '', lines: lineSummary(o), sentLines: [], orderIds: [], order: JSON.stringify(trimOrder(o)), heldAt: nowIso(), done: false };
+    if (!await createDoc(marker, rec)) return null;     // the webhook and the check saw it together
+    await commitWrites([{ path: statusPath(cid), data: { lastOrderAt: nowIso(), lastOrderName: o.name || '' } }, { path: statusPath(cid), inc: { waiting: 1 } }]);
+    return { order: o.name, waiting: true };
+  }
+  // seen again (paid now, edited, cancelled): keep what it says now
+  const patch = { order: JSON.stringify(trimOrder(o)), lines: lineSummary(o), updatedAt: nowIso() };
+  if (isPaid(o) && !seen.paid) { patch.paid = true; patch.paidAt = nowIso(); if ((seen.orderIds || []).length) await notePaid(parent, seen); }
+  if (o.cancelled_at && seen.status === 'waiting') patch.status = 'cancelled';
+  await patchDoc(marker, patch);
+  return null;
+}
+
+async function levelOf(who, area) {
+  if (who.owner) return 'edit';
+  const r = await getDoc(`companies/${who.cid}/roles/${who.member.role}`);
+  return (r && r.perms && r.perms[area]) || 'none';
+}
+// the list: everything waiting, and the last ones dealt with
+async function onlineList(who) {
+  if (!['view', 'edit'].includes(await levelOf(who, 'orders'))) throw new Error('Your role cannot see orders');
+  const rows = (await query('companies/' + who.cid, 'shopifyOrders', {}, 1000)).filter(r => r.status);
+  rows.sort((a, b) => String(b.placedAt || '').localeCompare(String(a.placedAt || '')));
+  const strip = ({ order, ...r }) => r;
+  return { ok: true, waiting: rows.filter(r => r.status === 'waiting').map(strip), recent: rows.filter(r => r.status !== 'waiting').slice(0, 30).map(strip) };
+}
+// a person sends the lines that are for the factory; the others stay off the floor
+async function sendOnline(who, body) {
+  if ((await levelOf(who, 'orders')) !== 'edit') throw new Error('Your role cannot add orders');
+  const id = String(body.orderId || '');
+  const marker = `companies/${who.cid}/shopifyOrders/${id}`;
+  const rec = /^\d{1,20}$/.test(id) ? await getDoc(marker) : null;
+  if (!rec || !rec.status || !rec.order) throw new Error('No such online order');
+  if (rec.status === 'cancelled') throw new Error('That order was cancelled on the shop');
+  const o = JSON.parse(rec.order);
+  const want = new Set((body.lines || []).map(String));
+  const lines = orderLines(o).filter(li => want.has(String(li.id)) && !(rec.sentLines || []).includes(String(li.id)));
+  if (!lines.length) throw new Error('Tick the lines that go to the factory');
+  const by = who.member.name || who.user.email || 'Online orders';
+  const cust = await customerFor(who.cid, o, {});
+  const vat = await vatOf(who.cid);
   const made = [];
-  for (const li of orderLines(o)) {
-    const id = orderDocId(o, li);
-    if (await getDoc(`${parent}/orders/${id}`)) { made.push({ id }); continue; }
-    const product = li.variant_id ? (await query(parent, 'products', { shopifyVariantId: String(li.variant_id) }, 1))[0] || null : null;
-    const qty = Number(li.current_quantity ?? li.quantity) || 1;
-    const fromStock = !!(product && Number(product.stock) >= qty && qty > 0);
-    const doc = mapLine(o, li, { customerId, customerName, product, fromStock, leadDays: settings.leadDays, vatRate });
-    const n = await nextNumber(cid, 'orderNo', settings.firstOrderNo || 1001);
-    doc.orderNo = (settings.orderPrefix || 'CP-') + n;
-    // the order and, from the shelf, the stock it takes: together or not at all
-    // (Shopify already took it off its own count)
-    if (await createWith(`${parent}/orders/${id}`, doc, fromStock ? [{ path: `${parent}/products/${product.id}`, inc: { stock: -qty } }] : [])) made.push({ id, orderNo: doc.orderNo });
-    else made.push({ id });
-  }
-  await patchDoc(marker, { done: true, at: nowIso(), orderIds: made.map(m => m.id), customerId, paid: paidNow });
+  for (const li of lines) made.push(await makeLine(who.cid, o, li, cust, vat, by));
   const fresh = made.filter(m => m.orderNo);
-  if (fresh.length) {
-    await commitWrites([{ path: statusPath(cid), data: { lastOrderAt: nowIso(), lastOrderName: o.name || '' } }, { path: statusPath(cid), inc: { ordersIn: 1 } }]);
+  await patchDoc(marker, { status: 'sent', done: true, sentLines: [...new Set([...(rec.sentLines || []), ...lines.map(li => String(li.id))])], orderIds: [...new Set([...(rec.orderIds || []), ...made.map(m => m.id)])],
+    orderNos: [...(rec.orderNos || []), ...fresh.map(m => m.orderNo)], customerId: cust.customerId, sentAt: nowIso(), sentBy: by, updatedAt: nowIso() });
+  if (fresh.length) await countIn(who.cid, o);
+  if (rec.status === 'waiting') await commitWrites([{ path: statusPath(who.cid), inc: { waiting: -1 } }]);
+  return { ok: true, order: rec.name, orders: fresh.map(m => m.orderNo) };
+}
+// not for the factory (bought from a supplier, sent from the shelf): kept off the floor; or back to waiting
+async function keepOnline(who, body) {
+  if ((await levelOf(who, 'orders')) !== 'edit') throw new Error('Your role cannot change orders');
+  const id = String(body.orderId || '');
+  const marker = `companies/${who.cid}/shopifyOrders/${id}`;
+  const rec = /^\d{1,20}$/.test(id) ? await getDoc(marker) : null;
+  if (!rec || !rec.status) throw new Error('No such online order');
+  const by = who.member.name || who.user.email || '';
+  if (body.undo) {
+    if (rec.status !== 'kept') return { ok: true, status: rec.status };
+    const status = (rec.sentLines || []).length ? 'sent' : 'waiting';
+    await patchDoc(marker, { status, keptAt: '', keptBy: '', keptNote: '', updatedAt: nowIso() });
+    if (status === 'waiting') await commitWrites([{ path: statusPath(who.cid), inc: { waiting: 1 } }]);
+    return { ok: true, status };
   }
-  return { order: o.name, orders: fresh.map(m => m.orderNo) };
+  if (rec.status !== 'waiting') throw new Error('Only a waiting order can be kept off the factory');
+  await patchDoc(marker, { status: 'kept', keptAt: nowIso(), keptBy: by, keptNote: String(body.note || '').slice(0, 200), updatedAt: nowIso() });
+  await commitWrites([{ path: statusPath(who.cid), inc: { waiting: -1 } }]);
+  return { ok: true, status: 'kept' };
 }
 
 // Look for orders the webhooks may have missed (or that came while the app
@@ -198,7 +309,7 @@ async function connect(event, who, body) {
   await patchDoc(statusPath(who.cid), {
     connected: true, domain, shopName: s.name, currency: s.currency, taxesIncluded: s.taxesIncluded,
     connectedAt: nowIso(), connectedBy: who.member.name || who.user.email || '', lastCheckedAt: nowIso(),
-    importWhen: body.importWhen === 'placed' ? 'placed' : 'paid', webhooks: hooks, lastError: '', ordersIn: Number(before.ordersIn) || 0
+    importWhen: body.importWhen === 'placed' ? 'placed' : 'paid', sendToFactory: body.sendToFactory === 'auto' ? 'auto' : 'manual', webhooks: hooks, lastError: '', ordersIn: Number(before.ordersIn) || 0
   });
   await patchDoc('shopifyLinks/' + who.cid, { domain, at: nowIso() });
   return { ok: true, shopName: s.name, currency: s.currency, webhooks: hooks };
@@ -464,7 +575,7 @@ export const handler = async (event) => {
   try { who = await whoIs(event); } catch (e) { return json(403, { error: e.message }); }
   // a locked company (trial over, payment stopped) is read only here too;
   // disconnecting and the till's stock (which skips itself) are still allowed
-  if (['connect', 'settings', 'products', 'sync', 'receive', 'setStock'].includes(body.action) && !companyActive(who.company)) {
+  if (['connect', 'settings', 'products', 'sync', 'receive', 'setStock', 'sendOnline', 'keepOnline'].includes(body.action) && !companyActive(who.company)) {
     return json(403, { error: 'Your subscription is not active, so the app is read only. Subscribe under Billing to use the online shop again.' });
   }
   try {
@@ -473,8 +584,11 @@ export const handler = async (event) => {
       case 'disconnect': return json(200, await disconnect(event, who));
       case 'settings':
         if (!who.owner) return json(403, { error: 'Only the owner can change this' });
-        await patchDoc(statusPath(who.cid), { importWhen: body.importWhen === 'placed' ? 'placed' : 'paid' });
+        await patchDoc(statusPath(who.cid), { importWhen: body.importWhen === 'placed' ? 'placed' : 'paid', sendToFactory: body.sendToFactory === 'auto' ? 'auto' : 'manual' });
         return json(200, { ok: true });
+      case 'online': return json(200, await onlineList(who));
+      case 'sendOnline': return json(200, await sendOnline(who, body));
+      case 'keepOnline': return json(200, await keepOnline(who, body));
       case 'products': return json(200, await products(who));
       case 'sync':
         if (!who.owner) return json(403, { error: 'Only the owner can do this' });
@@ -494,4 +608,4 @@ export const handler = async (event) => {
 };
 
 // for the tests
-export { connect, disconnect, products, pushSale, pushReturn, catalogue, receive, setStock, markPaid };
+export { connect, disconnect, products, pushSale, pushReturn, catalogue, receive, setStock, markPaid, onlineList, sendOnline, keepOnline };
