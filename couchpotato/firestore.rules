@@ -40,6 +40,7 @@ service cloud.firestore {
     // an update that touches only these fields
     function onlyChanged(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
     function orderEditor(cid) { return ed(cid, 'orders') || ed(cid, 'factory') || ed(cid, 'scan') || ed(cid, 'pos') || ed(cid, 'quotes') || ed(cid, 'invoices') || ed(cid, 'deliveries'); }
+    function timeKeeper(cid) { return ed(cid, 'factory') || ed(cid, 'orders') || ed(cid, 'scan') || ed(cid, 'wages') || ed(cid, 'costing'); }
     function materialEditor(cid) { return ed(cid, 'costing') || ed(cid, 'stock') || ed(cid, 'orders') || ed(cid, 'factory') || ed(cid, 'scan'); }
     function founding(cid) {
       return signedIn() && !exists(/databases/$(database)/documents/companies/$(cid))
@@ -259,6 +260,34 @@ service cloud.firestore {
         allow read: if isMember(cid) && sees(cid, 'wages');
         allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'wages');
       }
+      // Job cards: one per step of an order's routing, timed on the floor.
+      // Workstations and their steps are set up under Costing. A time entry
+      // that is running is stopped by whoever works the floor (or clocks
+      // people out); one already stopped is changed only by the owner, Wages
+      // or Costing, and only with who and why written on it.
+      match /workstations/{id} {
+        allow read: if isMember(cid);
+        allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'costing');
+      }
+      match /operations/{id} {
+        allow read: if isMember(cid);
+        allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'costing');
+      }
+      match /jobCards/{id} {
+        allow read: if isMember(cid);
+        allow create, update: if isMember(cid) && companyActive(cid) && timeKeeper(cid);
+        allow delete: if isOwner(cid);
+      }
+      match /timeEntries/{id} {
+        allow read: if isMember(cid) && (sees(cid, 'factory') || sees(cid, 'wages') || sees(cid, 'costing') || sees(cid, 'profit'));
+        allow create: if isMember(cid) && companyActive(cid) && timeKeeper(cid) && request.resource.data.open == true;
+        allow update: if isMember(cid) && companyActive(cid) && (
+                        (resource.data.open == true && timeKeeper(cid))
+                     || ((isOwner(cid) || ed(cid, 'wages') || ed(cid, 'costing'))
+                         && request.resource.data.editReason is string && request.resource.data.editReason.size() > 0
+                         && request.resource.data.editedAt != resource.data.get('editedAt', '')));
+        allow delete: if isOwner(cid);
+      }
       // The online shop (Shopify). Its app keys are read and written only by the
       // server (netlify/functions/factory-shopify.mjs), never by the app; the
       // connection status is shown to the team but only the server writes it.
@@ -281,9 +310,9 @@ service cloud.firestore {
 
       // Anything else a future version keeps: the settings screen decides.
       match /{coll}/{id} {
-        allow read: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'xeroPushes', 'attendance', 'staff', 'wageRuns', 'tillStaff', 'tillShifts', 'giftCards', 'grvs', 'stockTakes', 'shopProducts', 'suppliers', 'shopPos']);
+        allow read: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'xeroPushes', 'attendance', 'staff', 'wageRuns', 'tillStaff', 'tillShifts', 'giftCards', 'grvs', 'stockTakes', 'shopProducts', 'suppliers', 'shopPos', 'workstations', 'operations', 'jobCards', 'timeEntries']);
         allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'settings')
-                     && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'xeroPushes', 'attendance', 'staff', 'wageRuns', 'tillStaff', 'tillShifts', 'giftCards', 'grvs', 'stockTakes', 'shopProducts', 'suppliers', 'shopPos']);
+                     && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'xeroPushes', 'attendance', 'staff', 'wageRuns', 'tillStaff', 'tillShifts', 'giftCards', 'grvs', 'stockTakes', 'shopProducts', 'suppliers', 'shopPos', 'workstations', 'operations', 'jobCards', 'timeEntries']);
       }
     }
 

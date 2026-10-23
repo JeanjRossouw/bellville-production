@@ -161,6 +161,22 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   Settings in the browser, used the way a person does (a click into a field
   or on the select first, then the button): Connect, the location and the
   default store saved, the factory link saved. `node pos/test/shopifycard.test.mjs`
+- Factory Manager job cards (couchpotato/, phase 1 of the job cards spec):
+  - `jobcards.test.mjs` — the whole floor in the demo (no emulator):
+    workstation rates, a product's routing, release, the station tablet
+    (start, switch, pause with a reason, done, two people on one card,
+    clocking in by starting, a failed check sent back as rework then passed,
+    the order Done), clock-out and an overnight timer stopped, a manager's
+    change with who and why, cancelling, a product without steps, the board,
+    the TV link and the tablet on a phone. Needs `server.mjs` on 8788 (or
+    `FM_BASE`). `node pos/test/jobcards.test.mjs`
+  - `factory-jobs-rules.test.mjs` — the rules for workstations, steps, job
+    cards and time entries: who writes, a stopped entry changed only by the
+    owner, Wages or Costing with a reason, who reads the times, a lapsed
+    trial. `node pos/test/factory-jobs-rules.test.mjs`
+  - `jobcards-cloud.test.mjs` — the tablet with the Factory floor role on the
+    emulators through the real rules, then the owner's correction; no
+    permission errors. `node pos/test/jobcards-cloud.test.mjs`
 - `money.test.mjs` — the shared cents, VAT and loyalty-points maths; needs
   no emulator. `node pos/test/money.test.mjs`
 - Step 18 (hardening, see `pos/HARDENING.md`) is covered inside the suites

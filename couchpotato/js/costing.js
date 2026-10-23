@@ -10,6 +10,7 @@
 import * as store from './store.js';
 import { esc, money, field, row, val, openModal, toast, empty, niceDate, today, imgUrl, productImg, exVat, inclLabel } from './ui.js';
 import { nextShopCode, labelSheetHtml, encodable } from './barcode.js';
+import { stationsTabHtml, routingFieldHtml, readRouting, wireRouting, routingMinutes, hm } from './routing.js';
 
 export const UNITS = ['m', 'm²', 'sheet', 'each', 'kg', 'L', 'roll', 'pack'];
 
@@ -18,7 +19,7 @@ let products = [];
 let settings = {};
 let unwatchM = null, unwatchP = null;
 let onChange = null;
-let costView = 'products';   // products | materials | overheads
+let costView = 'products';   // products | materials | overheads | stations
 
 export function startCosting(cb, cfg) {
   onChange = cb;
@@ -143,6 +144,7 @@ function productForm(p) {
       <button type="button" class="btn ghost sm" id="bom-add" style="margin-top:.4rem">＋ Add a material</button>
       ${materials.length ? '' : '<p class="muted">No materials yet — add them under the Materials tab first.</p>'}
     </div>
+    ${routingFieldHtml(p, products)}
     <div class="cost-live" id="p-live"></div>`
     + field('Notes', 'p-notes', { value: p.notes, type: 'textarea', placeholder: 'Frame timber, foam grade, anything the floor must know' });
 }
@@ -161,7 +163,8 @@ function readProduct(w) {
     stock: parseInt(val(w, 'p-stock'), 10) || 0,
     barcode: val(w, 'p-barcode').trim(),
     imageUrl: imgUrl(val(w, 'p-img')),
-    materials: lines, notes: val(w, 'p-notes')
+    materials: lines, notes: val(w, 'p-notes'),
+    routing: readRouting(w)
   };
 }
 
@@ -200,6 +203,7 @@ function wireProductForm(wrap) {
     const b = e.target.closest('.bom-del');
     if (b) { b.closest('.bom-row').remove(); live(); }
   });
+  wireRouting(w, products);
   live();
 }
 
@@ -264,6 +268,7 @@ export function renderCosting(host) {
   let body;
   if (costView === 'materials') body = materialsHtml(cur);
   else if (costView === 'overheads') body = overheadsHtml(cur);
+  else if (costView === 'stations') body = stationsTabHtml();
   else body = productsHtml(cur);
   host.innerHTML = `
     <div class="page-head">
@@ -274,7 +279,7 @@ export function renderCosting(host) {
         <button class="btn ghost" data-act="print-costsheet">Cost sheet</button>
       </div>
     </div>
-    <div class="btn-row" style="margin-bottom:.9rem">${tab('products', 'Products')}${tab('materials', 'Materials')}${tab('overheads', 'Overheads & labour')}</div>
+    <div class="btn-row" style="margin-bottom:.9rem">${tab('products', 'Products')}${tab('materials', 'Materials')}${tab('overheads', 'Overheads & labour')}${tab('stations', 'Workstations & steps')}</div>
     ${body}`;
 }
 
@@ -293,7 +298,7 @@ function productsHtml(cur) {
       <table class="tbl cost">
         <thead><tr><th>Product</th><th class="r">Materials</th><th class="r">Labour</th><th class="r">Overhead</th><th class="r">Cost</th><th class="r">Price</th><th class="r">Margin</th><th></th></tr></thead>
         <tbody>${cats[cat].map(p => { const c = costOf(p); const missing = c.lines.some(l => l.missing); return `<tr>
-          <td>${productImg(p, 'prod-thumb', 120)}<strong>${esc(p.name)}</strong>${missing ? ' <span class="chip late">material missing</span>' : ''}<div class="muted">${c.lines.length} material${c.lines.length === 1 ? '' : 's'} · ${p.labourHours || 0}h${Number(p.stock) > 0 ? ' · ' + Number(p.stock) + ' in stock' : ''}${p.barcode ? ' · ▮▯▮ ' + esc(p.barcode) : ''}</div></td>
+          <td>${productImg(p, 'prod-thumb', 120)}<strong>${esc(p.name)}</strong>${missing ? ' <span class="chip late">material missing</span>' : ''}<div class="muted">${c.lines.length} material${c.lines.length === 1 ? '' : 's'} · ${p.labourHours || 0}h${routingMinutes(p) ? ' · ' + (p.routing || []).length + ' steps, ' + hm(routingMinutes(p)) : ''}${Number(p.stock) > 0 ? ' · ' + Number(p.stock) + ' in stock' : ''}${p.barcode ? ' · ▮▯▮ ' + esc(p.barcode) : ''}</div></td>
           <td class="r">${esc(money(c.material, cur))}</td>
           <td class="r">${esc(money(c.labour, cur))}</td>
           <td class="r">${esc(money(c.overhead, cur))}</td>

@@ -10,6 +10,7 @@ import { allProducts, productByName } from './costing.js';
 import { consumeForOrder, returnForOrder } from './stock.js';
 import { toXlsx, toCsv, download } from './exporter.js';
 import { pickBox, pickBarHtml } from './deliveries.js';
+import { releaseOrder, closeCardsFor, stageOf } from './jobs.js';
 import {
   esc, money, field, row, val, openModal, toast, empty, today, addDays,
   niceDate, daysUntil, statusChip, statusMeta, STATUSES, fabricChip, FABRIC_STATES, inclLabel
@@ -149,6 +150,7 @@ export async function cancelOrder(id) {
       && confirm('Put the materials for ' + (o.orderNo || 'this order') + ' back in stock?')) await returnForOrder(o, 'cancelled');
   await store.update('orders', id, { status: 'cancelled', cancelledAt: store.nowIso(), cancelledBy: (store.getUser() || {}).name || '', cancelReason: why.trim() },
     'Cancelled' + (why.trim() ? ': ' + why.trim() : ''));
+  try { await closeCardsFor(id, 'Order cancelled', true); } catch (e) { console.error('job cards:', e); }
   toast((o.orderNo || 'Order') + ' cancelled. It stays on record (show All to see it)');
 }
 export async function reopenOrder(id) {
@@ -160,9 +162,10 @@ export async function reopenOrder(id) {
 
 // -------------------------------------------------------------- changes -----
 
-export async function setStatus(id, status) {
+export async function setStatus(id, status, opts) {
   const o = orderById(id);
   if (!o) return;
+  opts = opts || {};
   // only an invoice makes an order Invoiced (Money → Invoices), so nothing
   // leaves the To invoice list without being billed
   if (status === 'invoiced' && !o.invoiceId) { toast('Raise the invoice under Money → Invoices: that marks it Invoiced', 'warn'); return; }
@@ -179,6 +182,15 @@ export async function setStatus(id, status) {
   // Sold at the till: already on an invoice, so leaving the door completes it.
   if (status === 'dispatched' && o.invoiceId) patch.status = 'invoiced';
   await store.update('orders', id, patch, 'Moved to ' + meta.label);
+  // Job cards: going into production releases it to the floor (one card per
+  // step of its product's routing); Done, out of the door or back to New
+  // closes what is still open on the floor.
+  let cardNote = '';
+  try {
+    if (status === 'in-production' && o.status === 'new') { const n = await releaseOrder(o); if (n) cardNote = ' · ' + n + ' job cards on the floor'; }
+    else if (['ready', 'dispatched', 'invoiced'].includes(status) && !opts.fromCards) await closeCardsFor(id, 'Order moved to ' + meta.label);
+    else if (status === 'new' && o.releasedAt) await closeCardsFor(id, 'Order moved back to New', true);
+  } catch (e) { console.error('job cards:', e); toast('Status saved, but the job cards could not be updated: ' + e.message, 'warn'); }
   // Stock: materials come off the shelf when an order leaves New (building
   // starts, or it skips straight past that), and go back if it is moved back
   // to New. Orders already past New when stock tracking began are left
@@ -187,7 +199,7 @@ export async function setStatus(id, status) {
     if (o.status === 'new' && status !== 'new' && !o.materialsUsed) await consumeForOrder(o);
     if (status === 'new' && o.materialsUsed) await returnForOrder(o);
   } catch (e) { console.error('stock update failed:', e); toast('Status saved, but stock could not be updated: ' + e.message, 'warn'); }
-  toast((o.orderNo || 'Order') + ' → ' + meta.label + (status === 'ready' && !o.deliveryDate ? '. Tick it under Done to put it on a delivery note.' : ''));
+  toast((o.orderNo || 'Order') + ' → ' + meta.label + cardNote + (status === 'ready' && !o.deliveryDate ? '. Tick it under Done to put it on a delivery note.' : ''));
 }
 
 export async function setFabric(id, fabricStatus) {
@@ -317,6 +329,7 @@ function orderCard(o) {
         ${next && next.key !== 'invoiced' ? `<button class="btn primary sm" data-act="status" data-id="${esc(o.id)}" data-to="${next.key}">${esc(next.label)}</button>` : ''}
         ${(o.status === 'dispatched' || o.status === 'ready') && !o.invoiceId && store.can('invoices', 'edit') ? `<button class="btn ${o.status === 'ready' ? 'ghost' : 'primary'} sm" data-act="inv-order" data-id="${esc(o.id)}" title="${o.status === 'ready' ? 'Invoice it now, before it goes out' : 'Raise the invoice for this order'}">Invoice it</button>` : ''}
         ${o.status === 'invoiced' && !o.invoiceId ? `<button class="btn ghost sm" data-act="status" data-id="${esc(o.id)}" data-to="dispatched" title="Marked invoiced without an invoice: put it back in the To invoice list">Back to Dispatched</button>` : ''}
+        ${o.releasedAt || o.jobCards ? `<button class="btn ghost sm" data-act="jobs-order" data-id="${esc(o.id)}" title="Each step, who worked on it and for how long">Job cards${stageOf(o) ? ' · ' + esc(stageOf(o).card.operationName) : ''}</button>` : ''}
         <button class="btn ghost sm" data-act="edit-order" data-id="${esc(o.id)}">Edit</button>
         ${['new', 'in-production', 'ready'].includes(o.status) ? `<button class="btn danger sm" data-act="cancel-order" data-id="${esc(o.id)}" title="Call it off. It stays on record">Cancel order</button>` : ''}
         ${o.status === 'cancelled' ? `<button class="btn ghost sm" data-act="reopen-order" data-id="${esc(o.id)}">Reopen</button>` : ''}
