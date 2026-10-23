@@ -170,8 +170,13 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
     change with who and why, cancelling, a product without steps, the board,
     the TV link and the tablet on a phone. Needs `server.mjs` on 8788 (or
     `FM_BASE`). `node pos/test/jobcards.test.mjs`
+  - `jobcost.test.mjs` — phase 2 in the demo: the plan frozen at release,
+    materials issued at start and corrected at Done (a reason for more, an
+    extra one, the shelf moved), the actual on the order, the cost card on
+    the floor and finished, the printout, the report and Use for a suggested
+    standard time. `node pos/test/jobcost.test.mjs`
   - `factory-jobs-rules.test.mjs` — the rules for workstations, steps, job
-    cards and time entries: who writes, a stopped entry changed only by the
+    cards, time entries and material issues: who writes, a stopped entry changed only by the
     owner, Wages or Costing with a reason, who reads the times, a lapsed
     trial. `node pos/test/factory-jobs-rules.test.mjs`
   - `jobcards-cloud.test.mjs` — the tablet with the Factory floor role on the

@@ -14,7 +14,8 @@ import * as store from './store.js';
 import { orderById } from './orders.js';
 import { allWorkstations, workstationById, hm } from './routing.js';
 import { openCards, cardsAt, cardById, peopleOn, runningFor, pauseFor, runningEntries, startCard, pauseCard, doneCard, failCheck, earlierSteps,
-  PAUSE_REASONS, cardMinutes, timeToday, statusLabel, setRosterNames } from './jobs.js';
+  PAUSE_REASONS, cardMinutes, timeToday, statusLabel, setRosterNames, issuesFor, recordIssues, VARIANCE_REASONS } from './jobs.js';
+import { allMaterials } from './costing.js';
 import { rosterPeople, isClockedIn, clockIn, clockOut } from './today.js';
 import { nameOf } from './clientgroups.js';
 import { esc, toast, today, daysUntil, niceDate } from './ui.js';
@@ -25,6 +26,7 @@ let stationId = (urlStation && urlStation !== '1') ? urlStation : (() => { try {
 let personId = '';
 let mode = '';            // '' | 'pause' | 'done' | 'fail'
 let failSteps = null;
+let doneIssues = null;    // the step's materials as issued, while Done is open
 let idleTimer = null;
 let repaint = () => {};
 export const setStationRepaint = (fn) => { repaint = fn; };
@@ -46,7 +48,37 @@ function touch() {
   clearTimeout(idleTimer);
   if (personId) idleTimer = setTimeout(() => { personId = ''; mode = ''; repaint(); }, 60000);
 }
-function backToNames(msg) { personId = ''; mode = ''; failSteps = null; if (msg) toast(msg); repaint(); }
+function backToNames(msg) { personId = ''; mode = ''; failSteps = null; doneIssues = null; if (msg) toast(msg); repaint(); }
+
+// The materials on Done: as issued when the step started, to correct. More
+// than planned needs a reason; one not on the list can be added.
+const whyOptions = (sel) => `<option value="">${'why, if it changed'}</option>` + VARIANCE_REASONS.map(r => `<option${r === sel ? ' selected' : ''}>${esc(r)}</option>`).join('');
+const extraRow = () => `<div class="st-mat st-extra"><select class="st-x-mat"><option value="">— material —</option>${allMaterials().map(m => `<option value="${esc(m.id)}">${esc(m.name)} (${esc(m.unit)})</option>`).join('')}</select>
+  <input type="number" class="st-mat-qty" step="0.01" min="0" placeholder="qty" inputmode="decimal"><select class="st-mat-why">${whyOptions('')}</select></div>`;
+function matsHtml() {
+  if (doneIssues == null) return '<p class="muted">Reading the materials…</p>';
+  return `<div class="st-mats">${doneIssues.map(i => `<div class="st-mat" data-iss="${esc(i.id)}"><span class="st-mat-name">${esc(i.name)}<small>planned ${esc(i.plannedQty)} ${esc(i.unit)}${i.extra ? ' · extra' : ''}</small></span>
+      <input type="number" class="st-mat-qty" step="0.01" min="0" value="${esc(i.qty)}" inputmode="decimal"><select class="st-mat-why">${whyOptions(i.varianceReason)}</select></div>`).join('')}
+    <div id="st-extras"></div></div>
+    <button class="btn ghost" data-act="st-extra" type="button">＋ A material not on the list</button>`;
+}
+function readMats() {
+  const changes = [], extras = [];
+  for (const row of document.querySelectorAll('.st-mat[data-iss]')) {
+    const i = (doneIssues || []).find(x => x.id === row.dataset.iss); if (!i) continue;
+    const qty = parseFloat(row.querySelector('.st-mat-qty').value), reason = row.querySelector('.st-mat-why').value;
+    if (isNaN(qty) || qty < 0) return { error: 'Put in how much ' + i.name + ' was used' };
+    if (qty > (Number(i.plannedQty) || 0) + 1e-9 && !reason) return { error: 'More ' + i.name + ' than planned: say why' };
+    if (qty !== Number(i.qty) || reason !== (i.varianceReason || '')) changes.push({ id: i.id, materialId: i.materialId, qty, was: Number(i.qty) || 0, unitCost: Number(i.unitCostAtTime) || 0, reason, wasReason: i.varianceReason || '' });
+  }
+  for (const row of document.querySelectorAll('.st-mat.st-extra')) {
+    const materialId = row.querySelector('.st-x-mat').value, qty = parseFloat(row.querySelector('.st-mat-qty').value) || 0, reason = row.querySelector('.st-mat-why').value;
+    if (!materialId || !qty) continue;
+    if (!reason) return { error: 'Say why the extra material was used' };
+    extras.push({ materialId, qty, reason });
+  }
+  return { changes, extras };
+}
 
 // ------------------------------------------------------------ tablet ----
 
@@ -109,7 +141,8 @@ function personHtml(ws, p) {
     <button class="btn ghost st-big" data-act="st-cancel">Keep going</button>`;
   if (mode === 'done' && c) return head + `<h2 class="st-h">${esc(c.operationName)} on ${esc(c.orderNo)}: done</h2>
     <div class="card st-done">${Number(c.qty) > 1 ? `<label class="fld"><span>How many finished now (of ${esc(Number(c.qty) - (Number(c.qtyDone) || 0))} left)</span><input type="number" id="st-qty" min="1" max="${esc(Number(c.qty) - (Number(c.qtyDone) || 0))}" value="${esc(Number(c.qty) - (Number(c.qtyDone) || 0))}" inputmode="numeric"></label>` : ''}
-      <label class="fld"><span>A note (if anything)</span><input id="st-note" placeholder="e.g. used an extra metre of fabric"></label>
+      <h3 class="st-h" style="margin-top:.4rem">Materials used</h3>${matsHtml()}
+      <label class="fld"><span>A note (if anything)</span><input id="st-note" placeholder="anything the office should know"></label>
       <button class="btn primary st-big" data-act="st-done-ok">${c.qc ? 'Passed ✓' : 'Done ✓'}</button>
       <button class="btn ghost st-big" data-act="st-cancel">Not yet</button></div>`;
   if (mode === 'fail' && c) return head + `<h2 class="st-h">Send ${esc(c.orderNo)} back to which step?</h2>
@@ -155,8 +188,12 @@ export async function stationAction(act, el) {
   }
   if (act === 'st-pause') { mode = 'pause'; return repaint(); }
   if (act === 'st-pause-why' && c) { pauseCard(c.id, p.id, el.dataset.why); return backToNames(p.name + ': paused (' + el.dataset.why + ')'); }
-  if (act === 'st-done') { mode = 'done'; return repaint(); }
+  if (act === 'st-done') { mode = 'done'; doneIssues = null; repaint(); doneIssues = c ? (await issuesFor(c.id)).sort((a, b) => String(a.name).localeCompare(String(b.name))) : []; return repaint(); }
+  if (act === 'st-extra') { const box = document.getElementById('st-extras'); if (box) box.insertAdjacentHTML('beforeend', extraRow()); return; }
   if (act === 'st-done-ok' && c) {
+    const mats = readMats();
+    if (mats.error) { toast(mats.error, 'warn'); return; }
+    recordIssues(c, mats.changes, mats.extras, p.name);
     const q = document.getElementById('st-qty'), n = document.getElementById('st-note');
     await doneCard(c.id, p.id, q ? parseInt(q.value, 10) || 0 : 0, n ? n.value.trim() : '');
     return backToNames(c.operationName + ' on ' + c.orderNo + ': done');

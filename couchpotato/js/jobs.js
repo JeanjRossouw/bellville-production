@@ -9,6 +9,15 @@
 //                     reworkOf (the check that sent it back), waitingOn (a
 //                     check waiting for its rework), reworks, doneAt, doneBy,
 //                     note, skipped (closed because the order moved on)
+//                     bom (this step's share of the bill of materials, × qty,
+//                     at the prices of the day it was released), issued,
+//                     causedBy (a rework card: who did the step it went back to)
+//   materialIssues/<id> jobCardId, orderId, operationId, materialId, name,
+//                     unit, plannedQty, qty, unitCostAtTime, cost,
+//                     varianceReason, extra (not on the bill), by, day
+//   orders/<id>       planned (frozen at release: materials, labour, total,
+//                     lines, ops), actual (worked out from the floor: see
+//                     jobcost.js)
 //   timeEntries/<id>  jobCardId, orderId, workstationId, staffId, staffName,
 //                     kind ('work' | 'pause'), start, end ('' while it runs),
 //                     open, minutes, day, pauseReason, rateAtTime,
@@ -31,7 +40,8 @@
 // for the server, so a tablet that loses the wifi carries on and catches up.
 import * as store from './store.js';
 import { orderById, setStatus } from './orders.js';
-import { productByName } from './costing.js';
+import { productByName, materialById } from './costing.js';
+import { refreshActual } from './jobcost.js';
 import { routingOf, operationById, workstationById, stationRate, hm } from './routing.js';
 import { attendanceOf } from './today.js';
 import { esc, openModal, toast, today, niceDate } from './ui.js';
@@ -58,6 +68,7 @@ export function startJobs(cb, cfg) {
 }
 export const readsTime = () => ['factory', 'wages', 'costing', 'profit'].some(a => store.can(a));
 export const setJobSettings = (cfg) => { settings = cfg || {}; };
+export const jobSettings = () => settings;
 // today's entries; a new subscription when the date turns over (the demo
 // answers a new watch at once, so the day is set before it is asked)
 function watchDay() {
@@ -80,6 +91,8 @@ const nowIso = () => store.nowIso();
 const who = () => (store.getUser() || {}).name || '';
 export const minutesBetween = (a, b) => Math.max(0, Math.round((Date.parse(b) - Date.parse(a)) / 6000) / 10);
 const r1 = (n) => Math.round((Number(n) || 0) * 10) / 10;
+const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const r3 = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
 const fire = (p, what) => { Promise.resolve(p).catch(e => { console.error(what, e); toast((what ? what + ': ' : '') + e.message, 'warn'); }); };
 
 // ----------------------------------------------------------- the lists ----
@@ -106,22 +119,48 @@ export function stageOf(o) {
 
 // --------------------------------------------------------- releasing ----
 
+// The bill of materials shared out over the steps: each line goes to the step
+// that uses it (Costing → product → "used at"), else to the first step.
+function bomByStep(p, steps, qty) {
+  const at = steps.map(() => []), ids = steps.map(s => s.operationId);
+  ((p && p.materials) || []).filter(l => l.materialId && Number(l.qty) > 0).forEach(l => {
+    const m = materialById(l.materialId) || {};
+    let i = l.operationId ? ids.indexOf(l.operationId) : 0;
+    if (i < 0) i = 0;
+    if (at[i]) at[i].push({ materialId: l.materialId, name: m.name || '', unit: m.unit || '', qty: r3(Number(l.qty) * qty), unitCost: Number(m.cost) || 0 });
+  });
+  return at;
+}
+
+// What the order should cost, at today's prices and rates: frozen on the
+// order when it is released, so the floor is measured against it.
+//   materials = the bill × qty × each material's price (excl. VAT)
+//   labour    = each step's standard minutes × qty × its station's rate
+export function plannedOf(o) {
+  const p = productByName(o.product), steps = routingOf(p), qty = Number(o.qty) || 1;
+  const lines = bomByStep(p, steps, qty).flatMap((ls, i) => ls.map(l => ({ ...l, operationId: steps[i].operationId, cost: r2(l.qty * l.unitCost) })));
+  const ops = steps.map(r => { const rate = stationRate(r.ws), minutes = r1(r.stdMinutes * qty); return { operationId: r.operationId, name: r.op.name, minutes, rate, cost: r2(minutes / 60 * rate) }; });
+  const materials = r2(lines.reduce((s, l) => s + l.cost, 0)), labour = r2(ops.reduce((s, x) => s + x.cost, 0));
+  return { materials, labour, total: r2(materials + labour), lines, ops, at: nowIso() };
+}
+
 // The job cards an order gets when it goes onto the floor (none when its
 // product has no routing: then it is built the old way).
 export function releaseOps(o) {
-  const steps = routingOf(productByName(o.product));
+  const p = productByName(o.product), steps = routingOf(p);
   const qty = Number(o.qty) || 1;
+  const bom = bomByStep(p, steps, qty);
   return steps.map((r, i) => ({ op: 'create', coll: 'jobCards', id: store.newId('jobCards'), data: {
     orderId: o.id, orderNo: o.orderNo || '', product: o.product || '', qty, fabric: o.fabric || '',
     operationId: r.operationId, operationName: r.op.name, workstationId: r.op.workstationId || '', sequence: i + 1,
     stdMinutes: r1(r.stdMinutes * qty), qc: !!r.op.qc, status: i === 0 ? 'ready' : 'waiting', open: true,
-    qtyDone: 0, workedMinutes: 0, isRework: false, reworkOf: '', waitingOn: '', reworks: 0 } }));
+    qtyDone: 0, workedMinutes: 0, isRework: false, reworkOf: '', waitingOn: '', reworks: 0, bom: bom[i], issued: false } }));
 }
 export async function releaseOrder(o) {
   if (cardsForOrder(o.id).length) return 0;
   const ops = releaseOps(o);
   if (!ops.length) return 0;
-  ops.push({ op: 'update', coll: 'orders', id: o.id, patch: { releasedAt: nowIso(), releasedBy: who(), jobCards: ops.length }, event: 'Released to the floor: ' + ops.length + ' job cards' });
+  ops.push({ op: 'update', coll: 'orders', id: o.id, patch: { releasedAt: nowIso(), releasedBy: who(), jobCards: ops.length, planned: plannedOf(o), actual: null }, event: 'Released to the floor: ' + ops.length + ' job cards' });
   await store.batchWrite(ops);
   return ops.length - 1;
 }
@@ -170,9 +209,49 @@ export function startCard(cardId, person) {
     jobCardId: c.id, orderId: c.orderId, workstationId: c.workstationId, staffId: person.id, staffName: person.name || '',
     kind: 'work', start: now, end: '', open: true, minutes: 0, day: today(), pauseReason: '',
     rateAtTime: stationRate(workstationById(c.workstationId)) } });
-  ops.push({ op: 'update', coll: 'jobCards', id: c.id, patch: { status: 'running', ...(c.startedAt ? {} : { startedAt: now }) } });
+  // the first start issues this step's materials, as planned; the person
+  // corrects them at Done if more or less was used
+  const issue = !c.issued && !c.isRework && Array.isArray(c.bom) && c.bom.length;
+  if (issue) c.bom.forEach(l => {
+    const m = materialById(l.materialId), unitCost = m ? Number(m.cost) || 0 : Number(l.unitCost) || 0;
+    ops.push({ op: 'create', coll: 'materialIssues', id: store.newId('materialIssues'), data: {
+      jobCardId: c.id, orderId: c.orderId, operationId: c.operationId, materialId: l.materialId, name: l.name || (m && m.name) || '', unit: l.unit || (m && m.unit) || '',
+      plannedQty: l.qty, qty: l.qty, unitCostAtTime: unitCost, cost: r2(l.qty * unitCost), varianceReason: '', extra: false, by: person.name || '', day: today() } });
+  });
+  ops.push({ op: 'update', coll: 'jobCards', id: c.id, patch: { status: 'running', ...(c.startedAt ? {} : { startedAt: now }), ...(issue ? { issued: true } : {}) } });
   fire(store.batchWrite(ops), 'Could not start');
 }
+
+// At Done: the materials as really used. Each changed line keeps why (more
+// than planned needs a reason); a material not on the bill is added as extra.
+// The shelf count moves by the difference (the bill came off at release).
+export const VARIANCE_REASONS = ['Offcut wasted', 'Cutting error', 'Pattern match', 'Customer change', 'Less was needed'];
+export function recordIssues(card, changes, extras, byName) {
+  const ops = [];
+  const o = orderById(card.orderId) || {};
+  const shelf = (materialId, delta, note) => {
+    if (!delta || !materialById(materialId)) return;
+    ops.push({ op: 'update', coll: 'materials', id: materialId, patch: { onHand: store.inc(-delta) } });
+    const m = materialById(materialId);
+    ops.push({ op: 'create', coll: 'stockMoves', data: { materialId, name: m.name || '', unit: m.unit || '', qty: r3(-delta), kind: 'used', ref: o.orderNo || card.orderNo || '', note } });
+  };
+  (changes || []).forEach(ch => {
+    const delta = r3(ch.qty - ch.was);
+    if (!delta && (ch.reason || '') === (ch.wasReason || '')) return;
+    ops.push({ op: 'update', coll: 'materialIssues', id: ch.id, patch: { qty: r3(ch.qty), cost: r2(ch.qty * ch.unitCost), varianceReason: ch.reason || '', adjustedBy: byName || '' } });
+    shelf(ch.materialId, delta, card.operationName + ': ' + (ch.reason || 'adjusted'));
+  });
+  (extras || []).filter(x => x.materialId && x.qty > 0).forEach(x => {
+    const m = materialById(x.materialId) || {}, unitCost = Number(m.cost) || 0;
+    ops.push({ op: 'create', coll: 'materialIssues', id: store.newId('materialIssues'), data: {
+      jobCardId: card.id, orderId: card.orderId, operationId: card.operationId, materialId: x.materialId, name: m.name || '', unit: m.unit || '',
+      plannedQty: 0, qty: r3(x.qty), unitCostAtTime: unitCost, cost: r2(x.qty * unitCost), varianceReason: x.reason || '', extra: true, by: byName || '', day: today() } });
+    shelf(x.materialId, r3(x.qty), card.operationName + ': ' + (x.reason || 'extra'));
+  });
+  if (ops.length) fire(store.batchWrite(ops), 'Could not save the materials');
+  return ops.length;
+}
+export const issuesFor = async (cardId) => { try { return await store.getWhere('materialIssues', [['jobCardId', '==', cardId]]); } catch (e) { return []; } };
 
 export const PAUSE_REASONS = ['Tea or lunch', 'Waiting for material', 'Waiting for the frame', 'Rework from the step before', 'Something else'];
 export function pauseCard(cardId, staffId, reason) {
@@ -215,7 +294,7 @@ export async function doneCard(cardId, staffId, qty, note) {
   fire(store.batchWrite(ops), 'Could not save');
   if (last) {
     const o = orderById(c.orderId);
-    if (o && o.status === 'in-production') fire(setStatus(o.id, 'ready', { fromCards: true }), 'Could not mark the order done');
+    if (o && o.status === 'in-production') fire(setStatus(o.id, 'ready', { fromCards: true }).then(() => refreshActual(o.id)), 'Could not mark the order done');
   }
 }
 
@@ -236,7 +315,7 @@ export function failCheck(cardId, staffId, back, note) {
     orderId: c.orderId, orderNo: c.orderNo, product: c.product, qty: c.qty, fabric: c.fabric || '',
     operationId: back.operationId, operationName: back.operationName, workstationId: back.workstationId, sequence: back.sequence,
     stdMinutes: 0, qc: false, status: 'ready', open: true, qtyDone: 0, workedMinutes: 0, isRework: true, reworkOf: c.id, waitingOn: '',
-    reworks: 0, note: note || '' } });
+    reworks: 0, note: note || '', causedBy: back.doneBy || '', bom: [], issued: true } });
   ops.push({ op: 'update', coll: 'jobCards', id: c.id, patch: { status: 'waiting', waitingOn: id, reworks: store.inc(1), lastFail: note || '' } });
   ops.push({ op: 'update', coll: 'orders', id: c.orderId, patch: {}, event: (c.operationName || 'Check') + ' failed: back to ' + back.operationName + (note ? ' (' + note + ')' : '') });
   fire(store.batchWrite(ops), 'Could not send it back');
@@ -352,6 +431,7 @@ function editEntry(e, list, orderId) {
       ]);
     } catch (err) { toast('Could not save: ' + err.message, 'warn'); return false; }
     toast('Changed. It says who and why');
+    refreshActual(orderId).catch(() => {});
     setTimeout(() => openJobCards(orderId), 50);
   } });
 }

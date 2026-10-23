@@ -1319,3 +1319,23 @@ html.tv-mode .bd-card { font-size: 16px; } html.tv-mode .bd-head strong { font-s
   .st-pick strong, .st-name strong { font-size: 16px; }
   .st-where { font-size: 20px; }
 }
+
+/* ---- job costing: the step a material is used at, the cost card, the tablet's materials ---- */
+.bom-row.has-op { grid-template-columns: 1fr 150px 70px 80px 24px; }
+.bom-row .bom-op { font: inherit; font-size: 12px; padding: .45rem .4rem; border: 1px solid #d6d3d1; border-radius: 3px; min-width: 0; }
+@media (max-width: 640px) { .bom-row.has-op { grid-template-columns: 1fr 1fr 64px 24px; } .bom-row.has-op .bom-line { display: none; } }
+.jcost td, .jcost th { font-size: 13px; }
+.jcost tr.sub td:first-child { padding-left: 1.4rem; font-size: 12.5px; }
+.jcost tr.sub td { color: var(--ink-2); }
+.jcost tr.strong td { border-top: 1px solid var(--line-2, #d6d3d1); }
+.jcost tr.margin td { border-top: 2px solid var(--ink); }
+.jcost td.warn { color: #b45309; font-weight: 700; } .jcost td.bad, td.r.bad { color: var(--red); font-weight: 800; }
+td.r.warn { color: #b45309; font-weight: 700; }
+.jcost-top { margin-bottom: .6rem; }
+.jcost-prog { height: 8px; background: var(--line); border-radius: 4px; margin: .4rem 0 .2rem; overflow: hidden; }
+.jcost-prog span { display: block; height: 100%; background: var(--ink); }
+.st-mats { display: grid; gap: .45rem; margin: .4rem 0 .6rem; }
+.st-mat { display: grid; grid-template-columns: 1fr 96px 1fr; gap: .45rem; align-items: center; }
+.st-mat input, .st-mat select { font: inherit; font-size: 16px; padding: .55rem .5rem; border: 1px solid var(--line-2, #d6d3d1); border-radius: 4px; min-width: 0; min-height: 48px; }
+.st-mat .st-mat-name { font-weight: 700; } .st-mat .st-mat-name small { display: block; font-weight: 400; color: var(--muted); }
+@media (max-width: 640px) { .st-mat { grid-template-columns: 1fr 80px; } .st-mat select { grid-column: 1 / -1; } }

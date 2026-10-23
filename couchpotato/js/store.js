@@ -1420,7 +1420,11 @@ function seedDemoJobs() {
     'p-daybed': rt([['op-frame', 150], ['op-cut', 60], ['op-sew', 110], ['op-uph', 240], ['op-qc', 15], ['op-pack', 25]]),
     'p-ott': rt([['op-frame', 40], ['op-cut', 15], ['op-sew', 30], ['op-uph', 60], ['op-qc', 10], ['op-pack', 10]])
   };
-  const prods = demoRead('products'); Object.keys(routes).forEach(k => { if (prods[k]) prods[k].routing = routes[k]; }); demoWrite('products', prods);
+  // each material on the bill is used at a step: timber, board and webbing at the frame shop, fabric at cutting, the rest at upholstery
+  const usedAt = (m) => ({ 'm-pine': 'op-frame', 'm-ply': 'op-frame', 'm-web': 'op-frame', 'm-fab': 'op-cut' })[m] || 'op-uph';
+  const prods = demoRead('products');
+  Object.keys(routes).forEach(k => { if (prods[k]) { prods[k].routing = routes[k]; prods[k].materials = (prods[k].materials || []).map(l => ({ ...l, operationId: usedAt(l.materialId) })); } });
+  demoWrite('products', prods);
   const set = demoRead('settings'); set.factory = { ...(set.factory || {}), productiveHours: 1550, dayEnd: '17:00' }; demoWrite('settings', set);
   // the register: Sipho, Thandi and Pieter clocked in a little under four hours ago
   const t = localDate(), att = demoRead('attendance');
@@ -1433,9 +1437,16 @@ function seedDemoJobs() {
   demoWrite('attendance', att);
   const orders = demoRead('orders'), o = orders.d1;
   if (!o || o.status !== 'in-production') return;
+  // CP-1001's plan, frozen when it was released: the bill at today's prices, the steps at the station rates
+  const mats = demoRead('materials'), r2 = (n) => Math.round(n * 100) / 100, ohH = r2(68000 / 1550);
+  const bomAt = (opId) => (prods['p-3s'].materials || []).filter(l => l.operationId === opId).map(l => ({ materialId: l.materialId, name: mats[l.materialId].name, unit: mats[l.materialId].unit, qty: l.qty, unitCost: mats[l.materialId].cost }));
+  const lines = Object.keys(ops).flatMap(opId => bomAt(opId).map(l => ({ ...l, operationId: opId, cost: r2(l.qty * l.unitCost) })));
+  const pops = routes['p-3s'].map(r => { const rate = r2(wsMap[opMap[r.operationId].workstationId].staffHourlyCost + ohH); return { operationId: r.operationId, name: opMap[r.operationId].name, minutes: r.stdMinutes, rate, cost: r2(r.stdMinutes / 60 * rate) }; });
+  const pm = r2(lines.reduce((a, l) => a + l.cost, 0)), pl = r2(pops.reduce((a, x) => a + x.cost, 0));
+  const planned = { materials: pm, labour: pl, total: r2(pm + pl), lines, ops: pops, at: ago(226) };
   const cardOf = (i, opId, status, extra) => ({ orderId: 'd1', orderNo: o.orderNo, product: o.product, qty: 1, fabric: o.fabric, operationId: opId, operationName: opMap[opId].name,
     workstationId: opMap[opId].workstationId, sequence: i, stdMinutes: routes['p-3s'][i - 1].stdMinutes, qc: opMap[opId].qc, status, open: status !== 'done',
-    qtyDone: status === 'done' ? 1 : 0, workedMinutes: 0, isRework: false, reworkOf: '', waitingOn: '', reworks: 0, ...by, ...(extra || {}) });
+    qtyDone: status === 'done' ? 1 : 0, workedMinutes: 0, isRework: false, reworkOf: '', waitingOn: '', reworks: 0, bom: bomAt(opId), issued: status !== 'waiting', ...by, ...(extra || {}) });
   const cards = {
     'jc-d1-1': cardOf(1, 'op-frame', 'done', { workedMinutes: 135, doneAt: ago(85), doneBy: 'Pieter Swart', startedAt: ago(220) }),
     'jc-d1-2': cardOf(2, 'op-cut', 'done', { workedMinutes: 40, doneAt: ago(42), doneBy: 'Thandi Mokoena', startedAt: ago(82) }),
@@ -1450,7 +1461,12 @@ function seedDemoJobs() {
     'te-2': te('jc-d1-2', 's2', 'Thandi Mokoena', ago(82), ago(42)),
     'te-3': te('jc-d1-3', 's2', 'Thandi Mokoena', ago(42), '')
   });
-  orders.d1 = { ...o, releasedAt: ago(226), releasedBy: 'Jean', jobCards: 6 };
+  // what the frame shop and the cutting table took: a little more timber and fabric than planned, with why
+  const iss = {}, used = { 'm-pine': [24, 'Cutting error'], 'm-fab': [13.5, 'Pattern match'] };
+  ['jc-d1-1', 'jc-d1-2'].forEach(cid => cards[cid].bom.forEach((l, n) => { const u = used[l.materialId], qty = u ? u[0] : l.qty;
+    iss['mi-' + cid + '-' + n] = { jobCardId: cid, orderId: 'd1', operationId: cards[cid].operationId, materialId: l.materialId, name: l.name, unit: l.unit, plannedQty: l.qty, qty, unitCostAtTime: l.unitCost, cost: r2(qty * l.unitCost), varianceReason: u ? u[1] : '', extra: false, by: cid === 'jc-d1-1' ? 'Pieter Swart' : 'Thandi Mokoena', day: t, ...by }; }));
+  demoWrite('materialIssues', iss);
+  orders.d1 = { ...o, releasedAt: ago(226), releasedBy: 'Jean', jobCards: 6, planned };
   demoWrite('orders', orders);
 }
 

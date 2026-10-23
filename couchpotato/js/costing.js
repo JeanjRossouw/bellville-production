@@ -10,7 +10,7 @@
 import * as store from './store.js';
 import { esc, money, field, row, val, openModal, toast, empty, niceDate, today, imgUrl, productImg, exVat, inclLabel } from './ui.js';
 import { nextShopCode, labelSheetHtml, encodable } from './barcode.js';
-import { stationsTabHtml, routingFieldHtml, readRouting, wireRouting, routingMinutes, hm } from './routing.js';
+import { stationsTabHtml, routingFieldHtml, readRouting, wireRouting, routingMinutes, hm, allOperations } from './routing.js';
 
 export const UNITS = ['m', 'm²', 'sheet', 'each', 'kg', 'L', 'roll', 'pack'];
 
@@ -117,10 +117,14 @@ export async function deleteMaterial(id) {
 
 // ------------------------------------------------------------ products ------
 
+// With steps set up, each line says which step uses it: its job card issues
+// it when that step starts (no step: the first one).
 function bomRow(l, i) {
   l = l || {};
-  return `<div class="bom-row" data-row="${i}">
+  const ops = allOperations();
+  return `<div class="bom-row${ops.length ? ' has-op' : ''}" data-row="${i}">
     <select class="bom-mat"><option value="">— material —</option>${materials.map(m => `<option value="${esc(m.id)}"${m.id === l.materialId ? ' selected' : ''}>${esc(m.name)} (${esc(money(m.cost, settings.currency))}/${esc(m.unit)})</option>`).join('')}</select>
+    ${ops.length ? `<select class="bom-op" title="The step that uses it"><option value="">used at the first step</option>${ops.map(o => `<option value="${esc(o.id)}"${o.id === l.operationId ? ' selected' : ''}>used at ${esc(o.name)}</option>`).join('')}</select>` : ''}
     <input class="bom-qty" type="number" min="0" step="0.01" value="${esc(l.qty == null ? '' : l.qty)}" placeholder="qty">
     <span class="bom-line muted"></span>
     <button type="button" class="icon-btn bom-del" title="Remove">✕</button>
@@ -154,7 +158,8 @@ function readProduct(w) {
   w.querySelectorAll('.bom-row').forEach(r => {
     const materialId = r.querySelector('.bom-mat').value;
     const qty = parseFloat(r.querySelector('.bom-qty').value) || 0;
-    if (materialId && qty > 0) lines.push({ materialId, qty });
+    const op = r.querySelector('.bom-op') ? r.querySelector('.bom-op').value : '';
+    if (materialId && qty > 0) lines.push({ materialId, qty, ...(op ? { operationId: op } : {}) });
   });
   return {
     name: val(w, 'p-name'), category: val(w, 'p-cat'),

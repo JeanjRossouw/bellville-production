@@ -11,6 +11,7 @@ import { consumeForOrder, returnForOrder } from './stock.js';
 import { toXlsx, toCsv, download } from './exporter.js';
 import { pickBox, pickBarHtml } from './deliveries.js';
 import { releaseOrder, closeCardsFor, stageOf } from './jobs.js';
+import { seesCost } from './jobcost.js';
 import {
   esc, money, field, row, val, openModal, toast, empty, today, addDays,
   niceDate, daysUntil, statusChip, statusMeta, STATUSES, fabricChip, FABRIC_STATES, inclLabel
@@ -330,6 +331,7 @@ function orderCard(o) {
         ${(o.status === 'dispatched' || o.status === 'ready') && !o.invoiceId && store.can('invoices', 'edit') ? `<button class="btn ${o.status === 'ready' ? 'ghost' : 'primary'} sm" data-act="inv-order" data-id="${esc(o.id)}" title="${o.status === 'ready' ? 'Invoice it now, before it goes out' : 'Raise the invoice for this order'}">Invoice it</button>` : ''}
         ${o.status === 'invoiced' && !o.invoiceId ? `<button class="btn ghost sm" data-act="status" data-id="${esc(o.id)}" data-to="dispatched" title="Marked invoiced without an invoice: put it back in the To invoice list">Back to Dispatched</button>` : ''}
         ${o.releasedAt || o.jobCards ? `<button class="btn ghost sm" data-act="jobs-order" data-id="${esc(o.id)}" title="Each step, who worked on it and for how long">Job cards${stageOf(o) ? ' · ' + esc(stageOf(o).card.operationName) : ''}</button>` : ''}
+        ${(o.releasedAt || o.jobCards) && seesCost() ? `<button class="btn ghost sm" data-act="order-cost" data-id="${esc(o.id)}" title="Planned against actual: materials, labour, rework, margin">Cost</button>` : ''}
         <button class="btn ghost sm" data-act="edit-order" data-id="${esc(o.id)}">Edit</button>
         ${['new', 'in-production', 'ready'].includes(o.status) ? `<button class="btn danger sm" data-act="cancel-order" data-id="${esc(o.id)}" title="Call it off. It stays on record">Cancel order</button>` : ''}
         ${o.status === 'cancelled' ? `<button class="btn ghost sm" data-act="reopen-order" data-id="${esc(o.id)}">Reopen</button>` : ''}

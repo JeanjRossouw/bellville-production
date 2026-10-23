@@ -21,7 +21,7 @@ import { startPos, renderPos, setPosSettings, setPosShop, setPosXero, posAction,
 import { renderOnline, onlineAction, setOnlineRepaint } from './onlineorders.js';
 import { staffCardHtml } from './till.js';
 import { startQuotes, renderQuotes, setQuoteSettings, setQuoteFilter, newQuote, editQuote, copyQuote, sendQuote, printQuote, acceptQuote, declineQuote } from './quotes.js';
-import { renderProfit, setProfitSettings, setProfitMonth } from './profit.js';
+import { renderProfit, setProfitSettings, setProfitMonth, setProfitView } from './profit.js';
 import { startToday, renderToday, setTodaySettings, todayAction, syncRoster } from './today.js';
 import { startSuppliers, setSupplierSettings, editSupplier } from './suppliers.js';
 import { downloadSupplierSheet, importSupplierSheet, setSupplierSheetSettings } from './suppliersheet.js';
@@ -51,6 +51,7 @@ import {
 import { startRouting, setRoutingSettings, newWorkstation, editWorkstation, newOperation, editOperation, addStarter, saveHours } from './routing.js';
 import { startJobs, setJobSettings, openJobCards } from './jobs.js';
 import { renderStations, stationAction, setStationRepaint, stationBusy } from './stations.js';
+import { openOrderCost, jobCostAction, setJobCostRepaint } from './jobcost.js';
 
 
 // ?pos=1 is the till link: opens straight onto the point of sale with bigger
@@ -107,7 +108,7 @@ const allowedViews = (user) => !user ? [] : NAV.map(n => n.key).filter(k =>
 const viewOnly = (k) => store.getUser() && store.getUser().role !== 'owner' && k !== 'clients' && levelOf(store.myPerms(), AREA_OF[k] || k) === 'view';
 // Actions that only look, print or switch what is shown — allowed on a view-only screen.
 const LOOK_ONLY = new Set(['filter-status', 'floor-view', 'cost-view', 'stock-view', 'sup-sheet-dl', 'quote-filter', 'profit-month', 'inv-view',
-  'print-job', 'print-week-jobs', 'jobs-order', 'st-station', 'st-change', 'st-person', 'st-back', 'st-cancel', 'print-week-report', 'wg-view', 'wg-period', 'wg-print-sheet', 'wg-print-slips', 'wg-export', 'wg-open', 'print-planner', 'print-pricesheet', 'print-costsheet', 'inv-print', 'stmt-print', 'inv-export',
+  'print-job', 'print-week-jobs', 'jobs-order', 'order-cost', 'jc-period', 'jc-refresh', 'pf-view', 'st-station', 'st-change', 'st-person', 'st-back', 'st-cancel', 'print-week-report', 'wg-view', 'wg-period', 'wg-print-sheet', 'wg-print-slips', 'wg-export', 'wg-open', 'print-planner', 'print-pricesheet', 'print-costsheet', 'inv-print', 'stmt-print', 'inv-export',
   'po-print', 'quote-print', 'scan-start', 'scan-stop', 'scan-find', 'notify',
   'sr-view', 'sr-asset-history',
   'dl-view', 'dl-day', 'dl-day-pick', 'dl-print-run', 'dl-note', 'dl-confirm', 'dl-send-run', 'dl-driver-copy']);
@@ -192,6 +193,7 @@ async function boot() {
       // workstations and steps (Costing), and the job cards on the floor
       startRouting(() => { if (view === 'costing' || view === 'stations' || view === 'factory') paint(); }, settings);
       setStationRepaint(() => { if (view === 'stations') paint(); });
+      setJobCostRepaint(() => { if (view === 'profit') paint(); });
       if (store.can('factory') || store.can('orders')) startJobs(() => {
         if (view === 'stations' && stationBusy()) return;      // someone is typing a note: leave it
         if (view === 'stations' || view === 'factory' || view === 'orders') paint();
@@ -1168,6 +1170,8 @@ async function onAction(e) {
   if (b.dataset.act.startsWith('pos-') || b.dataset.act.startsWith('till-') || b.dataset.act.startsWith('ss-')) return posAction(b.dataset.act, b);
   if (b.dataset.act.startsWith('ol-')) return onlineAction(b.dataset.act, b);
   if (b.dataset.act.startsWith('st-')) return stationAction(b.dataset.act, b);
+  if (b.dataset.act.startsWith('jc-') || b.dataset.act === 'order-cost') return jobCostAction(b.dataset.act, b);
+  if (b.dataset.act === 'pf-view') { setProfitView(b.dataset.to); return paint(); }
   if (b.dataset.act.startsWith('today-')) return todayAction(b, (to, sub) => {
     if (!allowedViews(store.getUser()).includes(to)) { toast('Your role does not open that screen', 'warn'); return; }
     if (to === 'invoices' && sub) setInvView(sub);
