@@ -705,12 +705,12 @@ const MOVE_LABELS = { customers: 'Customers', orders: 'Orders', products: 'Produ
 // The till built into Factory Manager stays until the shop has moved; then the
 // owner switches it off here and Factory Manager is the factory only. Past
 // till sales stay where they are (Profit still counts them).
-const POS_SITE = 'https://pos.factorymanager.co.za';
+const POS_SITE = location.origin + '/pos/';     // Factory Manager POS, on this same site
 function posCard() {
   const moved = !!settings.tillMoved;
   return `<div class="card" id="pos-card">
     <h2>Point of sale</h2>
-    <p>The shop's till is <strong>Factory Manager POS</strong>, its own system at <a href="${POS_SITE}" target="_blank" rel="noopener">${esc(POS_SITE.replace('https://', ''))}</a>: registers and cash-ups, lay-bys, returns, custom orders, stock and purchase orders, Shopify and Xero. Custom orders reach this factory only when the shop sends them.</p>
+    <p>The shop's till is <strong>Factory Manager POS</strong>, a separate module with its own sign-in at <a href="${POS_SITE}" target="_blank" rel="noopener">${esc(POS_SITE.replace(/^https?:\/\//, ''))}</a>: registers and cash-ups, lay-bys, returns, custom orders, stock and purchase orders, Shopify and Xero. It works on its own; a shop that links it to this factory sends custom orders here only when it presses Send to factory.</p>
     <p class="muted">${moved
       ? 'The till built into Factory Manager is switched off: Factory Manager is the factory only. Past till sales stay on record and in Profit.'
       : 'The till built into Factory Manager is still on, for shops that have not moved yet. Once your shop sells on Factory Manager POS, switch it off here.'}</p>

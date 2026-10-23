@@ -23,14 +23,7 @@
 # site. Each scheduled function checks for the keys it needs and answers
 # 200 "not configured on this site" where they are absent, instead of
 # failing: the factory and POS schedules work where FACTORY_SERVICE_ACCOUNT
-# is set, the order feed where its four keys are set.
-#
-# Factory Manager and Factory Manager POS are two sites built from this repo
-# (POS-SITE-SETUP.md). Each says which it is with FM_PRODUCT ('factory' or
-# 'pos'): the POS jobs (pos-shopify-sync, pos-factory-sync, pos-xero-daily)
-# run only on the POS site, factory-shopify-poll only on the factory site,
-# and the edge function netlify/edge-functions/product-split.js sends each
-# address to its own app. Unset, everything runs and nothing is redirected.
+# is set (factorymanager-za), the order feed where its four keys are set.
 [functions."factory-shopify-poll"]
   schedule = "*/15 * * * *"
 [functions."couchpotato-feed"]

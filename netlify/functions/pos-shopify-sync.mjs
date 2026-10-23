@@ -1,7 +1,6 @@
 // Retail POS — the Shopify schedule: every ten minutes, for every company
 // connected, push the stock still queued (with its back-off), pull the
 // discount codes and push customers who said yes to marketing.
-import { runsHere, notHere } from './lib/product.mjs';
 import { json, query, nowIso } from './lib/pos.mjs';
 import { secretsOf, settingsOf, flushStock, logSync } from './lib/shopify-pos.mjs';
 
@@ -9,7 +8,6 @@ export const config = { schedule: '*/10 * * * *' };
 
 // This repo deploys to more than one site; the schedule only works where the factory key is set.
 export const handler = async (event) => {
-  if (!runsHere('pos')) return notHere('pos');
   if (!process.env.FACTORY_SERVICE_ACCOUNT) return json(200, { ok: true, skipped: 'FACTORY_SERVICE_ACCOUNT is not set on this site: nothing to do here' });
   try {
     const ents = (await query('entities', [], 50)).filter(e => e.active !== false);
