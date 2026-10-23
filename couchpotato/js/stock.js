@@ -57,13 +57,15 @@ const cur = () => settings.currency || 'R';
 // ------------------------------------------------------- what orders take ---
 
 // The materials one order takes: its product's bill of materials × quantity.
-// null when the product is not in the catalogue (nothing to work out).
+// null when the product is not in the catalogue (nothing to work out). When
+// the customer supplies the fabric (COM), the fabric is theirs, not the shelf's.
+export const comLine = (o, materialId) => !!(o && o.com && isFabric(materialById(materialId) || {}));
 export function needsFor(o) {
   const p = productByName(o && o.product);
   if (!p) return null;
   const q = Number(o.qty) || 1;
   return (p.materials || [])
-    .filter(l => l.materialId && Number(l.qty) > 0)
+    .filter(l => l.materialId && Number(l.qty) > 0 && !comLine(o, l.materialId))
     .map(l => ({ materialId: l.materialId, qty: r3(Number(l.qty) * q) }));
 }
 
@@ -102,6 +104,32 @@ export async function returnForOrder(o, why) {
   return back.length;
 }
 
+// ------------------------------------------------------ the shortage check ----
+
+// Before an order goes onto the floor: each material it takes against what is
+// on the shelf (orders already released have taken theirs). OK; short, by how
+// much; or on order, when enough is coming on a purchase order (the first one
+// due is named). A material never counted is shown but not judged.
+const coming = (materialId) => pos.filter(p => p.status === 'sent' || p.status === 'part')
+  .flatMap(p => (p.lines || []).filter(x => x.materialId === materialId && !x.forOrderId).map(x => ({ poNo: p.poNo, date: p.expectedDate || '', qty: r3((Number(x.qty) || 0) - (Number(x.received) || 0)) })))
+  .filter(x => x.qty > 0).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+export function shortageFor(o) {
+  const need = needsFor(o);
+  if (!need) return null;
+  return need.map(l => {
+    const m = materialById(l.materialId); if (!m) return null;
+    const counted = m.onHand != null, onHand = r3(Number(m.onHand) || 0);
+    const short = counted ? r3(Math.max(0, l.qty - Math.max(0, onHand))) : 0;
+    const c = coming(l.materialId), onOrder = r3(c.reduce((s, x) => s + x.qty, 0));
+    const status = !counted ? 'uncounted' : !short ? 'ok' : onOrder >= short ? 'on-order' : 'short';
+    return { materialId: l.materialId, name: m.name, unit: m.unit || '', supplier: m.supplier || '', need: l.qty, onHand, short, onOrder, po: c[0] || null, status };
+  }).filter(Boolean);
+}
+// Released while short: still short while the shelf for any of those
+// materials is below nothing (a delivery received puts it right).
+export const shortNow = (o) => (o && o.status === 'in-production' && Array.isArray(o.shortAtRelease) ? o.shortAtRelease : [])
+  .filter(l => { const m = materialById(l.materialId); return m && Number(m.onHand) < 0; });
+
 // ------------------------------------------------------------ the levels ----
 
 // For every material: on hand, needed by orders not started, on order, and
@@ -112,10 +140,12 @@ export function levels(orders) {
     map[m.id] = { m, onHand: Number(m.onHand) || 0, counted: m.onHand != null, needed: 0, onOrder: 0, waiting: 0 };
   });
   let unknown = 0;
+  // released while short, and still short: those orders are waiting for it now, so they come first
+  (orders || []).forEach(o => shortNow(o).forEach(l => { if (map[l.materialId]) (map[l.materialId].for = map[l.materialId].for || []).push(o.orderNo || ''); }));
   (orders || []).filter(o => o.status === 'new' && !o.materialsUsed).forEach(o => {
     const need = needsFor(o);
     if (!need) { unknown++; return; }
-    need.forEach(l => { if (map[l.materialId]) { map[l.materialId].needed += l.qty; map[l.materialId].waiting++; } });
+    need.forEach(l => { if (map[l.materialId]) { map[l.materialId].needed += l.qty; map[l.materialId].waiting++; (map[l.materialId].for = map[l.materialId].for || []).push(o.orderNo || ''); } });
   });
   pos.filter(p => p.status === 'sent' || p.status === 'part').forEach(p => (p.lines || []).filter(l => !l.forOrderId).forEach(l => {
     // fabric bought for one order is that order's, not stock on order
@@ -169,7 +199,7 @@ function renderLevels(rows, shorts, unknown) {
       ${Object.keys(bySupplier).sort().map(sup => `<div class="stock-sup">
         <div class="stock-sup-head"><strong>${esc(sup)}</strong>
           <button class="btn primary sm" data-act="po-draft" data-supplier="${esc(sup)}">Draft purchase order</button></div>
-        ${bySupplier[sup].map(r => `<div class="stock-line"><span>${esc(r.m.name)}</span><span class="muted">${r.after < 0 ? 'short ' + esc(qtyTxt(-r.after)) + ' ' + esc(r.m.unit || '') : esc(qtyTxt(r.after)) + ' ' + esc(r.m.unit || '') + ' left'}</span><span>order <strong>${esc(qtyTxt(r.suggest))} ${esc(r.m.unit || '')}</strong></span></div>`).join('')}
+        ${bySupplier[sup].map(r => `<div class="stock-line"><span>${esc(r.m.name)}${r.for && r.for.length ? `<small class="muted"> for ${esc([...new Set(r.for)].filter(Boolean).slice(0, 4).join(', '))}${new Set(r.for).size > 4 ? '…' : ''}</small>` : ''}</span><span class="muted">${r.after < 0 ? 'short ' + esc(qtyTxt(-r.after)) + ' ' + esc(r.m.unit || '') : esc(qtyTxt(r.after)) + ' ' + esc(r.m.unit || '') + ' left'}</span><span>order <strong>${esc(qtyTxt(r.suggest))} ${esc(r.m.unit || '')}</strong></span></div>`).join('')}
       </div>`).join('')}
     </div>` : '';
   const uncounted = rows.filter(r => !r.counted).length;

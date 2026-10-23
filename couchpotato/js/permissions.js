@@ -84,6 +84,7 @@ export const WRITE_AREAS = {
   // a time entry that has stopped is changed only by the owner, Wages or Costing (see the rules)
   timeEntries: ['factory', 'orders', 'scan', 'wages', 'costing'],
   materialIssues: ['factory', 'orders', 'scan', 'wages', 'costing'],
+  comStock: ['storeroom', 'stock', 'factory', 'orders', 'scan', 'wages', 'costing'],   // the customer's own fabric, per order
   settings: ['settings']
 };
 

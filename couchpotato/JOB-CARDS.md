@@ -9,7 +9,8 @@ Phases 1 and 2 of the job cards & costing spec.
   the job cards, the order cost card, the margin report and suggested
   standard times.
 
-Shortages, customer's own fabric and outside work (phase 3) come later.
+- **Phase 3**: the shortage check before release, the customer's own fabric
+  (COM) and outside work.
 
 ## Once, by the owner
 
@@ -88,6 +89,37 @@ Shortages, customer's own fabric and outside work (phase 3) come later.
 - The spec's measure for phase 2: actual cost per order within 10% of a
   manual check on 5 sample orders.
 
+## Shortages, COM and outside work (phase 3)
+
+- **The shortage check**: moving an order into production (Release to floor,
+  or In production on Orders) first compares what it takes with the shelf.
+  All there: it goes straight on. Anything short, you see each material: OK,
+  short by how much, or on order (enough coming, with the purchase order and
+  its date). **Release anyway** puts it on the floor with a red *material
+  short* tag until the shelf is right again; **Order what is short** drafts
+  the supplier's purchase order (more than one supplier: Stock → Order now).
+- **The purchase list** is Stock → Materials → **Order now**: what is short,
+  grouped by supplier, one purchase order each, and now with the orders each
+  material is for (orders released short first).
+- **The customer's own fabric (COM)**: tick *The customer supplies the
+  fabric* on the order. Set a **COM handling fee** under Settings and ticking
+  adds it to the price. The fabric is left out of the shortage check, is not
+  taken from the shelf and costs R0; the job cards show **COM** so cutting
+  uses their roll. The stock room books the roll in against that order only
+  (Stock room → Client fabric → Fabric arrived), and the metres cutting takes
+  are written beside it.
+- **Outside work**: under Costing → Workstations & steps, a step can be
+  *done outside, by a supplier* (frames bought in, CNC parts, spraying), with
+  the supplier, their price a piece and the days it usually takes. Its job
+  card is not on any tablet: Factory floor → **Outside work** lists what is
+  ready to send, what is at suppliers (overdue first) and what is back with
+  the invoice to come. **Send out** (supplier, due back, quote), **Back in**
+  (the next step becomes Ready), **Invoice** (the amount becomes the step's
+  actual cost; the quote is its plan). Overdue work shows on Today and in an
+  *At suppliers* column on the board; the cost card has an Outside work row.
+- The spec's measure for phase 3: a week of releases with no surprise
+  material stoppages on the floor.
+
 ## The spec's open questions, as built
 
 - *Shared tablet or own phone?* Both work: the station screen is shared (tap
@@ -105,4 +137,4 @@ Shortages, customer's own fabric and outside work (phase 3) come later.
 
 Publish `couchpotato/firestore.rules` in the Firebase console (project
 factory-manager-ece82): it adds the rules for workstations, steps, job cards,
-time entries and material issues.
+time entries, material issues and the customer's fabric (comStock).

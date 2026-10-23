@@ -86,7 +86,7 @@ function renderReceive(openPos, waiting) {
       <h2>Client fabric to come in (${waiting.length})</h2>
       <p class="muted">When a client's fabric arrives, book it to the order: the order then shows the fabric as received, for the factory floor.</p>
       ${waiting.length ? waiting.map(o => `<div class="sr-row">
-        <div><strong>${esc(o.orderNo || '')}</strong> · ${esc(o.product || '')}<div class="muted">${esc(o.fabric)} · ${esc(nameOf(o))}${o.fabricStatus === 'ordered' ? ' · ordered' : ''}</div></div>
+        <div><strong>${esc(o.orderNo || '')}</strong> · ${esc(o.product || '')}<div class="muted">${esc(o.fabric)} · ${esc(nameOf(o))}${o.fabricStatus === 'ordered' ? ' · ordered' : ''}${o.com ? ' · <strong>the customer\'s own (COM): kept for this order only</strong>' : ''}</div></div>
         <button class="btn primary sm" data-act="sr-fabric" data-id="${esc(o.id)}">Fabric arrived</button></div>`).join('')
         : '<p class="muted">Every open order has its fabric.</p>'}
     </div>`;
@@ -126,6 +126,9 @@ export function fabricArrived(id, orders) {
       await store.update('orders', id, { fabricStatus: 'received', fabricReceivedAt: store.nowIso(), fabricNote: [what, val(w, 'fa-note')].filter(Boolean).join(' · ') },
         'Fabric received in the stock room' + (what ? ': ' + what : ''));
       await logMove('', m, 'client-fabric', o.orderNo, [o.customerName, val(w, 'fa-note')].filter(Boolean).join(' · '), { name: o.fabric || 'Client fabric', unit: 'm' });
+      // the customer's own fabric (COM): kept against this order only, and
+      // what cutting takes from it is written beside it
+      if (o.com) await store.batchWrite([{ op: 'merge', coll: 'comStock', id, data: { orderId: id, orderNo: o.orderNo || '', description: o.fabric || '', metres: m, rolls: r, receivedAt: store.nowIso(), note: val(w, 'fa-note') } }]);
       toast((o.orderNo || 'Order') + ': fabric received');
     }
   });

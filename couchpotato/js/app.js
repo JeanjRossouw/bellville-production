@@ -52,6 +52,8 @@ import { startRouting, setRoutingSettings, newWorkstation, editWorkstation, newO
 import { startJobs, setJobSettings, openJobCards } from './jobs.js';
 import { renderStations, stationAction, setStationRepaint, stationBusy } from './stations.js';
 import { openOrderCost, jobCostAction, setJobCostRepaint } from './jobcost.js';
+import { startOutside, setOutsideSettings, outsideAction } from './outside.js';
+import { releaseChecked, orderShortFor, setGoToStock } from './shortage.js';
 
 
 // ?pos=1 is the till link: opens straight onto the point of sale with bigger
@@ -167,7 +169,7 @@ async function boot() {
       settings = await store.loadSettings(FACTORY_DEFAULTS);
       setOrderSettings(settings);
       setFloorSettings(settings);
-      setCostingSettings(settings); setRoutingSettings(settings); setJobSettings(settings);
+      setCostingSettings(settings); setRoutingSettings(settings); setJobSettings(settings); setOutsideSettings(settings);
       setScanSettings(settings);
       setInvoiceSettings(settings);
       setPosSettings(settings);
@@ -194,10 +196,13 @@ async function boot() {
       startRouting(() => { if (view === 'costing' || view === 'stations' || view === 'factory') paint(); }, settings);
       setStationRepaint(() => { if (view === 'stations') paint(); });
       setJobCostRepaint(() => { if (view === 'profit') paint(); });
+      setGoToStock(() => { if (!allowedViews(store.getUser()).includes('stock')) return; setStockView('materials'); view = 'stock'; paint(); window.scrollTo(0, 0); });
       if (store.can('factory') || store.can('orders')) startJobs(() => {
         if (view === 'stations' && stationBusy()) return;      // someone is typing a note: leave it
         if (view === 'stations' || view === 'factory' || view === 'orders') paint();
       }, settings);
+      // steps done outside, at suppliers
+      if (store.can('factory') || store.can('orders')) startOutside(() => { if (view === 'factory' || view === 'home' || (view === 'stations' && !stationBusy())) paint(); }, settings);
       startCustomers(() => { if (view === 'customers' || view === 'orders' || view === 'pos' || view === 'home') paint(); });
       startOrders(() => {
         if (view !== 'settings') paint();   // includes Stock (what open orders need) and Profit
@@ -653,6 +658,7 @@ function renderSettings(host) {
       <h2>Numbering and terms</h2>
       ${row(field('Order number prefix', 's-oprefix', { value: s.orderPrefix }), field('Next order number', 's-ofirst', { value: s.firstOrderNo, type: 'number', min: 1 }))}
       ${row(field('Invoice prefix', 's-iprefix', { value: s.invoicePrefix }), field('Default payment terms (days)', 's-terms', { value: s.paymentTermsDays, type: 'number', min: 0 }))}
+      ${row(field('COM handling fee (customer\'s own fabric), added to the price', 's-comfee', { value: s.comFee || '', type: 'number', min: 0, step: '0.01', placeholder: 'e.g. 350, or blank for none' }), '<div></div>')}
       ${field('Delivery notes', 's-invfirst', { type: 'select', value: s.invoiceBeforeNote ? 'yes' : 'no', options: [{ value: 'no', label: 'Any finished piece can go on a delivery note' }, { value: 'yes', label: 'Invoice first: only invoiced pieces go on a delivery note' }] })}
       ${row(field('Loyalty points at the till (% of the sale, 1 point = R1; 0 = off)', 's-loyalty', { value: s.loyaltyPct == null ? 5 : s.loyaltyPct, type: 'number', min: 0, step: '0.5' }), field('Till cash float (R)', 's-float', { value: s.tillFloat || '', type: 'number', min: 0, step: '1', placeholder: 'Offered when the register opens' }))}
       ${row(field('Made-to-order lead time (days)', 's-lead', { value: s.leadDays == null ? 28 : s.leadDays, type: 'number', min: 1 }),
@@ -1132,6 +1138,7 @@ async function saveSettings() {
     firstOrderNo: parseInt(g('s-ofirst'), 10) || 1001,
     invoicePrefix: g('s-iprefix') || 'INV-',
     paymentTermsDays: parseInt(g('s-terms'), 10) || 0,
+    comFee: parseFloat(g('s-comfee')) || 0,
     leadDays: parseInt(g('s-lead'), 10) || 28,
     loyaltyPct: Math.max(0, parseFloat(g('s-loyalty')) || 0),
     tillFloat: Math.max(0, parseFloat(g('s-float')) || 0),
@@ -1144,7 +1151,7 @@ async function saveSettings() {
   settings = { ...settings, ...patch };
   setOrderSettings(settings);
   setFloorSettings(settings);
-  setCostingSettings(settings); setRoutingSettings(settings); setJobSettings(settings);
+  setCostingSettings(settings); setRoutingSettings(settings); setJobSettings(settings); setOutsideSettings(settings);
   setScanSettings(settings);
   setInvoiceSettings(settings);
   setPosSettings(settings);
@@ -1171,6 +1178,7 @@ async function onAction(e) {
   if (b.dataset.act.startsWith('ol-')) return onlineAction(b.dataset.act, b);
   if (b.dataset.act.startsWith('st-')) return stationAction(b.dataset.act, b);
   if (b.dataset.act.startsWith('jc-') || b.dataset.act === 'order-cost') return jobCostAction(b.dataset.act, b);
+  if (b.dataset.act.startsWith('ow-')) return outsideAction(b.dataset.act, b);
   if (b.dataset.act === 'pf-view') { setProfitView(b.dataset.to); return paint(); }
   if (b.dataset.act.startsWith('today-')) return todayAction(b, (to, sub) => {
     if (!allowedViews(store.getUser()).includes(to)) { toast('Your role does not open that screen', 'warn'); return; }
@@ -1187,7 +1195,9 @@ async function onAction(e) {
     case 'edit-order': return editOrder(id);
     case 'cancel-order': return cancelOrder(id);
     case 'reopen-order': return reopenOrder(id);
-    case 'status': return setStatus(id, b.dataset.to);
+    // into production: the shortage check first (it goes straight on when all is there)
+    case 'status': return b.dataset.to === 'in-production' ? releaseChecked(id, () => setStatus(id, 'in-production')) : setStatus(id, b.dataset.to);
+    case 'order-short': return orderShortFor(id);
     case 'new-customer': return newCustomer();
     case 'edit-customer': return editCustomer(id);
     case 'del-customer': return deleteCustomer(id, parseInt(b.dataset.n, 10) || 0);
@@ -1321,7 +1331,7 @@ async function onAction(e) {
       setRoutingSettings(settings); setJobSettings(settings); setCostingSettings(settings);
       return paint();
     }
-    case 'start': return startBuild(id);
+    case 'start': return releaseChecked(id, () => startBuild(id));
     case 'print-job': return printJobCard(id);
     case 'print-week-jobs': return printWeekJobCards();
     case 'print-planner': return printPlanner();

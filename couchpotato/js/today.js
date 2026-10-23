@@ -29,6 +29,7 @@ import { customerById } from './customers.js';
 import { esc, money, today, addDays, niceDate, daysUntil, openModal, toast, waDigits, statusChip } from './ui.js';
 import { nameOf, detail, seesClient } from './clientgroups.js';
 import { stopPerson } from './jobs.js';
+import { overdueOutside } from './outside.js';
 
 let settings = {};
 let att = {};               // attendance docs by id
@@ -165,6 +166,12 @@ function openRegister() {
 // and the buttons.
 function nudges(f) {
   const out = [];
+  // work at a supplier past the day it was due back
+  if (sees('factory', 'orders')) {
+    const late = overdueOutside();
+    if (late.length) out.push({ key: 'outside-' + late.map(c => c.id).sort().join('.'), tone: 'red', text: `${plural(late.length, 'job is', 'jobs are')} overdue back from ${late.length === 1 ? esc((late[0].outsourced || {}).supplier || 'the supplier') : 'suppliers'}: ${esc(late.slice(0, 3).map(c => c.orderNo + ' ' + c.operationName).join(', '))}${late.length > 3 ? '…' : ''}. Chase ${late.length === 1 ? 'it' : 'them'}?`,
+      send: { act: 'go', to: 'factory', sub: 'outside', label: 'Outside work' } });
+  }
   if (sees('orders', 'factory')) {
     f.late.filter(o => seesClient(o) && !(o.lateNoticeAt && daysUntil(String(o.lateNoticeAt).slice(0, 10)) > -7))
       .sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)))

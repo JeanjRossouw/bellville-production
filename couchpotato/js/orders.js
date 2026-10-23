@@ -12,6 +12,7 @@ import { toXlsx, toCsv, download } from './exporter.js';
 import { pickBox, pickBarHtml } from './deliveries.js';
 import { releaseOrder, closeCardsFor, stageOf } from './jobs.js';
 import { seesCost } from './jobcost.js';
+import { shortTag, isShort } from './shortage.js';
 import {
   esc, money, field, row, val, openModal, toast, empty, today, addDays,
   niceDate, daysUntil, statusChip, statusMeta, STATUSES, fabricChip, FABRIC_STATES, inclLabel
@@ -59,7 +60,8 @@ function form(o) {
   ) + row(
     field('Date paid / order placed', 'o-paid', { value: paid, type: 'date' }),
     field('Due out of the factory', 'o-due', { value: o.dueDate || addDays(paid, 28), type: 'date' })
-  ) + field('Notes for the floor', 'o-notes', { value: o.notes, type: 'textarea', placeholder: 'Anything the builders must know' })
+  ) + `<label class="check"><input type="checkbox" id="o-com"${o.com ? ' checked' : ''}> The customer supplies the fabric (COM): it is not taken from stock or costed${Number(settings.comFee) > 0 ? `, and the COM handling fee of ${esc(money(settings.comFee, settings.currency))} is added to the price` : ''}</label>`
+    + field('Notes for the floor', 'o-notes', { value: o.notes, type: 'textarea', placeholder: 'Anything the builders must know' })
     + `<datalist id="o-product-list">${allProducts().map(p => `<option value="${esc(p.name)}"></option>`).join('')}</datalist>`;
 }
 
@@ -68,7 +70,10 @@ function wireProductPrice(wrap) {
   const prod = wrap.querySelector('#o-product'), price = wrap.querySelector('#o-price');
   let priceTouched = !!price.value;
   price.addEventListener('input', () => { priceTouched = !!price.value; });
-  const fill = () => { const p = productByName(prod.value); if (p && p.sellingPrice && !priceTouched) price.value = p.sellingPrice; };
+  // COM: ticking adds the handling fee to the price, unticking takes it off
+  const com = wrap.querySelector('#o-com'), fee = Number(settings.comFee) || 0;
+  if (com && fee) com.addEventListener('change', () => { price.value = Math.max(0, Math.round(((parseFloat(price.value) || 0) + (com.checked ? fee : -fee)) * 100) / 100) || ''; priceTouched = true; });
+  const fill = () => { const p = productByName(prod.value); if (p && p.sellingPrice && !priceTouched) price.value = Number(p.sellingPrice) + (com && com.checked ? fee : 0); };
   prod.addEventListener('change', fill);
   prod.addEventListener('input', fill);
 }
@@ -86,7 +91,9 @@ function read(wrap) {
     priceEach: parseFloat(val(wrap, 'o-price')) || 0,
     paidDate: val(wrap, 'o-paid'),
     dueDate: val(wrap, 'o-due'),
-    notes: val(wrap, 'o-notes')
+    notes: val(wrap, 'o-notes'),
+    com: !!(wrap.querySelector('#o-com') || {}).checked,
+    comFee: (wrap.querySelector('#o-com') || {}).checked ? Number(settings.comFee) || 0 : 0
   };
 }
 
@@ -297,6 +304,7 @@ function orderCard(o) {
           <div class="order-no">${esc(o.orderNo || '—')}
             ${o.source === 'feed' ? '<span class="chip feed" title="Came through automatically from the customer’s system">auto</span>' : ''}
             ${o.source === 'shopify' ? `<span class="chip feed" title="Online order ${esc(o.shopifyOrderName || '')} from your Shopify store">online ${esc(o.shopifyOrderName || '')}</span>` : ''}
+            ${o.com ? '<span class="chip" title="The customer supplies the fabric">COM</span>' : ''}${shortTag(o)}
           </div>
           <h2>${esc(o.product || '')}${(o.qty || 1) > 1 ? ' <span class="qty">× ' + esc(o.qty) + '</span>' : ''}</h2>
           <div class="meta">
@@ -331,6 +339,7 @@ function orderCard(o) {
         ${(o.status === 'dispatched' || o.status === 'ready') && !o.invoiceId && store.can('invoices', 'edit') ? `<button class="btn ${o.status === 'ready' ? 'ghost' : 'primary'} sm" data-act="inv-order" data-id="${esc(o.id)}" title="${o.status === 'ready' ? 'Invoice it now, before it goes out' : 'Raise the invoice for this order'}">Invoice it</button>` : ''}
         ${o.status === 'invoiced' && !o.invoiceId ? `<button class="btn ghost sm" data-act="status" data-id="${esc(o.id)}" data-to="dispatched" title="Marked invoiced without an invoice: put it back in the To invoice list">Back to Dispatched</button>` : ''}
         ${o.releasedAt || o.jobCards ? `<button class="btn ghost sm" data-act="jobs-order" data-id="${esc(o.id)}" title="Each step, who worked on it and for how long">Job cards${stageOf(o) ? ' · ' + esc(stageOf(o).card.operationName) : ''}</button>` : ''}
+        ${isShort(o) ? `<button class="btn ghost sm" data-act="order-short" data-id="${esc(o.id)}" title="Draft the purchase order for what is short">Order what is short</button>` : ''}
         ${(o.releasedAt || o.jobCards) && seesCost() ? `<button class="btn ghost sm" data-act="order-cost" data-id="${esc(o.id)}" title="Planned against actual: materials, labour, rework, margin">Cost</button>` : ''}
         <button class="btn ghost sm" data-act="edit-order" data-id="${esc(o.id)}">Edit</button>
         ${['new', 'in-production', 'ready'].includes(o.status) ? `<button class="btn danger sm" data-act="cancel-order" data-id="${esc(o.id)}" title="Call it off. It stays on record">Cancel order</button>` : ''}

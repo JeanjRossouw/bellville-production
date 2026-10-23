@@ -1146,6 +1146,7 @@ export function newId(coll) {
 //   { op: 'create', coll, id?, data }        id from newId(), or one is made
 //   { op: 'update', coll, id, patch, event }  patch values may be inc(n)
 //   { op: 'remove', coll, id }
+//   { op: 'merge', coll, id, data }           created if missing, else these fields set
 // The demo applies them one after another (this browser's storage cannot
 // fail half-way); the cloud commits them as one batch.
 export async function batchWrite(ops) {
@@ -1158,6 +1159,7 @@ export async function batchWrite(ops) {
         map[o.id || newId(o.coll)] = { ...o.data, createdAt: nowIso(), createdBy: who, updatedAt: nowIso(), updatedBy: who };
         demoWrite(o.coll, map);
       } else if (o.op === 'update') await update(o.coll, o.id, o.patch || {}, o.event);
+      else if (o.op === 'merge') { const map = demoRead(o.coll); map[o.id] = { ...(map[o.id] || { createdAt: nowIso(), createdBy: who }), ...o.data, updatedAt: nowIso(), updatedBy: who }; demoWrite(o.coll, map); }
       else if (o.op === 'remove') await remove(o.coll, o.id);
     }
     return;
@@ -1169,7 +1171,8 @@ export async function batchWrite(ops) {
       const body = { ...(o.patch || {}), updatedAt: nowIso(), updatedBy: who };
       if (o.event) body.events = cloud.fns.arrayUnion({ at: nowIso(), by: who, what: o.event });
       b.update(docRef(o.coll, o.id), body);
-    } else if (o.op === 'remove') b.delete(docRef(o.coll, o.id));
+    } else if (o.op === 'merge') b.set(docRef(o.coll, o.id), { ...o.data, updatedAt: nowIso(), updatedBy: who }, { merge: true });
+    else if (o.op === 'remove') b.delete(docRef(o.coll, o.id));
   }
   await b.commit();
 }
@@ -1411,12 +1414,14 @@ function seedDemoJobs() {
   demoWrite('workstations', wsMap);
   const ops = { 'op-frame': ['Build frame', 'ws-frame'], 'op-cut': ['Cut fabric', 'ws-cut'], 'op-sew': ['Sew covers', 'ws-sew'], 'op-uph': ['Upholster', 'ws-uph'], 'op-qc': ['QC check', 'ws-qc', true], 'op-pack': ['Pack', 'ws-pack'] };
   const opMap = {}; Object.keys(ops).forEach((k, i) => { opMap[k] = { name: ops[k][0], workstationId: ops[k][1], qc: !!ops[k][2], sort: i + 1, active: true, ...by }; });
+  // a step a supplier does: the corner unit's arm panels are cut on a CNC outside
+  opMap['op-cnc'] = { name: 'CNC arm panels', workstationId: '', qc: false, outsourced: true, supplier: 'Cape CNC', outsideCost: 450, days: 5, sort: 7, active: true, ...by };
   demoWrite('operations', opMap);
   const rt = (a) => a.map(([operationId, stdMinutes]) => ({ operationId, stdMinutes }));
   const routes = {
     'p-3s': rt([['op-frame', 120], ['op-cut', 45], ['op-sew', 90], ['op-uph', 180], ['op-qc', 15], ['op-pack', 20]]),
     'p-2s': rt([['op-frame', 90], ['op-cut', 35], ['op-sew', 70], ['op-uph', 140], ['op-qc', 15], ['op-pack', 15]]),
-    'p-corner': rt([['op-frame', 240], ['op-cut', 90], ['op-sew', 180], ['op-uph', 420], ['op-qc', 20], ['op-pack', 40]]),
+    'p-corner': rt([['op-cnc', 0], ['op-frame', 240], ['op-cut', 90], ['op-sew', 180], ['op-uph', 420], ['op-qc', 20], ['op-pack', 40]]),
     'p-daybed': rt([['op-frame', 150], ['op-cut', 60], ['op-sew', 110], ['op-uph', 240], ['op-qc', 15], ['op-pack', 25]]),
     'p-ott': rt([['op-frame', 40], ['op-cut', 15], ['op-sew', 30], ['op-uph', 60], ['op-qc', 10], ['op-pack', 10]])
   };
@@ -1436,6 +1441,8 @@ function seedDemoJobs() {
   if (!att[t]) att[t] = { day: t, in: { s1: inAt, s2: inAt, s3: inAt }, out: {}, ...by };
   demoWrite('attendance', att);
   const orders = demoRead('orders'), o = orders.d1;
+  // CP-1004, the daybed for a private client, is in the customer's own fabric
+  if (orders.d4 && orders.d4.status === 'new') { orders.d4 = { ...orders.d4, com: true, comFee: 0 }; demoWrite('orders', orders); }
   if (!o || o.status !== 'in-production') return;
   // CP-1001's plan, frozen when it was released: the bill at today's prices, the steps at the station rates
   const mats = demoRead('materials'), r2 = (n) => Math.round(n * 100) / 100, ohH = r2(68000 / 1550);
