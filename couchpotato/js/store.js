@@ -1059,6 +1059,28 @@ export function watch(coll, cb) {
   }, (err) => console.error('watch(' + coll + ') failed:', err));
 }
 
+// Live list of only the records that match, e.g. [['open', '==', true]]: a
+// collection that keeps growing (job cards, time entries) costs no more to
+// watch as the months go by. Equality and ranges on one field need no index.
+const MATCH = { '==': (a, b) => a === b, '!=': (a, b) => a !== b, '>=': (a, b) => a >= b, '<=': (a, b) => a <= b, '>': (a, b) => a > b, '<': (a, b) => a < b, in: (a, b) => (b || []).includes(a) };
+const matches = (conds) => (r) => conds.every(([f, op, v]) => MATCH[op](r[f], v));
+export function watchWhere(coll, conds, cb) {
+  if (mode === 'demo') return watch(coll, rows => cb(rows.filter(matches(conds))));
+  const q = cloud.fns.query(collRef(coll), ...conds.map(([f, op, v]) => cloud.fns.where(f, op, v)));
+  return cloud.fns.onSnapshot(q, (snap) => {
+    const rows = [];
+    snap.forEach(d => rows.push({ id: d.id, ...d.data() }));
+    cb(rows);
+  }, (err) => console.error('watchWhere(' + coll + ') failed:', err));
+}
+export async function getWhere(coll, conds) {
+  if (mode === 'demo') return demoList(coll).filter(matches(conds));
+  const snap = await cloud.fns.getDocs(cloud.fns.query(collRef(coll), ...conds.map(([f, op, v]) => cloud.fns.where(f, op, v))));
+  const rows = [];
+  snap.forEach(d => rows.push({ id: d.id, ...d.data() }));
+  return rows;
+}
+
 export async function getOne(coll, id) {
   if (mode === 'demo') {
     const map = demoRead(coll);
@@ -1376,7 +1398,60 @@ export function seedDemoIfEmpty() {
   seedDemoDeliveries();
   seedDemoWages();
   seedDemoHistory();
+  seedDemoJobs();
   return !had;
+}
+// Workstations, steps and routings, and order CP-1001 on the floor: its frame
+// and fabric done, Thandi sewing the covers now. Seeded once.
+function seedDemoJobs() {
+  if (Object.keys(demoRead('workstations')).length) return;
+  const now = nowIso(), by = { createdAt: now, createdBy: 'demo', updatedAt: now, updatedBy: 'demo' };
+  const ws = { 'ws-frame': ['Frame shop', 70, 1], 'ws-cut': ['Cutting table', 60, 2], 'ws-sew': ['Sewing', 65, 3], 'ws-uph': ['Upholstery', 140, 4], 'ws-qc': ['QC', 75, 5], 'ws-pack': ['Packing', 55, 6] };
+  const wsMap = {}; Object.keys(ws).forEach(k => { wsMap[k] = { name: ws[k][0], staffHourlyCost: ws[k][1], sort: ws[k][2], active: true, ...by }; });
+  demoWrite('workstations', wsMap);
+  const ops = { 'op-frame': ['Build frame', 'ws-frame'], 'op-cut': ['Cut fabric', 'ws-cut'], 'op-sew': ['Sew covers', 'ws-sew'], 'op-uph': ['Upholster', 'ws-uph'], 'op-qc': ['QC check', 'ws-qc', true], 'op-pack': ['Pack', 'ws-pack'] };
+  const opMap = {}; Object.keys(ops).forEach((k, i) => { opMap[k] = { name: ops[k][0], workstationId: ops[k][1], qc: !!ops[k][2], sort: i + 1, active: true, ...by }; });
+  demoWrite('operations', opMap);
+  const rt = (a) => a.map(([operationId, stdMinutes]) => ({ operationId, stdMinutes }));
+  const routes = {
+    'p-3s': rt([['op-frame', 120], ['op-cut', 45], ['op-sew', 90], ['op-uph', 180], ['op-qc', 15], ['op-pack', 20]]),
+    'p-2s': rt([['op-frame', 90], ['op-cut', 35], ['op-sew', 70], ['op-uph', 140], ['op-qc', 15], ['op-pack', 15]]),
+    'p-corner': rt([['op-frame', 240], ['op-cut', 90], ['op-sew', 180], ['op-uph', 420], ['op-qc', 20], ['op-pack', 40]]),
+    'p-daybed': rt([['op-frame', 150], ['op-cut', 60], ['op-sew', 110], ['op-uph', 240], ['op-qc', 15], ['op-pack', 25]]),
+    'p-ott': rt([['op-frame', 40], ['op-cut', 15], ['op-sew', 30], ['op-uph', 60], ['op-qc', 10], ['op-pack', 10]])
+  };
+  const prods = demoRead('products'); Object.keys(routes).forEach(k => { if (prods[k]) prods[k].routing = routes[k]; }); demoWrite('products', prods);
+  const set = demoRead('settings'); set.factory = { ...(set.factory || {}), productiveHours: 1550, dayEnd: '17:00' }; demoWrite('settings', set);
+  // the register: Sipho, Thandi and Pieter clocked in a little under four hours ago
+  const t = localDate(), att = demoRead('attendance');
+  const ago = (min) => new Date(Date.now() - min * 60000).toISOString();
+  const hhmm = (iso) => new Date(iso).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const inAt = hhmm(ago(225));
+  const people = [['s3', 'Pieter Swart', 'Frames'], ['s1', 'Sipho Dlamini', 'Upholsterer'], ['s2', 'Thandi Mokoena', 'Sewing']].map(([id, name, job]) => ({ id, name, job })).sort((a, b) => a.name.localeCompare(b.name));
+  att.roster = att.roster && (att.roster.people || []).length ? att.roster : { people, ...by };
+  if (!att[t]) att[t] = { day: t, in: { s1: inAt, s2: inAt, s3: inAt }, out: {}, ...by };
+  demoWrite('attendance', att);
+  const orders = demoRead('orders'), o = orders.d1;
+  if (!o || o.status !== 'in-production') return;
+  const cardOf = (i, opId, status, extra) => ({ orderId: 'd1', orderNo: o.orderNo, product: o.product, qty: 1, fabric: o.fabric, operationId: opId, operationName: opMap[opId].name,
+    workstationId: opMap[opId].workstationId, sequence: i, stdMinutes: routes['p-3s'][i - 1].stdMinutes, qc: opMap[opId].qc, status, open: status !== 'done',
+    qtyDone: status === 'done' ? 1 : 0, workedMinutes: 0, isRework: false, reworkOf: '', waitingOn: '', reworks: 0, ...by, ...(extra || {}) });
+  const cards = {
+    'jc-d1-1': cardOf(1, 'op-frame', 'done', { workedMinutes: 135, doneAt: ago(85), doneBy: 'Pieter Swart', startedAt: ago(220) }),
+    'jc-d1-2': cardOf(2, 'op-cut', 'done', { workedMinutes: 40, doneAt: ago(42), doneBy: 'Thandi Mokoena', startedAt: ago(82) }),
+    'jc-d1-3': cardOf(3, 'op-sew', 'running', { startedAt: ago(42) }),
+    'jc-d1-4': cardOf(4, 'op-uph', 'waiting'), 'jc-d1-5': cardOf(5, 'op-qc', 'waiting'), 'jc-d1-6': cardOf(6, 'op-pack', 'waiting')
+  };
+  demoWrite('jobCards', cards);
+  const te = (card, staffId, staffName, start, end, extra) => ({ jobCardId: card, orderId: 'd1', workstationId: cards[card].workstationId, staffId, staffName, kind: 'work', start, end, open: !end,
+    minutes: end ? Math.round((Date.parse(end) - Date.parse(start)) / 6000) / 10 : 0, day: t, pauseReason: '', rateAtTime: Math.round((wsMap[cards[card].workstationId].staffHourlyCost + 70) * 100) / 100, ...by, ...(extra || {}) });
+  demoWrite('timeEntries', {
+    'te-1': te('jc-d1-1', 's3', 'Pieter Swart', ago(220), ago(85)),
+    'te-2': te('jc-d1-2', 's2', 'Thandi Mokoena', ago(82), ago(42)),
+    'te-3': te('jc-d1-3', 's2', 'Thandi Mokoena', ago(42), '')
+  });
+  orders.d1 = { ...o, releasedAt: ago(226), releasedBy: 'Jean', jobCards: 6 };
+  demoWrite('orders', orders);
 }
 
 function seedDemoBase() {

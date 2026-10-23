@@ -1241,3 +1241,81 @@ ol.steps code { font-size: 11.5px; background: var(--paper); border: 1px solid v
 .ol-what { flex: 1; min-width: 0; }
 .ol-h2 { margin-top: 1.6rem; }
 @media (max-width: 560px) { .ol-card .btn-row .btn { width: 100%; } }
+
+/* ---- job cards: routing on a product, the station tablet, the floor board ---- */
+.rt-row { display: grid; grid-template-columns: 1fr 80px 24px; gap: .35rem; align-items: center; margin-bottom: .35rem; }
+.rt-row select, .rt-row input { font: inherit; font-size: 13px; padding: .45rem .5rem; border: 1px solid #d6d3d1; border-radius: 3px; min-width: 0; }
+.rt-up { display: none; }
+#rt-copy { font: inherit; font-size: 12px; padding: .35rem .4rem; border: 1px solid #d6d3d1; border-radius: 3px; }
+
+.jc-row { border-top: 1px solid var(--line); padding: .55rem 0; }
+.jc-row.rework .jc-head strong { color: var(--red); }
+.jc-head { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.jc-min { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 700; }
+.jc-tbl { margin-top: .3rem; } .jc-tbl td { font-size: 12.5px; padding: .3rem .4rem; }
+
+.station { max-width: 1100px; }
+.st-bar { display: flex; justify-content: space-between; align-items: center; gap: .6rem; flex-wrap: wrap; border-bottom: 2px solid var(--ink); padding-bottom: .6rem; margin-bottom: .8rem; }
+.st-where { font-size: 24px; font-weight: 900; }
+.st-h { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 1.1rem 0 .5rem; }
+.st-grid, .st-names { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: .6rem; }
+.st-pick, .st-name { min-height: 72px; padding: .8rem .9rem; text-align: left; border: 1px solid var(--ink); background: #fff; border-radius: 6px; font: inherit; cursor: pointer; display: flex; flex-direction: column; justify-content: center; gap: .15rem; }
+.st-pick strong, .st-name strong { font-size: 18px; }
+.st-pick span, .st-name span { font-size: 13px; color: var(--ink-2); }
+.st-name.busy { background: var(--ink); color: #fff; } .st-name.busy span { color: #e7e5e4; }
+.st-name.out { border-style: dashed; color: var(--muted); }
+.st-pick:active, .st-name:active { transform: scale(.98); }
+.st-jobs { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: .7rem; }
+.st-job { border: 1px solid var(--line-2, #d6d3d1); border-left: 5px solid var(--ink); border-radius: 6px; background: #fff; padding: .75rem .85rem; display: flex; flex-direction: column; gap: .2rem; }
+.st-job.late { border-left-color: var(--red); }
+.st-job.late .st-no { color: var(--red); }
+.st-job.rework { border-left-color: #b8860b; }
+.st-job-top { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
+.st-no { font-weight: 900; font-size: 15px; letter-spacing: .03em; }
+.st-product { font-size: 18px; font-weight: 800; }
+.st-step { font-size: 15px; }
+.st-meta { font-size: 13px; color: var(--ink-2); }
+.st-note { font-size: 13px; background: var(--paper); padding: .3rem .45rem; border-radius: 3px; }
+.btn.st-big { min-height: 60px; font-size: 15px; letter-spacing: .08em; margin-top: .5rem; width: 100%; }
+.st-back { min-height: 48px; }
+.st-acts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .6rem; }
+.st-now { border: 2px solid var(--ink); border-radius: 8px; padding: .8rem; background: var(--paper); }
+.st-now-top { display: flex; justify-content: space-between; align-items: baseline; font-weight: 800; text-transform: uppercase; letter-spacing: .1em; font-size: 12px; margin-bottom: .4rem; }
+.st-timer { font-variant-numeric: tabular-nums; font-weight: 900; }
+.st-timer.big { font-size: 34px; letter-spacing: 0; }
+.st-mini { font-variant-numeric: tabular-nums; font-weight: 700; }
+.st-paused { background: var(--amber-soft); padding: .5rem .7rem; border-radius: 4px; }
+.st-coming { display: flex; gap: .4rem; flex-wrap: wrap; } .st-coming span { border: 1px dashed var(--line-2, #d6d3d1); padding: .25rem .5rem; border-radius: 3px; font-size: 13px; }
+.st-done { max-width: 520px; }
+html.station-mode .tabs { display: none; }
+html.station-mode .shell { max-width: none; }
+
+.board .bd-cols { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(210px, 1fr); gap: .6rem; overflow-x: auto; padding-bottom: .4rem; }
+.bd-col { background: var(--paper); border: 1px solid var(--line); border-radius: 6px; padding: .5rem; min-height: 120px; }
+.bd-head { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid var(--ink); padding-bottom: .3rem; margin-bottom: .45rem; }
+.bd-head strong { font-size: 14px; text-transform: uppercase; letter-spacing: .08em; }
+.bd-card { background: #fff; border: 1px solid var(--line); border-left: 4px solid var(--line-2, #d6d3d1); border-radius: 4px; padding: .45rem .55rem; margin-bottom: .4rem; font-size: 13px; }
+.bd-card.bd-running { border-left-color: var(--green); }
+.bd-card.bd-paused { border-left-color: #b8860b; }
+.bd-card.bd-ready { border-left-color: var(--ink); }
+.bd-card.late .bd-no, .bd-card.late .bd-prod { font-weight: 900; }
+.bd-card.late .bd-no { color: var(--red); }
+.bd-card.rework { background: #fff7ed; }
+.bd-top { display: flex; gap: .3rem; align-items: center; }
+.bd-no { font-weight: 800; }
+.bd-prod { font-weight: 700; }
+.bd-who { color: var(--green); font-weight: 700; }
+.bd-min { color: var(--muted); font-variant-numeric: tabular-nums; } .bd-min.over { color: var(--red); font-weight: 700; }
+.bd-wait { font-size: 12px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: .3rem; } .bd-wait .late { color: var(--red); font-weight: 800; }
+.bd-empty { font-size: 12px; }
+.bd-idle { margin: .8rem 0; }
+.bd-times { margin-top: .6rem; } .bd-times td.bad { color: var(--red); font-weight: 700; }
+.bd-title { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: .6rem; font-size: 18px; }
+html.tv-mode .tabs, html.tv-mode .topbar .top-right, html.tv-mode .as-fab, html.tv-mode #view-search, html.tv-mode .view-search { display: none; }
+html.tv-mode .shell { max-width: none; padding: .8rem; }
+html.tv-mode .bd-card { font-size: 16px; } html.tv-mode .bd-head strong { font-size: 17px; }
+@media (max-width: 640px) {
+  .st-grid, .st-names { grid-template-columns: 1fr 1fr; }
+  .st-pick strong, .st-name strong { font-size: 16px; }
+  .st-where { font-size: 20px; }
+}

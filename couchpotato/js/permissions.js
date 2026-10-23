@@ -77,6 +77,12 @@ export const WRITE_AREAS = {
   stockTakes: ['pos', 'stock', 'storeroom'],
   shopProducts: ['pos', 'stock', 'costing'],
   attendance: ['factory', 'wages'],     // the clock-in register (attendance/roster: wages only, see the rules)
+  // job cards: the floor times them; whoever moves an order on opens or closes them
+  workstations: ['costing'],
+  operations: ['costing'],
+  jobCards: ['factory', 'orders', 'scan', 'wages', 'costing'],
+  // a time entry that has stopped is changed only by the owner, Wages or Costing (see the rules)
+  timeEntries: ['factory', 'orders', 'scan', 'wages', 'costing'],
   settings: ['settings']
 };
 
@@ -103,7 +109,8 @@ export const READ_AREAS = {
   shopPos: ['pos', 'stock', 'storeroom'],
   stockTakes: ['pos', 'stock', 'storeroom'],
   shopProducts: ['pos', 'stock', 'costing', 'profit'],
-  attendance: ['factory', 'wages']
+  attendance: ['factory', 'wages'],
+  timeEntries: ['factory', 'wages', 'costing', 'profit']      // minutes and labour rates per person
 };
 
 export const levelOf = (perms, area) => (perms && perms[area]) || 'none';

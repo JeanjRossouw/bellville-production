@@ -28,6 +28,7 @@ import { allStaff } from './wages.js';
 import { customerById } from './customers.js';
 import { esc, money, today, addDays, niceDate, daysUntil, openModal, toast, waDigits, statusChip } from './ui.js';
 import { nameOf, detail, seesClient } from './clientgroups.js';
+import { stopPerson } from './jobs.js';
 
 let settings = {};
 let att = {};               // attendance docs by id
@@ -83,6 +84,10 @@ function figures() {
 const roster = () => ((att.roster || {}).people || []).filter(p => p && p.id);
 const dayDoc = (d) => att[d || today()] || { in: {}, out: {} };
 const onShift = () => { const d = dayDoc(); return roster().filter(p => (d.in || {})[p.id] && !(d.out || {})[p.id]); };
+// for the job cards: who is on the register, and a day's clock times
+export const rosterPeople = () => roster();
+export const attendanceOf = (d) => att[d || today()] || null;
+export const isClockedIn = (staffId) => { const d = dayDoc(); return !!(d.in || {})[staffId] && !(d.out || {})[staffId]; };
 // Wages keeps the real staff list; the register gets the names only.
 export async function syncRoster() {
   // only once both lists are in, so a list still loading never empties the register
@@ -99,10 +104,31 @@ async function clock(staffId) {
   const p = roster().find(x => x.id === staffId); if (!p) return;
   let what;
   if (!ins[staffId]) { ins[staffId] = nowHm(); what = p.name + ' clocked in at ' + ins[staffId]; }
-  else if (!outs[staffId]) { outs[staffId] = nowHm(); what = p.name + ' clocked out at ' + outs[staffId]; }
+  else if (!outs[staffId]) { outs[staffId] = nowHm(); what = p.name + ' clocked out at ' + outs[staffId]; stopPerson(staffId, 'clocked out'); }
   else { delete outs[staffId]; what = p.name + ' back in'; }
   await store.setWithId('attendance', t, { day: t, in: ins, out: outs });
   toast(what);
+}
+// The station tablet: someone not clocked in starts a job, so clock them in
+// first (or back in, after clocking out earlier).
+export async function clockIn(staffId) {
+  if (!edits('factory', 'wages')) return false;
+  const t = today(), d = dayDoc(t), ins = { ...(d.in || {}) }, outs = { ...(d.out || {}) };
+  if (ins[staffId] && !outs[staffId]) return true;
+  if (!ins[staffId]) ins[staffId] = nowHm(); else delete outs[staffId];
+  const p = store.setWithId('attendance', t, { day: t, in: ins, out: outs });
+  att[t] = { ...(att[t] || {}), day: t, in: ins, out: outs };
+  p.catch(e => toast('Could not clock in: ' + e.message, 'warn'));
+  return true;
+}
+export async function clockOut(staffId) {
+  if (!edits('factory', 'wages')) return;
+  const t = today(), d = dayDoc(t), ins = { ...(d.in || {}) }, outs = { ...(d.out || {}) };
+  if (!ins[staffId] || outs[staffId]) return;
+  outs[staffId] = nowHm();
+  stopPerson(staffId, 'clocked out');
+  att[t] = { ...(att[t] || {}), day: t, in: ins, out: outs };
+  store.setWithId('attendance', t, { day: t, in: ins, out: outs }).catch(e => toast('Could not clock out: ' + e.message, 'warn'));
 }
 async function clockAll() {
   if (!edits('factory', 'wages')) return;

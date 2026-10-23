@@ -22,7 +22,10 @@ couchpotato/
   js/ui.js          shared rendering helpers
   js/customers.js   customer screen
   js/orders.js      order capture, status, history
-  js/floor.js       planner, fabric list, job cards
+  js/floor.js       planner, fabric list, printed job cards, the floor board tab
+  js/routing.js     workstations, steps and each product's routing (Costing → Workstations & steps)
+  js/jobs.js        job cards per step: release, timing, pause, done, QC send-back, time per person
+  js/stations.js    the station tablet (?station=1) and the floor board (?board=1 on the TV)
   js/costing.js     materials, bills of material, overheads, price sheet
   js/scan.js        scan out at the door, dispatch, tell the customer
   js/invoices.js    invoice queue, invoices, payments, statements, export
@@ -155,3 +158,12 @@ go to, and an "issued vs used" comparison. The rules hold a stock-room-only
 role to the count, the received quantities and the fabric fields.
 
 Next: terms of service and a privacy policy for the website.
+
+Also built: job cards and time (phase 1 of the job cards & costing spec; see
+JOB-CARDS.md). Workstations with a rate (their people + the overhead an hour),
+steps, and a routing per product with standard minutes. Releasing an order to
+the floor makes one job card per step; the station tablet times each person
+(Start, Pause with a reason, Done; a check passes or sends the piece back as a
+rework card); the last card done makes the order Done. The floor board shows
+every station, late orders and who is clocked in but not on a job; managers
+see each person's time on jobs against their clock-in.

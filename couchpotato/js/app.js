@@ -48,15 +48,24 @@ import {
   newProduct, editProduct, duplicateProduct, deleteProduct, printLabels, saveOverheads, addOverheadRow, liveOverheads,
   printPriceSheet, printCostSheet
 } from './costing.js';
+import { startRouting, setRoutingSettings, newWorkstation, editWorkstation, newOperation, editOperation, addStarter, saveHours } from './routing.js';
+import { startJobs, setJobSettings, openJobCards } from './jobs.js';
+import { renderStations, stationAction, setStationRepaint, stationBusy } from './stations.js';
 
 
 // ?pos=1 is the till link: opens straight onto the point of sale with bigger
 // touch targets, for the tablet at the showroom counter.
 const TILL = new URLSearchParams(location.search).get('pos') === '1';
 if (TILL) document.documentElement.classList.add('till');
+// ?station=1 (or a station's id) is the tablet at a workstation: big buttons,
+// straight onto the station screen. ?board=1 is the floor board for the TV.
+const STATION = !!new URLSearchParams(location.search).get('station');
+const BOARD = new URLSearchParams(location.search).get('board') === '1';
+if (STATION) document.documentElement.classList.add('station-mode');
+if (BOARD) { document.documentElement.classList.add('tv-mode'); setFloorView('board'); }
 
 let settings = { ...FACTORY_DEFAULTS };
-let view = TILL ? 'pos' : 'home';
+let view = TILL ? 'pos' : STATION ? 'stations' : BOARD ? 'factory' : 'home';
 let booted = false;
 // A job-card QR opens the app with ?scan=<order id>: remember it until the
 // orders have loaded, then go straight to the dispatch screen for that order.
@@ -73,6 +82,7 @@ const NAV = [
   { key: 'customers', label: 'Customers', group: 'sales' },
   { key: 'orders', label: 'Orders', group: 'production' },
   { key: 'factory', label: 'Factory floor', group: 'production' },
+  { key: 'stations', label: 'Station tablet', group: 'production' },
   { key: 'scan', label: 'Scan out', group: 'production' },
   { key: 'deliveries', label: 'Deliveries', group: 'production' },
   { key: 'costing', label: 'Costing', group: 'buying' },
@@ -89,13 +99,15 @@ const GROUPS = [['sales', 'Sales'], ['production', 'Production'], ['buying', 'Bu
 // What each person sees comes from their role, which the owner designs under
 // Settings → Roles. The owner sees everything, plus the team and billing.
 let seller = false;          // the seller's own login: sees every company under Clients
+// screens that belong to another screen's area in the roles
+const AREA_OF = { online: 'orders', stations: 'factory' };
 const allowedViews = (user) => !user ? [] : NAV.map(n => n.key).filter(k =>
-  k === 'home' ? true : k === 'clients' ? seller : k === 'settings' ? (user.role === 'owner' || store.can('settings')) : k === 'online' ? store.can('orders') : k === 'pos' ? store.can('pos') && (!settings.tillMoved || TILL) : store.can(k));
+  k === 'home' ? true : k === 'clients' ? seller : k === 'settings' ? (user.role === 'owner' || store.can('settings')) : k === 'pos' ? store.can('pos') && (!settings.tillMoved || TILL) : store.can(AREA_OF[k] || k));
 // A screen the role may only look at: nothing on it may change data.
-const viewOnly = (k) => store.getUser() && store.getUser().role !== 'owner' && k !== 'clients' && levelOf(store.myPerms(), k === 'online' ? 'orders' : k) === 'view';
+const viewOnly = (k) => store.getUser() && store.getUser().role !== 'owner' && k !== 'clients' && levelOf(store.myPerms(), AREA_OF[k] || k) === 'view';
 // Actions that only look, print or switch what is shown — allowed on a view-only screen.
 const LOOK_ONLY = new Set(['filter-status', 'floor-view', 'cost-view', 'stock-view', 'sup-sheet-dl', 'quote-filter', 'profit-month', 'inv-view',
-  'print-job', 'print-week-jobs', 'print-week-report', 'wg-view', 'wg-period', 'wg-print-sheet', 'wg-print-slips', 'wg-export', 'wg-open', 'print-planner', 'print-pricesheet', 'print-costsheet', 'inv-print', 'stmt-print', 'inv-export',
+  'print-job', 'print-week-jobs', 'jobs-order', 'st-station', 'st-change', 'st-person', 'st-back', 'st-cancel', 'print-week-report', 'wg-view', 'wg-period', 'wg-print-sheet', 'wg-print-slips', 'wg-export', 'wg-open', 'print-planner', 'print-pricesheet', 'print-costsheet', 'inv-print', 'stmt-print', 'inv-export',
   'po-print', 'quote-print', 'scan-start', 'scan-stop', 'scan-find', 'notify',
   'sr-view', 'sr-asset-history',
   'dl-view', 'dl-day', 'dl-day-pick', 'dl-print-run', 'dl-note', 'dl-confirm', 'dl-send-run', 'dl-driver-copy']);
@@ -154,7 +166,7 @@ async function boot() {
       settings = await store.loadSettings(FACTORY_DEFAULTS);
       setOrderSettings(settings);
       setFloorSettings(settings);
-      setCostingSettings(settings);
+      setCostingSettings(settings); setRoutingSettings(settings); setJobSettings(settings);
       setScanSettings(settings);
       setInvoiceSettings(settings);
       setPosSettings(settings);
@@ -177,6 +189,13 @@ async function boot() {
       if (store.can('pos') || store.can('profit')) startPos(() => { if (view === 'pos' || view === 'profit') paint(); }, settings);
       if (store.can('invoices') || store.can('pos') || store.can('profit')) startInvoices(() => { if (view === 'invoices' || view === 'orders' || view === 'home') paint(); }, settings);
       startCosting(() => { if (view === 'costing' || view === 'orders' || view === 'pos' || view === 'stock') paint(); }, settings);
+      // workstations and steps (Costing), and the job cards on the floor
+      startRouting(() => { if (view === 'costing' || view === 'stations' || view === 'factory') paint(); }, settings);
+      setStationRepaint(() => { if (view === 'stations') paint(); });
+      if (store.can('factory') || store.can('orders')) startJobs(() => {
+        if (view === 'stations' && stationBusy()) return;      // someone is typing a note: leave it
+        if (view === 'stations' || view === 'factory' || view === 'orders') paint();
+      }, settings);
       startCustomers(() => { if (view === 'customers' || view === 'orders' || view === 'pos' || view === 'home') paint(); });
       startOrders(() => {
         if (view !== 'settings') paint();   // includes Stock (what open orders need) and Profit
@@ -570,7 +589,8 @@ function paintScreen() {
   if (view === 'customers') return renderCustomers(screen, allOrders());
   if (view === 'settings') return renderSettings(screen);
   if (view === 'clients') return renderClients(screen);
-  if (view === 'factory') return renderFloor(screen, overview());
+  if (view === 'factory') return renderFloor(screen, BOARD ? '' : overview(), BOARD);
+  if (view === 'stations') return renderStations(screen);
   if (view === 'costing') return renderCosting(screen);
   if (view === 'stock') return renderStock(screen, allOrders());
   if (view === 'quotes') return renderQuotes(screen);
@@ -1122,7 +1142,7 @@ async function saveSettings() {
   settings = { ...settings, ...patch };
   setOrderSettings(settings);
   setFloorSettings(settings);
-  setCostingSettings(settings);
+  setCostingSettings(settings); setRoutingSettings(settings); setJobSettings(settings);
   setScanSettings(settings);
   setInvoiceSettings(settings);
   setPosSettings(settings);
@@ -1147,6 +1167,7 @@ async function onAction(e) {
   const id = b.dataset.id;
   if (b.dataset.act.startsWith('pos-') || b.dataset.act.startsWith('till-') || b.dataset.act.startsWith('ss-')) return posAction(b.dataset.act, b);
   if (b.dataset.act.startsWith('ol-')) return onlineAction(b.dataset.act, b);
+  if (b.dataset.act.startsWith('st-')) return stationAction(b.dataset.act, b);
   if (b.dataset.act.startsWith('today-')) return todayAction(b, (to, sub) => {
     if (!allowedViews(store.getUser()).includes(to)) { toast('Your role does not open that screen', 'warn'); return; }
     if (to === 'invoices' && sub) setInvView(sub);
@@ -1284,6 +1305,18 @@ async function onAction(e) {
     case 'floor-view': setFloorView(b.dataset.to); return paint();
     case 'plan-move': return moveMenu(id);
     case 'mark-ready': return setStatus(id, 'ready');
+    case 'jobs-order': return openJobCards(id);
+    case 'ws-new': return newWorkstation();
+    case 'ws-edit': return editWorkstation(id);
+    case 'op-new': return newOperation();
+    case 'op-edit': return editOperation(id);
+    case 'ws-starter': return addStarter();
+    case 'ws-save-hours': {
+      const patch = await saveHours(document.getElementById('screen'));
+      settings = { ...settings, ...patch };
+      setRoutingSettings(settings); setJobSettings(settings); setCostingSettings(settings);
+      return paint();
+    }
     case 'start': return startBuild(id);
     case 'print-job': return printJobCard(id);
     case 'print-week-jobs': return printWeekJobCards();
@@ -1304,7 +1337,7 @@ async function onAction(e) {
     case 'save-overheads': {
       const patch = await saveOverheads(document.getElementById('screen'));
       settings = { ...settings, ...patch };
-      setOrderSettings(settings); setFloorSettings(settings); setCostingSettings(settings); setStockSettings(settings); setProfitSettings(settings); setWagesSettings(settings); setQuoteSettings(settings);
+      setOrderSettings(settings); setFloorSettings(settings); setCostingSettings(settings); setStockSettings(settings); setProfitSettings(settings); setWagesSettings(settings); setQuoteSettings(settings); setRoutingSettings(settings);
       return paint();
     }
     case 'print-pricesheet': return printPriceSheet();

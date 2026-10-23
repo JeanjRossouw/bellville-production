@@ -7,11 +7,15 @@ import { esc, money, today, isoLocal, niceDate, daysUntil, statusChip, statusMet
 import { qrSvg, scanUrl } from './qr.js';
 import { notable, isPicked, mayBook, pickBarHtml } from './deliveries.js';
 import { nameOf } from './clientgroups.js';
+import { hasRouting, stageOf } from './jobs.js';
+import { boardHtml } from './stations.js';
+import { routingOf, hm } from './routing.js';
+import { productByName } from './costing.js';
 
 let settings = {};
 export const setFloorSettings = (cfg) => { settings = cfg || {}; };
 
-let floorView = 'planner';   // planner | fabric
+let floorView = 'planner';   // planner | fabric | done | board
 
 // --------------------------------------------------------------- weeks ------
 
@@ -103,12 +107,14 @@ function planCard(o) {
       <div class="pcard-chips">
         ${o.fabric ? fabricChip(o.fabricStatus) : ''}
         ${o.status === 'ready' ? statusChip('ready') : ''}
+        ${stageOf(o) ? `<span class="chip ${stageOf(o).card.status === 'running' ? 'soon' : 'calm'}" title="The step it is at">${esc(stageOf(o).card.operationName)}${stageOf(o).card.status === 'running' ? ' · on it' : ''}</span>` : ''}
       </div>
       <div class="pcard-controls">
-        ${o.status === 'new' ? `<button class="btn ghost sm" data-act="start" data-id="${esc(o.id)}" title="The floor has started on it">In production</button>` : ''}
+        ${o.status === 'new' ? (hasRouting(o) ? `<button class="btn ghost sm" data-act="start" data-id="${esc(o.id)}" title="Put its job cards on the station tablets">Release to floor</button>` : `<button class="btn ghost sm" data-act="start" data-id="${esc(o.id)}" title="The floor has started on it">In production</button>`) : ''}
       </div>
       <div class="pcard-actions">
         ${o.status !== 'ready' ? `<button class="btn primary sm" data-act="mark-ready" data-id="${esc(o.id)}">Done</button>` : ''}
+        ${o.releasedAt ? `<button class="btn ghost sm" data-act="jobs-order" data-id="${esc(o.id)}" title="Its job cards: each step, who, how long">Cards</button>` : ''}
         <button class="btn ghost sm" data-act="print-job" data-id="${esc(o.id)}" title="Print job card">Print</button>
         <button class="btn ghost sm" data-act="plan-move" data-id="${esc(o.id)}" title="Move to another week">⋮</button>
       </div>
@@ -119,13 +125,16 @@ function planCard(o) {
 
 export function setFloorView(v) { floorView = v; }
 
-export function renderFloor(host, overviewHtml) {
+export function renderFloor(host, overviewHtml, tv) {
   const rows = allOrders().filter(onFloor);
+  // the TV on the wall: the board alone, big
+  if (tv) { host.innerHTML = boardHtml(true); return; }
   const tab = (key, label) => `<button class="btn ${floorView === key ? 'primary' : 'ghost'} sm" data-act="floor-view" data-to="${key}">${label}</button>`;
   let body = '';
   const done = allOrders().filter(notable).sort((a, b) => String(finishedOn(a)).localeCompare(String(finishedOn(b))) || String(a.orderNo || '').localeCompare(String(b.orderNo || ''), undefined, { numeric: true }));
   if (floorView === 'planner') body = plannerHtml(rows);
   else if (floorView === 'done') body = doneHtml(done);
+  else if (floorView === 'board') body = boardHtml(false) + `<p class="muted" style="margin-top:.8rem">For the TV on the wall: open <strong>${esc(location.origin + location.pathname)}?board=1</strong> there. For a tablet at a station: <strong>?station=1</strong>.</p>`;
   else body = fabricHtml(rows);
 
   host.innerHTML = `
@@ -139,7 +148,7 @@ export function renderFloor(host, overviewHtml) {
     </div>
     ${overviewHtml || ''}
     ${weekStrip()}
-    <div class="btn-row" style="margin-bottom:.9rem">${tab('planner', 'Planner')}${tab('fabric', 'Fabric')}${tab('done', 'Done (' + done.length + ')')}</div>
+    <div class="btn-row" style="margin-bottom:.9rem">${tab('planner', 'Planner')}${tab('board', 'Board')}${tab('fabric', 'Fabric')}${tab('done', 'Done (' + done.length + ')')}</div>
     ${body}`;
   wireDragDrop(host);
 }
@@ -280,6 +289,7 @@ function jobCardHtml(o) {
       <tr><th>Due out</th><td class="big">${esc(niceDate(o.dueDate) || '—')}</td></tr>
       <tr><th>Planned week</th><td>${o.planWeek ? 'Week of ' + esc(niceDate(o.planWeek)) : '<i>not planned</i>'}</td></tr>
     </table>
+    ${(() => { const steps = routingOf(productByName(o.product)); return steps.length ? `<table class="steps"><tr><th>#</th><th>Step</th><th>Station</th><th>Standard</th><th>Done by / date</th></tr>${steps.map((r, i) => `<tr><td>${i + 1}</td><td><b>${esc(r.op.name)}</b>${r.op.qc ? ' (check)' : ''}</td><td>${esc((r.ws || {}).name || '')}</td><td>${esc(hm(r.stdMinutes * (Number(o.qty) || 1)))}</td><td></td></tr>`).join('')}</table>` : ''; })()}
     <div class="sign">
       ${['Built by', 'Checked by', 'Dispatched by'].map(l => `<div class="sg"><b>${l}</b><div class="ln"></div><small>name / date</small></div>`).join('')}
     </div>
