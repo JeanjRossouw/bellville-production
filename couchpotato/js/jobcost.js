@@ -7,7 +7,8 @@
 //   actual   materials issued × their price when issued, plus what was
 //            changed or added at Done; labour = the minutes timed on each
 //            step × the rate of the day they were timed (paused time is not
-//            charged); rework = the time on rework cards, all of it loss
+//            charged); rework = the time on rework cards, all of it loss;
+//            outside work = the supplier's invoice (the quote until it comes)
 //   margin   the price excl. VAT − the cost, in rand and as a percentage
 //
 // The actual is worked out from the order's own job cards, time entries and
@@ -71,9 +72,18 @@ export async function actualFor(o) {
     if (i.varianceReason && !x.reasons.includes(i.varianceReason)) x.reasons.push(i.varianceReason);
     materials += Number(i.cost) || 0;
   });
+  // outside work: the invoice when it is in, the quote until then
+  const outsideOps = {};
+  let outside = 0, outsidePending = 0;
+  cards.filter(c => c.outsourced && !c.skipped).forEach(c => {
+    const o = c.outsourced, inv = o.invoice != null, cost = Number(inv ? o.invoice : o.quote) || 0;
+    outside += cost; if (!inv) outsidePending++;
+    outsideOps[c.operationId] = { name: c.operationName, supplier: o.supplier || '', cost: r2(cost), invoiced: inv, started: !!(o.sentAt || o.receivedAt || inv) };
+  });
   const main = cards.filter(c => !c.isRework && !c.skipped);
   return {
-    materials: r2(materials), labour: r2(labour), rework: r2(rework), reworkMinutes: Math.round(reworkMin), total: r2(materials + labour + rework),
+    materials: r2(materials), labour: r2(labour), rework: r2(rework), reworkMinutes: Math.round(reworkMin), outside: r2(outside), outsidePending, outsideOps,
+    total: r2(materials + labour + rework + outside),
     ops: Object.fromEntries(Object.entries(ops).map(([k, v]) => [k, { name: v.name, minutes: Math.round(v.minutes), cost: r2(v.cost) }])),
     lines, reworkCards: cards.filter(c => c.isRework).length,
     done: main.filter(c => c.status === 'done').length, steps: main.length,
@@ -86,7 +96,7 @@ export async function refreshActual(orderId) {
   const o = orderById(orderId);
   if (!o || !(o.releasedAt || o.jobCards) || !readsTime()) return null;
   const a = await actualFor(o);
-  const keep = { materials: a.materials, labour: a.labour, rework: a.rework, total: a.total, complete: a.complete, at: a.at };
+  const keep = { materials: a.materials, labour: a.labour, rework: a.rework, outside: a.outside, total: a.total, complete: a.complete, at: a.at };
   if (['orders', 'factory', 'scan'].some(x => store.can(x, 'edit'))) {
     try { await store.update('orders', orderId, { actual: keep }); } catch (e) { /* role or connection: shown anyway */ }
   }
@@ -111,25 +121,35 @@ function costRows(o, plan, a, print) {
       <td class="r ${print ? '' : cls}">${opts.loss ? (x ? 'all of it is loss' : '') : (p == null ? '' : (v >= 0 ? '+' : '−') + esc(money(Math.abs(v), c)) + (cmp ? ' (' + (v >= 0 ? '+' : '−') + Math.round(Math.abs(v) / cmp * 100) + '%)' : '') + (opts.against != null ? ' so far' : '')) + mark(cls)}</td></tr>`;
   };
   const going = !a.complete;
-  const lineRows = (plan.lines || []).reduce((m, l) => { const k = l.materialId; (m[k] = m[k] || { name: l.name, unit: l.unit, qty: 0, cost: 0 }); m[k].qty += l.qty; m[k].cost += l.cost; return m; }, {});
+  const lineRows = (plan.lines || []).reduce((m, l) => { const k = l.materialId; (m[k] = m[k] || { name: l.name, unit: l.unit, qty: 0, cost: 0, com: !!l.com }); m[k].qty += l.qty; m[k].cost += l.cost; return m; }, {});
   Object.keys(a.lines).forEach(k => { if (!lineRows[k]) lineRows[k] = { name: a.lines[k].name, unit: a.lines[k].unit, qty: 0, cost: 0 }; });
   let matSoFar = 0, labSoFar = 0;
   const matSub = Object.entries(lineRows).map(([k, l]) => { const x = a.lines[k] || { qty: 0, cost: 0, reasons: [] };
-    if (going && !a.lines[k]) return row(`${esc(l.name)} <span class="muted">${esc(r2(l.qty))} ${esc(l.unit || '')}</span>`, r2(l.cost), 0, { sub: true, notYet: true });
+    const com = l.com ? ' · the customer\'s own (COM)' : '';
+    if (going && !a.lines[k]) return row(`${esc(l.name)} <span class="muted">${esc(r2(l.qty))} ${esc(l.unit || '')}${com}</span>`, r2(l.cost), 0, { sub: true, notYet: true });
     matSoFar += l.cost;
-    return row(`${esc(l.name)} <span class="muted">${esc(r2(l.qty))} → ${esc(r2(x.qty))} ${esc(l.unit || '')}${x.reasons && x.reasons.length ? ' · ' + esc(x.reasons.join(', ')) : ''}</span>`, r2(l.cost), r2(x.cost), { sub: true }); }).join('');
+    return row(`${esc(l.name)} <span class="muted">${esc(r2(l.qty))} → ${esc(r2(x.qty))} ${esc(l.unit || '')}${x.reasons && x.reasons.length ? ' · ' + esc(x.reasons.join(', ')) : ''}${com}</span>`, r2(l.cost), r2(x.cost), { sub: true }); }).join('');
   const opIds = [...(plan.ops || []).map(x => x.operationId), ...Object.keys(a.ops).filter(k => !(plan.ops || []).some(x => x.operationId === k))];
   const opSub = opIds.map(k => { const p = (plan.ops || []).find(x => x.operationId === k), x = a.ops[k] || { minutes: 0, cost: 0 };
     if (going && !a.ops[k]) return row(`${esc((p && p.name) || (operationById(k) || {}).name || 'Step')} <span class="muted">${esc(hm(p ? p.minutes : 0))}</span>`, p ? p.cost : 0, 0, { sub: true, notYet: true });
     labSoFar += p ? p.cost : 0;
     return row(`${esc((p && p.name) || x.name || (operationById(k) || {}).name || 'Step')} <span class="muted">${esc(hm(p ? p.minutes : 0))} → ${esc(hm(x.minutes))}</span>`, p ? p.cost : 0, x.cost, { sub: true }); }).join('');
+  // outside work: each step a supplier does, its quote (planned) against the invoice
+  let outSoFar = 0;
+  const outIds = [...(plan.outsideOps || []).map(x => x.operationId), ...Object.keys(a.outsideOps || {}).filter(k => !(plan.outsideOps || []).some(x => x.operationId === k))];
+  const outSub = outIds.map(k => { const p = (plan.outsideOps || []).find(x => x.operationId === k), x = (a.outsideOps || {})[k];
+    const label = `${esc((p && p.name) || (x && x.name) || 'Outside')} <span class="muted">${esc((x && x.supplier) || (p && p.supplier) || '')}${x && !x.invoiced ? ' · not invoiced yet' : ''}</span>`;
+    if (going && !(x && x.started)) return row(label, p ? p.cost : 0, 0, { sub: true, notYet: true });
+    outSoFar += p ? p.cost : 0;
+    return row(label, p ? p.cost : 0, x ? x.cost : 0, { sub: true }); }).join('');
   const price = priceEx(o);
   const mP = price - plan.total, mA = price - a.total;
   return `<table class="tbl jcost"><thead><tr><th>Line</th><th class="r">Planned</th><th class="r">Actual</th><th class="r">Variance</th></tr></thead><tbody>
     ${row('<strong>Materials</strong>', plan.materials, a.materials, { strong: true, ...(going ? { against: r2(matSoFar) } : {}) })}${matSub}
     ${row('<strong>Labour</strong>', plan.labour, a.labour, { strong: true, ...(going ? { against: r2(labSoFar) } : {}) })}${opSub}
+    ${outIds.length ? row('<strong>Outside work</strong>', plan.outside || 0, a.outside || 0, { strong: true, ...(going ? { against: r2(outSoFar) } : {}) }) + outSub : ''}
     ${row('<strong>Rework</strong>' + (a.reworkCards ? ` <span class="muted">${a.reworkCards} card${a.reworkCards === 1 ? '' : 's'}, ${esc(hm(a.reworkMinutes))}</span>` : ''), 0, a.rework, { strong: true, loss: true, noVar: !a.rework })}
-    ${row('<strong>Total cost</strong>', plan.total, a.total, { strong: true, ...(going ? { against: r2(matSoFar + labSoFar) } : {}) })}
+    ${row('<strong>Total cost</strong>', plan.total, a.total, { strong: true, ...(going ? { against: r2(matSoFar + labSoFar + outSoFar) } : {}) })}
     <tr class="strong margin"><td><strong>Margin</strong> <span class="muted">on ${esc(money(price, cur()))} excl. VAT</span></td>
       <td class="r">${esc(money(mP, cur()))}<div class="muted">${pct(mP, price)}</div></td>${going ? '<td class="r muted">when it is done</td>' : `<td class="r ${mA < 0 ? 'bad' : ''}"><strong>${esc(money(mA, cur()))}</strong><div class="muted">${pct(mA, price)}</div></td>`}<td></td></tr>
   </tbody></table>`;

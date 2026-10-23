@@ -27,6 +27,8 @@ couchpotato/
   js/jobs.js        job cards per step: release, timing, pause, done, QC send-back, time per person
   js/stations.js    the station tablet (?station=1) and the floor board (?board=1 on the TV)
   js/jobcost.js     planned against actual per order: the cost card and the margin report (Profit)
+  js/shortage.js    the shortage check before an order goes onto the floor, "material short"
+  js/outside.js     steps a supplier does: send out, book back in, the invoice (Factory floor → Outside work)
   js/costing.js     materials, bills of material, overheads, price sheet
   js/scan.js        scan out at the door, dispatch, tell the customer
   js/invoices.js    invoice queue, invoices, payments, statements, export
@@ -177,3 +179,12 @@ of the day, rework as loss) sits beside the plan on the order's cost card,
 printable in black and white; Profit → Per order shows margin per order and
 product, labour against standard per step, rework, idle time and suggested
 standard times.
+
+Also built: phase 3 of the job cards spec. Moving an order into production
+runs a shortage check (OK, short, on order with the purchase order) and it
+can be released anyway, tagged "material short" until the shelf is right,
+with one tap to order what is short; the customer's own fabric (COM) is kept
+out of the check, the shelf and the cost, booked in against its order and
+tagged on the job cards, with an optional handling fee; a step can be done
+outside by a supplier, sent out, booked back in and invoiced, with overdue
+work on Today and the board.

@@ -24,9 +24,10 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(C(db, 'roles', 'factory'), { name: 'Factory floor', perms: { ...none, factory: 'edit', scan: 'edit', stock: 'edit', orders: 'view', deliveries: 'view' } });
   await setDoc(C(db, 'roles', 'storeroom'), { name: 'Stock room', perms: { ...none, storeroom: 'edit', stock: 'view', orders: 'view' } });
   await setDoc(C(db, 'roles', 'pay'), { name: 'Wages', perms: { ...none, wages: 'edit' } });
+  await setDoc(C(db, 'roles', 'till'), { name: 'Till', perms: { ...none, pos: 'edit' } });
   await setDoc(C(db, 'roles', 'sales'), { name: 'Sales', perms: { ...none, pos: 'edit', quotes: 'edit', orders: 'edit', customers: 'edit' } });
   await setDoc(C(db, 'roles', 'cost'), { name: 'Costing', perms: { ...none, costing: 'edit' } });
-  for (const [uid, role] of [['own', 'owner'], ['floor', 'factory'], ['store', 'storeroom'], ['pay', 'pay'], ['cost', 'cost'], ['sales', 'sales']]) await setDoc(C(db, 'members', uid), { role, email: uid + '@factory.co.za' });
+  for (const [uid, role] of [['own', 'owner'], ['floor', 'factory'], ['store', 'storeroom'], ['pay', 'pay'], ['cost', 'cost'], ['sales', 'sales'], ['till', 'till']]) await setDoc(C(db, 'members', uid), { role, email: uid + '@factory.co.za' });
   await setDoc(C(db, 'workstations', 'ws1'), { name: 'Upholstery', staffHourlyCost: 140, active: true });
   await setDoc(C(db, 'orders', 'o1'), { orderNo: 'CP-1', status: 'in-production', product: 'Sofa' });
   await setDoc(C(db, 'jobCards', 'jc1'), { orderId: 'o1', operationName: 'Upholster', status: 'ready', open: true, workedMinutes: 0 });
@@ -83,6 +84,15 @@ await t('Costing reads them', getDoc(C(cost, 'materialIssues', 'mi1')), true);
 await t('the floor CANNOT delete an issue', deleteDoc(C(floor, 'materialIssues', 'mi1')), false);
 await t('a stranger CANNOT read them', getDoc(C(stranger, 'materialIssues', 'mi1')), false);
 await t('the floor may keep an order\'s actual cost on it', updateDoc(C(floor, 'orders', 'o1'), { actual: { materials: 1100, labour: 500, rework: 0, total: 1600, complete: true } }), true);
+
+// ---- the customer's own fabric (COM) and outside work
+await t('the stock room books a customer\'s roll in against the order', setDoc(C(store, 'comStock', 'o1'), { orderId: 'o1', metres: 10, receivedAt: '2026-10-23T10:00:00.000Z' }), true);
+await t('the floor writes what cutting took from it', updateDoc(C(floor, 'comStock', 'o1'), { usedMetres: 9.5 }), true);
+await t('every member may read it', getDoc(C(pay, 'comStock', 'o1')), true);
+await t('a stranger CANNOT read it', getDoc(C(stranger, 'comStock', 'o1')), false);
+await t('a till-only role (no floor, no orders, no stock) CANNOT write it', setDoc(C(as('till'), 'comStock', 'o2'), { orderId: 'o2', metres: 1 }), false);
+await t('the floor sends a step out to a supplier', updateDoc(C(floor, 'jobCards', 'jc1'), { status: 'out', outsourced: { supplier: 'Cape CNC', quote: 450, dueAt: '2026-10-28' } }), true);
+await t('the stock room CANNOT send work out', updateDoc(C(store, 'jobCards', 'jc1'), { status: 'out' }), false);
 
 // ---- a company whose trial is over writes nothing
 await t('trial over: the owner reads the floor', getDoc(doc(old, 'companies', 'B', 'jobCards', 'jcB')), true);

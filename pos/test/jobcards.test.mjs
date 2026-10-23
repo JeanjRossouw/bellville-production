@@ -48,7 +48,7 @@ check('six workstations, each rate = its people + R 43.87 overhead an hour (R 68
 await p.click('[data-act="cost-view"][data-to="products"]'); await wait();
 await p.locator('tr:has-text("2 Seater Amber") [data-act="edit-product"]').click(); await wait();
 R.route = await p.evaluate(() => ({ rows: document.querySelectorAll('.rt-row').length, total: document.getElementById('rt-total').textContent }));
-check('the product shows its routing: six steps, the time a piece, labour at the station rates', R.route.rows === 6 && /6 steps · 6h 05 a piece/.test(R.route.total) && /labour at the station rates R/.test(R.route.total), R.route);
+check('the product shows its routing: six steps, the time a piece, labour at the station rates', R.route.rows === 6 && /6 steps · 6h 05 a piece/.test(R.route.total) && /labour at the station rates .*R/.test(R.route.total), R.route);
 await p.click('.modal-foot [data-close]'); await wait();
 
 // ---- release CP-1002 (2 Seater Amber) and CP-1004 (Daybed) from the planner

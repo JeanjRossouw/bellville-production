@@ -16,6 +16,8 @@ import { allWorkstations, workstationById, hm } from './routing.js';
 import { openCards, cardsAt, cardById, peopleOn, runningFor, pauseFor, runningEntries, startCard, pauseCard, doneCard, failCheck, earlierSteps,
   PAUSE_REASONS, cardMinutes, timeToday, statusLabel, setRosterNames, issuesFor, recordIssues, VARIANCE_REASONS } from './jobs.js';
 import { allMaterials } from './costing.js';
+import { shortTag } from './shortage.js';
+import { atSuppliers, outsideCards } from './outside.js';
 import { rosterPeople, isClockedIn, clockIn, clockOut } from './today.js';
 import { nameOf } from './clientgroups.js';
 import { esc, toast, today, daysUntil, niceDate } from './ui.js';
@@ -57,7 +59,7 @@ const extraRow = () => `<div class="st-mat st-extra"><select class="st-x-mat"><o
   <input type="number" class="st-mat-qty" step="0.01" min="0" placeholder="qty" inputmode="decimal"><select class="st-mat-why">${whyOptions('')}</select></div>`;
 function matsHtml() {
   if (doneIssues == null) return '<p class="muted">Reading the materials…</p>';
-  return `<div class="st-mats">${doneIssues.map(i => `<div class="st-mat" data-iss="${esc(i.id)}"><span class="st-mat-name">${esc(i.name)}<small>planned ${esc(i.plannedQty)} ${esc(i.unit)}${i.extra ? ' · extra' : ''}</small></span>
+  return `<div class="st-mats">${doneIssues.map(i => `<div class="st-mat" data-iss="${esc(i.id)}"><span class="st-mat-name">${esc(i.name)}${i.com ? ' <span class="chip com">COM</span>' : ''}<small>planned ${esc(i.plannedQty)} ${esc(i.unit)}${i.extra ? ' · extra' : ''}${i.com ? ' · the customer\'s roll' : ''}</small></span>
       <input type="number" class="st-mat-qty" step="0.01" min="0" value="${esc(i.qty)}" inputmode="decimal"><select class="st-mat-why">${whyOptions(i.varianceReason)}</select></div>`).join('')}
     <div id="st-extras"></div></div>
     <button class="btn ghost" data-act="st-extra" type="button">＋ A material not on the list</button>`;
@@ -69,7 +71,7 @@ function readMats() {
     const qty = parseFloat(row.querySelector('.st-mat-qty').value), reason = row.querySelector('.st-mat-why').value;
     if (isNaN(qty) || qty < 0) return { error: 'Put in how much ' + i.name + ' was used' };
     if (qty > (Number(i.plannedQty) || 0) + 1e-9 && !reason) return { error: 'More ' + i.name + ' than planned: say why' };
-    if (qty !== Number(i.qty) || reason !== (i.varianceReason || '')) changes.push({ id: i.id, materialId: i.materialId, qty, was: Number(i.qty) || 0, unitCost: Number(i.unitCostAtTime) || 0, reason, wasReason: i.varianceReason || '' });
+    if (qty !== Number(i.qty) || reason !== (i.varianceReason || '')) changes.push({ id: i.id, materialId: i.materialId, qty, was: Number(i.qty) || 0, unitCost: Number(i.unitCostAtTime) || 0, reason, wasReason: i.varianceReason || '', com: !!i.com });
   }
   for (const row of document.querySelectorAll('.st-mat.st-extra')) {
     const materialId = row.querySelector('.st-x-mat').value, qty = parseFloat(row.querySelector('.st-mat-qty').value) || 0, reason = row.querySelector('.st-mat-why').value;
@@ -87,7 +89,7 @@ function jobCard(c, opts) {
   const on = peopleOn(c.id);
   const due = o.dueDate ? (daysUntil(o.dueDate) < 0 ? `<span class="chip late">${-daysUntil(o.dueDate)}d late</span>` : `<span class="chip calm">due ${esc(niceDate(o.dueDate).replace(/ \d{4}$/, ''))}</span>`) : '';
   return `<div class="st-job ${c.isRework ? 'rework' : ''} ${late(o) ? 'late' : ''}">
-    <div class="st-job-top"><span class="st-no">${esc(c.orderNo || o.orderNo || '')}</span>${due}${c.isRework ? '<span class="chip late">rework</span>' : ''}${c.qc ? '<span class="chip">check</span>' : ''}</div>
+    <div class="st-job-top"><span class="st-no">${esc(c.orderNo || o.orderNo || '')}</span>${due}${c.isRework ? '<span class="chip late">rework</span>' : ''}${c.qc ? '<span class="chip">check</span>' : ''}${c.com || o.com ? '<span class="chip com" title="The customer supplies the fabric: use their roll">COM</span>' : ''}${shortTag(o)}</div>
     <div class="st-product">${esc(c.product || o.product || '')}${Number(c.qty) > 1 ? ' × ' + esc(c.qty) : ''}</div>
     <div class="st-step">${esc(c.operationName)}${c.stdMinutes ? ' · ' + esc(hm(c.stdMinutes)) : ''}${Number(c.qtyDone) ? ' · ' + esc(c.qtyDone) + ' of ' + esc(c.qty) + ' done' : ''}</div>
     ${(c.fabric || o.fabric) ? `<div class="st-meta">Fabric: <strong>${esc(c.fabric || o.fabric)}</strong></div>` : ''}
@@ -230,6 +232,12 @@ export function boardHtml(tv) {
       ${waiting.length ? `<div class="bd-wait">${waiting.sort(jobOrder).map(c => `<span class="${late(orderById(c.orderId)) ? 'late' : ''}">${esc(c.orderNo)}</span>`).join(' ')}</div>` : ''}
     </div>`;
   };
+  // steps done outside: one column, at the supplier first
+  const outs = outsideCards().filter(c => c.open !== false && c.status !== 'waiting').sort((a, b) => (a.status === 'out' ? 0 : 1) - (b.status === 'out' ? 0 : 1) || String((a.outsourced || {}).dueAt).localeCompare(String((b.outsourced || {}).dueAt)));
+  const outCol = outs.length ? `<div class="bd-col bd-out"><div class="bd-head"><strong>At suppliers</strong><span>${atSuppliers().length}</span></div>
+    ${outs.map(c => { const o = c.outsourced || {}, late = c.status === 'out' && o.dueAt && o.dueAt < today();
+      return `<div class="bd-card ${c.status === 'out' ? 'bd-running' : 'bd-ready'} ${late ? 'late' : ''}"><div class="bd-top"><span class="bd-no">${esc(c.orderNo)}</span>${late ? '<span class="chip late">overdue</span>' : ''}</div>
+        <div class="bd-prod">${esc(c.product)}</div><div class="bd-step">${esc(c.operationName)} · ${c.status === 'out' ? esc(o.supplier || '') + (o.dueAt ? ', due ' + esc(niceDate(o.dueAt).replace(/ \d{4}$/, '')) : '') : 'to send out'}</div></div>`; }).join('')}</div>` : '';
   const list = people();
   const idle = list.filter(p => isClockedIn(p.id) && !runningFor(p.id));
   const manager = !tv && ((store.getUser() || {}).role === 'owner' || store.can('wages') || store.can('profit'));
@@ -245,7 +253,7 @@ export function boardHtml(tv) {
   }
   return `<div class="board ${tv ? 'tv' : ''}">
     ${tv ? `<div class="bd-title"><strong>${esc(niceDate(today()))}</strong><span>${(() => { const n = all.filter(c => c.status === 'running').length, l = all.filter(c => late(orderById(c.orderId))).length; return n + (n === 1 ? ' job' : ' jobs') + ' running · ' + l + (l === 1 ? ' card' : ' cards') + ' on late orders'; })()}</span></div>` : ''}
-    <div class="bd-cols">${ws.map(col).join('')}</div>
+    <div class="bd-cols">${ws.map(col).join('')}${outCol}</div>
     <div class="bd-idle"><strong>Clocked in, not on a job:</strong> ${idle.length ? idle.map(p => { const pz = pauseFor(p.id); return esc(p.name) + (pz ? ' <span class="muted">(' + esc(pz.pauseReason || 'paused') + ')</span>' : ''); }).join(', ') : 'nobody'}</div>
     ${times}
   </div>`;

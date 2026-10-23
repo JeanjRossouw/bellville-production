@@ -9,13 +9,15 @@ import { notable, isPicked, mayBook, pickBarHtml } from './deliveries.js';
 import { nameOf } from './clientgroups.js';
 import { hasRouting, stageOf } from './jobs.js';
 import { boardHtml } from './stations.js';
+import { outsideHtml, atSuppliers } from './outside.js';
+import { shortTag } from './shortage.js';
 import { routingOf, hm } from './routing.js';
 import { productByName } from './costing.js';
 
 let settings = {};
 export const setFloorSettings = (cfg) => { settings = cfg || {}; };
 
-let floorView = 'planner';   // planner | fabric | done | board
+let floorView = 'planner';   // planner | fabric | done | board | outside
 
 // --------------------------------------------------------------- weeks ------
 
@@ -107,6 +109,7 @@ function planCard(o) {
       <div class="pcard-chips">
         ${o.fabric ? fabricChip(o.fabricStatus) : ''}
         ${o.status === 'ready' ? statusChip('ready') : ''}
+        ${o.com ? '<span class="chip com" title="The customer supplies the fabric">COM</span>' : ''}${shortTag(o)}
         ${stageOf(o) ? `<span class="chip ${stageOf(o).card.status === 'running' ? 'soon' : 'calm'}" title="The step it is at">${esc(stageOf(o).card.operationName)}${stageOf(o).card.status === 'running' ? ' · on it' : ''}</span>` : ''}
       </div>
       <div class="pcard-controls">
@@ -134,6 +137,7 @@ export function renderFloor(host, overviewHtml, tv) {
   const done = allOrders().filter(notable).sort((a, b) => String(finishedOn(a)).localeCompare(String(finishedOn(b))) || String(a.orderNo || '').localeCompare(String(b.orderNo || ''), undefined, { numeric: true }));
   if (floorView === 'planner') body = plannerHtml(rows);
   else if (floorView === 'done') body = doneHtml(done);
+  else if (floorView === 'outside') body = outsideHtml();
   else if (floorView === 'board') body = boardHtml(false) + `<p class="muted" style="margin-top:.8rem">For the TV on the wall: open <strong>${esc(location.origin + location.pathname)}?board=1</strong> there. For a tablet at a station: <strong>?station=1</strong>.</p>`;
   else body = fabricHtml(rows);
 
@@ -148,7 +152,7 @@ export function renderFloor(host, overviewHtml, tv) {
     </div>
     ${overviewHtml || ''}
     ${weekStrip()}
-    <div class="btn-row" style="margin-bottom:.9rem">${tab('planner', 'Planner')}${tab('board', 'Board')}${tab('fabric', 'Fabric')}${tab('done', 'Done (' + done.length + ')')}</div>
+    <div class="btn-row" style="margin-bottom:.9rem">${tab('planner', 'Planner')}${tab('board', 'Board')}${tab('outside', 'Outside work' + (atSuppliers().length ? ' (' + atSuppliers().length + ')' : ''))}${tab('fabric', 'Fabric')}${tab('done', 'Done (' + done.length + ')')}</div>
     ${body}`;
   wireDragDrop(host);
 }

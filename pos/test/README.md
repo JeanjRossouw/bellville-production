@@ -175,8 +175,15 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
     extra one, the shelf moved), the actual on the order, the cost card on
     the floor and finished, the printout, the report and Use for a suggested
     standard time. `node pos/test/jobcost.test.mjs`
+  - `jobshort.test.mjs` — phase 3 in the demo: the COM fee and a COM order
+    (left out of the check, the shelf and the cost; the roll booked in; what
+    cutting took), the shortage check (short, on order, Not now, Release
+    anyway, material short, Order what is short, Order now naming the order,
+    the tag gone when the shelf is right), and a step done outside (send,
+    board, overdue on Today, back in, invoice on the cost card).
+    `node pos/test/jobshort.test.mjs`
   - `factory-jobs-rules.test.mjs` — the rules for workstations, steps, job
-    cards, time entries and material issues: who writes, a stopped entry changed only by the
+    cards, time entries, material issues and the customer's fabric: who writes, a stopped entry changed only by the
     owner, Wages or Costing with a reason, who reads the times, a lapsed
     trial. `node pos/test/factory-jobs-rules.test.mjs`
   - `jobcards-cloud.test.mjs` — the tablet with the Factory floor role on the

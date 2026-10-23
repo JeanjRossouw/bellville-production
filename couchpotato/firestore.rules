@@ -285,6 +285,12 @@ service cloud.firestore {
         allow create, update: if isMember(cid) && companyActive(cid) && timeKeeper(cid);
         allow delete: if isOwner(cid);
       }
+      // The customer's own fabric (COM), one record per order (id = the
+      // order's): received by the stock room, taken from by cutting.
+      match /comStock/{orderId} {
+        allow read: if isMember(cid);
+        allow write: if isMember(cid) && companyActive(cid) && (timeKeeper(cid) || ed(cid, 'storeroom') || ed(cid, 'stock'));
+      }
       match /timeEntries/{id} {
         allow read: if isMember(cid) && (sees(cid, 'factory') || sees(cid, 'wages') || sees(cid, 'costing') || sees(cid, 'profit'));
         allow create: if isMember(cid) && companyActive(cid) && timeKeeper(cid) && request.resource.data.open == true;
@@ -317,9 +323,9 @@ service cloud.firestore {
 
       // Anything else a future version keeps: the settings screen decides.
       match /{coll}/{id} {
-        allow read: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'xeroPushes', 'attendance', 'staff', 'wageRuns', 'tillStaff', 'tillShifts', 'giftCards', 'grvs', 'stockTakes', 'shopProducts', 'suppliers', 'shopPos', 'workstations', 'operations', 'jobCards', 'timeEntries', 'materialIssues']);
+        allow read: if isMember(cid) && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'xeroPushes', 'attendance', 'staff', 'wageRuns', 'tillStaff', 'tillShifts', 'giftCards', 'grvs', 'stockTakes', 'shopProducts', 'suppliers', 'shopPos', 'workstations', 'operations', 'jobCards', 'timeEntries', 'materialIssues', 'comStock']);
         allow write: if isMember(cid) && companyActive(cid) && ed(cid, 'settings')
-                     && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'xeroPushes', 'attendance', 'staff', 'wageRuns', 'tillStaff', 'tillShifts', 'giftCards', 'grvs', 'stockTakes', 'shopProducts', 'suppliers', 'shopPos', 'workstations', 'operations', 'jobCards', 'timeEntries', 'materialIssues']);
+                     && !(coll in ['members', 'invites', 'settings', 'payments', 'roles', 'orders', 'customers', 'products', 'materials', 'stockMoves', 'purchaseOrders', 'invoices', 'sales', 'quotes', 'counters', 'drivers', 'deliveryNotes', 'storeStaff', 'assets', 'secrets', 'integrations', 'shopifyOrders', 'shopifyPushes', 'xeroPushes', 'attendance', 'staff', 'wageRuns', 'tillStaff', 'tillShifts', 'giftCards', 'grvs', 'stockTakes', 'shopProducts', 'suppliers', 'shopPos', 'workstations', 'operations', 'jobCards', 'timeEntries', 'materialIssues', 'comStock']);
       }
     }
 

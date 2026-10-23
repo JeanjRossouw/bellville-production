@@ -15,9 +15,15 @@
 //   materialIssues/<id> jobCardId, orderId, operationId, materialId, name,
 //                     unit, plannedQty, qty, unitCostAtTime, cost,
 //                     varianceReason, extra (not on the bill), by, day
-//   orders/<id>       planned (frozen at release: materials, labour, total,
-//                     lines, ops), actual (worked out from the floor: see
-//                     jobcost.js)
+//   orders/<id>       planned (frozen at release: materials, labour, outside,
+//                     total, lines, ops, outsideOps), actual (worked out from
+//                     the floor: see jobcost.js)
+//   jobCards/<id>     com (the customer's own fabric), outsourced (a step a
+//                     supplier does: supplier, quote, days, sentAt, dueAt,
+//                     receivedAt, invoice, invoiceRef), outsideOpen (until
+//                     its invoice is in: see outside.js)
+//   comStock/<orderId> the customer's fabric for that order only: metres
+//                     received, usedMetres (what cutting issued)
 //   timeEntries/<id>  jobCardId, orderId, workstationId, staffId, staffName,
 //                     kind ('work' | 'pause'), start, end ('' while it runs),
 //                     open, minutes, day, pauseReason, rateAtTime,
@@ -42,6 +48,7 @@ import * as store from './store.js';
 import { orderById, setStatus } from './orders.js';
 import { productByName, materialById } from './costing.js';
 import { refreshActual } from './jobcost.js';
+import { comLine } from './stock.js';
 import { routingOf, operationById, workstationById, stationRate, hm } from './routing.js';
 import { attendanceOf } from './today.js';
 import { esc, openModal, toast, today, niceDate } from './ui.js';
@@ -113,7 +120,7 @@ export const hasRouting = (o) => !!o && routingOf(productByName(o.product)).leng
 export function stageOf(o) {
   const mine = cardsForOrder(o.id);
   if (!mine.length) return null;
-  const on = mine.find(c => c.status === 'running') || mine.find(c => c.status === 'paused') || mine.find(c => c.status === 'ready') || mine[0];
+  const on = mine.find(c => c.status === 'running') || mine.find(c => c.status === 'out') || mine.find(c => c.status === 'paused') || mine.find(c => c.status === 'ready') || mine[0];
   return { card: on, left: mine.length, total: Number(o.jobCards) || mine.length };
 }
 
@@ -121,13 +128,15 @@ export function stageOf(o) {
 
 // The bill of materials shared out over the steps: each line goes to the step
 // that uses it (Costing → product → "used at"), else to the first step.
-function bomByStep(p, steps, qty) {
+// The customer's own fabric (COM) stays on the bill, so cutting knows how
+// much, but costs nothing and never comes off the shelf.
+function bomByStep(p, steps, qty, o) {
   const at = steps.map(() => []), ids = steps.map(s => s.operationId);
   ((p && p.materials) || []).filter(l => l.materialId && Number(l.qty) > 0).forEach(l => {
-    const m = materialById(l.materialId) || {};
+    const m = materialById(l.materialId) || {}, com = comLine(o, l.materialId);
     let i = l.operationId ? ids.indexOf(l.operationId) : 0;
     if (i < 0) i = 0;
-    if (at[i]) at[i].push({ materialId: l.materialId, name: m.name || '', unit: m.unit || '', qty: r3(Number(l.qty) * qty), unitCost: Number(m.cost) || 0 });
+    if (at[i]) at[i].push({ materialId: l.materialId, name: m.name || '', unit: m.unit || '', qty: r3(Number(l.qty) * qty), unitCost: com ? 0 : Number(m.cost) || 0, ...(com ? { com: true } : {}) });
   });
   return at;
 }
@@ -136,12 +145,14 @@ function bomByStep(p, steps, qty) {
 // order when it is released, so the floor is measured against it.
 //   materials = the bill × qty × each material's price (excl. VAT)
 //   labour    = each step's standard minutes × qty × its station's rate
+//   outside   a step a supplier does: its standing price a piece × qty
 export function plannedOf(o) {
   const p = productByName(o.product), steps = routingOf(p), qty = Number(o.qty) || 1;
-  const lines = bomByStep(p, steps, qty).flatMap((ls, i) => ls.map(l => ({ ...l, operationId: steps[i].operationId, cost: r2(l.qty * l.unitCost) })));
-  const ops = steps.map(r => { const rate = stationRate(r.ws), minutes = r1(r.stdMinutes * qty); return { operationId: r.operationId, name: r.op.name, minutes, rate, cost: r2(minutes / 60 * rate) }; });
-  const materials = r2(lines.reduce((s, l) => s + l.cost, 0)), labour = r2(ops.reduce((s, x) => s + x.cost, 0));
-  return { materials, labour, total: r2(materials + labour), lines, ops, at: nowIso() };
+  const lines = bomByStep(p, steps, qty, o).flatMap((ls, i) => ls.map(l => ({ ...l, operationId: steps[i].operationId, cost: r2(l.qty * l.unitCost) })));
+  const ops = steps.filter(r => !r.op.outsourced).map(r => { const rate = stationRate(r.ws), minutes = r1(r.stdMinutes * qty); return { operationId: r.operationId, name: r.op.name, minutes, rate, cost: r2(minutes / 60 * rate) }; });
+  const outsideOps = steps.filter(r => r.op.outsourced).map(r => ({ operationId: r.operationId, name: r.op.name, supplier: r.op.supplier || '', cost: r2((Number(r.op.outsideCost) || 0) * qty) }));
+  const materials = r2(lines.reduce((s, l) => s + l.cost, 0)), labour = r2(ops.reduce((s, x) => s + x.cost, 0)), outside = r2(outsideOps.reduce((s, x) => s + x.cost, 0));
+  return { materials, labour, outside, total: r2(materials + labour + outside), lines, ops, outsideOps, at: nowIso() };
 }
 
 // The job cards an order gets when it goes onto the floor (none when its
@@ -149,12 +160,13 @@ export function plannedOf(o) {
 export function releaseOps(o) {
   const p = productByName(o.product), steps = routingOf(p);
   const qty = Number(o.qty) || 1;
-  const bom = bomByStep(p, steps, qty);
+  const bom = bomByStep(p, steps, qty, o);
   return steps.map((r, i) => ({ op: 'create', coll: 'jobCards', id: store.newId('jobCards'), data: {
-    orderId: o.id, orderNo: o.orderNo || '', product: o.product || '', qty, fabric: o.fabric || '',
-    operationId: r.operationId, operationName: r.op.name, workstationId: r.op.workstationId || '', sequence: i + 1,
-    stdMinutes: r1(r.stdMinutes * qty), qc: !!r.op.qc, status: i === 0 ? 'ready' : 'waiting', open: true,
-    qtyDone: 0, workedMinutes: 0, isRework: false, reworkOf: '', waitingOn: '', reworks: 0, bom: bom[i], issued: false } }));
+    orderId: o.id, orderNo: o.orderNo || '', product: o.product || '', qty, fabric: o.fabric || '', com: !!o.com,
+    operationId: r.operationId, operationName: r.op.name, workstationId: r.op.outsourced ? '' : (r.op.workstationId || ''), sequence: i + 1,
+    stdMinutes: r.op.outsourced ? 0 : r1(r.stdMinutes * qty), qc: !!r.op.qc, status: i === 0 ? 'ready' : 'waiting', open: true,
+    qtyDone: 0, workedMinutes: 0, isRework: false, reworkOf: '', waitingOn: '', reworks: 0, bom: bom[i], issued: false,
+    ...(r.op.outsourced ? { outsourced: { supplier: r.op.supplier || '', quote: r2((Number(r.op.outsideCost) || 0) * qty), days: Number(r.op.days) || 0, sentAt: '', dueAt: '', receivedAt: '', invoice: null, invoiceRef: '' }, outsideOpen: true } : {}) } }));
 }
 export async function releaseOrder(o) {
   if (cardsForOrder(o.id).length) return 0;
@@ -213,10 +225,12 @@ export function startCard(cardId, person) {
   // corrects them at Done if more or less was used
   const issue = !c.issued && !c.isRework && Array.isArray(c.bom) && c.bom.length;
   if (issue) c.bom.forEach(l => {
-    const m = materialById(l.materialId), unitCost = m ? Number(m.cost) || 0 : Number(l.unitCost) || 0;
+    const m = materialById(l.materialId), unitCost = l.com ? 0 : m ? Number(m.cost) || 0 : Number(l.unitCost) || 0;
     ops.push({ op: 'create', coll: 'materialIssues', id: store.newId('materialIssues'), data: {
       jobCardId: c.id, orderId: c.orderId, operationId: c.operationId, materialId: l.materialId, name: l.name || (m && m.name) || '', unit: l.unit || (m && m.unit) || '',
-      plannedQty: l.qty, qty: l.qty, unitCostAtTime: unitCost, cost: r2(l.qty * unitCost), varianceReason: '', extra: false, by: person.name || '', day: today() } });
+      plannedQty: l.qty, qty: l.qty, unitCostAtTime: unitCost, cost: r2(l.qty * unitCost), varianceReason: '', extra: false, com: !!l.com, by: person.name || '', day: today() } });
+    // the customer's roll: how much of it cutting has taken
+    if (l.com) ops.push({ op: 'merge', coll: 'comStock', id: c.orderId, data: { orderId: c.orderId, orderNo: c.orderNo || '', usedMetres: l.qty } });
   });
   ops.push({ op: 'update', coll: 'jobCards', id: c.id, patch: { status: 'running', ...(c.startedAt ? {} : { startedAt: now }), ...(issue ? { issued: true } : {}) } });
   fire(store.batchWrite(ops), 'Could not start');
@@ -239,7 +253,8 @@ export function recordIssues(card, changes, extras, byName) {
     const delta = r3(ch.qty - ch.was);
     if (!delta && (ch.reason || '') === (ch.wasReason || '')) return;
     ops.push({ op: 'update', coll: 'materialIssues', id: ch.id, patch: { qty: r3(ch.qty), cost: r2(ch.qty * ch.unitCost), varianceReason: ch.reason || '', adjustedBy: byName || '' } });
-    shelf(ch.materialId, delta, card.operationName + ': ' + (ch.reason || 'adjusted'));
+    if (ch.com) ops.push({ op: 'merge', coll: 'comStock', id: card.orderId, data: { orderId: card.orderId, orderNo: card.orderNo || '', usedMetres: r3(ch.qty) } });
+    else shelf(ch.materialId, delta, card.operationName + ': ' + (ch.reason || 'adjusted'));
   });
   (extras || []).filter(x => x.materialId && x.qty > 0).forEach(x => {
     const m = materialById(x.materialId) || {}, unitCost = Number(m.cost) || 0;
@@ -303,7 +318,7 @@ export async function earlierSteps(c) {
   let all = [];
   try { all = await store.getWhere('jobCards', [['orderId', '==', c.orderId]]); } catch (e) { all = cardsForOrder(c.orderId); }
   const seen = {};
-  return all.filter(x => !x.isRework && x.sequence < c.sequence && !x.skipped).sort((a, b) => a.sequence - b.sequence)
+  return all.filter(x => !x.isRework && !x.outsourced && x.sequence < c.sequence && !x.skipped).sort((a, b) => a.sequence - b.sequence)
     .filter(x => (seen[x.operationId] ? false : (seen[x.operationId] = true)));
 }
 export function failCheck(cardId, staffId, back, note) {
@@ -371,7 +386,7 @@ export function timeToday(people) {
 
 // ---------------------------------------------- the order's job cards ----
 
-const STATUS_LABEL = { waiting: 'Waiting', ready: 'Ready', running: 'On it', paused: 'Paused', done: 'Done' };
+const STATUS_LABEL = { waiting: 'Waiting', ready: 'Ready', running: 'On it', paused: 'Paused', done: 'Done', out: 'At the supplier' };
 export const statusLabel = (c) => c.skipped ? 'Closed' : c.waitingOn ? 'Waiting for the fix' : (STATUS_LABEL[c.status] || c.status);
 const hmTime = (iso) => iso ? new Date(iso).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
 const localInput = (iso) => { if (!iso) return ''; const d = new Date(iso); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };

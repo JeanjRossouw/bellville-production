@@ -5,7 +5,9 @@
 //   workstations/<id>  name, staffHourlyCost (what the people normally there
 //                      cost an hour, together), sort, active
 //   operations/<id>    name, workstationId, qc (a check that passes or sends
-//                      the piece back), sort, active
+//                      the piece back), sort, active; outsourced (a supplier
+//                      does it: supplier, outsideCost a piece excl. VAT, days
+//                      it usually takes)
 //   products/<id>      routing: [{ operationId, stdMinutes }], in build order
 //   settings/factory   productiveHours (worked hours a month, all staff),
 //                      dayEnd ('17:00': a job left running is stopped there)
@@ -16,6 +18,7 @@
 // its day, so a later change never rewrites what an old order cost.
 import * as store from './store.js';
 import { esc, money, field, row, val, openModal, toast, empty } from './ui.js';
+import { allSuppliers } from './suppliers.js';
 
 let workstations = [];
 let operations = [];
@@ -91,8 +94,8 @@ export function stationsTabHtml() {
       <thead><tr><th>Step</th><th>Workstation</th><th></th><th></th></tr></thead>
       <tbody>${operations.map(o => `<tr class="${o.active === false ? 'muted' : ''}">
         <td><strong>${esc(o.name)}</strong>${o.active === false ? ' <span class="chip">not in use</span>' : ''}</td>
-        <td>${esc((workstationById(o.workstationId) || {}).name || '—')}</td>
-        <td>${o.qc ? '<span class="chip calm">check: pass or send back</span>' : ''}</td>
+        <td>${o.outsourced ? 'outside: ' + esc(o.supplier || 'a supplier') : esc((workstationById(o.workstationId) || {}).name || '—')}</td>
+        <td>${o.qc ? '<span class="chip calm">check: pass or send back</span>' : ''}${o.outsourced ? `<span class="chip">${esc(money(o.outsideCost || 0, cur()))} a piece${o.days ? ', ' + esc(o.days) + ' days' : ''}</span>` : ''}</td>
         <td class="r nowrap">${editable ? `<button class="btn ghost sm" data-act="op-edit" data-id="${esc(o.id)}">Edit</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
   return ohCard + wsHead + wsBody + opHead + opBody;
 }
@@ -131,23 +134,41 @@ function opForm(o) {
   o = o || {};
   return row(
     field('Step', 'op-name', { value: o.name, placeholder: 'e.g. Upholster' }),
-    field('Done at', 'op-ws', { type: 'select', value: o.workstationId || '', options: allWorkstations().map(w => ({ value: w.id, label: w.name })) })
+    field('Done at', 'op-ws', { type: 'select', value: o.workstationId || '', options: [{ value: '', label: '— (done outside, by a supplier)' }].concat(allWorkstations().map(w => ({ value: w.id, label: w.name }))) })
   ) + `<label class="check"><input type="checkbox" id="op-qc"${o.qc ? ' checked' : ''}> A check: it passes, or sends the piece back to an earlier step to be fixed</label>`
+    + `<label class="check"><input type="checkbox" id="op-out"${o.outsourced ? ' checked' : ''}> Done outside, by a supplier (frames bought in, CNC parts, spraying): it is sent and booked back in, not timed on a tablet</label>`
+    + `<div id="op-out-box"${o.outsourced ? '' : ' hidden'}>${row(
+        field('Supplier', 'op-sup', { value: o.supplier, list: 'op-sup-list', placeholder: 'Who does it' }),
+        field('Their price a piece, excl. VAT (' + cur() + ')', 'op-cost', { value: o.outsideCost == null ? '' : o.outsideCost, type: 'number', min: 0, step: '0.01' })
+      )}${row(field('Days it usually takes', 'op-days', { value: o.days || '', type: 'number', min: 0, step: '1', placeholder: 'e.g. 5' }), '<div></div>')}
+      <datalist id="op-sup-list">${allSuppliers().map(x => `<option value="${esc(x.name)}"></option>`).join('')}</datalist></div>`
     + (o.id ? `<label class="check"><input type="checkbox" id="op-off"${o.active === false ? ' checked' : ''}> Not in use any more</label>` : '');
 }
-const readOp = (m) => ({ name: val(m, 'op-name').trim(), workstationId: val(m, 'op-ws'), qc: !!m.querySelector('#op-qc').checked, ...(m.querySelector('#op-off') ? { active: !m.querySelector('#op-off').checked } : {}) });
+const readOp = (m) => {
+  const out = !!m.querySelector('#op-out').checked;
+  return { name: val(m, 'op-name').trim(), workstationId: out ? '' : val(m, 'op-ws'), qc: !!m.querySelector('#op-qc').checked, outsourced: out,
+    supplier: out ? val(m, 'op-sup').trim() : '', outsideCost: out ? parseFloat(val(m, 'op-cost')) || 0 : 0, days: out ? parseInt(val(m, 'op-days'), 10) || 0 : 0,
+    ...(m.querySelector('#op-off') ? { active: !m.querySelector('#op-off').checked } : {}) };
+};
+const opOk = (d) => d.name && (d.outsourced || d.workstationId);
+function wireOp(w) {
+  const out = w.querySelector('#op-out'), box = w.querySelector('#op-out-box');
+  out.addEventListener('change', () => { box.hidden = !out.checked; });
+}
 export function newOperation() {
-  openModal('New step', opForm(null), { okLabel: 'Save', onOk: async (m) => {
-    const d = readOp(m); if (!d.name || !d.workstationId) { toast('Name the step and say where it is done', 'warn'); return false; }
+  const { wrap } = openModal('New step', opForm(null), { okLabel: 'Save', onOk: async (m) => {
+    const d = readOp(m); if (!opOk(d)) { toast('Name the step and say where it is done (or tick done outside)', 'warn'); return false; }
     await store.create('operations', { ...d, active: true, sort: operations.length + 1 }); toast(d.name + ' added');
   } });
+  wireOp(wrap);
 }
 export function editOperation(id) {
   const o = operationById(id); if (!o) return;
-  openModal('Edit ' + o.name, opForm(o), { okLabel: 'Save', onOk: async (m) => {
-    const d = readOp(m); if (!d.name || !d.workstationId) { toast('Name the step and say where it is done', 'warn'); return false; }
+  const { wrap } = openModal('Edit ' + o.name, opForm(o), { okLabel: 'Save', onOk: async (m) => {
+    const d = readOp(m); if (!opOk(d)) { toast('Name the step and say where it is done (or tick done outside)', 'warn'); return false; }
     await store.update('operations', id, d); toast('Saved');
   } });
+  wireOp(wrap);
 }
 
 // A sofa factory's usual floor, to change rather than type from nothing.
@@ -204,9 +225,9 @@ export function wireRouting(w, products) {
   const box = w.querySelector('#rt'); if (!box) return;
   const total = () => {
     const t = readRouting(w), mins = t.reduce((s, r) => s + r.stdMinutes, 0);
-    const cost = t.reduce((s, r) => s + r.stdMinutes / 60 * stationRate(workstationById((operationById(r.operationId) || {}).workstationId)), 0);
+    const cost = t.reduce((s, r) => { const op = operationById(r.operationId) || {}; return s + (op.outsourced ? Number(op.outsideCost) || 0 : r.stdMinutes / 60 * stationRate(workstationById(op.workstationId))); }, 0);
     const el = w.querySelector('#rt-total');
-    if (el) el.textContent = t.length ? t.length + ' step' + (t.length === 1 ? '' : 's') + ' · ' + hm(mins) + ' a piece · labour at the station rates ' + money(cost, cur()) : 'No steps: orders of this product are built the old way, without job cards.';
+    if (el) el.textContent = t.length ? t.length + ' step' + (t.length === 1 ? '' : 's') + ' · ' + hm(mins) + ' a piece · labour at the station rates (and outside work at its price) ' + money(cost, cur()) : 'No steps: orders of this product are built the old way, without job cards.';
   };
   w.querySelector('#rt-add').addEventListener('click', () => { box.insertAdjacentHTML('beforeend', stepRow({}, box.children.length)); total(); });
   box.addEventListener('click', (e) => { const b = e.target.closest('.rt-del'); if (b) { b.closest('.rt-row').remove(); total(); } });
