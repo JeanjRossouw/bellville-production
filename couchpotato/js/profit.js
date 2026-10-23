@@ -11,9 +11,13 @@
 // estimates, not timesheets or invoices; the report says so.
 import { productByName, costOf, overheadPerUnit } from './costing.js';
 import { esc, money, today, isoLocal, exVat } from './ui.js';
+import { renderJobCosting } from './jobcost.js';
 
 let settings = {};
 let month = '';         // 'YYYY-MM' being looked at
+let pview = 'month';    // month | jobs (planned against actual, from the job cards)
+export const setProfitView = (v) => { pview = v === 'jobs' ? 'jobs' : 'month'; };
+const viewTabs = () => `<div class="btn-row" style="margin-bottom:.9rem"><button class="btn ${pview === 'month' ? 'primary' : 'ghost'} sm" data-act="pf-view" data-to="month">By month</button><button class="btn ${pview === 'jobs' ? 'primary' : 'ghost'} sm" data-act="pf-view" data-to="jobs">Per order: planned against actual</button></div>`;
 export const setProfitSettings = (cfg) => { settings = cfg || {}; };
 export const setProfitMonth = (m) => { month = m; };
 
@@ -89,6 +93,10 @@ const pct = (x) => x == null ? '—' : Math.round(x * 100) + '%';
 const signed = (n) => `<span style="color:${n < 0 ? '#b91c1c' : 'inherit'}">${esc(money(n, cur()))}</span>`;
 
 export function renderProfit(host, orders, sales) {
+  if (pview === 'jobs') {
+    host.innerHTML = `<div class="page-head"><div><h1>Profit</h1><p class="sub">What each order really cost on the floor, against what it was planned to cost when it was released.</p></div></div>${viewTabs()}${renderJobCosting(host)}`;
+    return;
+  }
   const list = pieces(orders, sales);
   // from the first month anything went out (no losses for months before the app was used)
   const first = list.reduce((m, x) => (x.month && x.month < m ? x.month : m), today().slice(0, 7));
@@ -111,6 +119,7 @@ export function renderProfit(host, orders, sales) {
   host.innerHTML = `
     <div class="page-head"><div><h1>Profit</h1><p class="sub">What the factory made, month by month and piece by piece.</p></div>
       <div class="btn-row"><select id="pf-month">${months.map(m => `<option value="${m}" ${m === month ? 'selected' : ''}>${esc(monthName(m))}</option>`).join('')}</select></div></div>
+    ${viewTabs()}
     <div class="tiles">
       ${tile(esc(money(sel.sales, cur())), 'Sales, ' + monthName(month))}
       ${tile(signed(sel.gross), 'Gross profit · ' + pct(sel.grossPct), sel.gross < 0 ? 'red' : '')}

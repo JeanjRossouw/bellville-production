@@ -28,6 +28,7 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(C(db, 'roles', 'cost'), { name: 'Costing', perms: { ...none, costing: 'edit' } });
   for (const [uid, role] of [['own', 'owner'], ['floor', 'factory'], ['store', 'storeroom'], ['pay', 'pay'], ['cost', 'cost'], ['sales', 'sales']]) await setDoc(C(db, 'members', uid), { role, email: uid + '@factory.co.za' });
   await setDoc(C(db, 'workstations', 'ws1'), { name: 'Upholstery', staffHourlyCost: 140, active: true });
+  await setDoc(C(db, 'orders', 'o1'), { orderNo: 'CP-1', status: 'in-production', product: 'Sofa' });
   await setDoc(C(db, 'jobCards', 'jc1'), { orderId: 'o1', operationName: 'Upholster', status: 'ready', open: true, workedMinutes: 0 });
   await setDoc(C(db, 'timeEntries', 'te-run'), { jobCardId: 'jc1', staffId: 's1', kind: 'work', start: '2026-10-23T08:00:00.000Z', end: '', open: true, minutes: 0, day: '2026-10-23', rateAtTime: 183.87 });
   await setDoc(C(db, 'timeEntries', 'te-done'), { jobCardId: 'jc1', staffId: 's1', kind: 'work', start: '2026-10-23T06:00:00.000Z', end: '2026-10-23T07:00:00.000Z', open: false, minutes: 60, day: '2026-10-23', rateAtTime: 183.87 });
@@ -72,6 +73,16 @@ await t('Wages reads time entries', getDoc(C(pay, 'timeEntries', 'te-done')), tr
 await t('the running-timers query works for the floor', getDocs(query(collection(floor, 'companies', 'A', 'timeEntries'), where('open', '==', true))), true);
 await t('the today query works for the floor', getDocs(query(collection(floor, 'companies', 'A', 'timeEntries'), where('day', '==', '2026-10-23'))), true);
 await t('a stranger CANNOT read time entries', getDoc(C(stranger, 'timeEntries', 'te-done')), false);
+
+// ---- material issues
+await t('the floor issues a material', setDoc(C(floor, 'materialIssues', 'mi1'), { jobCardId: 'jc1', orderId: 'o1', materialId: 'm1', plannedQty: 10, qty: 10, unitCostAtTime: 100, cost: 1000 }), true);
+await t('the floor corrects it with why', updateDoc(C(floor, 'materialIssues', 'mi1'), { qty: 11, cost: 1100, varianceReason: 'Pattern match' }), true);
+await t('the stock room CANNOT issue materials to a job card', setDoc(C(store, 'materialIssues', 'mi2'), { jobCardId: 'jc1', qty: 1 }), false);
+await t('the stock room CANNOT read what a job cost', getDoc(C(store, 'materialIssues', 'mi1')), false);
+await t('Costing reads them', getDoc(C(cost, 'materialIssues', 'mi1')), true);
+await t('the floor CANNOT delete an issue', deleteDoc(C(floor, 'materialIssues', 'mi1')), false);
+await t('a stranger CANNOT read them', getDoc(C(stranger, 'materialIssues', 'mi1')), false);
+await t('the floor may keep an order\'s actual cost on it', updateDoc(C(floor, 'orders', 'o1'), { actual: { materials: 1100, labour: 500, rework: 0, total: 1600, complete: true } }), true);
 
 // ---- a company whose trial is over writes nothing
 await t('trial over: the owner reads the floor', getDoc(doc(old, 'companies', 'B', 'jobCards', 'jcB')), true);

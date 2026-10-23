@@ -1,10 +1,15 @@
-# Job cards and time — setting it up
+# Job cards, time and job costing — setting it up
 
-Phase 1 of the job cards & costing spec: workstations with rates, a routing
-per product, job cards made when an order is released, the station tablet,
-time entries tied to the clock-in register, and the floor board. Planned vs
-actual cost (phase 2) and shortages, customer's own fabric and outside work
-(phase 3) come after this has run at Bellville for two weeks.
+Phases 1 and 2 of the job cards & costing spec.
+
+- **Phase 1**: workstations with rates, a routing per product, job cards made
+  when an order is released, the station tablet, time entries tied to the
+  clock-in register, and the floor board.
+- **Phase 2**: planned against actual cost per order: materials issued from
+  the job cards, the order cost card, the margin report and suggested
+  standard times.
+
+Shortages, customer's own fabric and outside work (phase 3) come later.
 
 ## Once, by the owner
 
@@ -50,6 +55,39 @@ actual cost (phase 2) and shortages, customer's own fabric and outside work
   time set under Workstations & steps, 17:00 by default) and marked so you can
   check it.
 
+## Planned against actual (phase 2)
+
+- **Where each material is used**: Costing → Products → Edit, each line of
+  the bill says the step that uses it (*used at Build frame*, *used at Cut
+  fabric*…); no step means the first one.
+- **Released**: the order keeps its planned cost, frozen: the bill × qty at
+  that day's prices, and each step's standard minutes at its station's rate.
+  A price or rate change later does not move it.
+- **On the floor**: starting a step issues its materials as planned (at the
+  price of the day). At **Done** the person sees them filled in and changes
+  only what was different. Using more than planned needs a reason: offcut
+  wasted, cutting error, pattern match, customer change. **A material not on
+  the list** adds one. The shelf count moves by the difference (the bill came
+  off when the order was released, as before).
+- **Actual cost** = materials issued + minutes timed × the rate of the day +
+  rework (time on rework cards, all of it loss). Paused time is not charged.
+  It is worked out when the order is done, when a manager corrects a time,
+  and whenever its cost card is opened.
+- **Orders → Cost** (owner, Costing, Profit): planned against actual per
+  material and per step, rework, the total, and the margin on the price excl.
+  VAT, in rand and %. While the order is on the floor, steps not reached show
+  *not yet* and the totals compare what is done so far. Variance: within 5%
+  normal, 5–15% a warning, over 15% flagged. **Print** gives a black-and-white
+  copy with asterisks instead of colour.
+- **Money → Profit → Per order: planned against actual** (last 30 or 90
+  days): margin per order worst first, margin per product, labour against
+  standard per step (which step always runs over), rework by month and by
+  whose step it went back to, idle time per person, and **suggested standard
+  times** (the average of the last ten runs); **Use** puts one into the
+  product's routing for orders released after that.
+- The spec's measure for phase 2: actual cost per order within 10% of a
+  manual check on 5 sample orders.
+
 ## The spec's open questions, as built
 
 - *Shared tablet or own phone?* Both work: the station screen is shared (tap
@@ -66,5 +104,5 @@ actual cost (phase 2) and shortages, customer's own fabric and outside work
 ## After this change
 
 Publish `couchpotato/firestore.rules` in the Firebase console (project
-factory-manager-ece82): it adds the rules for workstations, steps, job cards
-and time entries.
+factory-manager-ece82): it adds the rules for workstations, steps, job cards,
+time entries and material issues.

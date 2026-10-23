@@ -26,6 +26,7 @@ couchpotato/
   js/routing.js     workstations, steps and each product's routing (Costing → Workstations & steps)
   js/jobs.js        job cards per step: release, timing, pause, done, QC send-back, time per person
   js/stations.js    the station tablet (?station=1) and the floor board (?board=1 on the TV)
+  js/jobcost.js     planned against actual per order: the cost card and the margin report (Profit)
   js/costing.js     materials, bills of material, overheads, price sheet
   js/scan.js        scan out at the door, dispatch, tell the customer
   js/invoices.js    invoice queue, invoices, payments, statements, export
@@ -167,3 +168,12 @@ the floor makes one job card per step; the station tablet times each person
 rework card); the last card done makes the order Done. The floor board shows
 every station, late orders and who is clocked in but not on a job; managers
 see each person's time on jobs against their clock-in.
+
+Also built: job costing (phase 2). Releasing an order freezes its planned
+cost (the bill at that day's prices, the steps at the station rates);
+starting a step issues its materials, corrected at Done with a reason when
+more was used; the actual cost (materials issued, minutes timed at the rate
+of the day, rework as loss) sits beside the plan on the order's cost card,
+printable in black and white; Profit → Per order shows margin per order and
+product, labour against standard per step, rework, idle time and suggested
+standard times.

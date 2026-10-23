@@ -83,6 +83,7 @@ export const WRITE_AREAS = {
   jobCards: ['factory', 'orders', 'scan', 'wages', 'costing'],
   // a time entry that has stopped is changed only by the owner, Wages or Costing (see the rules)
   timeEntries: ['factory', 'orders', 'scan', 'wages', 'costing'],
+  materialIssues: ['factory', 'orders', 'scan', 'wages', 'costing'],
   settings: ['settings']
 };
 
@@ -110,7 +111,8 @@ export const READ_AREAS = {
   stockTakes: ['pos', 'stock', 'storeroom'],
   shopProducts: ['pos', 'stock', 'costing', 'profit'],
   attendance: ['factory', 'wages'],
-  timeEntries: ['factory', 'wages', 'costing', 'profit']      // minutes and labour rates per person
+  timeEntries: ['factory', 'wages', 'costing', 'profit'],     // minutes and labour rates per person
+  materialIssues: ['factory', 'wages', 'costing', 'profit']
 };
 
 export const levelOf = (perms, area) => (perms && perms[area]) || 'none';
