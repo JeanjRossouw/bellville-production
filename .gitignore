@@ -4,3 +4,7 @@ Thumbs.db
 .vscode/
 .idea/
 node_modules/
+# the Firebase emulators write these where they are started
+*-debug.log
+# a test run links node_modules into pos/test
+pos/test/node_modules
