@@ -44,6 +44,8 @@
     nav.top .links a { text-decoration: none; color: #bdbdbd; font-size: 11px; letter-spacing: .16em; text-transform: uppercase; }
     nav.top .links a:hover { color: var(--white); }
     nav.top .act { display: flex; gap: 10px; }
+    .hero .signin-line { margin: 14px 0 0; font-size: 14px; color: #d6d6d6; }
+    .hero .signin-line a { color: #fff; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
     nav.top .act .btn { padding: 10px 16px; font-size: 11px; }
 
     /* hero */
@@ -210,8 +212,11 @@
     }
     @media (max-width: 560px) {
       .wrap { padding: 0 16px; }
-      nav.top .act .ghost { display: none; }
-      .wordmark { font-size: 12px; letter-spacing: .24em; }
+      nav.top .wrap { gap: 12px; }
+      nav.top .act { gap: 6px; }
+      nav.top .act .btn { padding: 10px 11px; font-size: 10px; letter-spacing: .1em; white-space: nowrap; }
+      .wordmark { font-size: 11px; letter-spacing: .16em; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+      .hero .signin-line { display: block; }
       .grid4 { grid-template-columns: 1fr; }
       .hero .shot { margin-bottom: -60px; }
       .after-hero { padding-top: 108px; }
@@ -270,6 +275,7 @@
           <a class="btn ghost" href="/couchpotato/?demo=1" data-demo>Try the demo</a>
           <a class="btn ghost more" href="#features">See what it does</a>
         </div>
+        <p class="signin-line">Already have an account? <a href="/couchpotato/" data-app>Sign in</a></p>
         <p class="price-line"><b><span data-price>R 2 999</span> a month</b>, everything included. No card, no sales call, no setup fee.</p>
       </div>
     </div>

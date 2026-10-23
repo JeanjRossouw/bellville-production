@@ -43,6 +43,15 @@ async function main() {
   $('screen').addEventListener('click', onAction);
   $('sign-out').addEventListener('click', () => auth.signOut());
   $('lock').addEventListener('click', () => auth.lock());
+  // the phone menu: one button in the top bar, a sheet with every screen
+  $('menu-btn').addEventListener('click', () => openMobileMenu($('mnav').hidden));
+  $('mnav').addEventListener('click', (e) => {
+    if (e.target.closest('[data-mclose]')) return openMobileMenu(false);
+    if (e.target.closest('#m-sign-out')) { openMobileMenu(false); return auth.signOut(); }
+    const b = e.target.closest('[data-view]');
+    if (b) { openMobileMenu(false); const t = $('nav').querySelector(`[data-view="${b.dataset.view}"]`); if (t) t.click(); window.scrollTo(0, 0); }
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('mnav').hidden) openMobileMenu(false); });
   $('nav').addEventListener('click', (e) => { const b = e.target.closest('[data-view]'); if (b) { if (view === 'stock' && b.dataset.view !== 'stock' && stock.st.camera) stock.action('st-camera', b); view = b.dataset.view; editId = ''; if (view === 'register') register.reg.stale = true; paint(); } });
   await auth.boot();
   sync.setContext({ repaint: () => { paintBanner(); reloadOffsets(); if (view === 'register') paint(); }, storeId: sellStoreId });   // reloadOffsets repaints Sell itself
@@ -191,6 +200,19 @@ function showApp() {
 const roleLabel = (k) => (ROLES.find(r => r.key === k) || { label: k }).label;
 const storeName = (id) => (stores.find(s => s.id === id) || {}).name || '';
 const entityName = (id) => { const e = entities.find(x => x.id === id); return e ? (e.tradingName || e.legalName) : id; };
+// The phone menu sheet: the same screens as the tabs, then who is signed in and Sign out.
+function paintMobileMenu(items) {
+  const u = auth.session.user || {};
+  $('mnav').innerHTML = `<div class="mnav-top"><span class="mnav-brand">Point of sale</span><button class="mnav-close" data-mclose aria-label="Close the menu">✕</button></div>
+    <div class="mnav-body"><div class="mnav-group">${items.map(n => `<button class="mnav-item${n.key === view ? ' on' : ''}" data-view="${n.key}">${esc(n.label)}</button>`).join('')}</div></div>
+    <div class="mnav-foot"><div class="mnav-who"><strong>${esc(u.name || '')}</strong><span>${esc(roleLabel(u.role))}</span></div><button class="btn ghost wide" id="m-sign-out">Sign out</button></div>`;
+}
+function openMobileMenu(open) {
+  if (open) paintMobileMenu(navItems());
+  $('mnav').hidden = !open;
+  $('menu-btn').setAttribute('aria-expanded', open ? 'true' : 'false');
+  document.documentElement.classList.toggle('mnav-open', !!open);
+}
 function navItems() {
   const out = [];
   if (sellStoreId()) out.push({ key: 'sell', label: 'Sell' }, { key: 'sales', label: 'Sales' }, { key: 'returns', label: 'Returns' }, { key: 'laybys', label: 'Lay-bys' }, { key: 'orders', label: 'Custom orders' });
@@ -217,7 +239,10 @@ const prData = () => ({ entities, stores, settings, products: catalogue, variant
 const prEntityId = () => { const t = document.querySelector('.pr-tbl'); if (t) return t.dataset.entity; const sel = document.getElementById('pr-entity'); if (sel) return sel.value; const mine = entities.filter(e => auth.inEntity(e.id)); return prEntity && mine.some(e => e.id === prEntity) ? prEntity : (mine[0] || {}).id || ''; };
 function paint() {
   if (!auth.session.user) return;
-  $('nav').innerHTML = navItems().map(n => `<button class="tab${n.key === view ? ' on' : ''}" data-view="${n.key}">${esc(n.label)}</button>`).join('');
+  const items = navItems();
+  $('nav').innerHTML = items.map(n => `<button class="tab${n.key === view ? ' on' : ''}" data-view="${n.key}">${esc(n.label)}</button>`).join('');
+  $('menu-now').textContent = (items.find(n => n.key === view) || { label: '' }).label;
+  if (!$('mnav').hidden) paintMobileMenu(items);
   const screen = $('screen');
   if (view === 'sell') {
     startStoreData();

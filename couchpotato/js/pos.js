@@ -60,6 +60,7 @@ let sales = [];
 let unwatch = null;
 let onChange = null;
 let posTab = 'sale';       // sale | sales | register | stock | dash | clients | orders
+let navOpen = false;       // the till's screen menu on a phone: kept open across repaints until a screen is picked
 let cat = '__home__';      // the category landing, '' for all, else a category
 let search = '';
 let mCart = false;         // on a phone: the cart instead of the shop
@@ -741,6 +742,11 @@ function headHtml() {
   const on = (key) => posTab === key || (posTab === 'stock' && ({ receive: 'receive', count: 'take', catalogue: 'catalogue', po: 'order' })[key] === stockView);
   const nav = (key, ico, label, title) => `<button class="pos-nav-btn${on(key) ? ' on' : ''}" data-act="pos-tab" data-to="${key}" title="${esc(title || '')}">${icon(ico)}<span>${label}</span></button>`;
   const pend = store.shopifyPendingCount();
+  // the till's screens: a row of tabs on a wide screen, one drop-down button on a phone
+  const screens = [['sale', 'cart', 'Sell', 'Ring up a sale'], ['dash', 'chart', 'Dashboard', 'How the shop is doing'], ['clients', 'users', 'Clients', 'Customers, accounts and laybys'], ['orders', 'list', 'Orders', 'Sales orders, laybys and quotes'],
+    ...(till.shopOn() ? [['receive', 'inbox', 'Receive', 'Book in a delivery (GRV)'], ['count', 'box', 'Count', 'Stock take'], ['catalogue', 'grid', 'Catalogue', 'Products, prices and cost prices'], ['po', 'file', 'PO Order', 'Purchase orders and what to order']] : []),
+    ['sales', 'receipt', 'Sales', 'Sales history'], ['refund', 'undo', 'Refund', 'A return or refund'], ['register', 'till', 'Register', 'Open, cash up and close the till']];
+  const cur = screens.find(x => on(x[0]));
   const pill = (dot, text, title, cls = '') => `<span class="pos-pill${cls ? ' ' + cls : ''}"${title ? ` title="${esc(title)}"` : ''}>${dot ? `<i class="pos-dot ${dot}"></i>` : ''}${text}</span>`;
   return `<div class="pos-head">
     <div class="pos-head-top">
@@ -758,16 +764,11 @@ function headHtml() {
         ${me ? `<span class="pos-staff" title="Who is ringing">${icon('user')}${esc(me.name)}${till.isManager(me) ? ' <small>manager</small>' : ''}</span><button class="pos-icon-btn" data-act="till-lock" title="Lock the till">${icon('lock')}</button>` : ''}
       </div>
     </div>
-    <nav class="pos-nav">
-      ${nav('sale', 'cart', 'Sell', 'Ring up a sale')}
-      ${nav('dash', 'chart', 'Dashboard', 'How the shop is doing')}
-      ${nav('clients', 'users', 'Clients', 'Customers, accounts and laybys')}
-      ${nav('orders', 'list', 'Orders', 'Sales orders, laybys and quotes')}
-      ${till.shopOn() ? nav('receive', 'inbox', 'Receive', 'Book in a delivery (GRV)') + nav('count', 'box', 'Count', 'Stock take') + nav('catalogue', 'grid', 'Catalogue', 'Products, prices and cost prices') + nav('po', 'file', 'PO Order', 'Purchase orders and what to order') : ''}
-      ${nav('sales', 'receipt', 'Sales', 'Sales history')}
-      ${nav('refund', 'undo', 'Refund', 'A return or refund')}
-      ${nav('register', 'till', 'Register', 'Open, cash up and close the till')}
-    </nav>
+    <nav class="pos-nav">${screens.map(x => nav(...x)).join('')}</nav>
+    <div class="pos-mnav">
+      <button class="pos-mnav-btn" data-act="pos-menu" aria-expanded="${navOpen ? 'true' : 'false'}">${cur ? icon(cur[1]) + `<span>${cur[2]}</span>` : '<span>Screens</span>'}<i class="caret"></i></button>
+      ${navOpen ? `<div class="pos-mnav-list">${screens.map(([key, ico, label]) => `<button class="pos-mnav-item${on(key) ? ' on' : ''}" data-act="pos-tab" data-to="${key}">${icon(ico)}<span>${label}</span></button>`).join('')}</div>` : ''}
+    </div>
   </div>`;
 }
 
@@ -1290,7 +1291,8 @@ export function posAction(act, el) {
   if (act.startsWith('ss-')) return shopstock.shopStockAction(act, el);
   const i = parseInt(el.dataset.i, 10);
   switch (act) {
-    case 'pos-tab': case 'pos-go': return goTab(el.dataset.to);
+    case 'pos-tab': case 'pos-go': navOpen = false; return goTab(el.dataset.to);
+    case 'pos-menu': navOpen = !navOpen; return rerender();
     case 'pos-cat': cat = el.dataset.to; search = ''; return rerender();
     case 'pos-mview': mCart = el.dataset.to === 'cart'; return rerender();
     case 'pos-client': return openClient(el.dataset.id);
