@@ -15,6 +15,7 @@
 // token the write that needed the approval carries along.
 import { API, APP_VERSION, RANK, DEFAULTS } from './config.js';
 import { fb, EMULATOR } from './db.js';
+import * as db from './db.js';
 import { openModal, closeModal, pinPadHtml, wirePinPad, toast, esc } from './ui.js';
 
 const LS_DEVICE = 'pos-device';
@@ -70,7 +71,7 @@ function loadDevice() {
 }
 function saveDevice(d, s) { try { localStorage.setItem(LS_DEVICE, JSON.stringify({ ...d, secret: s })); } catch (e) {} }
 export function forgetDevice() { try { localStorage.removeItem(LS_DEVICE); localStorage.removeItem(LS_CACHE); } catch (e) {} secret = ''; session.device = null; emit(); }
-const devBody = () => session.device ? { deviceId: session.device.deviceId, secret } : {};
+const devBody = () => session.device ? { deviceId: session.device.deviceId, secret, groupId: session.device.groupId || '' } : {};
 export const deviceBody = devBody;   // the till's identity for the other functions
 
 function loadCache() { try { return JSON.parse(localStorage.getItem(LS_CACHE) || 'null') || { at: '', staff: [] }; } catch (e) { return { at: '', staff: [] }; } }
@@ -99,6 +100,7 @@ let ready = null;
 export function boot() {
   if (ready) return ready;
   session.device = loadDevice();
+  if (session.device) db.setGroup(session.device.groupId);      // a till works in the business it was enrolled for
   ready = new Promise((resolve) => {
     let first = true;
     fb.fns.onAuthStateChanged(fb.auth, async (u) => {
@@ -114,14 +116,15 @@ export function boot() {
 async function adoptLogin(u) {
   try {
     const r = await api('me', devBody());
+    db.setGroup(r.groupId);
     session.nobodyYet = !!r.nobodyYet;
     if (r.device) session.device = r.device;
-    if (r.user) { session.user = r.user; session.uid = r.user.uid; session.mode = session.mode || rememberedMode(r.user); try { localStorage.setItem(LS_LAST, JSON.stringify(r.user)); } catch (e) {} }
+    if (r.user) { session.user = r.user; session.uid = r.user.uid; session.mode = session.mode || rememberedMode(r.user); try { localStorage.setItem(LS_LAST, JSON.stringify({ ...r.user, groupId: r.groupId })); } catch (e) {} }
     else { session.user = null; session.uid = u.uid; session.mode = 'email'; }
   } catch (e) {
     // offline: the last answer stands
     let last = null; try { last = JSON.parse(localStorage.getItem(LS_LAST) || 'null'); } catch (x) {}
-    if (last && last.uid === u.uid) { session.user = last; session.uid = u.uid; session.mode = session.mode || rememberedMode(last); }
+    if (last && last.uid === u.uid) { db.setGroup(last.groupId); session.user = last; session.uid = u.uid; session.mode = session.mode || rememberedMode(last); }
     else { session.user = null; session.uid = u.uid; session.mode = 'email'; }
   }
 }
@@ -152,8 +155,8 @@ export async function signInPin(pin) {
     saveCache(r.staff || []);
     rememberMode('pin');
     session.mode = 'pin';
-    session.user = r.user; session.uid = r.user.uid; session.device = r.device;
-    try { localStorage.setItem(LS_LAST, JSON.stringify(r.user)); } catch (e) {}
+    session.user = r.user; session.uid = r.user.uid; session.device = r.device; db.setGroup(r.device && r.device.groupId);
+    try { localStorage.setItem(LS_LAST, JSON.stringify({ ...r.user, groupId: r.device && r.device.groupId })); } catch (e) {}
     await fb.fns.signInWithCustomToken(fb.auth, r.token);   // onAuthStateChanged → adoptLogin keeps mode 'pin'
     emit();
     return r.user;

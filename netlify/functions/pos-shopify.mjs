@@ -25,7 +25,7 @@
 //   webhooks: POST ?hook=1&e=<entityId> with X-Shopify-Topic orders/create | orders/cancelled | refunds/create, signed with the client secret
 //
 // Env: FACTORY_SERVICE_ACCOUNT, SHOPIFY_API_BASE (tests only).
-import { json, Reject, clean, randomId, nowIso, getDoc, query, commit, createDoc, patchDoc, deleteDoc, loginOf, loadUser, inEntity, inStore, rank, serverStamp, bodyOf, audit } from './lib/pos.mjs';
+import { json, Reject, clean, randomId, nowIso, getDoc, query, commit, createDoc, patchDoc, deleteDoc, loginOf, loadUser, inEntity, inStore, rank, serverStamp, bodyOf, audit, withGroup, groupId, DEFAULT_GROUP } from './lib/pos.mjs';
 import { whoAndWhere, runSale, moveWrites, approved } from './lib/sale.mjs';
 import { gql, gidNum, secretsOf, settingsOf, patchShopify, verifyWebhook, logSync, queueStock, flushStock } from './lib/shopify-pos.mjs';
 import { pullCatalogue, planCatalogue, planStock, applyCatalogue } from './lib/shopify-catalogue.mjs';
@@ -44,7 +44,8 @@ const money = (c) => 'R ' + (c / 100).toFixed(2);
 // the scopes the Dev Dashboard app needs; shown on the card with a Copy button
 export const SCOPES = ['read_products', 'write_inventory', 'read_inventory', 'read_locations', 'read_orders', 'write_orders', 'write_merchant_managed_fulfillment_orders', 'read_discounts', 'read_customers', 'write_customers'];
 const TOPICS = { 'orders/create': 'ORDERS_CREATE', 'orders/cancelled': 'ORDERS_CANCELLED', 'refunds/create': 'REFUNDS_CREATE' };
-const hookPath = (entityId) => '/.netlify/functions/pos-shopify?hook=1&e=' + entityId;
+// a customer's own space is named in the address too (the webhook then proves itself with that space's shop secret)
+const hookPath = (entityId) => '/.netlify/functions/pos-shopify?hook=1&e=' + entityId + (groupId() === DEFAULT_GROUP ? '' : '&g=' + groupId());
 // where the webhooks must call: the site the owner is on (sent by the page), else the host this request came to
 function siteOf(event, b, sh = {}) {
   const given = clean(b.siteUrl, 200).replace(/\/+$/, '');
@@ -423,7 +424,7 @@ const actions = {
   }
 };
 
-export const handler = async (event) => {
+const handleRequest = async (event) => {
   const q = event.queryStringParameters || {};
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }, body: '' };
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' });
@@ -451,3 +452,6 @@ export const handler = async (event) => {
     return json(500, { error: 'Something went wrong on the server: ' + String(e.message).slice(0, 200) });
   }
 };
+
+// every request works in its own customer's space (lib/pos.mjs)
+export const handler = withGroup(handleRequest);

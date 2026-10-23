@@ -4,6 +4,7 @@
 // pos/{GROUP_ID}, kept apart from everything else by the database rules
 // (couchpotato/firestore.rules). The web values below are public by design;
 // the rules protect the data.
+// the space the first shops use; a customer who signed up has its own (the server says which at sign-in)
 export const GROUP_ID = 'retail';
 export const APP_VERSION = '0.2.0';
 export const FB_VERSION = '10.13.0';

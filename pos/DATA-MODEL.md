@@ -40,11 +40,34 @@ database rules. Change it first; then the code.
 ## Where it lives
 
 ```
-pos/{groupId}                       the retail group (one per deployment)
+pos/{groupId}                       one business (a Factory Manager POS customer)
 pos/{groupId}/<collection>/{id}     everything below
+posMembers/{uid}                    { groupId, at }: which business a login is in
+posGroups/{groupId}                 one per business: name, ownerUid, status, trial and subscription
 ```
 
-`groupId` is a constant in the app's config. Nothing in Factory Manager's
+**Each business has its own space.** The first shops (Bellville, ReptiCube,
+PinkFoot) are the default group, `retail`, and their logins have no
+`posMembers` record. A business that signs up gets a group of its own, and
+every person added to it gets a `posMembers` record. The server works out
+the group for each request once (`withGroup` in `netlify/functions/lib/pos.mjs`):
+- a signed-in person: their `posMembers` record, else the default group;
+- an enrolled till: the `groupId` it was enrolled with, proven by its secret inside that group;
+- a signed link or Xero's return: the group in the token's signature;
+- a Shopify webhook: `?g=` in its address, proven by that group's own shop secret.
+
+Every read and write in the request then goes to that group, and an approval
+token made in one group is refused in another. The schedules go through
+every group (`allGroups`). The app learns its group from the sign-in answer
+(`me` → `groupId`) or the enrolled till (`pos-device.groupId`). A login is in
+one business only: adding an email that already signs in elsewhere is
+refused. Keys outside a group that are named by company code (the stored
+Xero sign-in, the store's customer in a linked factory) carry the group for
+every business but the default one. `posMembers` and `posGroups` are written
+only by the server; a login reads its own `posMembers` record and a member
+reads their own `posGroups` record.
+
+Nothing in Factory Manager's
 `companies/…` or the existing `users/{uid}` is touched: that `users` doc is
 writable by its own login, so a POS role could never safely live there.
 

@@ -8,13 +8,25 @@
 //
 // Env: FACTORY_SERVICE_ACCOUNT (the project's service-account JSON, already
 //      used by the billing and driver functions).
-//      POS_GROUP_ID (optional) — the group under pos/; default 'retail'.
+//      POS_GROUP_ID (optional) — the default group under pos/; default 'retail'.
+//      Each Factory Manager POS customer has its own group (pos/{groupId}); a
+//      request works in one, worked out once by withGroup() below.
 //      FIRESTORE_EMULATOR_HOST / FIREBASE_AUTH_EMULATOR_HOST — tests only.
 import { createHash, pbkdf2Sync, randomBytes, timingSafeEqual, createHmac } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { SignJWT, importPKCS8 } from 'jose';
 import { verifyFirebaseToken } from './auth.mjs';
 
-export const GROUP_ID = process.env.POS_GROUP_ID || 'retail';
+// ---- the customer's own space: pos/{groupId}
+// Every read and write in a request goes to the group that request works in.
+// The shops that were here before sign-ups (Bellville, ReptiCube, PinkFoot)
+// are the default group; a login or till with no record of its own is there.
+export const DEFAULT_GROUP = process.env.POS_GROUP_ID || 'retail';
+export const GROUP_ID = DEFAULT_GROUP;      // the default group's id (kept for older callers)
+const groupStore = new AsyncLocalStorage();
+export const groupId = () => (groupStore.getStore() || {}).gid || DEFAULT_GROUP;
+export const inGroup = (gid, fn) => groupStore.run({ gid: gid || DEFAULT_GROUP }, fn);
+export const GROUP_RE = /^[A-Za-z0-9_-]{1,40}$/;
 export const PROJECT_ID = 'factory-manager-ece82';
 // the project's public web key (the one in couchpotato/js/config.js); it only identifies the project
 const WEB_API_KEY = 'AIzaSyDchC2SgGdNn9VieudKSVOfZrHdi_GqPcg';
@@ -72,7 +84,7 @@ const idtToken = () => accessToken('https://www.googleapis.com/auth/identitytool
 const projectId = () => serviceAccount().project_id || PROJECT_ID;
 const root = () => `${FS_BASE}/projects/${projectId()}/databases/(default)/documents`;
 const enc = (path) => path.split('/').map(encodeURIComponent).join('/');
-export const docPath = (coll, id) => `pos/${GROUP_ID}/${coll}/${id}`;
+export const docPath = (coll, id) => `pos/${groupId()}/${coll}/${id}`;
 const docName = (coll, id) => `projects/${projectId()}/databases/(default)/documents/${docPath(coll, id)}`;
 
 export function toFs(v) {
@@ -127,7 +139,7 @@ export async function patchDoc(coll, id, patch) {
 // the group's own document, pos/{group}
 export async function patchGroupDoc(patch) {
   const mask = Object.keys(patch).map(k => 'updateMask.fieldPaths=' + encodeURIComponent(k)).join('&');
-  const res = await call('PATCH', `${root()}/${enc('pos/' + GROUP_ID)}?${mask}`, { fields: toFs(patch).mapValue.fields });
+  const res = await call('PATCH', `${root()}/${enc('pos/' + groupId())}?${mask}`, { fields: toFs(patch).mapValue.fields });
   if (!res.ok) throw new Error(`Firestore patch group failed: ${await res.text()}`);
 }
 // create only when not there yet: false when it already was
@@ -150,7 +162,7 @@ export async function query(coll, filters, limit = 500, orderBy) {
   const where = parts.length === 1 ? parts[0] : parts.length ? { compositeFilter: { op: 'AND', filters: parts } } : undefined;
   const sq = { from: [{ collectionId: coll }], ...(where ? { where } : {}), limit };
   if (orderBy) sq.orderBy = [{ field: { fieldPath: orderBy.field }, direction: orderBy.desc ? 'DESCENDING' : 'ASCENDING' }];
-  const res = await call('POST', `${root()}/${enc('pos/' + GROUP_ID)}:runQuery`, { structuredQuery: sq });
+  const res = await call('POST', `${root()}/${enc('pos/' + groupId())}:runQuery`, { structuredQuery: sq });
   if (!res.ok) throw new Error(`Firestore query ${coll} failed: ${await res.text()}`);
   return (await res.json()).filter(r => r.document).map(r => docOf(r.document));
 }
@@ -260,17 +272,20 @@ function overrideSecret() {
   return sha256('override:' + (serviceAccount().private_key || 'emulator'));
 }
 export function overrideToken(claims, minutes = 5) {
-  const body = { ...claims, exp: Date.now() + minutes * 60000, nonce: randomBytes(8).toString('hex') };
+  const body = { g: groupId(), ...claims, exp: Date.now() + minutes * 60000, nonce: randomBytes(8).toString('hex') };
   const b = Buffer.from(JSON.stringify(body)).toString('base64url');
   return b + '.' + createHmac('sha256', overrideSecret()).update(b).digest('base64url');
 }
-export function verifyOverrideToken(t) {
+export function verifyOverrideToken(t, { anyGroup = false } = {}) {
   const [b, sig] = String(t || '').split('.');
   if (!b || !sig) return null;
   const want = createHmac('sha256', overrideSecret()).update(b).digest('base64url');
   if (want.length !== sig.length || !timingSafeEqual(Buffer.from(want), Buffer.from(sig))) return null;
   const body = JSON.parse(Buffer.from(b, 'base64url').toString('utf8'));
-  return body.exp > Date.now() ? body : null;
+  if (!(body.exp > Date.now())) return null;
+  // a token made in one customer's space is no good in another's (older tokens are the default group's)
+  if (!anyGroup && (body.g || DEFAULT_GROUP) !== groupId()) return null;
+  return body;
 }
 
 // ----------------------------------------------------------- Identity Toolkit
@@ -329,4 +344,78 @@ export async function loadDevice(deviceId, secret) {
 export function bodyOf(event) {
   try { return JSON.parse(event.isBase64Encoded ? Buffer.from(event.body || '', 'base64').toString('utf8') : (event.body || '{}')); }
   catch { throw new Reject(400, 'Invalid request'); }
+}
+
+// ---- documents outside any group: which space a login belongs to, and the spaces themselves
+//   posMembers/{uid}  { groupId }                       written when a person is added
+//   posGroups/{gid}   { name, ownerUid, status, trialEndsAt, paidUntil, ... }   one per customer
+export async function getTop(path) {
+  const res = await call('GET', `${root()}/${enc(path)}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Firestore get ${path} failed: ${await res.text()}`);
+  return docOf(await res.json());
+}
+export async function patchTop(path, patch) {
+  const mask = Object.keys(patch).map(k => 'updateMask.fieldPaths=' + encodeURIComponent(k)).join('&');
+  const res = await call('PATCH', `${root()}/${enc(path)}?${mask}`, { fields: toFs(patch).mapValue.fields });
+  if (!res.ok) throw new Error(`Firestore patch ${path} failed: ${await res.text()}`);
+}
+export async function createTop(path, data) {
+  const res = await call('PATCH', `${root()}/${enc(path)}?currentDocument.exists=false`, { fields: toFs(data).mapValue.fields });
+  if (res.ok) return true;
+  const t = await res.text();
+  if (res.status === 409 || /ALREADY_EXISTS|FAILED_PRECONDITION/.test(t)) return false;
+  throw new Error(`Firestore create ${path} failed: ${t}`);
+}
+export async function listTop(coll, limit = 500) {
+  const res = await call('POST', `${root()}:runQuery`, { structuredQuery: { from: [{ collectionId: coll }], limit } });
+  if (!res.ok) throw new Error(`Firestore list ${coll} failed: ${await res.text()}`);
+  return (await res.json()).filter(r => r.document && r.document.name.split('/').length === 7).map(r => docOf(r.document));
+}
+// a person joins a group: one record, so every later request finds their space
+export const setMember = (uid, gid) => patchTop('posMembers/' + uid, { groupId: gid || groupId(), at: nowIso() });
+
+// which business a login already belongs to, if any: its own record, or (for the first shops, who have none) the default group's staff list
+export async function memberGroupOf(uid) {
+  const m = uid ? await getTop('posMembers/' + uid) : null;
+  if (m && GROUP_RE.test(m.groupId || '')) return m.groupId;
+  return uid && await getTop(`pos/${DEFAULT_GROUP}/users/${uid}`) ? DEFAULT_GROUP : null;
+}
+// which group a login is in (kept a few minutes per function instance)
+const memberCache = new Map();
+export async function groupOfLogin(uid) {
+  const hit = memberCache.get(uid);
+  if (hit && hit.at > Date.now() - 300000) return hit.gid;
+  const m = uid ? await getTop('posMembers/' + uid) : null;
+  const gid = m && GROUP_RE.test(m.groupId || '') ? m.groupId : DEFAULT_GROUP;
+  memberCache.set(uid, { gid, at: Date.now() });
+  return gid;
+}
+// The group a request works in: a signed link or Xero's return names it in its
+// signature; a signed-in person's own record says it (a login cannot reach
+// another customer's space); an enrolled till says it in its body and then
+// proves itself with its secret inside that group; Shopify's webhook names
+// it in the address and proves it with that group's own shop secret.
+export async function groupFor(event) {
+  const q = event.queryStringParameters || {};
+  const signed = q.t || q.state;
+  if (signed) { let c = null; try { c = verifyOverrideToken(signed, { anyGroup: true }); } catch (e) {} if (c && GROUP_RE.test(c.g || '')) return c.g; }
+  if (bearer(event)) { const login = await loginOf(event); return groupOfLogin(login.sub); }
+  if (q.hook && GROUP_RE.test(q.g || '')) return q.g;
+  let b = {}; try { b = event.body ? bodyOf(event) : {}; } catch (e) {}
+  if (b && b.deviceId && GROUP_RE.test(b.groupId || '')) return b.groupId;
+  return DEFAULT_GROUP;
+}
+// wrap a function's handler so everything in it works in the request's group
+export const withGroup = (handler) => async (event, context) => {
+  let gid;
+  try { gid = await groupFor(event); }
+  catch (e) { if (e instanceof Reject) return json(e.status, { error: e.message }); throw e; }
+  return inGroup(gid, () => handler(event, context));
+};
+// every group, for the schedules: the default one and every customer's
+export async function allGroups() {
+  let rows = [];
+  try { rows = await listTop('posGroups', 1000); } catch (e) { console.error('posGroups', e.message); }
+  return [DEFAULT_GROUP, ...rows.map(r => r.id).filter(id => GROUP_RE.test(id) && id !== DEFAULT_GROUP)];
 }

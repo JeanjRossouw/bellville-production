@@ -149,6 +149,22 @@ await t('manager reads the audit log', getDoc(P(mgr, 'auditLog', 'a1')), true);
 await t('nobody edits the audit log', updateDoc(P(owner, 'auditLog', 'a1'), { action: 'y' }), false);
 await t('nobody deletes from the audit log', deleteDoc(P(owner, 'auditLog', 'a1')), false);
 
+// ---- each business's records: which business a login is in, and the business itself (server-written only)
+await env.withSecurityRulesDisabled(async (c) => {
+  const d = c.firestore();
+  await setDoc(doc(d, 'posMembers', 'owner'), { groupId: G });
+  await setDoc(doc(d, 'posMembers', 'stranger'), { groupId: 'otherGrp' });
+  await setDoc(doc(d, 'posGroups', G), { name: 'Bellville Furniture', status: 'trial', ownerUid: 'owner' });
+  await setDoc(doc(d, 'posGroups', 'otherGrp'), { name: 'Other Shop', status: 'trial', ownerUid: 'stranger' });
+});
+await t('a login reads its own business record', getDoc(doc(owner, 'posMembers', 'owner')), true);
+await t('a login CANNOT read another login\'s business record', getDoc(doc(owner, 'posMembers', 'stranger')), false);
+await t('nobody writes a business record from the app', setDoc(doc(owner, 'posMembers', 'owner'), { groupId: 'otherGrp' }), false);
+await t('a member reads their own business', getDoc(doc(cash, 'posGroups', G)), true);
+await t('a member CANNOT read another business', getDoc(doc(owner, 'posGroups', 'otherGrp')), false);
+await t('the owner CANNOT change the business (its trial and subscription)', updateDoc(doc(owner, 'posGroups', G), { status: 'active' }), false);
+await t('another business\'s login CANNOT read this business\'s data', getDoc(P(stranger, 'products', 'p1')), false);
+
 // ---- Factory Manager untouched: a POS user is not a Factory Manager member
 await t('POS owner CANNOT read a Factory Manager company', getDoc(doc(owner, 'companies', 'A')), false);
 

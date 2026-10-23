@@ -11,11 +11,13 @@
 //   disconnect { entityId }
 //
 // Env: FACTORY_SERVICE_ACCOUNT, XERO_CLIENT_ID, XERO_CLIENT_SECRET, XERO_POS_REDIRECT_URI, POS_OVERRIDE_SECRET (signs the state).
-import { json, Reject, clean, nowIso, getDoc, query, createDoc, patchDoc, loginOf, loadUser, inEntity, rank, overrideToken, verifyOverrideToken, bodyOf, audit } from './lib/pos.mjs';
+import { json, Reject, clean, nowIso, getDoc, query, createDoc, patchDoc, loginOf, loadUser, inEntity, rank, overrideToken, verifyOverrideToken, bodyOf, audit, withGroup, groupId, DEFAULT_GROUP } from './lib/pos.mjs';
 import { clientCreds, exchangeCode, getConnections, saveTokens, loadTokens, deleteTokens, xeroApi, AUTHORIZE_URL, SCOPES, connectBlobs } from './lib/xero.mjs';
 
 // the schedule lives in pos-xero-daily.mjs: a scheduled function cannot also serve HTTP
-const KEY = (entityId) => 'pos-' + entityId;
+// the stored Xero sign-in per company; a customer's own space adds its id (the first shops keep their keys)
+export const xeroKey = (entityId) => groupId() === DEFAULT_GROUP ? 'pos-' + entityId : 'pos-' + groupId() + '-' + entityId;
+const KEY = xeroKey;
 const DEFAULT_ACCOUNTS = { sales: '200', vat: '820', cash: '090', card: '091', eft: '090', qr: '091', account: '610', storeCredit: '860', voucher: '861', layby: '862', specialOrder: '863', points: '864', exchange: '865', rounding: '260', penalty: '270' };
 const LABEL = { sales: 'Sales (ex VAT)', vat: 'VAT output', cash: 'Cash takings', card: 'Card takings', eft: 'EFT received', qr: 'QR payments', account: 'Customer accounts (receivable)', storeCredit: 'Store credit owed', voucher: 'Gift vouchers outstanding', layby: 'Lay-by deposits held', specialOrder: 'Custom order deposits held', points: 'Loyalty points owed', exchange: 'Exchange clearing', rounding: 'Cash rounding', penalty: 'Cancellation penalties' };
 const sum = (rows, f) => rows.reduce((n, r) => n + (Number(typeof f === 'function' ? f(r) : r[f]) || 0), 0);
@@ -174,7 +176,7 @@ const actions = {
   }
 };
 
-export const handler = async (event) => {
+const handleRequest = async (event) => {
   connectBlobs(event);
   const q = event.queryStringParameters || {};
   // ---- Xero sending the owner back
@@ -210,3 +212,6 @@ export const handler = async (event) => {
     return json(500, { error: 'Something went wrong on the server.' });
   }
 };
+
+// every request works in its own customer's space (lib/pos.mjs)
+export const handler = withGroup(handleRequest);

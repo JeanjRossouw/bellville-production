@@ -12,8 +12,7 @@
 import {
   json, Reject, clean, randomId, nowIso, rank,
   getDoc, query, commit, beginTransaction, rollback, serverStamp,
-  loginOf, loadUser, inEntity, inStore, verifyOverrideToken, loadDevice, bodyOf
-} from './lib/pos.mjs';
+  loginOf, loadUser, inEntity, inStore, verifyOverrideToken, loadDevice, bodyOf, withGroup } from './lib/pos.mjs';
 import { approved, consumeToken } from './lib/sale.mjs';
 
 export const DENOMS = [20000, 10000, 5000, 2000, 1000, 500, 200, 100, 50, 20, 10];
@@ -150,7 +149,7 @@ const actions = {
   }
 };
 
-export const handler = async (event) => {
+const handleRequest = async (event) => {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }, body: '' };
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' });
   try {
@@ -164,3 +163,6 @@ export const handler = async (event) => {
     return json(500, { error: 'Something went wrong on the server. Try again.' });
   }
 };
+
+// every request works in its own customer's space (lib/pos.mjs)
+export const handler = withGroup(handleRequest);

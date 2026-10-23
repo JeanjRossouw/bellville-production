@@ -25,9 +25,13 @@ export async function initFirebase() {
   fb.fns = { ...authMod, ...fsMod };
 }
 
-export const col = (name) => fb.fns.collection(fb.db, 'pos', GROUP_ID, name);
-export const ref = (name, id) => fb.fns.doc(fb.db, 'pos', GROUP_ID, name, id);
-export const groupRef = () => fb.fns.doc(fb.db, 'pos', GROUP_ID);
+// the customer's own space, pos/{group}: set at sign-in (or from the enrolled till) before anything is read
+let group = GROUP_ID;
+export const setGroup = (g) => { if (g && /^[A-Za-z0-9_-]{1,40}$/.test(g)) group = g; };
+export const currentGroup = () => group;
+export const col = (name) => fb.fns.collection(fb.db, 'pos', group, name);
+export const ref = (name, id) => fb.fns.doc(fb.db, 'pos', group, name, id);
+export const groupRef = () => fb.fns.doc(fb.db, 'pos', group);
 const rowOf = (d) => ({ id: d.id, ...d.data() });
 
 // Live rows of a collection, filtered: wheres = [['entityId', '==', 'BF'], ['storeId', 'in', [...]]].

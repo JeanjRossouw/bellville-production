@@ -16,7 +16,7 @@
 //
 // Env: ANTHROPIC_API_KEY, FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional), POS_ASSIST_PER_DAY (optional).
 import Anthropic from '@anthropic-ai/sdk';
-import { json, Reject, clean, nowIso, getDoc, query, patchDoc, bodyOf, requireMember, inEntity, inStore, rank } from './lib/pos.mjs';
+import { json, Reject, clean, nowIso, getDoc, query, patchDoc, bodyOf, requireMember, inEntity, inStore, rank, withGroup } from './lib/pos.mjs';
 import { whoAndWhere } from './lib/sale.mjs';
 import { GUIDE } from './lib/pos-guide.mjs';
 import { TOOLS, runTool, confirmProposal } from './lib/assist-tools.mjs';
@@ -183,7 +183,7 @@ const actions = {
   }
 };
 
-export const handler = async (event) => {
+const handleRequest = async (event) => {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }, body: '' };
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' });
   try {
@@ -197,3 +197,6 @@ export const handler = async (event) => {
     return json(500, { error: 'Something went wrong. Try again.' });
   }
 };
+
+// every request works in its own customer's space (lib/pos.mjs)
+export const handler = withGroup(handleRequest);

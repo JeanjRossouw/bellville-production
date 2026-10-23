@@ -340,6 +340,17 @@ service cloud.firestore {
                 && pUserDoc(gid).entityIds.hasAll(d.entityIds) && pUserDoc(gid).storeIds.hasAll(d.storeIds)));
     }
 
+    // ---- Factory Manager POS: which business a login is in, and each business (its trial and subscription).
+    // Written only by the server (pos-auth, pos-signup, pos-billing).
+    match /posMembers/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+    match /posGroups/{gid} {
+      allow read: if pMember(gid);
+      allow write: if false;
+    }
+
     match /pos/{gid} {
       allow read: if pMember(gid);
       allow write: if false;
