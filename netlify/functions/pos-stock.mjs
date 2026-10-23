@@ -11,7 +11,7 @@
 //   takeCancel { takeId }
 //
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
-import { json, Reject, clean, randomId, nowIso, getDoc, query, createDoc, patchDoc, serverStamp, bodyOf, audit } from './lib/pos.mjs';
+import { json, Reject, clean, randomId, nowIso, getDoc, query, createDoc, patchDoc, serverStamp, bodyOf, audit, withGroup } from './lib/pos.mjs';
 import { whoAndWhere, runSale, moveWrites, approved, int } from './lib/sale.mjs';
 
 export const ADJUST_CODES = ['damaged', 'stolen', 'found', 'correction', 'sample', 'writeoff', 'other'];
@@ -206,7 +206,7 @@ const actions = {
   }
 };
 
-export const handler = async (event) => {
+const handleRequest = async (event) => {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }, body: '' };
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' });
   try {
@@ -220,3 +220,6 @@ export const handler = async (event) => {
     return json(500, { error: 'Something went wrong on the server. Nothing was written; try again.' });
   }
 };
+
+// every request works in its own customer's space (lib/pos.mjs)
+export const handler = withGroup(handleRequest);

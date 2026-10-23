@@ -7,7 +7,7 @@
 //        a purchase order's link goes to the supplier: an A4 page to print or save as PDF
 //
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional), POS_OVERRIDE_SECRET (optional, signs the links).
-import { json, Reject, clean, getDoc, query, loginOf, loadUser, inEntity, inStore, loadDevice, overrideToken, verifyOverrideToken, bodyOf } from './lib/pos.mjs';
+import { json, Reject, clean, getDoc, query, loginOf, loadUser, inEntity, inStore, loadDevice, overrideToken, verifyOverrideToken, bodyOf, withGroup } from './lib/pos.mjs';
 import { receiptModel, a4Html, A4_CSS, shareText } from '../../pos/js/receipt.js';
 import { poHtml, poShareText } from '../../pos/js/buying-doc.js';
 import { rank } from './lib/pos.mjs';
@@ -30,7 +30,7 @@ function siteUrl(event) {
   return process.env.URL && !local ? process.env.URL : proto + '://' + (h.host || 'localhost');
 }
 
-export const handler = async (event) => {
+const handleRequest = async (event) => {
   try {
     if (event.httpMethod === 'GET') {
       const t = (event.queryStringParameters || {}).t || '';
@@ -83,3 +83,6 @@ export const handler = async (event) => {
     return json(500, { error: 'Something went wrong on the server.' });
   }
 };
+
+// every request works in its own customer's space (lib/pos.mjs)
+export const handler = withGroup(handleRequest);

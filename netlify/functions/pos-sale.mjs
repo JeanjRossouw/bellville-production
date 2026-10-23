@@ -11,7 +11,7 @@
 //   voucher    { code, entityId } → { balanceCents, status }
 //
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
-import { json, Reject, clean, nowIso, getDoc, query, commit, beginTransaction, rollback, serverStamp, createDoc, patchDoc, bodyOf, audit } from './lib/pos.mjs';
+import { json, Reject, clean, nowIso, getDoc, query, commit, beginTransaction, rollback, serverStamp, createDoc, patchDoc, bodyOf, audit, withGroup } from './lib/pos.mjs';
 import { whoAndWhere, prepareSale, runSale, int, pad6, blockId, BLOCK_SIZE_DEFAULT, specNote } from './lib/sale.mjs';
 import { specialSettings } from '../../pos/js/special-terms.js';
 
@@ -106,7 +106,7 @@ function salesOrderWrites(ctx, b, prep, s, saleId) {
   return { writes: [{ create: true, coll: 'salesOrders', id: saleId, data: doc }], result: { salesOrder: { id: saleId, ...doc } } };
 }
 
-export const handler = async (event) => {
+const handleRequest = async (event) => {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }, body: '' };
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' });
   try {
@@ -120,3 +120,6 @@ export const handler = async (event) => {
     return json(500, { error: 'Something went wrong on the server. The sale was not written; try again.' });
   }
 };
+
+// every request works in its own customer's space (lib/pos.mjs)
+export const handler = withGroup(handleRequest);

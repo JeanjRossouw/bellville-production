@@ -3,7 +3,7 @@
 // open orders that are at the factory, and try again a send that a person
 // asked for and that failed. Nothing goes to the factory by itself: an order
 // that nobody has sent stays at the till.
-import { json, query, getDoc, nowIso } from './lib/pos.mjs';
+import { json, query, getDoc, nowIso, allGroups, inGroup, groupStanding } from './lib/pos.mjs';
 import { factoryCfg } from './lib/factory-link.mjs';
 import { pushForSchedule, syncFromFactory } from './lib/factory-bridge.mjs';
 
@@ -18,8 +18,11 @@ export const handler = async (event) => {
   if (!process.env.FACTORY_SERVICE_ACCOUNT) return json(200, { ok: true, skipped: 'FACTORY_SERVICE_ACCOUNT is not set on this site: nothing to do here' });
   try {
     const started = Date.now();
-    const ents = (await query('entities', [], 50)).filter(e => e.active !== false);
     const out = [];
+    // every customer's space in turn (lib/pos.mjs)
+    for (const gid of await allGroups()) await inGroup(gid, async () => {
+    if ((await groupStanding(gid)).state === 'locked') return;      // a business that has not paid gets no syncing
+    const ents = (await query('entities', [], 50)).filter(e => e.active !== false);
     for (const e of ents) {
       const settings = (await getDoc('settings', e.id)) || {};
       const cfg = factoryCfg(settings); if (!cfg) continue;
@@ -39,6 +42,7 @@ export const handler = async (event) => {
       }
       out.push(`${e.id} → ${cfg.companyName || cfg.companyId}: ${sent} sent, ${synced} checked, ${moved} moved on, ${failed} failed`);
     }
+    });
     return json(200, { ok: true, at: nowIso(), done: out });
   } catch (e) {
     console.error('pos-factory-sync failed:', e);

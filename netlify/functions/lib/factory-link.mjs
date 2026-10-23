@@ -9,6 +9,7 @@
 // Both apps live in one Firebase project, so the factory's REST helpers
 // (by full path, service account) are used here as they are.
 import { getDoc, patchDoc, createDoc, query, listDocs, nextNumber } from './factory-firestore.mjs';
+import { groupId, DEFAULT_GROUP } from './pos.mjs';
 
 export const STORE_GROUP = 'POS stores';
 const now = () => new Date().toISOString();
@@ -26,7 +27,8 @@ export async function listCompanies() {
 export async function companyNamed(cid) { const c = await getDoc('companies/' + cid); return c && c.name ? String(c.name) : ''; }
 
 // ---- the store as the factory's customer
-export const storeCustomerId = (entityId, storeId) => 'pos-' + safe(entityId) + '-' + safe(storeId);
+// a store from a customer's own POS space carries the space in its id, so two shops' codes never meet
+export const storeCustomerId = (entityId, storeId) => 'pos-' + (groupId() === DEFAULT_GROUP ? '' : safe(groupId()) + '-') + safe(entityId) + '-' + safe(storeId);
 const addrLine = (a) => [a && a.line1, a && a.line2, a && a.city, a && a.code].filter(Boolean).join(', ');
 export function storeCustomer(entity, store) {
   const t = now();

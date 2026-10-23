@@ -1,6 +1,6 @@
 // Retail POS — the shell: sign-in, the menu, and the screens of step 2
 // (Home, Staff, Devices, Me). Later steps add Sell, Products, Admin.
-import { APP_VERSION, ROLES, DEFAULTS } from './config.js';
+import { API, APP_VERSION, ROLES, DEFAULTS } from './config.js';
 import { initFirebase, watch, getOne, patchOne } from './db.js';
 import * as auth from './auth.js';
 import { esc, toast, openModal, field, row, val, checks, empty, niceDate, niceTime, money } from './ui.js';
@@ -41,6 +41,7 @@ async function main() {
   auth.watchIdle();
   wireLogin();
   $('screen').addEventListener('click', onAction);
+  $('billing-bar').addEventListener('click', (e) => { const b = e.target.closest('[data-bill]'); if (b) billAction(b.dataset.bill); });
   $('sign-out').addEventListener('click', () => auth.signOut());
   $('lock').addEventListener('click', () => auth.lock());
   // the phone menu: one button in the top bar, a sheet with every screen
@@ -152,6 +153,67 @@ function wireLogin() {
   });
   $('claim-out').addEventListener('click', () => auth.signOut());
   $('nobody-out').addEventListener('click', () => auth.signOut());
+  // a new business
+  $('to-signup').addEventListener('click', () => showSignup(false));
+  $('nobody-start').addEventListener('click', () => showSignup(true));
+  $('signup-back').addEventListener('click', () => { if (auth.session.uid) auth.signOut(); else { $('signup').hidden = true; $('login').hidden = false; } });
+  $('signup-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = $('signup-submit'); btn.disabled = true; $('signup-msg').textContent = '';
+    const loggedIn = !!auth.session.uid;
+    const pass = $('signup-pass').value;
+    if (!loggedIn && pass.length < 6) { $('signup-msg').textContent = 'The password needs 6 or more characters.'; btn.disabled = false; return; }
+    try {
+      await auth.signUp({ email: val(document, 'signup-email'), password: pass, businessName: val(document, 'signup-business'), name: val(document, 'signup-name') });
+      toast('Welcome. Your 14-day trial has started: add your company and store under Admin.');
+    } catch (err) { $('signup-msg').textContent = /email-already-in-use/.test(err.code || '') ? 'That email already has a login: sign in instead, or use another email.' : friendlyAuthError(err); }
+    btn.disabled = false;
+  });
+  if (/[?&]signup=1/.test(location.search)) setTimeout(() => { if (!auth.session.user) showSignup(!!auth.session.uid); }, 300);
+  if (/[?&]billing=done/.test(location.search)) toast('Thank you. Your subscription starts as soon as PayFast confirms the payment, usually within a minute.');
+  if (/[?&]billing=cancelled/.test(location.search)) toast('Payment cancelled: nothing was charged.', 'warn');
+  fetch(API.billing + '?plan=1').then(r => r.ok ? r.json() : null).then(j => { if (j && j.plan) document.querySelectorAll('[data-pos-price]').forEach(el => { el.textContent = 'R ' + j.plan.amount; }); }).catch(() => {});
+}
+// the sign-up form: everything for a new person, or only the names for a login that has no business yet
+function showSignup(loggedIn) {
+  $('login').hidden = true; $('nobody').hidden = true; $('claim').hidden = true; $('signup').hidden = false;
+  document.querySelectorAll('#signup [data-new]').forEach(el => { el.hidden = loggedIn; el.querySelector('input').required = !loggedIn; });
+  $('signup-msg').textContent = '';
+  setTimeout(() => { const f = $('signup-business'); if (f) f.focus(); }, 50);
+}
+
+// ---- the business's standing: a trial, paid up, or read only (pos-billing)
+let standing = null;
+async function loadStanding() {
+  try { standing = await auth.api('status', {}, API.billing); } catch (e) { standing = null; }
+  paintStanding();
+}
+function paintStanding() {
+  const bar = $('billing-bar'); if (!bar) return;
+  const s = standing;
+  if (!s || s.status === 'free' || !auth.session.user) { bar.hidden = true; return; }
+  const price = 'R ' + s.plan.amount + ' a month';
+  const pay = s.owner ? `<button class="btn sm" data-bill="checkout">Subscribe · ${esc(price)}</button>` : '<span>The owner subscribes.</span>';
+  let html = '', cls = 'billing-bar';
+  if (s.access === 'locked') { cls += ' locked'; html = `<strong>Read only.</strong> ${s.why === 'trialOver' ? 'The free trial has ended.' : 'The subscription has ended.'} Everything is still here to see; subscribe to carry on selling. ${pay}`; }
+  else if (s.status === 'trial') html = `Free trial: <strong>${s.daysLeft} day${s.daysLeft === 1 ? '' : 's'} left</strong>. ${pay}`;
+  else if (s.status === 'cancelled') html = `Cancelled: it works until ${esc(String(s.until).slice(0, 10))}. ${pay}`;
+  else if (s.status === 'active') html = `Subscribed · ${esc(price)} · paid to ${esc(String(s.until).slice(0, 10))}${s.owner && s.canCancel ? ' · <button class="link" data-bill="cancel">Cancel the subscription</button>' : ''}`;
+  bar.className = cls; bar.innerHTML = html; bar.hidden = !html;
+}
+async function billAction(act) {
+  if (act === 'checkout') {
+    try {
+      const r = await auth.api('checkout', {}, API.billing);
+      const f = document.createElement('form'); f.method = 'POST'; f.action = r.action;
+      for (const [k, v] of r.fields) { const i = document.createElement('input'); i.type = 'hidden'; i.name = k; i.value = v; f.appendChild(i); }
+      document.body.appendChild(f); f.submit();
+    } catch (e) { toast(e.message, 'warn'); }
+  }
+  if (act === 'cancel') {
+    if (!confirm('Cancel the subscription? No more payments are taken, and the POS works until the end of the month already paid for.')) return;
+    try { await auth.api('cancel', {}, API.billing); toast('Cancelled. It works until the end of the month paid for.'); await loadStanding(); } catch (e) { toast(e.message, 'warn'); }
+  }
 }
 function friendlyAuthError(err) {
   const c = (err && err.code) || '';
@@ -176,7 +238,8 @@ function setLoginMode(mode) {
   if (mode !== 'pin') pinPad = null;
 }
 function showLogin() {
-  $('app').hidden = true; $('claim').hidden = true; $('nobody').hidden = true;
+  if (auth.session.signingUp) return;
+  $('app').hidden = true; $('claim').hidden = true; $('nobody').hidden = true; $('signup').hidden = true;
   assist.stopAssistant();
   const fbUser = auth.session.uid && !auth.session.user;
   if (fbUser && auth.session.nobodyYet) { $('login').hidden = true; $('claim').hidden = false; return; }
@@ -188,7 +251,9 @@ function showLogin() {
 
 // ----------------------------------------------------------------- app --
 function showApp() {
-  $('login').hidden = true; $('claim').hidden = true; $('nobody').hidden = true; $('app').hidden = false;
+  if (auth.session.signingUp) return;
+  $('login').hidden = true; $('claim').hidden = true; $('nobody').hidden = true; $('signup').hidden = true; $('app').hidden = false;
+  loadStanding();
   const u = auth.session.user;
   $('who').innerHTML = `<strong>${esc(u.name)}</strong><small>${esc(roleLabel(u.role))}${auth.session.mode === 'pin-offline' ? ' · offline' : ''}</small>`;
   $('lock').hidden = auth.session.mode === 'email';

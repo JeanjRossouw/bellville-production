@@ -403,3 +403,10 @@ button.link { background: none; border: 0; padding: 0; color: var(--ink-2); text
   .mnav-who { display: grid; gap: .15rem; } .mnav-who strong { font-size: 14px; font-weight: 600; } .mnav-who span { font-family: var(--font-ui); font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: #8a8a86; }
   .mnav-foot .btn { width: 100%; min-height: 46px; color: #fff; border-color: #555; background: transparent; }
 }
+
+/* the business's standing: a trial, paid up, or read only */
+.billing-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem; padding: .55rem 1rem; background: #fff7e0; border-bottom: 1px solid #f1d58a; font-size: 13px; }
+.billing-bar.locked { background: var(--red-soft); border-bottom-color: #f2b8b8; }
+.billing-bar .btn.sm { padding: .35rem .7rem; }
+.billing-bar .link { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
+.login-link { display: block; width: 100%; margin-top: .8rem; background: none; border: 0; color: var(--ink-2); text-decoration: underline; cursor: pointer; font: inherit; font-size: 13px; }

@@ -241,6 +241,7 @@
     <div class="links">
       <a href="#features">Features</a>
       <a href="#pricing">Pricing</a>
+      <a href="#pos">POS</a>
       <a href="#questions">Questions</a>
     </div>
     <div class="act">
@@ -484,6 +485,34 @@
   </div>
 </section>
 
+<section id="pos" class="alt">
+  <div class="wrap price-wrap">
+    <div>
+      <div class="caps" style="color:var(--muted)">Also from us</div>
+      <h2>Factory Manager POS. The till for your shop.</h2>
+      <p class="sec-lead">A point of sale for showrooms and retail shops, on its own: you do not need Factory Manager to use it. Registers and cash-ups, lay-bys, returns, custom orders, stock, purchase orders, Shopify and Xero.</p>
+      <ul class="nolock">
+        <li>Staff sign in with a PIN on each till; managers approve discounts with theirs</li>
+        <li>Works through a power or internet cut and catches up after</li>
+        <li>Make furniture too? Link it to Factory Manager and send custom orders to the factory when you choose</li>
+        <li>Its own sign-up, its own price, its own 14-day free trial</li>
+      </ul>
+    </div>
+    <div class="price-card">
+      <div class="caps plan">Factory Manager POS</div>
+      <div class="amount" data-pos-price>R 999</div>
+      <div class="per">per month</div>
+      <ul>
+        <li>One business: every company, store, till and person</li>
+        <li>Tax invoices, lay-bys and cash-ups that add up</li>
+        <li>14 days free before you pay anything</li>
+      </ul>
+      <a class="btn solid" href="/pos/?signup=1">Start POS free trial</a>
+      <p class="fine">Already using it? <a href="/pos/" style="color:#fff">Sign in to the POS</a>. Paid monthly through PayFast.</p>
+    </div>
+  </div>
+</section>
+
 <section id="questions">
   <div class="wrap">
     <div class="caps" style="color:var(--muted)">Questions</div>
@@ -535,6 +564,13 @@
     var txt = 'R ' + (a % 1 ? a.toFixed(2) : String(a)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
     document.querySelectorAll('[data-price]').forEach(function (el) { el.textContent = txt; });
     if (j.plan.name) document.querySelectorAll('[data-plan-name]').forEach(function (el) { el.textContent = j.plan.name; });
+  }).catch(function () {});
+  // and the POS's, from its own billing
+  fetch('/.netlify/functions/pos-billing?plan=1').then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+    if (!j || !j.plan) return;
+    var a = Number(j.plan.amount);
+    var txt = 'R ' + (a % 1 ? a.toFixed(2) : String(a)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    document.querySelectorAll('[data-pos-price]').forEach(function (el) { el.textContent = txt; });
   }).catch(function () {});
 </script>
 </body>

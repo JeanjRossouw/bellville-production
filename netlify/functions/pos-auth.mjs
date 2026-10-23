@@ -21,7 +21,7 @@ import {
   getDoc, patchDoc, createDoc, query, commit, serverStamp,
   loginOf, loadUser, requireMember, inEntity, inStore, atLeast, mayManage,
   pinValid, newSalt, hashPin, pinMatches, PIN_ITERATIONS, sha256, customToken, overrideToken,
-  createAuthUser, sendPasswordReset, audit, loadDevice, bodyOf, patchGroupDoc
+  createAuthUser, sendPasswordReset, audit, loadDevice, bodyOf, patchGroupDoc, withGroup, groupId, setMember, getTop, memberGroupOf, DEFAULT_GROUP
 } from './lib/pos.mjs';
 
 const MAX_FAILED = 5, LOCK_MINUTES = 15;
@@ -40,7 +40,7 @@ async function countTillFailure(device, deviceId) {
 }
 const later = (minutes) => new Date(Date.now() + minutes * 60000).toISOString();
 const publicUser = (u) => ({ uid: u.id, name: u.name, email: u.email || '', role: u.role, entityIds: u.entityIds || [], storeIds: u.storeIds || [], defaultStoreId: u.defaultStoreId || '', pinSet: !!u.pinSet });
-const publicDevice = (d) => ({ deviceId: d.id, label: d.label, entityId: d.entityId, storeId: d.storeId, registerId: d.registerId });
+const publicDevice = (d) => ({ deviceId: d.id, label: d.label, entityId: d.entityId, storeId: d.storeId, registerId: d.registerId, groupId: groupId() });
 
 // the device's PIN cache: the active staff of its store, with their hashes, so a PIN works offline
 async function pinCacheFor(device) {
@@ -92,6 +92,7 @@ const actions = {
     const name = clean(b.name, 80) || (login.email || '').split('@')[0];
     const groupName = clean(b.groupName, 80) || 'Retail group';
     await patchGroupDoc({ name: groupName, createdAt: nowIso(), createdBy: login.sub });
+    await setMember(login.sub, groupId());
     await createDoc('users', login.sub, { email: (login.email || '').toLowerCase(), name, role: 'owner', active: true, entityIds: [], storeIds: [], defaultStoreId: '', pinSet: false, ...serverStamp('*', '', login.sub, 'web') });
     await audit({ entityId: '*', action: 'group.bootstrap', actorUid: login.sub, actorName: name, details: { groupName } });
     return { ok: true, user: publicUser({ id: login.sub, email: login.email, name, role: 'owner', entityIds: [], storeIds: [], pinSet: false }) };
@@ -102,7 +103,9 @@ const actions = {
     const user = login ? await loadUser(login.sub) : null;
     const device = b.deviceId ? await loadDevice(b.deviceId, b.secret) : null;
     if (device) await patchDoc('devices', device.id, { lastSeenAt: nowIso(), appVersion: clean(b.appVersion, 20) });
-    return { user: user ? publicUser(user) : null, device: device ? publicDevice(device) : null, nobodyYet: !user && !(await query('users', [], 1)).length };
+    // the first shops' staff have no record of which business they are in: it is written the first time they sign in
+    if (user && login && groupId() === DEFAULT_GROUP && !(await getTop('posMembers/' + login.sub))) await setMember(login.sub, DEFAULT_GROUP).catch(() => {});
+    return { user: user ? publicUser(user) : null, device: device ? publicDevice(device) : null, groupId: groupId(), nobodyYet: !user && !(await query('users', [], 1)).length };
   },
 
   async createUser(event, b) {
@@ -124,11 +127,15 @@ const actions = {
       if ((await query('users', [{ field: 'email', value: email }], 1)).length) throw new Reject(409, 'Someone with that email is already on the staff list.');
       ({ uid, existed } = await createAuthUser({ email, displayName: name }));
       if (!uid) throw new Reject(500, 'The login could not be made.');
+      // a login is in one business's POS only
+      const other = existed ? await memberGroupOf(uid) : null;
+      if (other && other !== groupId()) throw new Reject(409, 'That email already signs in to Factory Manager POS for another business. Use a different email for this person.');
       try { await sendPasswordReset(email, b.continueUrl ? clean(b.continueUrl, 300) : ''); mailed = true; } catch (e) { console.error(e); }
     } else uid = randomId('st_');
     const writes = [{ create: true, coll: 'users', id: uid, data: { email, name, role, active: true, entityIds, storeIds, defaultStoreId: storeIds[0] || '', pinSet: !!pin, pinChangedAt: pin ? nowIso() : '', ...serverStamp(entityIds[0] || '*', '', me.uid, 'web') } }];
     if (pin) { const salt = newSalt(); writes.push({ set: true, coll: 'pinHashes', id: uid, data: { hash: hashPin(pin, salt), salt, iterations: PIN_ITERATIONS, algo: 'pbkdf2-sha256', failedCount: 0, lockedUntil: '', ...serverStamp(entityIds[0] || '*', '', me.uid) } }); }
     await commit(writes);
+    await setMember(uid, groupId());
     await audit({ entityId: entityIds[0] || '*', action: 'user.create', actorUid: me.uid, actorName: me.user.name, docType: 'user', docId: uid, details: { name, role, entityIds, storeIds, email: !!email, pin: !!pin } });
     return { ok: true, uid, existed, mailed, text: email ? (mailed ? name + ' has been emailed a link to set a password.' : name + ' is added, but the email did not go: use "Forgot password" on the sign-in page.') : name + ' is added' + (pin ? ' with a PIN.' : '. Set a PIN so they can sign in at a till.') };
   },
@@ -183,7 +190,7 @@ const actions = {
       await audit({ entityId: device.entityId, storeId: device.storeId, action: 'login.pin.failed', deviceId: device.id, details: { locked, tillLocked: tillNow } });
       throw new Reject(locked || tillNow ? 423 : 401, tillNow ? TILL_LOCKED : locked ? 'Too many wrong PINs: this PIN is locked for ' + LOCK_MINUTES + ' minutes.' : 'That PIN is not known at this till.');
     }
-    const token = await customToken(user.id, { posRole: user.role });
+    const token = await customToken(user.id, { posRole: user.role, posGroup: groupId() });
     await Promise.all([
       patchDoc('devices', device.id, { lastSeenAt: nowIso(), appVersion: clean(b.appVersion, 20), ...(device.pinFailCount ? { pinFailCount: 0, pinFailWindowStart: '' } : {}) }),
       audit({ entityId: device.entityId, storeId: device.storeId, action: 'login.pin', actorUid: user.id, actorName: user.name, deviceId: device.id })
@@ -233,7 +240,7 @@ const actions = {
   }
 };
 
-export const handler = async (event) => {
+const handleRequest = async (event) => {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }, body: '' };
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' });
   try {
@@ -247,3 +254,6 @@ export const handler = async (event) => {
     return json(500, { error: 'Something went wrong on the server. Try again; if it keeps happening, tell the office.' });
   }
 };
+
+// every request works in its own customer's space (lib/pos.mjs)
+export const handler = withGroup(handleRequest, { anyStanding: true });   // signing in works whatever the business's standing

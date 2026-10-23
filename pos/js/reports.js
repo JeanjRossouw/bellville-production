@@ -121,9 +121,22 @@ async function xeroConnect() {
 }
 
 // ------------------------------------------------------------ dashboard --
+// Home is painted again each time some of the app's data arrives: the dashboard is asked for once a minute, and
+// the last one shown in between (each request reads the day's sales on the server)
+const dash = { key: '', html: '', at: 0, loading: false };
 export async function dashboardHtml(host) {
   if (!auth.atLeast('manager')) return;
   const el = host.querySelector('#dash'); if (!el) return;
+  const key = auth.session.uid || '';
+  if (dash.key !== key) Object.assign(dash, { key, html: '', at: 0 });
+  if (dash.html) el.innerHTML = dash.html;
+  if (dash.loading || Date.now() - dash.at < 60000) return;
+  dash.loading = true;
+  await loadDashboard(document.createElement('div'));
+  dash.at = Date.now(); dash.loading = false;
+  const now = document.querySelector('#dash'); if (now) now.innerHTML = dash.html;
+}
+async function loadDashboard(el) {
   try {
     const r = await auth.api('dashboard', {}, API.report);
     const delta = (a, b) => b ? Math.round((a - b) / b * 100) : (a ? 100 : 0);
@@ -131,4 +144,5 @@ export async function dashboardHtml(host) {
     const card = (title, t, l, extra = '') => `<div class="card dash-card"><h3>${esc(title)}</h3><div class="dash-big">${esc(money(t.net))} ${chip(t.net, l.net)}</div><div class="muted">${t.sales} sale${t.sales === 1 ? '' : 's'} · basket ${esc(money(t.basket))}${t.refunds ? ' · refunds ' + esc(money(t.refunds)) : ''}</div><div class="muted">Same day last week: ${esc(money(l.net))} · ${l.sales} sale${l.sales === 1 ? '' : 's'}</div>${extra}</div>`;
     el.innerHTML = `<h2 class="dash-h2">Today, ${esc(niceDate(r.day))}, against ${esc(niceDate(r.lastWeek))}</h2><div class="dash-grid">${r.stores.length > 1 ? card('All stores', r.all.today, r.all.lastWeek) : ''}${r.stores.map(s => card(s.store + (r.stores.some(x => x.entityId !== s.entityId) ? ' · ' + s.entity : ''), s.today, s.lastWeek, s.openLaybys ? `<div class="muted">${s.openLaybys} open lay-by${s.openLaybys === 1 ? '' : 's'} · ${esc(money(s.laybyBalance))} to come</div>` : '')).join('')}</div>`;
   } catch (e) { el.innerHTML = `<p class="muted">The dashboard could not load: ${esc(e.message)}</p>`; }
+  dash.html = el.innerHTML;
 }

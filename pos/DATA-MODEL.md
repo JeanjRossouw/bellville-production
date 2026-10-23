@@ -40,11 +40,55 @@ database rules. Change it first; then the code.
 ## Where it lives
 
 ```
-pos/{groupId}                       the retail group (one per deployment)
+pos/{groupId}                       one business (a Factory Manager POS customer)
 pos/{groupId}/<collection>/{id}     everything below
+posMembers/{uid}                    { groupId, at }: which business a login is in
+posGroups/{groupId}                 one per business: name, ownerUid, status, trial and subscription
 ```
 
-`groupId` is a constant in the app's config. Nothing in Factory Manager's
+**Each business has its own space.** The first shops (Bellville, ReptiCube,
+PinkFoot) are the default group, `retail`, and their logins have no
+`posMembers` record. A business that signs up gets a group of its own, and
+every person added to it gets a `posMembers` record. The server works out
+the group for each request once (`withGroup` in `netlify/functions/lib/pos.mjs`):
+- a signed-in person: their `posMembers` record, else the default group;
+- an enrolled till: the `groupId` it was enrolled with, proven by its secret inside that group;
+- a signed link or Xero's return: the group in the token's signature;
+- a Shopify webhook: `?g=` in its address, proven by that group's own shop secret.
+
+Every read and write in the request then goes to that group, and an approval
+token made in one group is refused in another. The schedules go through
+every group (`allGroups`). The app learns its group from the sign-in answer
+(`me` → `groupId`) or the enrolled till (`pos-device.groupId`). A login is in
+one business only: adding an email that already signs in elsewhere is
+refused. Keys outside a group that are named by company code (the stored
+Xero sign-in, the store's customer in a linked factory) carry the group for
+every business but the default one. `posMembers` and `posGroups` are written
+only by the server; a login reads its own `posMembers` record and a member
+reads their own `posGroups` record.
+
+**Signing up and paying.** `pos-signup` (`start`) makes a business for a
+login that has none: `posGroups/{groupId} { name, ownerUid, ownerEmail,
+ownerName, status: 'trial', plan: 'pos', trialEndsAt (timestamp, 14 days),
+createdAt }`, the group's own document, the owner's `users` record and
+`posMembers`. `pos-billing` takes the subscription through PayFast (the same
+helper as Factory Manager, `custom_str1` = the group id, notify URL
+`/.netlify/functions/pos-billing`); a payment notice sets `status: 'active',
+paidUntil` (a month on, plus a few days' grace), `payfastToken`,
+`lastPaymentAt`, `lastPaymentAmount`, and records
+`posGroups/{groupId}/payments/{pfPaymentId}` once; cancelling sets
+`status: 'cancelled'` and it runs to `paidUntil`. The price is
+`lib/pos-plans.mjs` (R999 a month, `POS_PRICE` overrides).
+
+A business **may work** when it has no record (the first shops), is `free`,
+is in a trial not yet over, or is `active`/`cancelled` with `paidUntil` still
+ahead. Otherwise it is **read only**: the server refuses every write in it
+(402, saying how to subscribe; signing in still works, so the owner can pay),
+its schedules are skipped, and the database rules refuse the app's own writes
+(`pActive(gid)` on every write rule under `pos/{gid}`); reading is never
+blocked.
+
+Nothing in Factory Manager's
 `companies/…` or the existing `users/{uid}` is touched: that `users` doc is
 writable by its own login, so a POS role could never safely live there.
 

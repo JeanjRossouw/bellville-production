@@ -9,7 +9,7 @@
 //            refunds, stockValue, lowStock, movements, deadStock, laybys, specialOrders, customers
 //
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
-import { json, Reject, clean, getDoc, query, loginOf, loadUser, inEntity, inStore, rank, bodyOf } from './lib/pos.mjs';
+import { json, Reject, clean, getDoc, query, loginOf, loadUser, inEntity, inStore, rank, bodyOf, withGroup } from './lib/pos.mjs';
 import { expectedBy } from '../../pos/js/layby-terms.js';
 
 const METHODS = ['cash', 'card', 'eft', 'qr', 'voucher', 'storeCredit', 'account', 'points', 'creditNote', 'layby', 'specialOrder'];
@@ -230,7 +230,7 @@ const actions = {
   }
 };
 
-export const handler = async (event) => {
+const handleRequest = async (event) => {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }, body: '' };
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' });
   try {
@@ -244,3 +244,6 @@ export const handler = async (event) => {
     return json(500, { error: 'Something went wrong on the server.' });
   }
 };
+
+// every request works in its own customer's space (lib/pos.mjs)
+export const handler = withGroup(handleRequest);

@@ -12,7 +12,7 @@
 //   transferCancel  { transferId }                                                             nothing received yet: the stock goes back
 //
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
-import { json, Reject, clean, randomId, nowIso, getDoc, query, serverStamp, bodyOf } from './lib/pos.mjs';
+import { json, Reject, clean, randomId, nowIso, getDoc, query, serverStamp, bodyOf, withGroup } from './lib/pos.mjs';
 import { whoAndWhere, runSale, moveWrites, nextFromCounter, approved, int } from './lib/sale.mjs';
 import { rateOn } from '../../pos/js/money.js';
 
@@ -246,7 +246,7 @@ const actions = {
   }
 };
 
-export const handler = async (event) => {
+const handleRequest = async (event) => {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }, body: '' };
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' });
   try {
@@ -260,3 +260,6 @@ export const handler = async (event) => {
     return json(500, { error: 'Something went wrong on the server. Nothing was written; try again.' });
   }
 };
+
+// every request works in its own customer's space (lib/pos.mjs)
+export const handler = withGroup(handleRequest);

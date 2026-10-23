@@ -297,6 +297,17 @@ service cloud.firestore {
     // functions, which check totals, VAT and the document number first; the
     // browser can read them and never write them.
     // ======================================================================
+    // the business may still work: no record (the first shops), free, a trial not yet over, or paid up.
+    // Once a trial or subscription has run out, the app can read but not write until the owner pays.
+    function pActive(gid) {
+      let g = /databases/$(database)/documents/posGroups/$(gid);
+      return !exists(g) || pGroupOk(get(g).data);
+    }
+    function pGroupOk(d) {
+      return d.status == 'free'
+        || (d.status == 'trial' && d.trialEndsAt > request.time)
+        || ((d.status == 'active' || d.status == 'cancelled') && d.paidUntil > request.time);
+    }
     function pUserDoc(gid) { return get(/databases/$(database)/documents/pos/$(gid)/users/$(request.auth.uid)).data; }
     function pMember(gid) {
       return signedIn() && exists(/databases/$(database)/documents/pos/$(gid)/users/$(request.auth.uid)) && pUserDoc(gid).active == true;
@@ -340,6 +351,17 @@ service cloud.firestore {
                 && pUserDoc(gid).entityIds.hasAll(d.entityIds) && pUserDoc(gid).storeIds.hasAll(d.storeIds)));
     }
 
+    // ---- Factory Manager POS: which business a login is in, and each business (its trial and subscription).
+    // Written only by the server (pos-auth, pos-signup, pos-billing).
+    match /posMembers/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+    match /posGroups/{gid} {
+      allow read: if pMember(gid);
+      allow write: if false;
+    }
+
     match /pos/{gid} {
       allow read: if pMember(gid);
       allow write: if false;
@@ -347,10 +369,10 @@ service cloud.firestore {
       // ---- people -------------------------------------------------------
       match /users/{uid} {
         allow read: if signedIn() && (request.auth.uid == uid || pAtLeast(gid, 'manager'));
-        allow create: if pStamped() && pUserWrite(gid, request.resource.data) && request.auth.uid != uid;
+        allow create: if pActive(gid) && pStamped() && pUserWrite(gid, request.resource.data) && request.auth.uid != uid;
         // anyone may change their own name and default store, nothing else of their own record;
         // a manager may only touch cashiers and supervisors within their reach, before and after
-        allow update: if pStampsKept() && (
+        allow update: if pActive(gid) && pStampsKept() && (
                         (request.auth.uid == uid && pMember(gid)
                           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'defaultStoreId', 'updatedAt', 'updatedBy']))
                         || (request.auth.uid != uid && pUserWrite(gid, request.resource.data) && pUserWrite(gid, resource.data)));
@@ -365,47 +387,47 @@ service cloud.firestore {
       // ---- entities, stores, registers, settings --------------------------
       match /entities/{id} {
         allow read: if pReadsEntity(gid);
-        allow create: if pOwner(gid) && pStamped() && request.resource.data.entityId == id && request.resource.data.storeId == '';
-        allow update: if pOwner(gid) && pStampsKept();
+        allow create: if pActive(gid) && pOwner(gid) && pStamped() && request.resource.data.entityId == id && request.resource.data.storeId == '';
+        allow update: if pActive(gid) && pOwner(gid) && pStampsKept();
         allow delete: if false;
       }
       match /stores/{id} {
         allow read: if pReadsStore(gid);
-        allow create: if pOwner(gid) && pStamped() && request.resource.data.storeId == id;
-        allow update: if pOwner(gid) && pStampsKept();
+        allow create: if pActive(gid) && pOwner(gid) && pStamped() && request.resource.data.storeId == id;
+        allow update: if pActive(gid) && pOwner(gid) && pStampsKept();
         allow delete: if false;
       }
       match /registers/{id} {
         allow read: if pReadsStore(gid);
-        allow create: if pWritesEntity(gid, 'manager') && pStamped() && pInStore(gid, request.resource.data.storeId)
+        allow create: if pActive(gid) && pWritesEntity(gid, 'manager') && pStamped() && pInStore(gid, request.resource.data.storeId)
                       && request.resource.data.currentShiftId == '';
         // the open shift is the server's to move
-        allow update: if pWritesEntity(gid, 'manager') && pStampsKept() && pInStore(gid, resource.data.storeId)
+        allow update: if pActive(gid) && pWritesEntity(gid, 'manager') && pStampsKept() && pInStore(gid, resource.data.storeId)
                       && request.resource.data.currentShiftId == resource.data.currentShiftId;
         allow delete: if false;
       }
       match /settings/{eid} {
         allow read: if pReadsEntity(gid);
-        allow create: if pAtLeast(gid, 'manager') && pInEntity(gid, eid) && pStamped()
+        allow create: if pActive(gid) && pAtLeast(gid, 'manager') && pInEntity(gid, eid) && pStamped()
                       && request.resource.data.entityId == eid && request.resource.data.storeId == '';
-        allow update: if pAtLeast(gid, 'manager') && pInEntity(gid, eid) && pStampsKept();
+        allow update: if pActive(gid) && pAtLeast(gid, 'manager') && pInEntity(gid, eid) && pStampsKept();
         allow delete: if false;
       }
 
       // ---- catalogue ------------------------------------------------------
       match /products/{id} {
         allow read: if pReadsEntity(gid);
-        allow create: if pWritesEntity(gid, 'manager') && pStamped() && request.resource.data.storeId == ''
+        allow create: if pActive(gid) && pWritesEntity(gid, 'manager') && pStamped() && request.resource.data.storeId == ''
                       && request.resource.data.priceCents is int && request.resource.data.costCents is int;
-        allow update: if pWritesEntity(gid, 'manager') && pStampsKept()
+        allow update: if pActive(gid) && pWritesEntity(gid, 'manager') && pStampsKept()
                       && request.resource.data.priceCents is int && request.resource.data.costCents is int;
         allow delete: if false;                    // archive instead
       }
       match /variants/{id} {
         allow read: if pReadsEntity(gid);
-        allow create: if pWritesEntity(gid, 'manager') && pStamped() && request.resource.data.storeId == ''
+        allow create: if pActive(gid) && pWritesEntity(gid, 'manager') && pStamped() && request.resource.data.storeId == ''
                       && request.resource.data.productId is string && pCents(request.resource.data.priceCents) && pCents(request.resource.data.costCents);
-        allow update: if pWritesEntity(gid, 'manager') && pStampsKept()
+        allow update: if pActive(gid) && pWritesEntity(gid, 'manager') && pStampsKept()
                       && request.resource.data.productId == resource.data.productId && pCents(request.resource.data.priceCents) && pCents(request.resource.data.costCents);
         allow delete: if false;
       }
@@ -430,16 +452,16 @@ service cloud.firestore {
       // ---- buying ---------------------------------------------------------
       match /suppliers/{id} {
         allow read: if pReadsEntity(gid) && pAtLeast(gid, 'supervisor');
-        allow create: if pWritesEntity(gid, 'manager') && pStamped() && request.resource.data.storeId == '';
-        allow update: if pWritesEntity(gid, 'manager') && pStampsKept();
+        allow create: if pActive(gid) && pWritesEntity(gid, 'manager') && pStamped() && request.resource.data.storeId == '';
+        allow update: if pActive(gid) && pWritesEntity(gid, 'manager') && pStampsKept();
         allow delete: if false;
       }
       match /purchaseOrders/{id} {
         allow read: if pReadsStore(gid) && pAtLeast(gid, 'supervisor');
         // a draft is the manager's; sending it (the number) and receiving against it are the server's
-        allow create: if pWritesEntity(gid, 'manager') && pStamped() && pInStore(gid, request.resource.data.storeId)
+        allow create: if pActive(gid) && pWritesEntity(gid, 'manager') && pStamped() && pInStore(gid, request.resource.data.storeId)
                       && request.resource.data.status == 'draft' && request.resource.data.get('docNo', '') == '';
-        allow update: if pWritesEntity(gid, 'manager') && pStampsKept() && pInStore(gid, resource.data.storeId)
+        allow update: if pActive(gid) && pWritesEntity(gid, 'manager') && pStampsKept() && pInStore(gid, resource.data.storeId)
                       && resource.data.status == 'draft' && request.resource.data.status == 'draft'
                       && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['seq', 'docNo']);
         allow delete: if false;
@@ -474,7 +496,7 @@ service cloud.firestore {
       // ---- audit: anyone appends in their own name; nobody edits ------------
       match /auditLog/{id} {
         allow read: if pReadsEntity(gid) && pAtLeast(gid, 'manager');
-        allow create: if pWritesEntity(gid, 'cashier') && pStamped() && request.resource.data.actorUid == request.auth.uid
+        allow create: if pActive(gid) && pWritesEntity(gid, 'cashier') && pStamped() && request.resource.data.actorUid == request.auth.uid
                       && request.resource.data.action is string;
         allow update, delete: if false;
       }
