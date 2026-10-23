@@ -1,8 +1,8 @@
 // Retail POS — the factory schedule: every ten minutes, for every company
-// linked to a Factory Manager company, send the custom orders and sales
-// orders that are not at the factory yet (a write failed, or the link was
-// made after the money came in) and read the factory's status back on the
-// open ones.
+// linked to a Factory Manager company, read the factory's status back on the
+// open orders that are at the factory, and try again a send that a person
+// asked for and that failed. Nothing goes to the factory by itself: an order
+// that nobody has sent stays at the till.
 import { json, query, getDoc, nowIso } from './lib/pos.mjs';
 import { factoryCfg } from './lib/factory-link.mjs';
 import { pushForSchedule, syncFromFactory } from './lib/factory-bridge.mjs';
@@ -29,7 +29,10 @@ export const handler = async (event) => {
         for (const so of rows) {
           if (Date.now() - started > 20000) break;
           try {
-            if (!so.factory || !so.factory.orders || !so.factory.orders.length) { const r = await pushForSchedule(e, settings, w.coll, so, w.kind); if (r.factory && r.factory.error) failed++; else sent++; continue; }
+            if (!so.factory || !so.factory.orders || !so.factory.orders.length) {
+              if (!so.factory || !so.factory.requestedAt) continue;     // nobody has sent it: it stays at the till
+              const r = await pushForSchedule(e, settings, w.coll, so, w.kind); if (r.factory && r.factory.error) failed++; else sent++; continue;
+            }
             const r = await syncFromFactory(w.coll, so, w.forward); synced++; if (r.status !== so.status) moved++;
           } catch (err) { failed++; console.error('factory sync', so.docNo, err.message); }
         }

@@ -1,7 +1,7 @@
 // Retail POS step 12: the pos-special function over HTTP. Opening needs
 // the customer and a signed-off spec, takes made-to-order items only; a
-// deposit under the minimum leaves it quoted, reaching it sends it to the
-// factory: written into the linked Factory Manager company's own orders with
+// deposit under the minimum leaves it quoted; reaching it sends nothing (nor
+// does the schedule) until a supervisor sends it to the factory: written into the linked Factory Manager company's own orders with
 // the store as the customer and no retail customer data, the factory's
 // status read back; the till's status step; updates logged; a delivery
 // booking; the hand-over into a tax invoice paid by the order with the
@@ -66,7 +66,7 @@ R.stock = await call('pos-special', openBody([...sofa(), { productId: 'p_cushion
 R.unsigned = await call('pos-special', openBody(sofa(), 1500000, [], { signoff: { accepted: false, signedBy: 'x' } })); check('unsigned spec: refused', R.unsigned.status === 400 && /sign/.test(R.unsigned.error), R.unsigned);
 R.bigPhoto = await call('pos-special', openBody(sofa({ ...spec, photo: 'data:image/jpeg;base64,' + 'A'.repeat(400000) }), 1500000, [])); check('a photo over 300 KB is refused', R.bigPhoto.status === 400 && /300 KB/.test(R.bigPhoto.error), R.bigPhoto);
 
-// ---- quoted with a small deposit; the deposit reached later sends it to the factory
+// ---- quoted with a small deposit; the deposit reached later; it goes to the factory only when a supervisor sends it
 R.open = await call('pos-special', openBody(sofa(), 1500000, [{ method: 'card', amountCents: 300000, cardLast4: '4242' }]));
 const O = R.open.order || {};
 check('opened as BF-SO-000001, quoted (deposit under 50%)', R.open.ok && O.docNo === 'BF-SO-000001' && O.status === 'quoted' && O.minDepositCents === 750000 && O.paidCents === 300000 && O.balanceCents === 1200000 && O.depositCents === 300000, R.open.error || [O.docNo, O.status, O.minDepositCents]);
@@ -79,8 +79,12 @@ R.cos = await call('pos-special', { action: 'factoryCompanies', entityId: 'BF' }
 R.cosCas = await call('pos-special', { action: 'factoryCompanies', entityId: 'BF' }); check('not a cashier', R.cosCas.status === 403, R.cosCas);
 R.sendEarly = await call('pos-special', { action: 'factorySend', orderId: O.id, ...bell }, sup.idToken); check('cannot be sent before the deposit', R.sendEarly.status === 409 && /deposit/.test(R.sendEarly.error), R.sendEarly);
 R.pay1 = await call('pos-special', { action: 'pay', orderId: O.id, paymentId: 'sp-' + Date.now().toString(36) + '-1', tenders: [{ method: 'cash', amountCents: 450000, tenderedCents: 450000 }], clientCreatedAt: new Date().toISOString(), ...bell });
-check('R 4 500 more: the deposit reached, to the factory, an update due', R.pay1.ok && R.pay1.order.status === 'depositPaid' && R.pay1.order.paidCents === 750000 && R.pay1.order.depositCents === 750000 && R.pay1.order.updateDue === true && R.pay1.order.history.length === 2, R.pay1.error || R.pay1.order);
-check('the order went to the factory by itself: CP-1001, the ref filled in', R.pay1.order.factory && R.pay1.order.factory.companyId === 'CPTEST' && R.pay1.order.factory.orders.length === 1 && R.pay1.order.factory.orders[0].orderNo === 'CP-1001' && R.pay1.order.factoryRef === 'CP-1001' && !R.pay1.order.factory.error, R.pay1.order.factory);
+check('R 4 500 more: the deposit reached, an update due', R.pay1.ok && R.pay1.order.status === 'depositPaid' && R.pay1.order.paidCents === 750000 && R.pay1.order.depositCents === 750000 && R.pay1.order.updateDue === true && R.pay1.order.history.length === 2, R.pay1.error || R.pay1.order);
+check('the deposit paid sends nothing: the order stays at the till until someone sends it', !(R.pay1.order.factory && (R.pay1.order.factory.orders || []).length) && (await listAt('companies/CPTEST/orders')).length === 0, R.pay1.order.factory);
+R.sched = await call('pos-factory-sync', {}); check('the schedule does not send it either', R.sched.ok && (await listAt('companies/CPTEST/orders')).length === 0 && !((await getDoc('pos/retail/specialOrders/' + O.id)).factory || {}).orders, R.sched);
+R.sendCas = await call('pos-special', { action: 'factorySend', orderId: O.id, ...bell }); check('a cashier cannot send it to the factory', R.sendCas.status === 403, R.sendCas);
+R.send1 = await call('pos-special', { action: 'factorySend', orderId: O.id, ...bell }, sup.idToken);
+check('a supervisor sends it: CP-1001, the ref filled in, who asked kept', R.send1.ok && R.send1.order.factory.companyId === 'CPTEST' && R.send1.order.factory.orders.length === 1 && R.send1.order.factory.orders[0].orderNo === 'CP-1001' && R.send1.order.factoryRef === 'CP-1001' && !R.send1.order.factory.error && R.send1.order.factory.requestedBy === 'Sam' && !!R.send1.order.factory.requestedAt, R.send1.error || R.send1.order.factory);
 R.fo = await getDoc(FO(O.id));
 check('the factory order: the store as the customer, the SO number, the spec, the price, the due date', R.fo && R.fo.orderNo === 'CP-1001' && R.fo.customerId === 'pos-BF-BF-BELL' && R.fo.customerName === 'Bellville Furniture · Bellville' && R.fo.externalRef === 'BF-SO-000001' && R.fo.source === 'pos' && R.fo.product === 'Custom Sofa' && R.fo.fabric === 'Linen look / Charcoal' && /Size: 2\.4 m/.test(R.fo.notes) && /Legs: Oak, tapered/.test(R.fo.notes) && /Notes: Firm seat/.test(R.fo.notes) && R.fo.priceEach === 15000 && R.fo.qty === 1 && R.fo.dueDate === O.expectedAt && R.fo.status === 'new' && R.fo.photo === photo && R.fo.deliveryAddress === '12 Voortrekker Rd, Bellville, 7530' && R.fo.deliveryContact === 'Bellville', R.fo && { ...R.fo, photo: undefined });
 R.fc = await getDoc('companies/CPTEST/customers/pos-BF-BF-BELL');
@@ -132,7 +136,9 @@ check('cancelled before production: everything back', R.cancel2.ok && R.cancel2.
 pays = await listColl('payments'); check('the refund as a negative payment', pays.some(p => p.docType === 'refund' && p.docNo === 'BF-SO-000002' && p.amountCents === -300000), pays.filter(p => p.docNo === 'BF-SO-000002'));
 R.open3 = await call('pos-special', openBody(sofa(), 1500000, [{ method: 'card', amountCents: 750000 }]));
 const O3 = R.open3.order; check('third order straight to deposit paid', R.open3.ok && O3.status === 'depositPaid' && O3.depositCents === 750000, R.open3.error || O3.status);
-check('straight to the factory on opening: CP-1002', O3.factory && O3.factory.orders[0].orderNo === 'CP-1002' && O3.factoryRef === 'CP-1002', O3.factory);
+check('not at the factory on opening, even with the deposit paid', !(O3.factory && (O3.factory.orders || []).length), O3.factory);
+R.send3 = await call('pos-special', { action: 'factorySend', orderId: O3.id, ...bell }, sup.idToken);
+check('sent by a supervisor: CP-1002', R.send3.ok && R.send3.order.factory.orders[0].orderNo === 'CP-1002' && R.send3.order.factoryRef === 'CP-1002', R.send3.error || R.send3.order.factory);
 await patchAt(FO(O3.id), { status: 'in-production' });
 R.f3 = await call('pos-special', { action: 'factorySync', orderId: O3.id, ...bell }); check('in production', R.f3.ok && R.f3.order.status === 'inProduction', R.f3);
 R.cancel3wrong = await call('pos-special', { action: 'cancel', orderId: O3.id, kind: 'customer', refunds: [{ method: 'cash', amountCents: 750000 }], ...bell }, own.idToken); check('after production starts the deposit stays: the refund must be nil', R.cancel3wrong.status === 400 && /must equal what is owed back: R 0\.00/.test(R.cancel3wrong.error), R.cancel3wrong);
@@ -140,6 +146,7 @@ R.cancel3 = await call('pos-special', { action: 'cancel', orderId: O3.id, kind: 
 check('cancelled in production: the deposit is the fee', R.cancel3.ok && R.cancel3.order.feeCents === 750000 && R.cancel3.order.refundedCents === 0 && /work and materials/.test(R.cancel3.order.feeReason), R.cancel3.error || R.cancel3.order);
 R.fo3 = await getDoc(FO(O3.id)); check('the factory order is cancelled too, on record', R.fo3.status === 'cancelled' && /Cancelled at the till/.test(R.fo3.cancelReason) && R.fo3.events.at(-1).what.includes('Jean') && R.cancel3.order.factory.orders[0].status === 'cancelled', R.fo3);
 R.storeFault = await call('pos-special', openBody(sofa(), 1500000, [{ method: 'card', amountCents: 750000 }]));
+R.send4 = await call('pos-special', { action: 'factorySend', orderId: R.storeFault.order.id, ...bell }, sup.idToken); check('the fourth order sent to the factory', R.send4.ok && R.send4.order.factory.orders.length === 1, R.send4.error);
 R.cancel4 = await call('pos-special', { action: 'cancel', orderId: R.storeFault.order.id, kind: 'store', reason: 'Fabric discontinued', refunds: [{ method: 'storeCredit', amountCents: 750000 }], ...bell }, own.idToken);
 check('we cannot make it: all back, as store credit', R.cancel4.ok && R.cancel4.order.feeCents === 0 && (await getDoc('pos/retail/customers/c1')).storeCreditCents === 750000, R.cancel4.error || R.cancel4.order);
 check('its factory order cancelled with the reason', (await getDoc(FO(R.storeFault.order.id))).status === 'cancelled' && /Fabric discontinued/.test((await getDoc(FO(R.storeFault.order.id))).cancelReason));

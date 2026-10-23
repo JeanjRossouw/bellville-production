@@ -90,7 +90,20 @@ R.sold = await finish(); check('sold: BF-000001', /Sale BF-000001/.test(R.sold),
 check('the invoice line prints the spec', /Custom Sofa/.test(R.slip || '') && /Fabric Linen look/.test(R.slip || '') && /Colour Charcoal/.test(R.slip || ''), (R.slip || '').slice(0, 400));
 await p.waitForTimeout(1200);
 const so1 = (await listColl('salesOrders'))[0];
-check('the sales order written: open, the spec, at the factory as CP-1001', so1 && so1.docNo === 'BF-000001' && so1.status === 'open' && so1.lines[0].spec.fabric === 'Linen look' && so1.factoryRef === 'CP-1001' && so1.customerSnapshot.name === 'Thandi Mokoena', so1 && [so1.status, so1.factoryRef]);
+check('the sales order written: open, the spec, not at the factory by itself', so1 && so1.docNo === 'BF-000001' && so1.status === 'open' && so1.lines[0].spec.fabric === 'Linen look' && !so1.factoryRef && so1.customerSnapshot.name === 'Thandi Mokoena', so1 && [so1.status, so1.factoryRef]);
+
+// ---- it waits at the till: the cashier sees it is not at the factory and cannot send it; the manager sends it
+await nav('orders');
+await p.click('[data-act=so-sales-open]'); await p.waitForSelector('#modal .lb-detail');
+R.waiting = await modalText(); check('the cashier sees "Not at the factory" and no Send button', /Not at the factory/.test(R.waiting) && /Send to factory/.test(R.waiting) && (await p.locator('[data-act=so-sales-send]').count()) === 0, R.waiting.slice(0, 500));
+await p.keyboard.press('Escape'); await p.waitForTimeout(300); if (await p.locator('#modal').count()) { await p.locator('#modal [data-close]').first().click(); await p.waitForTimeout(200); }
+await p.click('#lock'); await p.waitForSelector('#login-pin .pinpad'); await pinType('#login-pin', '222222'); await p.waitForSelector('#nav [data-view=orders]'); await p.waitForTimeout(1000);
+await nav('orders');
+await p.click('[data-act=so-sales-open]'); await p.waitForSelector('#modal [data-act=so-sales-send]');
+await p.click('[data-act=so-sales-send]'); R.sentToast = await toast(); await p.waitForTimeout(800);
+check('the manager sends it: at the factory as CP-1001', /BF-000001 is at the factory: CP-1001/.test(R.sentToast) && (await listColl('salesOrders'))[0].factoryRef === 'CP-1001', R.sentToast);
+if (await p.locator('#modal').count()) { await p.locator('#modal [data-close]').first().click(); await p.waitForTimeout(200); }
+await p.click('#lock'); await p.waitForSelector('#login-pin .pinpad'); await pinType('#login-pin', '111111'); await p.waitForSelector('#sl-q'); await p.waitForTimeout(1200);
 
 // ---- the Sales orders section, the factory, the update, the hand-over
 await nav('orders');

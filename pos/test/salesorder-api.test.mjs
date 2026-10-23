@@ -1,7 +1,7 @@
 // Retail POS step 12: the pos-special function over HTTP. Opening needs
 // the customer and a signed-off spec, takes made-to-order items only; a
-// deposit under the minimum leaves it quoted, reaching it sends it to the
-// factory: written into the linked Factory Manager company's own orders with
+// deposit under the minimum leaves it quoted; nothing goes to the factory
+// until a supervisor sends it: written into the linked Factory Manager company's own orders with
 // the store as the customer and no retail customer data, the factory's
 // status read back; the till's status step; updates logged; a delivery
 // booking; the hand-over into a tax invoice paid by the order with the
@@ -66,7 +66,7 @@ const sofaLine = (sp = { size: '2.4 m', fabric: 'Linen look', colour: 'Charcoal'
 const cushion = { productId: 'p_cushion', variantId: '', qty: 2, unitPriceCents: 19900, discountCents: 0 };
 const tot = (c) => ({ totalCents: c, vatCents: vatIn(c, 1500) });
 
-// ---- the customer is needed; the sale is written with its sales order and goes to the factory
+// ---- the customer is needed; the sale is written with its sales order, which waits at the till until a supervisor sends it to the factory
 R.noCust = await call('pos-sale', sale([sofaLine()], [{ method: 'card', amountCents: 1500000 }], { customerId: '', totals: tot(1500000) })); check('a made-to-order sale without a customer: refused', R.noCust.status === 400 && /needs the customer|add the customer/.test(R.noCust.error), R.noCust);
 R.s1 = await call('pos-sale', sale([sofaLine(), cushion], [{ method: 'card', amountCents: 1539800, cardLast4: '4242' }], { totals: tot(1539800) }));
 const S1 = R.s1.sale || {}, SO1 = R.s1.salesOrder || {};
@@ -74,7 +74,11 @@ check('the sale written: BF-000001, paid by card', R.s1.ok && S1.docNo === 'BF-0
 check('the invoice line carries the spec in its note, and the spec itself', R.s1.lines[0].note === 'deliver Friday · Size 2.4 m · Fabric Linen look · Colour Charcoal · Legs Oak, tapered' && R.s1.lines[0].spec.model === 'Custom Sofa' && R.s1.lines[0].spec.notes === 'Firm seat' && !R.s1.lines[1].spec, R.s1.lines.map(l => [l.note, l.spec]));
 check('the sales order: the sofa only, open, the customer, expected 21 days out', SO1.id === R.s1.sale.id && SO1.docNo === 'BF-000001' && SO1.status === 'open' && SO1.lines.length === 1 && SO1.lines[0].lineNo === 1 && SO1.lines[0].spec.fabric === 'Linen look' && SO1.totalCents === 1500000 && SO1.customerSnapshot.name === 'Thandi Mokoena' && SO1.paidInFull === true && SO1.expectedAt === new Date(Date.now() + 21 * 86400000).toISOString().slice(0, 10), SO1);
 check('stored, server-only', (await getDoc('pos/retail/salesOrders/' + SO1.id)).status === 'open');
-check('at the factory at once: CP-1001', SO1.factory && SO1.factory.orders.length === 1 && SO1.factory.orders[0].orderNo === 'CP-1001' && SO1.factoryRef === 'CP-1001' && !SO1.factory.error, SO1.factory);
+check('not at the factory by itself: it waits at the till', !(SO1.factory && (SO1.factory.orders || []).length) && (await listAt('companies/CPTEST/orders')).length === 0, SO1.factory);
+R.sched0 = await (await fetch(FN + 'pos-factory-sync', { method: 'POST' })).json(); check('the schedule does not send it either', R.sched0.ok && (await listAt('companies/CPTEST/orders')).length === 0, R.sched0);
+R.sendCas = await call('pos-salesorder', { action: 'factorySend', saleId: SO1.id, ...bell }); check('a cashier cannot send it', R.sendCas.status === 403, R.sendCas);
+R.send1 = await call('pos-salesorder', { action: 'factorySend', saleId: SO1.id, ...bell }, sup.idToken);
+check('a supervisor sends it: CP-1001, who asked kept', R.send1.ok && R.send1.order.factory.orders.length === 1 && R.send1.order.factory.orders[0].orderNo === 'CP-1001' && R.send1.order.factoryRef === 'CP-1001' && !R.send1.order.factory.error && R.send1.order.factory.requestedBy === 'Sam', R.send1.error || R.send1.order.factory);
 R.fo = await getDoc(FO(SO1.id));
 check('the factory order: the store as the customer, the invoice as the reference, the spec, no retail customer', R.fo && R.fo.customerId === 'pos-BF-BF-BELL' && R.fo.customerName === 'Bellville Furniture · Bellville' && R.fo.externalRef === 'BF-000001' && R.fo.product === 'Custom Sofa' && R.fo.fabric === 'Linen look / Charcoal' && /Sales order: tax invoice BF-000001/.test(R.fo.notes) && /paid in full/.test(R.fo.notes) && /Legs: Oak, tapered/.test(R.fo.notes) && /Line note: deliver Friday/.test(R.fo.notes) && R.fo.priceEach === 15000 && R.fo.dueDate === SO1.expectedAt && R.fo.status === 'new' && !/Thandi|0825550101|Parow/.test(JSON.stringify(R.fo)), R.fo);
 R.again = await call('pos-sale', { ...sale([sofaLine(), cushion], [{ method: 'card', amountCents: 1539800 }], { totals: tot(1539800) }), saleId: S1.id }); check('the same sale again: the first answer, with its sales order', R.again.ok && R.again.again && R.again.salesOrder && R.again.salesOrder.docNo === 'BF-000001', R.again);
@@ -97,7 +101,7 @@ R.foDone = await getDoc(FO(SO1.id)); check('the factory order notes the hand-ove
 
 // ---- a credit note on the made-to-order line calls the factory order off
 R.s2 = await call('pos-sale', sale([sofaLine({ fabric: 'Velvet', colour: 'Teal' })], [{ method: 'eft', amountCents: 1500000, ref: 'MOKOENA' }], { totals: tot(1500000) }));
-const SO2 = R.s2.salesOrder || {}; check('a second sales order at the factory: CP-1002', R.s2.ok && SO2.factoryRef === 'CP-1002', R.s2.error || SO2);
+const SO2 = R.s2.salesOrder || {}; R.send2 = await call('pos-salesorder', { action: 'factorySend', saleId: SO2.id, ...bell }, sup.idToken); check('a second sales order sent to the factory: CP-1002', R.s2.ok && R.send2.ok && R.send2.order.factoryRef === 'CP-1002', R.send2.error || R.s2.error || SO2);
 R.cnCas = await call('pos-return', { action: 'credit', creditId: 'cn-sales-' + Date.now().toString(36), saleId: R.s2.sale.id, lines: [{ saleLineNo: 1, qty: 1, reason: 'Changed mind', disposition: 'writeoff' }], refunds: [{ method: 'eft', amountCents: 1500000 }], ...bell }); check('a made-to-order return needs a manager', R.cnCas.status === 403 && /manager/.test(R.cnCas.error), R.cnCas);
 R.cn = await call('pos-return', { action: 'credit', creditId: 'cn-sales-' + Date.now().toString(36) + 'b', saleId: R.s2.sale.id, lines: [{ saleLineNo: 1, qty: 1, reason: 'Changed mind', disposition: 'writeoff' }], refunds: [{ method: 'eft', amountCents: 1500000 }], ...bell }, own.idToken);
 check('credited by the owner: the sales order cancelled', R.cn.ok && R.cn.creditNote.docNo === 'BF-CN-000001' && R.cn.salesOrder && R.cn.salesOrder.status === 'cancelled' && R.cn.salesOrder.lines[0].cancelledQty === 1 && /Credit note BF-CN-000001/.test(R.cn.salesOrder.cancelReason), R.cn.error || R.cn.salesOrder);
@@ -106,6 +110,7 @@ R.fo2 = await getDoc(FO(SO2.id)); check('its factory order cancelled, on record'
 // ---- on account: the factory hears it is not paid in full
 await put('pos/retail/customers/c1', { ...(await getDoc('pos/retail/customers/c1')), accountEnabled: true, creditLimitCents: 5000000 });
 R.s3 = await call('pos-sale', sale([sofaLine()], [{ method: 'account', amountCents: 1500000 }], { totals: tot(1500000) }));
+await call('pos-salesorder', { action: 'factorySend', saleId: R.s3.salesOrder.id, ...bell }, sup.idToken);
 check('on account: a sales order not paid in full, at the factory as such', R.s3.ok && R.s3.salesOrder.paidInFull === false && /on the customer's account/.test((await getDoc(FO(R.s3.salesOrder.id))).notes), R.s3.error || R.s3.salesOrder);
 
 const audit = await listColl('auditLog'); check('audited', ['salesOrder.factorySent', 'salesOrder.status', 'salesOrder.update', 'salesOrder.handover', 'salesOrder.factoryCancel'].every(a => audit.some(x => x.action === a)) && audit.some(x => x.action === 'salesOrder.status' && x.actorUid === 'factory'), audit.map(a => a.action));

@@ -245,7 +245,7 @@ function customItem() {
 function lineNote(i) {
   const l = sale.cart.lines[i]; if (!l) return;
   if (l.type !== 'mto') return openModal('Note on ' + l.name, field('Note', 'ln-note', { value: l.note, placeholder: 'e.g. Grey fabric, deliver Friday' }), { okLabel: 'Save', onOk: (w) => { l.note = val(w, 'ln-note'); persist(); ctx.repaint(); return true; } });
-  // made to order: the specification goes to the factory with the sale (a sales order)
+  // made to order: the specification is kept on the sale's sales order, for when someone sends it to the factory
   const sp = l.spec || {};
   openModal('Made to order: ' + l.name, `<p class="muted">Sold as a sales order: when the sale is written the factory gets this specification, and the customer on the sale is told when it is ready.</p>
     <div class="grid two">${field('Model', 'ln-model', { value: sp.model || l.name })}${field('Size', 'ln-size', { value: sp.size || '', placeholder: 'e.g. 2.4 m' })}${field('Fabric', 'ln-fabric', { value: sp.fabric || '', placeholder: 'e.g. Linen look' })}${field('Colour', 'ln-colour', { value: sp.colour || '', placeholder: 'e.g. Charcoal' })}${field('Legs', 'ln-legs', { value: sp.legs || '', placeholder: 'e.g. Oak, tapered' })}</div>

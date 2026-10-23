@@ -334,7 +334,7 @@ function pay(id) {
       close(true);
       const after = fresh(id, r);
       const pays = r.payments || []; const chg = pays[0] && pays[0].changeCents || 0;
-      toast('Paid ' + money(amount) + ' on ' + o.docNo + (chg ? ' · change ' + money(chg) : '') + (after.status === 'depositPaid' && o.status === 'quoted' ? ' · deposit paid, to the factory' : after.balanceCents <= 0 ? ' · paid in full' : ''));
+      toast('Paid ' + money(amount) + ' on ' + o.docNo + (chg ? ' · change ' + money(chg) : '') + (after.status === 'depositPaid' && o.status === 'quoted' ? ' · deposit paid' + (factoryLinked() ? ': press Send to factory when it should be built' : '') : after.balanceCents <= 0 ? ' · paid in full' : ''));
       openReceipt(docOf(after, 'payment', { at: r.paidAt || new Date().toISOString(), amountCents: amount, payments: pays, changeCents: chg }));
       if (ctx.onChange) ctx.onChange(r);
       return true;
@@ -361,7 +361,8 @@ function factoryLine(o) {
   const orders = f.orders || [];
   if (orders.length) return `<p class="muted">Factory (${esc(f.companyName || '')}): ${orders.map(x => esc(x.orderNo || x.id) + ' ' + esc(String(x.status || 'new').replace('-', ' '))).join(', ')}${f.lastCheckedAt ? ' · checked ' + esc(niceTime(f.lastCheckedAt)) : ''}${f.error ? ' · <span class="warn">' + esc(f.error) + '</span>' : ''}</p>`;
   if (f.error) return `<p class="warn">${esc(f.error)}</p>`;
-  if (factoryLinked() && ['open', 'depositPaid', 'inProduction', 'ready'].includes(o.status)) return '<p class="warn">Not at the factory yet.</p>';
+  if (factoryLinked() && ['open', 'depositPaid', 'inProduction', 'ready'].includes(o.status)) return '<p class="warn">Not at the factory. It stays here until a supervisor presses <strong>Send to factory</strong>: nothing goes by itself, so items bought from a supplier stay off the factory floor.</p>';
+  if (factoryLinked() && o.status === 'quoted') return '<p class="muted">Once the deposit is paid it can be sent to the factory with <strong>Send to factory</strong>.</p>';
   return '';
 }
 async function factorySync(id) {

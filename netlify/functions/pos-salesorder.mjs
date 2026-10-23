@@ -3,7 +3,7 @@
 // the factory). This function moves it along after that.
 //
 //   factorySync { saleId }                                         any member: the factory's status now
-//   factorySend { saleId }                                         a supervisor: send (again) to the factory
+//   factorySend { saleId }                                         a supervisor: send it to the factory (nothing goes by itself)
 //   status      { saleId, status: 'inProduction'|'ready', note }   a supervisor, when the factory does not say
 //   update      { saleId, status?, how }                           → the WhatsApp text, logged
 //   handover    { saleId, kind: 'collect'|'deliver', signedBy, signature, note }   handed to the customer

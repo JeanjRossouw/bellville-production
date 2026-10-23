@@ -401,7 +401,7 @@ signoff { text (the specification read back and the no-change-of-mind clause), a
 status ('quoted'|'depositPaid'|'inProduction'|'ready'|'delivered'|'collected'|'cancelled'),
 statusHistory [ { status, at, byName, source ('till'|'factory'), note } ], updateDue (bool: a status changed and no message went yet),
 updates [ { at, status, how, byName } ], lastUpdateAt, factoryRef (the factory's order numbers, filled in by the server), expectedAt (date), openedAt,
-factory { companyId, companyName, customerId, orders [ { id, orderNo, lineNo, status } ], sentAt, lastCheckedAt, error } (once sent),
+factory { requestedAt, requestedBy, companyId, companyName, customerId, orders [ { id, orderNo, lineNo, status } ], sentAt, lastCheckedAt, error } (once a supervisor sends it),
 delivery { kind ('deliver'|'collect'), date, slot, address, phone, note, driverName, bookedAt, bookedBy } | null,
 deliveryNote { signedBy, signature, at, byName, note, kind } | null,
 completedAt, completedSaleId, completedDocNo, completedByUid, completedByName,
@@ -409,7 +409,7 @@ cancelledAt, cancelKind ('customer'|'store'|'other'), cancelReason, feeCents, fe
 cashierUid, cashierName, approvers, note, + stamps, updatedAt
 ```
 R: members of the store. W: server only. The flow is quoted → deposit
-paid (the deposit reaches the minimum; the order goes to the factory) →
+paid (the deposit reaches the minimum; a supervisor can now send it to the factory) →
 in production → ready → delivered or collected; cancelled from any open
 state by a manager (no fee before production starts; after it the deposit
 covers the work, as the sign-off says). The deposit and the balance are
@@ -419,8 +419,10 @@ tender (the sale carries `specialOrderOf`) and keeps the signed delivery
 note. Nothing is reserved: the goods do not exist until made.
 
 **The factory.** The POS and Factory Manager are separate systems in one
-Firebase project; the POS server is the only bridge. When the deposit is
-reached, `pos-special` writes the order into the linked factory company
+Firebase project; the POS server is the only bridge. **Nothing goes to the
+factory by itself.** Once the deposit is reached a supervisor presses *Send to
+factory* (`factorySend`), and only then does `pos-special` write the order
+into the linked factory company
 (`settings/{entityId}.factory { companyId, companyName, linkedAt, linkedBy }`,
 set by the owner under Admin → Settings → Factory): one
 `companies/{companyId}/orders/pos-{specialOrderId}-{lineNo}` per line,
@@ -430,7 +432,9 @@ group "POS stores" — as the customer. The order carries the SO number, the
 specification, the price per piece, the expected date and the store's
 address; the retail customer never goes across. The factory's status comes
 back the same way (`factorySync`, and the `pos-factory-sync` schedule every
-ten minutes, which also sends what is not there yet): in production →
+ten minutes, which reads back the orders already sent and retries a send a
+person asked for that failed, `factory.requestedAt` set; it never sends an
+order nobody has sent): in production →
 `inProduction`, all lines done or dispatched → `ready`, with
 `source: 'factory'` in the history. A cancellation at the till cancels the
 factory orders not yet out of the door. Every status change marks
@@ -446,15 +450,15 @@ lines [ { lineNo, productId, variantId, itemId, name, qty, unitPriceCents, netCe
 lineCount, totalCents, paidInFull (false when on account),
 status ('open'|'inProduction'|'ready'|'delivered'|'collected'|'cancelled'), statusHistory [ { status, at, byName, source ('till'|'factory'), note } ],
 updateDue, updates [ { at, status, how, byName } ], lastUpdateAt, expectedAt, openedAt, lastPaidAt,
-factory { companyId, companyName, customerId, orders [ { id, orderNo, lineNo, status } ], sentAt, lastCheckedAt, error }, factoryRef,
+factory { requestedAt, requestedBy, companyId, companyName, customerId, orders [ { id, orderNo, lineNo, status } ], sentAt, lastCheckedAt, error }, factoryRef,
 handover { signedBy, signature, at, byName, note, kind } | null, completedAt, cancelledAt, cancelReason,
 cashierUid, cashierName, note, + stamps, updatedAt
 ```
 R: members of the store. W: server only. A made-to-order line on a sale
 carries `spec` on its `saleLines` row too (and the spec is read back on the
-line's note, so it prints). The sale needs a customer. The factory gets the
-order the moment the sale is written, exactly as for a custom order, and
-its status comes back the same way; the hand-over keeps the signed note
+line's note, so it prints). The sale needs a customer. It stays at the till
+until a supervisor presses *Send to factory* (`factorySend`), exactly as for a
+custom order, and its status comes back the same way; the hand-over keeps the signed note
 here (the invoice was written with the sale). A credit note on a
 made-to-order line sets `cancelledQty`, cancels the sales order when every
 line is back, and calls the factory order off.

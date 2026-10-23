@@ -18,7 +18,7 @@
 // and reads the factory's status back. The factory never calls the POS.
 //   factoryCompanies { entityId }                     the owner: the factory companies to link to
 //   factoryLink      { entityId, companyId | '' }     the owner: link this company to a factory company (or unlink)
-//   factorySend      { orderId }                      a supervisor: send (again) an order whose deposit is paid
+//   factorySend      { orderId }                      a supervisor: send an order whose deposit is paid to the factory (nothing goes by itself)
 //   factorySync      { orderId }                      any member: read the factory's status now
 //
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
@@ -102,8 +102,7 @@ const actions = {
       writes.push(auditRow(ctx, 'specialOrder.open', so, { totalCents: prep.total, depositCents: paid, status, lines: prep.lines.length }, prep.approvers, stamp, now));
       return { writes, result: { order: so, payments: dep ? dep.pays : [] } };
     } });
-    if (r.order && r.order.status === 'depositPaid') r.order = await pushToFactory(ctx, r.order);
-    return r;
+    return r;    // it stays at the till until someone sends it to the factory (Send to factory on the order)
   },
 
   async pay(event, b) {
@@ -126,7 +125,7 @@ const actions = {
       const n = cur.paymentCount || 0;
       const paid = cur.paidCents + t.paid;
       const patch = { paidCents: paid, balanceCents: cur.balanceCents - t.paid, paymentCount: n + 1, lastPaidAt: now, updatedAt: now, depositCents: Math.min(paid, cur.minDepositCents), history: [...(cur.history || []), { n, at: now, amountCents: t.paid, methods: t.pays.map(p => p.method), storeId: ctx.storeId, byName: ctx.user.name }].slice(-100) };
-      // the deposit reached: the order goes to the factory
+      // the deposit reached: the order can go to the factory when someone sends it
       if (cur.status === 'quoted' && paid >= cur.minDepositCents) { patch.status = 'depositPaid'; patch.statusHistory = hist(cur, 'depositPaid', ctx.user.name, 'till', '', now); patch.updateDue = true; }
       const writes = [{ update: true, coll: 'specialOrders', id: so.id, data: patch }];
       writes.push(...payRows(ctx, so, t.pays, n, payId, stamp, now));
@@ -134,7 +133,6 @@ const actions = {
       writes.push(auditRow(ctx, 'specialOrder.pay', so, { amountCents: t.paid, instalment: n, methods: t.pays.map(p => p.method), balanceCents: patch.balanceCents, status: patch.status || cur.status }, new Map(), stamp, now));
       return { writes, result: { order: { ...cur, ...patch, id: so.id }, payments: t.pays, instalment: n, paidAt: now, sent: !!patch.status } };
     } });
-    if (r.sent) r.order = await pushToFactory(ctx, r.order);
     delete r.sent;
     return r;
   },
@@ -276,7 +274,7 @@ const actions = {
     await audit({ action: companyId ? 'factory.link' : 'factory.unlink', docType: 'settings', docId: entityId, docNo: '', actorUid: uid, actorName: u.name, details: { companyId, name }, entityId, storeId: '', deviceId: 'web' });
     return { ok: true, linked: companyId ? { companyId, companyName: name } : null };
   },
-  // send the order to the factory (again): after a failure, or a link made after the deposit was paid
+  // send the order to the factory: only ever on request, never by itself
   async factorySend(event, b) {
     const ctx = await whoAndWhere(event, b, { noShift: true });
     approved(ctx, b.approvalToken, 'specialOrder', 'supervisor', 'Sending an order to the factory');
@@ -296,7 +294,7 @@ const actions = {
   }
 };
 
-// ---- the factory (lib/factory-bridge.mjs): the order written into the linked company once the deposit is paid, its status read back
+// ---- the factory (lib/factory-bridge.mjs): the order written into the linked company when someone sends it, its status read back
 const FORWARD_SPECIAL = { depositPaid: ['inProduction', 'ready'], inProduction: ['ready'] };
 const pushToFactory = (ctx, so) => pushBridge(ctx, 'specialOrders', so, 'custom');
 const syncFromFactory = (so) => syncBridge('specialOrders', so, FORWARD_SPECIAL);

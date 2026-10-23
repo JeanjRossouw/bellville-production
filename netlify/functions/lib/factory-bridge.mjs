@@ -1,7 +1,7 @@
 // Retail POS → Factory Manager, for any POS document that carries
 // made-to-order lines (a custom order in specialOrders, a sales order in
-// salesOrders): the push once the money is in, the status read back, the
-// schedule's way in, and the cancellation. The document needs id, docNo,
+// salesOrders): the push when a person sends it (never by itself), the status
+// read back, the schedule's retry of a send that failed, and the cancellation. The document needs id, docNo,
 // entityId, storeId, lines [ { qty, name, netCents, note, spec } ],
 // expectedAt and lastPaidAt; it gets factory {…} and factoryRef.
 import { getDoc, patchDoc, nowIso, audit } from './pos.mjs';
@@ -11,14 +11,16 @@ export const KIND_LABEL = { custom: 'Custom order', sales: 'Sales order' };
 export const histOf = (doc, status, byName, source, note, now) => [...(doc.statusHistory || []), { status, at: now, byName, source, note: note || '' }].slice(-50);
 const row = (ctx, action, coll, doc, details) => audit({ action, docType: coll === 'salesOrders' ? 'salesOrder' : 'specialOrder', docId: doc.id, docNo: doc.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, details, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
 
-// the document written into the linked factory company; a failure is kept on the document and tried again by the schedule
+// who asked for it to go: kept, so the schedule retries only what a person sent
+const asked = (ctx, doc) => doc.factory && doc.factory.requestedAt ? { requestedAt: doc.factory.requestedAt, requestedBy: doc.factory.requestedBy || '' } : { requestedAt: nowIso(), requestedBy: ctx.user.name };
+// the document written into the linked factory company, when a person sends it; a failure is kept on the document and tried again by the schedule
 export async function pushToFactory(ctx, coll, doc, kind = 'custom') {
   const cfg = factoryCfg(ctx.settings);
   if (!cfg) return doc;    // no factory linked: the till moves the status by hand
   const store = ctx.store || (await getDoc('stores', doc.storeId)) || { id: doc.storeId, name: doc.storeId };
   try {
     const sent = await sendOrder(cfg.companyId, doc, { ...ctx.entity, id: ctx.entityId }, { ...store, id: doc.storeId }, kind);
-    const factory = { companyId: cfg.companyId, companyName: cfg.companyName, customerId: sent.customerId, orders: sent.orders, sentAt: doc.factory && doc.factory.sentAt ? doc.factory.sentAt : nowIso(), lastCheckedAt: nowIso(), error: '' };
+    const factory = { ...asked(ctx, doc), companyId: cfg.companyId, companyName: cfg.companyName, customerId: sent.customerId, orders: sent.orders, sentAt: doc.factory && doc.factory.sentAt ? doc.factory.sentAt : nowIso(), lastCheckedAt: nowIso(), error: '' };
     const factoryRef = sent.orders.map(o => o.orderNo).filter(Boolean).join(', ');
     const patch = { factory, factoryRef, updatedAt: nowIso() };
     await patchDoc(coll, doc.id, patch);
@@ -26,13 +28,13 @@ export async function pushToFactory(ctx, coll, doc, kind = 'custom') {
     return { ...doc, ...patch };
   } catch (e) {
     console.error('factory send', e.message);
-    const factory = { ...(doc.factory || {}), companyId: cfg.companyId, companyName: cfg.companyName, error: 'Not at the factory yet: ' + String(e.message).slice(0, 200) + '. It will be tried again.' };
+    const factory = { ...(doc.factory || {}), ...asked(ctx, doc), companyId: cfg.companyId, companyName: cfg.companyName, error: 'Not at the factory yet: ' + String(e.message).slice(0, 200) + '. It will be tried again.' };
     await patchDoc(coll, doc.id, { factory }).catch(() => {});
     await row(ctx, (coll === 'salesOrders' ? 'salesOrder' : 'specialOrder') + '.factoryFailed', coll, doc, { error: String(e.message).slice(0, 200) }).catch(() => {});
     return { ...doc, factory };
   }
 }
-// the schedule's way in: the same push, with the entity and settings read here
+// the schedule's retry of a send a person asked for that failed: the same push, with the entity and settings read here
 export async function pushForSchedule(entity, settings, coll, doc, kind) {
   const store = await getDoc('stores', doc.storeId);
   const ctx = { entityId: doc.entityId, storeId: doc.storeId, entity: { ...entity, id: entity.id }, settings, store: { ...(store || { name: doc.storeId }), id: doc.storeId }, user: { id: 'server', name: 'Schedule' }, deviceId: 'server' };
