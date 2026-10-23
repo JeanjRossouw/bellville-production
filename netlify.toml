@@ -55,6 +55,24 @@
   to = "/couchpotato/www/index.html"
   status = 200
   force = true
+# Search engines: robots.txt, the sitemap and the icon for factorymanager.co.za
+# only (the netlify.app addresses keep their own; the page's canonical tag
+# points every copy of the website at https://factorymanager.co.za/).
+[[redirects]]
+  from = "https://factorymanager.co.za/robots.txt"
+  to = "/couchpotato/www/robots.txt"
+  status = 200
+  force = true
+[[redirects]]
+  from = "https://factorymanager.co.za/sitemap.xml"
+  to = "/couchpotato/www/sitemap.xml"
+  status = 200
+  force = true
+[[redirects]]
+  from = "https://factorymanager.co.za/favicon.ico"
+  to = "/couchpotato/www/img/favicon-48.png"
+  status = 200
+  force = true
 [[redirects]]
   from = "https://factorymanager.co.za/app/*"
   to = "/couchpotato/:splat"

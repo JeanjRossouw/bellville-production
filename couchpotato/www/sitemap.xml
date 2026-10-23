@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- factorymanager.co.za (served at /sitemap.xml by a rule in netlify.toml).
+     Add a <url> here for every new public page, and move lastmod when the page changes. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+  <url>
+    <loc>https://factorymanager.co.za/</loc>
+    <lastmod>2026-10-23</lastmod>
+    <image:image><image:loc>https://factorymanager.co.za/couchpotato/www/img/og-image.jpg</image:loc></image:image>
+    <image:image><image:loc>https://factorymanager.co.za/couchpotato/www/img/people/hero-wide.jpg</image:loc></image:image>
+  </url>
+</urlset>

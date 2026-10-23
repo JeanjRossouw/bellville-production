@@ -1,0 +1,9 @@
+# factorymanager.co.za (served at /robots.txt by a rule in netlify.toml)
+# The website is the home page. The app screens (/app/, /pos/ and the rest)
+# carry their own noindex tag, so they stay crawlable and Google sees it.
+User-agent: *
+Disallow: /.netlify/
+Disallow: /claude-report
+Disallow: /o/
+
+Sitemap: https://factorymanager.co.za/sitemap.xml
