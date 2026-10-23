@@ -18,7 +18,7 @@
   <!-- Sign in: email for the office, a PIN on an enrolled till -->
   <section id="login" class="login" hidden>
     <div class="login-card">
-      <div class="login-brand"><h1 class="wordmark">Point of sale</h1><div class="rule"></div><p class="wordsub" id="login-device"></p></div>
+      <div class="login-brand"><h1 class="wordmark">Factory Manager POS</h1><div class="rule"></div><p class="wordsub" id="login-device"></p></div>
       <div class="login-switch" id="login-switch" hidden>
         <button type="button" data-mode="pin">PIN</button>
         <button type="button" data-mode="email">Email</button>
@@ -29,8 +29,24 @@
         <label class="fld"><span>Password</span><input id="login-pass" type="password" autocomplete="current-password" required></label>
         <p class="login-msg" id="login-msg"></p>
         <button class="btn primary wide" id="login-submit" type="submit">Sign in</button>
+        <button class="login-link" type="button" id="to-signup">New business? Start a 14-day free trial</button>
       </form>
     </div>
+  </section>
+
+  <!-- A new business signs up: its own space, a 14-day trial, then a monthly subscription -->
+  <section id="signup" class="login" hidden>
+    <form class="login-card" id="signup-form">
+      <div class="login-brand"><h1 class="wordmark">Factory Manager POS</h1><div class="rule"></div><p class="wordsub">Start your free trial</p></div>
+      <p class="muted" id="signup-lead">14 days free, then <strong data-pos-price>R 999</strong> a month. No card needed to start.</p>
+      <label class="fld"><span>Business name</span><input id="signup-business" autocomplete="organization" required placeholder="e.g. Rossouw Furniture"></label>
+      <label class="fld"><span>Your name</span><input id="signup-name" autocomplete="name" required></label>
+      <label class="fld" data-new><span>Email</span><input id="signup-email" type="email" autocomplete="username"></label>
+      <label class="fld" data-new><span>Password (6 or more)</span><input id="signup-pass" type="password" autocomplete="new-password" minlength="6"></label>
+      <p class="login-msg" id="signup-msg"></p>
+      <button class="btn primary wide" id="signup-submit" type="submit">Start my free trial</button>
+      <button class="login-link" type="button" id="signup-back">Already have an account? Sign in</button>
+    </form>
   </section>
 
   <!-- The very first sign-in: nobody owns the group yet -->
@@ -50,6 +66,7 @@
     <div class="login-card">
       <div class="login-brand"><h1 class="wordmark">Point of sale</h1><div class="rule"></div></div>
       <p>This login is not on the staff list. Ask the owner or a manager to add you under Staff, with the same email.</p>
+      <button class="btn primary wide" type="button" id="nobody-start">Start a new business with this login</button>
       <button class="btn ghost wide" type="button" id="nobody-out">Sign out</button>
     </div>
   </section>
@@ -67,6 +84,7 @@
     <nav class="tabs" id="nav"></nav>
     <div class="mnav" id="mnav" hidden role="dialog" aria-label="Menu"></div>
     <div id="offline-bar" class="offline-bar" hidden></div>
+    <div id="billing-bar" class="billing-bar" hidden></div>
     <main class="shell" id="screen"></main>
   </div>
 

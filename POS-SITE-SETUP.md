@@ -17,6 +17,24 @@ nothing is sent until someone presses it.
 Both modules run from the one Netlify site (`factorymanager-za`) and the one
 Firebase project (`factory-manager-ece82`).
 
+## Selling Factory Manager POS
+
+Any shop can sign up at **factorymanager.co.za/pos** ("New business? Start a
+14-day free trial", or straight from the homepage's POS card at
+`/pos/?signup=1`). Each business gets its own space, a 14-day trial and then
+**R999 a month** through PayFast, paid by the owner with **Subscribe** in the
+bar at the top of the POS. When a trial or subscription runs out unpaid the
+business becomes read only until it pays.
+
+- PayFast uses the same keys as Factory Manager (`PAYFAST_MERCHANT_ID`,
+  `PAYFAST_MERCHANT_KEY`, `PAYFAST_PASSPHRASE`, `PAYFAST_SANDBOX`), already
+  on the site. Nothing else to set.
+- To change the price, set `POS_PRICE` (rands, e.g. `999`) on the site.
+- The first shops (Bellville, ReptiCube, PinkFoot) are free and never see the
+  bar.
+- **Publish the database rules** after this change: they add the business
+  records (`posMembers`, `posGroups`) and the read-only check.
+
 ## The database: upgrade it once
 
 On the free plan the project has a daily read allowance. When it runs out,

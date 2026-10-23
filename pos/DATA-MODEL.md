@@ -67,6 +67,27 @@ every business but the default one. `posMembers` and `posGroups` are written
 only by the server; a login reads its own `posMembers` record and a member
 reads their own `posGroups` record.
 
+**Signing up and paying.** `pos-signup` (`start`) makes a business for a
+login that has none: `posGroups/{groupId} { name, ownerUid, ownerEmail,
+ownerName, status: 'trial', plan: 'pos', trialEndsAt (timestamp, 14 days),
+createdAt }`, the group's own document, the owner's `users` record and
+`posMembers`. `pos-billing` takes the subscription through PayFast (the same
+helper as Factory Manager, `custom_str1` = the group id, notify URL
+`/.netlify/functions/pos-billing`); a payment notice sets `status: 'active',
+paidUntil` (a month on, plus a few days' grace), `payfastToken`,
+`lastPaymentAt`, `lastPaymentAmount`, and records
+`posGroups/{groupId}/payments/{pfPaymentId}` once; cancelling sets
+`status: 'cancelled'` and it runs to `paidUntil`. The price is
+`lib/pos-plans.mjs` (R999 a month, `POS_PRICE` overrides).
+
+A business **may work** when it has no record (the first shops), is `free`,
+is in a trial not yet over, or is `active`/`cancelled` with `paidUntil` still
+ahead. Otherwise it is **read only**: the server refuses every write in it
+(402, saying how to subscribe; signing in still works, so the owner can pay),
+its schedules are skipped, and the database rules refuse the app's own writes
+(`pActive(gid)` on every write rule under `pos/{gid}`); reading is never
+blocked.
+
 Nothing in Factory Manager's
 `companies/…` or the existing `users/{uid}` is touched: that `users` doc is
 writable by its own login, so a POS role could never safely live there.

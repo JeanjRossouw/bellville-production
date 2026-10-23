@@ -154,7 +154,7 @@ await env.withSecurityRulesDisabled(async (c) => {
   const d = c.firestore();
   await setDoc(doc(d, 'posMembers', 'owner'), { groupId: G });
   await setDoc(doc(d, 'posMembers', 'stranger'), { groupId: 'otherGrp' });
-  await setDoc(doc(d, 'posGroups', G), { name: 'Bellville Furniture', status: 'trial', ownerUid: 'owner' });
+  await setDoc(doc(d, 'posGroups', G), { name: 'Bellville Furniture', status: 'trial', ownerUid: 'owner', trialEndsAt: new Date(Date.now() + 5 * 86400000) });
   await setDoc(doc(d, 'posGroups', 'otherGrp'), { name: 'Other Shop', status: 'trial', ownerUid: 'stranger' });
 });
 await t('a login reads its own business record', getDoc(doc(owner, 'posMembers', 'owner')), true);
@@ -164,6 +164,23 @@ await t('a member reads their own business', getDoc(doc(cash, 'posGroups', G)), 
 await t('a member CANNOT read another business', getDoc(doc(owner, 'posGroups', 'otherGrp')), false);
 await t('the owner CANNOT change the business (its trial and subscription)', updateDoc(doc(owner, 'posGroups', G), { status: 'active' }), false);
 await t('another business\'s login CANNOT read this business\'s data', getDoc(P(stranger, 'products', 'p1')), false);
+
+// ---- the business's standing: a live trial writes; once it runs out unpaid the app reads but cannot write; paid up it writes again
+const standing = (data) => env.withSecurityRulesDisabled(async (c) => { await setDoc(doc(c.firestore(), 'posGroups', G), { name: 'Bellville Furniture', ownerUid: 'owner', ...data }); });
+const sofa = (n) => setDoc(P(mgr, 'products', 'pz' + n), { name: 'Sofa ' + n, priceCents: 640000, costCents: 300000, ...stamp('mgr', 'BF') });
+await t('in a live trial a manager writes a product', sofa(1), true);
+await standing({ status: 'trial', trialEndsAt: new Date(Date.now() - 86400000) });
+await t('the trial over and unpaid: no product writes', sofa(2), false);
+await t('the trial over and unpaid: no settings writes', updateDoc(P(mgr, 'settings', 'BF'), { 'receipt.footer': 'x' }), false);
+await t('the trial over and unpaid: still readable (to see and pay)', getDoc(P(mgr, 'products', 'pz1')), true);
+await standing({ status: 'active', paidUntil: new Date(Date.now() + 20 * 86400000) });
+await t('paid up: writes again', sofa(3), true);
+await standing({ status: 'cancelled', paidUntil: new Date(Date.now() + 3 * 86400000) });
+await t('cancelled: writes until the month paid for ends', sofa(4), true);
+await standing({ status: 'cancelled', paidUntil: new Date(Date.now() - 86400000) });
+await t('cancelled and the month over: no writes', sofa(5), false);
+await standing({ status: 'free' });
+await t('a free business always writes', sofa(6), true);
 
 // ---- Factory Manager untouched: a POS user is not a Factory Manager member
 await t('POS owner CANNOT read a Factory Manager company', getDoc(doc(owner, 'companies', 'A')), false);

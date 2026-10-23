@@ -48,7 +48,7 @@ const secret1 = 'g1-secret-' + Date.now();
 await put('pos/retail/devices/dev_a', { label: 'Till 1', registerId: 'r1', secretHash: createHash('sha256').update(secret1).digest('hex'), enrolledBy: 'server', enrolledAt: '2026-10-21T08:00:00.000Z', active: true, ...srv('BF', 'BF-BELL', 'dev_a') });
 // ---- a second business, signed up, with the same codes
 const own2 = await mk('owner@othershop.co.za'), cas2 = await mk('sipho@othershop.co.za'), man2 = await mk('lerato@othershop.co.za');
-await put('posGroups/' + G2, { name: 'Other Shop', ownerUid: own2.localId, status: 'trial', createdAt: '2026-10-23T08:00:00.000Z' });
+await put('posGroups/' + G2, { name: 'Other Shop', ownerUid: own2.localId, status: 'trial', trialEndsAt: new Date(Date.now() + 10 * 86400000).toISOString(), createdAt: '2026-10-23T08:00:00.000Z' });
 for (const u of [own2, cas2, man2]) await put('posMembers/' + u.localId, { groupId: G2, at: '2026-10-23T08:00:00.000Z' });
 await seed(G2, { legal: 'Other Shop (Pty) Ltd', trading: 'Other Shop', store: 'High Street', product: 'Desk Lamp' });
 await put(`pos/${G2}/users/` + own2.localId, { email: 'owner@othershop.co.za', name: 'Nomsa', role: 'owner', active: true, entityIds: [], storeIds: [], defaultStoreId: '', pinSet: false, ...srv('*') });

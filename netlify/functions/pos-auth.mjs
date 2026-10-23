@@ -21,7 +21,7 @@ import {
   getDoc, patchDoc, createDoc, query, commit, serverStamp,
   loginOf, loadUser, requireMember, inEntity, inStore, atLeast, mayManage,
   pinValid, newSalt, hashPin, pinMatches, PIN_ITERATIONS, sha256, customToken, overrideToken,
-  createAuthUser, sendPasswordReset, audit, loadDevice, bodyOf, patchGroupDoc, withGroup, groupId, setMember, getTop, memberGroupOf
+  createAuthUser, sendPasswordReset, audit, loadDevice, bodyOf, patchGroupDoc, withGroup, groupId, setMember, getTop, memberGroupOf, DEFAULT_GROUP
 } from './lib/pos.mjs';
 
 const MAX_FAILED = 5, LOCK_MINUTES = 15;
@@ -103,6 +103,8 @@ const actions = {
     const user = login ? await loadUser(login.sub) : null;
     const device = b.deviceId ? await loadDevice(b.deviceId, b.secret) : null;
     if (device) await patchDoc('devices', device.id, { lastSeenAt: nowIso(), appVersion: clean(b.appVersion, 20) });
+    // the first shops' staff have no record of which business they are in: it is written the first time they sign in
+    if (user && login && groupId() === DEFAULT_GROUP && !(await getTop('posMembers/' + login.sub))) await setMember(login.sub, DEFAULT_GROUP).catch(() => {});
     return { user: user ? publicUser(user) : null, device: device ? publicDevice(device) : null, groupId: groupId(), nobodyYet: !user && !(await query('users', [], 1)).length };
   },
 
@@ -254,4 +256,4 @@ const handleRequest = async (event) => {
 };
 
 // every request works in its own customer's space (lib/pos.mjs)
-export const handler = withGroup(handleRequest);
+export const handler = withGroup(handleRequest, { anyStanding: true });   // signing in works whatever the business's standing

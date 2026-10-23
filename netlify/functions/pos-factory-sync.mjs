@@ -3,7 +3,7 @@
 // open orders that are at the factory, and try again a send that a person
 // asked for and that failed. Nothing goes to the factory by itself: an order
 // that nobody has sent stays at the till.
-import { json, query, getDoc, nowIso, allGroups, inGroup } from './lib/pos.mjs';
+import { json, query, getDoc, nowIso, allGroups, inGroup, groupStanding } from './lib/pos.mjs';
 import { factoryCfg } from './lib/factory-link.mjs';
 import { pushForSchedule, syncFromFactory } from './lib/factory-bridge.mjs';
 
@@ -21,6 +21,7 @@ export const handler = async (event) => {
     const out = [];
     // every customer's space in turn (lib/pos.mjs)
     for (const gid of await allGroups()) await inGroup(gid, async () => {
+    if ((await groupStanding(gid)).state === 'locked') return;      // a business that has not paid gets no syncing
     const ents = (await query('entities', [], 50)).filter(e => e.active !== false);
     for (const e of ents) {
       const settings = (await getDoc('settings', e.id)) || {};

@@ -28,7 +28,7 @@ const own = await mk('owner@shop.co.za');
 await put('pos/retail/users/' + own.localId, { email: 'owner@shop.co.za', name: 'Jean', role: 'owner', active: true, entityIds: [], storeIds: [], defaultStoreId: '', pinSet: false, ...srv('*') });
 await seed(G2, { legal: 'Other Shop (Pty) Ltd', trading: 'Other Shop', store: 'High Street', product: 'Desk Lamp' });
 const own2 = await mk('owner@othershop.co.za');
-await put('posGroups/' + G2, { name: 'Other Shop', ownerUid: own2.localId, status: 'trial', createdAt: '2026-10-23T08:00:00.000Z' });
+await put('posGroups/' + G2, { name: 'Other Shop', ownerUid: own2.localId, status: 'trial', trialEndsAt: new Date(Date.now() + 10 * 86400000).toISOString(), createdAt: '2026-10-23T08:00:00.000Z' });
 await put('posMembers/' + own2.localId, { groupId: G2, at: '2026-10-23T08:00:00.000Z' });
 await put(`pos/${G2}/users/` + own2.localId, { email: 'owner@othershop.co.za', name: 'Nomsa', role: 'owner', active: true, entityIds: [], storeIds: [], defaultStoreId: '', pinSet: false, ...srv('*') });
 await put('posMembers/st_sipho', { groupId: G2, at: '2026-10-23T08:00:00.000Z' });

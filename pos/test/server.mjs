@@ -4,6 +4,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8085';
+process.env.POS_STANDING_CACHE_MS = '0';      // a business's standing is read fresh on every request in the tests
 process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
 // the factory's helpers read the project id from the key; on the emulator no key is used
 process.env.FACTORY_SERVICE_ACCOUNT = process.env.FACTORY_SERVICE_ACCOUNT || JSON.stringify({ project_id: 'factory-manager-ece82', client_email: 'emulator@test', private_key: '' });

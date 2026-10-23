@@ -1,7 +1,7 @@
 // Retail POS — the Xero schedule, on its own so pos-xero can still answer
 // HTTP: in the small hours, build yesterday's journal for every company
 // that asked for it and post it when the company is connected.
-import { json, query, getDoc, allGroups, inGroup } from './lib/pos.mjs';
+import { json, query, getDoc, allGroups, inGroup, groupStanding } from './lib/pos.mjs';
 import { loadTokens, connectBlobs } from './lib/xero.mjs';
 import { buildDoc, pushDoc, xeroKey } from './pos-xero.mjs';
 
@@ -16,6 +16,7 @@ export const handler = async (event) => {
     const out = [];
     // every customer's space in turn (lib/pos.mjs)
     for (const gid of await allGroups()) await inGroup(gid, async () => {
+    if ((await groupStanding(gid)).state === 'locked') return;      // a business that has not paid gets no syncing
     const ents = (await query('entities', [], 50)).filter(e => e.active !== false);
     for (const e of ents) {
       const s = (await getDoc('settings', e.id)) || {};

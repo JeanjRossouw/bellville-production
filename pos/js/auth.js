@@ -143,6 +143,21 @@ export async function signInEmail(email, password) {
   await fb.fns.signInWithEmailAndPassword(fb.auth, String(email || '').trim(), password);
   session.mode = 'email';
 }
+// A new business: the login (made here, unless already signed in) and its space on the server.
+// While it is being made the app keeps the sign-up screen (session.signingUp).
+export async function signUp({ email, password, businessName, name }) {
+  session.signingUp = true; emit();
+  try {
+    if (!fb.auth.currentUser) {
+      rememberMode('email');
+      await fb.fns.createUserWithEmailAndPassword(fb.auth, String(email || '').trim(), password);
+    }
+    const r = await api('start', { businessName, name }, API.signup);
+    await adoptLogin(fb.auth.currentUser);
+    session.mode = 'email';
+    return r;
+  } finally { session.signingUp = false; emit(); }
+}
 export async function claimGroup(name, groupName) {
   const r = await api('bootstrap', { name, groupName });
   session.user = r.user; session.uid = r.user.uid; session.nobodyYet = false; emit();

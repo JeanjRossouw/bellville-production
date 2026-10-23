@@ -14,6 +14,7 @@
 //      FIRESTORE_EMULATOR_HOST / FIREBASE_AUTH_EMULATOR_HOST — tests only.
 import { createHash, pbkdf2Sync, randomBytes, timingSafeEqual, createHmac } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { accessOfGroup, LOCKED_TEXT } from './pos-plans.mjs';
 import { SignJWT, importPKCS8 } from 'jose';
 import { verifyFirebaseToken } from './auth.mjs';
 
@@ -25,7 +26,9 @@ export const DEFAULT_GROUP = process.env.POS_GROUP_ID || 'retail';
 export const GROUP_ID = DEFAULT_GROUP;      // the default group's id (kept for older callers)
 const groupStore = new AsyncLocalStorage();
 export const groupId = () => (groupStore.getStore() || {}).gid || DEFAULT_GROUP;
-export const inGroup = (gid, fn) => groupStore.run({ gid: gid || DEFAULT_GROUP }, fn);
+export const inGroup = (gid, fn, opts = {}) => groupStore.run({ gid: gid || DEFAULT_GROUP, locked: !!opts.locked }, fn);
+// a business whose trial or subscription has run out reads but does not write (pos-plans.mjs)
+function writable() { const st = groupStore.getStore(); if (st && st.locked) throw new Reject(402, LOCKED_TEXT); }
 export const GROUP_RE = /^[A-Za-z0-9_-]{1,40}$/;
 export const PROJECT_ID = 'factory-manager-ece82';
 // the project's public web key (the one in couchpotato/js/config.js); it only identifies the project
@@ -132,18 +135,21 @@ export async function getDoc(coll, id, tx) {
 }
 // set only the named fields; the document is created if missing
 export async function patchDoc(coll, id, patch) {
+  writable();
   const mask = Object.keys(patch).map(k => 'updateMask.fieldPaths=' + encodeURIComponent(k)).join('&');
   const res = await call('PATCH', `${root()}/${enc(docPath(coll, id))}?${mask}`, { fields: toFs(patch).mapValue.fields });
   if (!res.ok) throw new Error(`Firestore patch ${coll}/${id} failed: ${await res.text()}`);
 }
 // the group's own document, pos/{group}
 export async function patchGroupDoc(patch) {
+  writable();
   const mask = Object.keys(patch).map(k => 'updateMask.fieldPaths=' + encodeURIComponent(k)).join('&');
   const res = await call('PATCH', `${root()}/${enc('pos/' + groupId())}?${mask}`, { fields: toFs(patch).mapValue.fields });
   if (!res.ok) throw new Error(`Firestore patch group failed: ${await res.text()}`);
 }
 // create only when not there yet: false when it already was
 export async function createDoc(coll, id, data) {
+  writable();
   const res = await call('PATCH', `${root()}/${enc(docPath(coll, id))}?currentDocument.exists=false`, { fields: toFs(data).mapValue.fields });
   if (res.ok) return true;
   const t = await res.text();
@@ -171,6 +177,7 @@ export async function query(coll, filters, limit = 500, orderBy) {
 //   create: refused if the document exists;  update: refused if it does not;  set: either way.
 // With a transaction id from beginTransaction(), reads made in it are checked too.
 export async function commit(writes, tx) {
+  writable();
   const body = {
     writes: writes.map(w => {
       if (w.delete) return { delete: docName(w.coll, w.id) };
@@ -329,7 +336,8 @@ export async function audit(a) {
     details: a.details || {},
     ...serverStamp(a.entityId, a.storeId, a.actorUid || 'server', a.deviceId || 'server')
   };
-  return addDoc('auditLog', row);
+  // a read-only business still reads: its audit rows are not written then
+  try { return await addDoc('auditLog', row); } catch (e) { if (e instanceof Reject && e.status === 402) return ''; throw e; }
 }
 
 // ------------------------------------------------------------------ devices
@@ -373,7 +381,12 @@ export async function listTop(coll, limit = 500) {
   return (await res.json()).filter(r => r.document && r.document.name.split('/').length === 7).map(r => docOf(r.document));
 }
 // a person joins a group: one record, so every later request finds their space
-export const setMember = (uid, gid) => patchTop('posMembers/' + uid, { groupId: gid || groupId(), at: nowIso() });
+const memberCache = new Map();
+export async function setMember(uid, gid) {
+  gid = gid || groupId();
+  await patchTop('posMembers/' + uid, { groupId: gid, at: nowIso() });
+  memberCache.set(uid, { gid, at: Date.now() });
+}
 
 // which business a login already belongs to, if any: its own record, or (for the first shops, who have none) the default group's staff list
 export async function memberGroupOf(uid) {
@@ -382,14 +395,13 @@ export async function memberGroupOf(uid) {
   return uid && await getTop(`pos/${DEFAULT_GROUP}/users/${uid}`) ? DEFAULT_GROUP : null;
 }
 // which group a login is in (kept a few minutes per function instance)
-const memberCache = new Map();
 export async function groupOfLogin(uid) {
   const hit = memberCache.get(uid);
   if (hit && hit.at > Date.now() - 300000) return hit.gid;
   const m = uid ? await getTop('posMembers/' + uid) : null;
-  const gid = m && GROUP_RE.test(m.groupId || '') ? m.groupId : DEFAULT_GROUP;
-  memberCache.set(uid, { gid, at: Date.now() });
-  return gid;
+  if (!(m && GROUP_RE.test(m.groupId || ''))) return DEFAULT_GROUP;      // no record: not remembered, a business may be made for it any moment
+  memberCache.set(uid, { gid: m.groupId, at: Date.now() });
+  return m.groupId;
 }
 // The group a request works in: a signed link or Xero's return names it in its
 // signature; a signed-in person's own record says it (a login cannot reach
@@ -407,12 +419,23 @@ export async function groupFor(event) {
   return DEFAULT_GROUP;
 }
 // wrap a function's handler so everything in it works in the request's group
-export const withGroup = (handler) => async (event, context) => {
-  let gid;
-  try { gid = await groupFor(event); }
+// opts.anyStanding: signing in and the staff list work whatever the business's standing (so the owner can still pay)
+export const withGroup = (handler, opts = {}) => async (event, context) => {
+  let gid, locked = false;
+  try { gid = await groupFor(event); if (!opts.anyStanding) locked = (await groupStanding(gid)).state === 'locked'; }
   catch (e) { if (e instanceof Reject) return json(e.status, { error: e.message }); throw e; }
-  return inGroup(gid, () => handler(event, context));
+  return inGroup(gid, () => handler(event, context), { locked });
 };
+// a business's standing (its trial or subscription), kept a minute per function instance
+const standingCache = new Map();
+export async function groupStanding(gid) {
+  if (!gid || gid === DEFAULT_GROUP) return { state: 'ok', why: 'free' };
+  const hit = standingCache.get(gid);
+  if (hit && hit.at > Date.now() - Number(process.env.POS_STANDING_CACHE_MS ?? 60000)) return hit.a;
+  const a = accessOfGroup(await getTop('posGroups/' + gid));
+  standingCache.set(gid, { a, at: Date.now() });
+  return a;
+}
 // every group, for the schedules: the default one and every customer's
 export async function allGroups() {
   let rows = [];
