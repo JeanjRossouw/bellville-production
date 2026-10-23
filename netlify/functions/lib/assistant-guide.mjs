@@ -326,8 +326,13 @@ password; the owner invites the team under Settings and gives each person a role
 
 ## Online shop (Shopify)
 - Settings → Online shop → Connect Shopify with the store address, Client ID and Client
-  secret from an app made in the Shopify Dev Dashboard. Paid online orders then come in as
-  orders by themselves (tagged "online #…"), "Bring in products" brings the shop's
+  secret from an app made in the Shopify Dev Dashboard. Online orders then arrive in
+  Sales → Online orders and wait there: nothing goes to the factory by itself. Tick the
+  lines the factory builds and press "Send ticked lines to the factory" (each becomes an
+  order tagged "online #…"), or "Not for the factory" for things bought in from a supplier
+  (order those on a purchase order under Buying) or sent from the shelf; it can be undone.
+  The owner can choose instead (Settings → Online shop → Online orders) to have them go to
+  the factory by themselves once paid or as soon as placed. "Bring in products" brings the shop's
   products, prices and pictures into the price list (matched by exact name the first time),
   and till sales from stock come off the shop's count.
 

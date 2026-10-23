@@ -23,7 +23,7 @@
 //           demonstrated before any database is created
 import { FIREBASE_CONFIG, isCloudConfigured, TRIAL_DAYS } from './config.js';
 import { DEFAULT_ROLES, WRITE_AREAS, OWNER_PERMS, canSee, canEdit } from './permissions.js';
-import { wantOrder, orderLines, orderDocId, customerOf, findCustomer, mapLine, mapProduct } from './shopify-map.js';
+import { wantOrder, isPaid, orderLines, orderDocId, customerOf, findCustomer, mapLine, mapProduct } from './shopify-map.js';
 
 const FB_VERSION = '10.13.0';
 const FB = (m) => `https://www.gstatic.com/firebasejs/${FB_VERSION}/firebase-${m}.js`;
@@ -317,6 +317,35 @@ const DEMO_SHOP = [
   { title: 'Oak Side Table', price: 2899, tracked: true, qoh: 6, category: 'Tables', collections: ['Lounge', 'Tables'], vendor: 'Timber Traders' }
 ].map((p, i) => ({ ...p, shopifyProductId: String(8100 + i), shopifyVariantId: String(4400 + i), shopifyInventoryItemId: String(5500 + i), sku: 'OS-' + (100 + i), barcode: '600100' + (100 + i) }));
 
+// the demo's way of making factory orders from shop order lines: the customer found or added, one order per line
+function demoMakeOrders(o, lines, { settings, vatRate }) {
+  const c = customerOf(o);
+  const custs = demoRead('customers');
+  const hit = findCustomer(Object.keys(custs).map(k => ({ id: k, ...custs[k] })), c);
+  let customerId = hit ? hit.id : '';
+  if (!customerId) { customerId = 'shopify-c-' + ((o.customer && o.customer.id) || o.id); custs[customerId] = { ...c, notes: 'Added from online order ' + o.name, source: 'shopify', createdAt: nowIso(), createdBy: 'Shopify', updatedAt: nowIso(), updatedBy: 'Shopify' }; demoWrite('customers', custs); }
+  const customerName = custs[customerId].name;
+  const products = demoRead('products');
+  const orders = demoRead('orders');
+  const made = [];
+  for (const li of lines) {
+    if (orders[orderDocId(o, li)]) continue;
+    const pid = Object.keys(products).find(k => products[k].shopifyVariantId === String(li.variant_id));
+    const product = pid ? { id: pid, ...products[pid] } : null;
+    const fromStock = !!(product && Number(product.stock) >= li.quantity);
+    const doc = mapLine(o, li, { customerId, customerName, product, fromStock, leadDays: settings.leadDays, vatRate });
+    const counters = demoRead('counters');
+    const next = (counters.orderNo && counters.orderNo.value) || settings.firstOrderNo || 1001;
+    counters.orderNo = { value: next + 1 }; demoWrite('counters', counters);
+    doc.orderNo = (settings.orderPrefix || 'CP-') + next;
+    orders[orderDocId(o, li)] = doc; made.push(doc.orderNo);
+    if (fromStock) { products[pid].stock = Number(products[pid].stock) - li.quantity; }
+  }
+  demoWrite('products', products);
+  demoWrite('orders', orders);
+  return made;
+}
+
 function demoShopify(action, p) {
   const ints = demoRead('integrations');
   const st = ints.shopify || {};
@@ -329,12 +358,42 @@ function demoShopify(action, p) {
     if (!String(p.clientId || '').trim() || !String(p.clientSecret || '').trim()) throw new Error('Paste both the Client ID and the Client secret');
     const name = full.replace('.myshopify.com', '').split('-').filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
     save({ connected: true, domain: full, shopName: name, currency: 'ZAR', taxesIncluded: true, connectedAt: nowIso(), connectedBy: (currentUser || {}).name || '',
-      lastCheckedAt: nowIso(), importWhen: p.importWhen === 'placed' ? 'placed' : 'paid', webhooks: 'on', lastError: '', ordersIn: Number(st.ordersIn) || 0, demo: true });
+      lastCheckedAt: nowIso(), importWhen: p.importWhen === 'placed' ? 'placed' : 'paid', sendToFactory: p.sendToFactory === 'auto' ? 'auto' : 'manual', webhooks: 'on', lastError: '', ordersIn: Number(st.ordersIn) || 0, demo: true });
     return { ok: true, shopName: name, webhooks: 'on' };
   }
   if (!st.connected) throw new Error('Connect the shop first');
   if (action === 'disconnect') { save({ connected: false, disconnectedAt: nowIso(), webhooks: '' }); return { ok: true }; }
-  if (action === 'settings') { save({ importWhen: p.importWhen === 'placed' ? 'placed' : 'paid' }); return { ok: true }; }
+  if (action === 'settings') { save({ importWhen: p.importWhen === 'placed' ? 'placed' : 'paid', sendToFactory: p.sendToFactory === 'auto' ? 'auto' : 'manual' }); return { ok: true }; }
+  // online orders that wait for a person (the same shape as companies/<cid>/shopifyOrders on the server)
+  const held = () => demoRead('shopifyOrders') || {};
+  const strip = (id, r) => { const { order, ...rest } = r; return { id, ...rest }; };
+  if (action === 'online') {
+    const rows = Object.entries(held()).map(([id, r]) => strip(id, r)).sort((a, b) => String(b.placedAt || '').localeCompare(String(a.placedAt || '')));
+    return { ok: true, waiting: rows.filter(r => r.status === 'waiting'), recent: rows.filter(r => r.status !== 'waiting').slice(0, 30) };
+  }
+  if (action === 'sendOnline') {
+    const m = held(); const rec = m[p.orderId];
+    if (!rec) throw new Error('No such online order');
+    if (rec.status === 'cancelled') throw new Error('That order was cancelled on the shop');
+    const o = JSON.parse(rec.order); const want = new Set((p.lines || []).map(String));
+    const lines = orderLines(o).filter(li => want.has(String(li.id)) && !(rec.sentLines || []).includes(String(li.id)));
+    if (!lines.length) throw new Error('Tick the lines that go to the factory');
+    const made = demoMakeOrders(o, lines, vat());
+    const was = rec.status;
+    m[p.orderId] = { ...rec, status: 'sent', done: true, sentLines: [...new Set([...(rec.sentLines || []), ...lines.map(li => String(li.id))])], orderNos: [...(rec.orderNos || []), ...made], sentAt: nowIso(), sentBy: (currentUser || {}).name || '' };
+    demoWrite('shopifyOrders', m);
+    save({ waiting: Math.max(0, (Number(st.waiting) || 0) - (was === 'waiting' ? 1 : 0)) });     // counted in when it arrived
+    return { ok: true, order: rec.name, orders: made };
+  }
+  if (action === 'keepOnline') {
+    const m = held(); const rec = m[p.orderId];
+    if (!rec) throw new Error('No such online order');
+    if (p.undo) { if (rec.status !== 'kept') return { ok: true, status: rec.status }; const status = (rec.sentLines || []).length ? 'sent' : 'waiting'; m[p.orderId] = { ...rec, status, keptAt: '', keptBy: '' }; demoWrite('shopifyOrders', m); if (status === 'waiting') save({ waiting: (Number(st.waiting) || 0) + 1 }); return { ok: true, status }; }
+    if (rec.status !== 'waiting') throw new Error('Only a waiting order can be kept off the factory');
+    m[p.orderId] = { ...rec, status: 'kept', keptAt: nowIso(), keptBy: (currentUser || {}).name || '', keptNote: String(p.note || '').slice(0, 200) };
+    demoWrite('shopifyOrders', m); save({ waiting: Math.max(0, (Number(st.waiting) || 0) - 1) });
+    return { ok: true, status: 'kept' };
+  }
   if (action === 'pushSale' || action === 'pushReturn') {
     // the demo shop's count moves like the real one would
     const sale = (demoRead('sales') || {})[p.saleId] || {};
@@ -400,31 +459,18 @@ function demoShopify(action, p) {
         { id: n * 10 + 2, product_id: Number(cushion.shopifyProductId), variant_id: Number(cushion.shopifyVariantId), title: cushion.title, variant_title: '', quantity: 2, price: String(cushion.price), sku: cushion.sku, tax_lines: [{ rate: 0.15 }] }
       ]
     };
-    if (!wantOrder(o, st.importWhen)) return { ok: true, looked: 1, brought: [] };
-    const { settings, vatRate } = vat();
-    const c = customerOf(o);
-    const custs = demoRead('customers');
-    const hit = findCustomer(Object.keys(custs).map(k => ({ id: k, ...custs[k] })), c);
-    let customerId = hit ? hit.id : '';
-    if (!customerId) { customerId = 'shopify-c-' + o.customer.id; custs[customerId] = { ...c, notes: 'Added from online order ' + o.name, source: 'shopify', createdAt: nowIso(), createdBy: 'Shopify', updatedAt: nowIso(), updatedBy: 'Shopify' }; demoWrite('customers', custs); }
-    const customerName = custs[customerId].name;
-    const products = demoRead('products');
-    const orders = demoRead('orders');
-    const made = [];
-    for (const li of orderLines(o)) {
-      const pid = Object.keys(products).find(k => products[k].shopifyVariantId === String(li.variant_id));
-      const product = pid ? { id: pid, ...products[pid] } : null;
-      const fromStock = !!(product && Number(product.stock) >= li.quantity);
-      const doc = mapLine(o, li, { customerId, customerName, product, fromStock, leadDays: settings.leadDays, vatRate });
-      const counters = demoRead('counters');
-      const next = (counters.orderNo && counters.orderNo.value) || settings.firstOrderNo || 1001;
-      counters.orderNo = { value: next + 1 }; demoWrite('counters', counters);
-      doc.orderNo = (settings.orderPrefix || 'CP-') + next;
-      orders[orderDocId(o, li)] = doc; made.push(doc.orderNo);
-      if (fromStock) { products[pid].stock = Number(products[pid].stock) - li.quantity; }
+    if (st.sendToFactory !== 'auto') {
+      // it waits in Online orders for a person to send the lines that are for the factory
+      if (!wantOrder(o, 'placed')) return { ok: true, looked: 1, brought: [] };
+      const m = held(); const c = customerOf(o);
+      m[String(o.id)] = { status: 'waiting', name: o.name, placedAt: o.created_at, paid: isPaid(o), customer: { name: c.name || '', phone: c.phone || '', email: c.email || '' }, total: String(o.total_price || ''), currency: 'ZAR',
+        lines: orderLines(o).map(li => ({ id: String(li.id), title: [li.title, li.variant_title].filter(Boolean).join(' · '), qty: Number(li.quantity) || 1, price: String(li.price || ''), sku: li.sku || '' })), sentLines: [], order: JSON.stringify(o), heldAt: nowIso(), done: false };
+      demoWrite('shopifyOrders', m);
+      save({ ordersIn: (Number(st.ordersIn) || 0) + 1, waiting: (Number(st.waiting) || 0) + 1, lastOrderAt: nowIso(), lastOrderName: o.name, lastCheckedAt: nowIso() });
+      return { ok: true, looked: 1, brought: [{ order: o.name, waiting: true }] };
     }
-    demoWrite('products', products);
-    demoWrite('orders', orders);
+    if (!wantOrder(o, st.importWhen)) return { ok: true, looked: 1, brought: [] };
+    const made = demoMakeOrders(o, orderLines(o), vat());
     save({ ordersIn: (Number(st.ordersIn) || 0) + 1, lastOrderAt: nowIso(), lastOrderName: o.name, lastCheckedAt: nowIso() });
     return { ok: true, looked: 1, brought: [{ order: o.name, orders: made }] };
   }

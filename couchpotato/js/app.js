@@ -18,6 +18,7 @@ import {
   printJobCard, printWeekJobCards, printPlanner, weekReportDialog } from './floor.js';
 import { renderScan, setScanSettings, startCamera, stopCamera, manualFind, confirmDispatch, notifyCustomer } from './scan.js';
 import { startPos, renderPos, setPosSettings, setPosShop, setPosXero, posAction, posInput, allSales } from './pos.js';
+import { renderOnline, onlineAction, setOnlineRepaint } from './onlineorders.js';
 import { staffCardHtml } from './till.js';
 import { startQuotes, renderQuotes, setQuoteSettings, setQuoteFilter, newQuote, editQuote, copyQuote, sendQuote, printQuote, acceptQuote, declineQuote } from './quotes.js';
 import { renderProfit, setProfitSettings, setProfitMonth } from './profit.js';
@@ -67,6 +68,7 @@ if (pendingScan) history.replaceState(null, '', location.pathname);
 const NAV = [
   { key: 'home', label: 'Today' },
   { key: 'pos', label: 'Point of sale', group: 'sales' },
+  { key: 'online', label: 'Online orders', group: 'sales' },
   { key: 'quotes', label: 'Quotes', group: 'sales' },
   { key: 'customers', label: 'Customers', group: 'sales' },
   { key: 'orders', label: 'Orders', group: 'production' },
@@ -88,9 +90,9 @@ const GROUPS = [['sales', 'Sales'], ['production', 'Production'], ['buying', 'Bu
 // Settings → Roles. The owner sees everything, plus the team and billing.
 let seller = false;          // the seller's own login: sees every company under Clients
 const allowedViews = (user) => !user ? [] : NAV.map(n => n.key).filter(k =>
-  k === 'home' ? true : k === 'clients' ? seller : k === 'settings' ? (user.role === 'owner' || store.can('settings')) : store.can(k));
+  k === 'home' ? true : k === 'clients' ? seller : k === 'settings' ? (user.role === 'owner' || store.can('settings')) : k === 'online' ? store.can('orders') : store.can(k));
 // A screen the role may only look at: nothing on it may change data.
-const viewOnly = (k) => store.getUser() && store.getUser().role !== 'owner' && k !== 'clients' && levelOf(store.myPerms(), k) === 'view';
+const viewOnly = (k) => store.getUser() && store.getUser().role !== 'owner' && k !== 'clients' && levelOf(store.myPerms(), k === 'online' ? 'orders' : k) === 'view';
 // Actions that only look, print or switch what is shown — allowed on a view-only screen.
 const LOOK_ONLY = new Set(['filter-status', 'floor-view', 'cost-view', 'stock-view', 'sup-sheet-dl', 'quote-filter', 'profit-month', 'inv-view',
   'print-job', 'print-week-jobs', 'print-week-report', 'wg-view', 'wg-period', 'wg-print-sheet', 'wg-print-slips', 'wg-export', 'wg-open', 'print-planner', 'print-pricesheet', 'print-costsheet', 'inv-print', 'stmt-print', 'inv-export',
@@ -137,7 +139,7 @@ async function boot() {
         store.watch('payments', rows => { billing.payments = rows; if (view === 'settings') paint(); });
         // only the Online shop card is redrawn: the 15-minute check writes here,
         // and a full repaint would wipe settings the owner is still typing
-        store.watch('integrations', rows => { shop = rows.find(r => r.id === 'shopify') || null; xero = rows.find(r => r.id === 'xero') || null; setPosShop(shop); setPosXero(xero); if (view === 'settings') { redrawShopCard(); redrawXeroCard(); } });
+        store.watch('integrations', rows => { shop = rows.find(r => r.id === 'shopify') || null; xero = rows.find(r => r.id === 'xero') || null; setPosShop(shop); setPosXero(xero); if (view === 'settings') { redrawShopCard(); redrawXeroCard(); } if (view === 'online') paint(); });
         store.getPlan().then(r => { billing.plan = r.plan; billing.configured = !!r.configured; setClientPlan(r.plan); if (view === 'settings') paint(); });
       }
       // a payment, a cancellation or an extended trial takes effect live
@@ -148,7 +150,7 @@ async function boot() {
       store.seedDemoIfEmpty();
       store.shopifyRetryPending();      // till sales whose stock could not reach the online shop yet
       // the till sells the shop's stock when the shop is connected (the owner's watch above covers the owner)
-      if (user.role !== 'owner' && store.can('pos')) store.watch('integrations', rows => { setPosShop(rows.find(r => r.id === 'shopify') || null); setPosXero(rows.find(r => r.id === 'xero') || null); });
+      if (user.role !== 'owner' && (store.can('pos') || store.can('orders'))) store.watch('integrations', rows => { shop = rows.find(r => r.id === 'shopify') || null; setPosShop(shop); setPosXero(rows.find(r => r.id === 'xero') || null); if (view === 'online') paint(); });
       settings = await store.loadSettings(FACTORY_DEFAULTS);
       setOrderSettings(settings);
       setFloorSettings(settings);
@@ -413,6 +415,7 @@ function showApp(user) {
   document.getElementById('screen').addEventListener('change', onChangeEvent);
   document.getElementById('screen').addEventListener('input', onInput);
   paint();
+  setOnlineRepaint(() => { if (view === 'online') paint(); });
   startAssistant(() => (NAV.find(n => n.key === view) || {}).label || view);
 }
 
@@ -556,9 +559,11 @@ function paint() {
   if (screen && viewOnly(view)) screen.insertAdjacentHTML('afterbegin', '<div class="viewonly-note">View only: your role can look at this screen but not change anything on it.</div>');
 }
 
+let lastPainted = '';
 function paintScreen() {
   const screen = document.getElementById('screen');
   if (!screen) return;
+  const entering = view !== lastPainted; lastPainted = view;     // a screen just opened reads its list afresh
   if (view !== 'scan') stopCamera(screen);
   if (view === 'home') return renderToday(screen);
   if (view === 'orders') return renderOrders(screen);
@@ -576,6 +581,7 @@ function paintScreen() {
   if (view === 'scan') return renderScan(screen);
   if (view === 'invoices') return renderInvoices(screen);
   if (view === 'pos') return renderPos(screen);
+  if (view === 'online') return renderOnline(screen, { shop, canEdit: store.getUser().role === 'owner' || levelOf(store.myPerms(), 'orders') === 'edit', fresh: entering });
   screen.innerHTML = '';
 }
 
@@ -827,17 +833,17 @@ function shopCard() {
   const s = shop || {};
   if (!s.connected) return `<div class="card" id="shop-card">
     <h2>Online shop</h2>
-    <p>Connect your Shopify store and every online order comes in as a factory order by itself, with the customer, the fabric and the delivery address. Your shop’s products come into your price list, and pieces sold from stock at the till come off the shop’s count too.</p>
+    <p>Connect your Shopify store and online orders come into Sales → Online orders, with the customer, the fabric and the delivery address. Nothing goes to the factory by itself: you tick the lines the factory builds and send them, so items bought from a supplier stay off the floor. Your shop’s products come into your price list, and pieces sold from stock at the till come off the shop’s count too.</p>
     <div class="card-actions"><button class="btn primary" data-act="shop-connect">Connect Shopify</button></div>
   </div>`;
-  const when = s.importWhen === 'placed' ? 'placed' : 'paid';
+  const when = s.sendToFactory === 'auto' ? (s.importWhen === 'placed' ? 'placed' : 'paid') : 'manual';
   return `<div class="card" id="shop-card">
     <h2>Online shop</h2>
-    <p><strong>Connected to ${esc(s.shopName || s.domain)}</strong> <span class="muted">(${esc(s.domain || '')})</span>. Online orders come in by themselves${s.webhooks === 'on' ? ' within a minute' : ', every 15 minutes'}.</p>
+    <p><strong>Connected to ${esc(s.shopName || s.domain)}</strong> <span class="muted">(${esc(s.domain || '')})</span>. Online orders arrive${s.webhooks === 'on' ? ' within a minute' : ' every 15 minutes'}${when === 'manual' ? ' in Sales → Online orders and wait there until someone sends them to the factory' + (s.waiting ? ` · <strong>${esc(String(s.waiting))} waiting</strong>` : '') : ' and go to the factory by themselves'}.</p>
     <p class="muted">Orders brought in: ${esc(String(s.ordersIn || 0))}${s.lastOrderName ? ' · last ' + esc(s.lastOrderName) + ' ' + esc(ago(s.lastOrderAt)) : ''} · last checked ${esc(ago(s.lastCheckedAt) || 'not yet')}${s.productsAt ? ' · products brought in ' + esc(ago(s.productsAt)) : ''}</p>
     ${s.webhooks && s.webhooks !== 'on' ? `<p class="notice-inline">Shopify could not be asked to send orders straight away (${esc(s.webhooks)}). They still come in every 15 minutes.</p>` : ''}
     ${s.lastError ? `<p class="notice-inline">${esc(s.lastError)}</p>` : ''}
-    ${field('Bring online orders in', 'shop-when', { type: 'select', value: when, options: [{ value: 'paid', label: 'Once they are paid (recommended)' }, { value: 'placed', label: 'As soon as they are placed, paid or not' }] })}
+    ${field('Online orders', 'shop-when', { type: 'select', value: when, options: [{ value: 'manual', label: 'Wait in Online orders until someone sends them to the factory (recommended)' }, { value: 'paid', label: 'Go to the factory by themselves once paid' }, { value: 'placed', label: 'Go to the factory by themselves as soon as placed' }] })}
     <div class="card-actions">
       <button class="btn primary" data-act="shop-sync">Check for orders now</button>
       <button class="btn ghost" data-act="shop-products">Bring in products</button>
@@ -857,14 +863,14 @@ function shopConnect() {
     </ol>
     ${field('Your store', 'sh-domain', { placeholder: 'your-store.myshopify.com' })}
     ${row(field('Client ID', 'sh-id'), field('Client secret', 'sh-secret', { type: 'password' }))}
-    ${field('Bring online orders in', 'sh-when', { type: 'select', value: 'paid', options: [{ value: 'paid', label: 'Once they are paid (recommended)' }, { value: 'placed', label: 'As soon as they are placed, paid or not' }] })}
+    ${field('Online orders', 'sh-when', { type: 'select', value: 'manual', options: [{ value: 'manual', label: 'Wait in Online orders until someone sends them to the factory (recommended)' }, { value: 'paid', label: 'Go to the factory by themselves once paid' }, { value: 'placed', label: 'Go to the factory by themselves as soon as placed' }] })}
     <p class="muted">The secret is kept on the server only. Nobody on your team can see it again, and only orders from now on come in.${demo ? ' <strong>Demo mode:</strong> any store name and keys work, and a made-up shop is used.' : ''}</p>`, {
     okLabel: 'Connect',
     onOk: async (w) => {
       const g = (id) => (w.querySelector('#' + id) || {}).value || '';
       const ok = w.querySelector('#modal-ok'); ok.disabled = true; ok.textContent = 'Connecting…';
       try {
-        const r = await store.shopifyCall('connect', { domain: g('sh-domain'), clientId: g('sh-id'), clientSecret: g('sh-secret'), importWhen: g('sh-when') });
+        const r = await store.shopifyCall('connect', { domain: g('sh-domain'), clientId: g('sh-id'), clientSecret: g('sh-secret'), importWhen: g('sh-when') === 'placed' ? 'placed' : 'paid', sendToFactory: g('sh-when') === 'manual' ? 'manual' : 'auto' });
         toast('Connected to ' + (r.shopName || 'your shop') + '. Now bring your products in.');
       } catch (e) { toast(e.message, 'warn'); ok.disabled = false; ok.textContent = 'Connect'; return false; }
     }
@@ -888,16 +894,19 @@ async function shopSync(btn) {
   if (!r) return;
   if (r.skipped) { toast('Not checked: ' + r.skipped, 'warn'); return; }
   const n = (r.brought || []).filter(x => x.orders && x.orders.length);
-  toast(n.length ? n.map(x => x.order + ' → ' + x.orders.join(', ')).join(' · ') : 'No new online orders');
+  const w = (r.brought || []).filter(x => x.waiting);
+  toast(n.length || w.length ? [...n.map(x => x.order + ' → ' + x.orders.join(', ')), ...(w.length ? [w.map(x => x.order).join(', ') + ' waiting in Online orders'] : [])].join(' · ') : 'No new online orders');
 }
 async function shopDisconnect() {
   if (!confirm('Disconnect ' + ((shop && shop.shopName) || 'the shop') + '? Online orders stop coming in. Orders already here stay.')) return;
   if (await shopRun('disconnect')) toast('Shop disconnected');
 }
 async function shopWhen(value) {
-  if (await shopRun('settings', '', null, { importWhen: value })) { toast(value === 'placed' ? 'Online orders come in as soon as they are placed' : 'Online orders come in once they are paid'); return; }
+  if (await shopRun('settings', '', null, { importWhen: value === 'placed' ? 'placed' : 'paid', sendToFactory: value === 'manual' ? 'manual' : 'auto' })) {
+    toast(value === 'manual' ? 'Online orders wait in Online orders until someone sends them to the factory' : value === 'placed' ? 'Online orders go to the factory as soon as they are placed' : 'Online orders go to the factory once they are paid'); return;
+  }
   const sel = document.getElementById('shop-when');     // not saved: show what is really set
-  if (sel) sel.value = (shop && shop.importWhen) === 'placed' ? 'placed' : 'paid';
+  if (sel) sel.value = shop && shop.sendToFactory === 'auto' ? (shop.importWhen === 'placed' ? 'placed' : 'paid') : 'manual';
 }
 
 // ----------------------------------------------------------------- roles ----
@@ -1104,6 +1113,7 @@ async function onAction(e) {
   if (viewOnly(view) && !LOOK_ONLY.has(b.dataset.act)) { toast('Your role can only look at this screen. Ask the owner if you need to change things here.', 'warn'); return; }
   const id = b.dataset.id;
   if (b.dataset.act.startsWith('pos-') || b.dataset.act.startsWith('till-') || b.dataset.act.startsWith('ss-')) return posAction(b.dataset.act, b);
+  if (b.dataset.act.startsWith('ol-')) return onlineAction(b.dataset.act, b);
   if (b.dataset.act.startsWith('today-')) return todayAction(b, (to, sub) => {
     if (!allowedViews(store.getUser()).includes(to)) { toast('Your role does not open that screen', 'warn'); return; }
     if (to === 'invoices' && sub) setInvView(sub);
