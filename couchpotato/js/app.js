@@ -376,8 +376,10 @@ function showApp(user) {
         <span class="who">${esc(user.name || user.email)}<span class="role">${esc(store.roleLabel(user.role))}</span></span>
         <button class="btn ghost sm" id="sign-out">Sign out</button>
       </div>
+      <button class="menu-btn" id="menu-btn" aria-expanded="false" aria-controls="mnav"><span class="menu-now" id="menu-now"></span><span class="menu-ico" aria-hidden="true"><i></i><i></i><i></i></span><span class="menu-word">Menu</span></button>
     </header>
     <nav class="tabs" id="tabs">${navHtml(user)}</nav>
+    <div class="mnav" id="mnav" hidden role="dialog" aria-label="Menu">${mnavHtml(user)}</div>
     ${user.pendingInvite ? `<div class="invite-bar">You have been invited to join <strong>${esc(user.pendingInvite.companyName || 'another company')}</strong>${user.pendingInvite.role ? ' as ' + esc(user.pendingInvite.role) : ''}. You keep ${esc(settings.name || 'this company')} as well.
       <button class="btn sm" id="inv-accept">Join ${esc(user.pendingInvite.companyName || 'them')}</button><button class="btn sm ghost" id="inv-decline">No thanks</button></div>` : ''}
     ${store.accessState() !== 'ok' ? `<div class="readonly-bar">Read only — ${esc((LOCK_TEXT[store.accessState()] || [''])[0].toLowerCase())}. ${store.getUser().role === 'owner' ? '<button class="btn sm" id="ro-pay">Subscribe</button>' : 'Ask the owner to subscribe.'}</div>` : ''}
@@ -391,6 +393,16 @@ function showApp(user) {
   if (idl) idl.addEventListener('click', async () => { try { await store.declineInvite(); } catch (e) { toast('Could not decline: ' + e.message, 'warn'); } });
 
   document.getElementById('sign-out').addEventListener('click', signOutAndReset);
+  // the phone menu: one button, a sheet with every screen; picking one closes it
+  document.getElementById('menu-btn').addEventListener('click', () => openMobileMenu(document.getElementById('mnav').hidden));
+  document.getElementById('mnav').addEventListener('click', (e) => {
+    if (e.target.closest('[data-mclose]')) return openMobileMenu(false);
+    if (e.target.closest('#m-sign-out')) { openMobileMenu(false); return signOutAndReset(); }
+    const b = e.target.closest('[data-view]');
+    if (b && allowedViews(store.getUser()).includes(b.dataset.view)) { openMobileMenu(false); closeMenus(); view = b.dataset.view; paint(); window.scrollTo(0, 0); }
+  });
+  const msw = document.getElementById('co-switch-m');
+  if (msw) msw.addEventListener('change', async () => { try { await store.switchCompany(msw.value); location.reload(); } catch (e) { toast('Could not switch: ' + e.message, 'warn'); } });
   document.getElementById('tabs').addEventListener('click', (e) => {
     const g = e.target.closest('[data-group]');
     if (g) { toggleMenu(g); return; }
@@ -434,6 +446,36 @@ function navHtml(user) {
   return parts.join('');
 }
 
+// The phone menu: every screen the person may open, grouped as on the bar,
+// with who is signed in, the company switch and Sign out at the foot.
+function mnavHtml(user) {
+  const ok = allowedViews(user);
+  const item = (n) => `<button class="mnav-item" data-view="${n.key}">${esc(n.label)}</button>`;
+  const parts = [];
+  if (ok.includes('home')) parts.push(`<div class="mnav-group"><button class="mnav-item big" data-view="home">Today</button></div>`);
+  GROUPS.forEach(([g, label]) => {
+    const items = NAV.filter(n => n.group === g && ok.includes(n.key));
+    if (items.length) parts.push(`<div class="mnav-group"><div class="mnav-head">${esc(label)}</div>${items.map(item).join('')}</div>`);
+  });
+  const rest = NAV.filter(n => !n.group && n.key !== 'home' && ok.includes(n.key));
+  if (rest.length) parts.push(`<div class="mnav-group"><div class="mnav-head">More</div>${rest.map(item).join('')}</div>`);
+  const cos = store.myCompanies();
+  return `<div class="mnav-top"><span class="mnav-brand">${esc(settings.name || (store.getCompany() || {}).name || PRODUCT.name)}</span><button class="mnav-close" data-mclose aria-label="Close the menu">✕</button></div>
+    <div class="mnav-body">${parts.join('')}</div>
+    <div class="mnav-foot">
+      <div class="mnav-who"><strong>${esc(user.name || user.email)}</strong><span>${esc(store.roleLabel(user.role))}${store.storeMode() === 'demo' ? ' · demo' : ''}</span></div>
+      ${cos.length > 1 ? `<label class="mnav-co"><span>Company</span><select id="co-switch-m">${cos.map(c => `<option value="${esc(c.id)}" ${c.id === user.companyId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>` : ''}
+      <button class="btn ghost wide" id="m-sign-out">Sign out</button>
+    </div>`;
+}
+function openMobileMenu(open) {
+  const m = document.getElementById('mnav'), b = document.getElementById('menu-btn');
+  if (!m || !b) return;
+  m.hidden = !open;
+  b.setAttribute('aria-expanded', open ? 'true' : 'false');
+  document.documentElement.classList.toggle('mnav-open', !!open);
+}
+
 function closeMenus() {
   document.querySelectorAll('.tab-menu').forEach(m => { m.hidden = true; });
   document.querySelectorAll('.tab-group').forEach(b => b.setAttribute('aria-expanded', 'false'));
@@ -452,11 +494,13 @@ function toggleMenu(btn) {
   btn.setAttribute('aria-expanded', 'true');
 }
 document.addEventListener('click', (e) => { if (!e.target.closest('.tab-group, .tab-menu')) closeMenus(); });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenus(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeMenus(); openMobileMenu(false); } });
 window.addEventListener('resize', closeMenus);
 
 function markActive() {
-  document.querySelectorAll('#tabs [data-view]').forEach(t => t.classList.toggle('on', t.dataset.view === view));
+  document.querySelectorAll('#tabs [data-view], #mnav [data-view]').forEach(t => t.classList.toggle('on', t.dataset.view === view));
+  const now = document.getElementById('menu-now');
+  if (now) now.textContent = view === 'home' ? 'Today' : (NAV.find(n => n.key === view) || {}).label || '';
   document.querySelectorAll('#tabs .tab-group').forEach(b => {
     const cur = NAV.find(n => n.key === view && n.group === b.dataset.group);
     b.classList.toggle('on', !!cur);

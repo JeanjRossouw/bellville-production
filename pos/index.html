@@ -61,9 +61,11 @@
         <div class="who" id="who"></div>
         <button class="btn ghost sm" id="lock" title="Back to the PIN pad">Lock</button>
         <button class="btn sm" id="sign-out">Sign out</button>
+        <button class="menu-btn" id="menu-btn" aria-expanded="false" aria-controls="mnav"><span class="menu-now" id="menu-now"></span><span class="menu-ico" aria-hidden="true"><i></i><i></i><i></i></span><span class="menu-word">Menu</span></button>
       </div>
     </header>
     <nav class="tabs" id="nav"></nav>
+    <div class="mnav" id="mnav" hidden role="dialog" aria-label="Menu"></div>
     <div id="offline-bar" class="offline-bar" hidden></div>
     <main class="shell" id="screen"></main>
   </div>
