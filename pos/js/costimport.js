@@ -4,7 +4,8 @@
 // company with its SKU, barcode, price and cost), fills in the Cost column,
 // and brings it back. A supplier's own price list or the Shopify product CSV
 // works too: any CSV with a cost column and a SKU, barcode, handle or name
-// to find the item by.
+// to find the item by. Names are compared on letters and digits only, and a
+// supplier's model code (UVL601) is found inside our own product names.
 //
 // It changes only costCents on products and variants that are already here
 // (and updatedBy/updatedAt). It never creates or deletes anything, and never
@@ -19,6 +20,9 @@ import { randsOf } from './money.js';
 const low = (s) => String(s == null ? '' : s).trim().toLowerCase();
 const norm = (h) => low(h).replace(/[^a-z0-9]/g, '');
 const handleOf = (name) => String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const skuKey = (s) => low(s).replace(/^'+/, '');           // Excel and Shopify sometimes keep a leading apostrophe
+// a supplier's model code in a name (UVL601, LF-T508T, TH32): letters and digits, starting with a letter, 3 or more long
+const codesIn = (name) => (String(name || '').match(/[A-Za-z][A-Za-z0-9-]*\d[A-Za-z0-9-]*/g) || []).map(norm).filter(c => c.length >= 3);
 const vkey = (vals) => Object.keys(vals || {}).sort().map(k => low(k) + '=' + low(vals[k])).join('|');
 const SHEET_HEAD = ['Product', 'Variant', 'SKU', 'Barcode', 'Price', 'Cost'];
 
@@ -79,9 +83,11 @@ export function planCosts(text, d, eid) {
   const index = (keyOf) => { const m = new Map(); for (const it of items) for (const k of keyOf(it)) if (k) { if (!m.has(k)) m.set(k, []); if (!m.get(k).includes(it)) m.get(k).push(it); } return m; };
   const withVariants = new Set(d.variants.map(v => v.productId));
   // a product with variants is costed per variant by SKU and barcode; its own SKU and barcode (if any) name the product
-  const bySku = index(it => [low(it.v ? it.v.sku : it.p.sku)]);
+  const bySku = index(it => [skuKey(it.v ? it.v.sku : it.p.sku)]);
   const byCode = index(it => ((it.v ? it.v.barcodes : it.p.barcodes) || []).map(low));
-  const byName = index(it => [it.v ? low(it.p.name) + '|' + low(it.v.name) : low(it.p.name)]);
+  // names compared on letters and digits only: "UVB &UVA" and "UVB & UVA" are the same
+  const byName = index(it => [it.v ? norm(it.p.name) + '|' + norm(it.v.name) : norm(it.p.name)]);
+  const byModel = index(it => codesIn(it.v ? it.v.name : it.p.name));
   const byHandle = index(it => [low(it.p.shopifyHandle || handleOf(it.p.name)) + '|' + (it.v ? vkey(it.v.optionValues) : '')]);
   const cell = (r, i) => (i >= 0 ? String(r[i] == null ? '' : r[i]).trim() : '');
   const changes = new Map(), same = [], missing = [], bad = [];
@@ -98,10 +104,12 @@ export function planCosts(text, d, eid) {
     if (Number.isNaN(cents) || cents < 0) { bad.push({ line, what, cost: cell(r, col.cost) }); return; }
     const opts = {}; col.opts.forEach(o => { const k = cell(r, o.name), v = cell(r, o.value); if (v && v !== 'Default Title') opts[k || 'Option'] = v; });
     const tries = [
-      bySku.get(low(cell(r, col.sku))), byCode.get(low(cell(r, col.barcode))),
+      bySku.get(skuKey(cell(r, col.sku))), byCode.get(low(cell(r, col.barcode))),
       col.handle >= 0 ? byHandle.get(low(cell(r, col.handle)) + '|' + vkey(opts)) : null,
       col.handle >= 0 && !Object.keys(opts).length ? byHandle.get(low(cell(r, col.handle)) + '|') : null,
-      name ? byName.get(low(name) + (cell(r, col.variant) ? '|' + low(cell(r, col.variant)) : '')) : null
+      name ? byName.get(norm(name) + (cell(r, col.variant) ? '|' + norm(cell(r, col.variant)) : '')) : null,
+      // last: the row's SKU, or a code in its name, found in exactly one of our product names
+      ...[norm(cell(r, col.sku)), ...codesIn(name)].filter(c => c.length >= 3).map(c => byModel.get(c))
     ];
     // the first key that points at exactly one item
     const hit = tries.find(t => t && t.length === 1);
