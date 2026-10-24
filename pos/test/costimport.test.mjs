@@ -41,6 +41,8 @@ await put('pos/retail/variants/v_l', { productId: 'p_kit', name: 'Large', option
 await prod('p_lamp', 'RC', { name: 'Basking Lamp', priceCents: 19500, costCents: 10000 });
 await prod('p_d1', 'RC', { name: 'Dup A', sku: 'DUP', barcodes: ['7001'], priceCents: 5000, costCents: 0 });
 await prod('p_d2', 'RC', { name: 'Dup B', sku: 'DUP', barcodes: ['7002'], priceCents: 5000, costCents: 0 });
+await prod('p_uv', 'RC', { name: 'Giangarden UVL601 UVB &UVA LED Fixture Plus', sku: "'10296", priceCents: 87000, costCents: 0 });
+await prod('p_th', 'RC', { name: 'Thermo-hygrometer TH32 digital', sku: '', priceCents: 15000, costCents: 0 });
 await prod('p_bf', 'BF', { name: 'Heat Mat (furniture shop)', sku: 'HM8', priceCents: 30000, costCents: 9900, vatClass: 'standard' });
 
 let server = null;
@@ -68,26 +70,28 @@ R.intro = await txt('#modal .modal-body');
 check('the window says only the cost changes, and VAT included for a company not registered', /Only the cost changes/.test(R.intro) && /VAT included/.test(R.intro) && /not VAT registered/.test(R.intro), R.intro);
 const [dl] = await Promise.all([p.waitForEvent('download'), p.click('[data-ci=sheet]')]);
 R.sheetName = dl.suggestedFilename(); R.sheet = fs.readFileSync(await dl.path(), 'utf8').replace(/^﻿/, '').split('\r\n');
-check('the costs sheet: heading, one row per simple product and per variant (not the kit itself), price and cost now', /^costs-RC-/.test(R.sheetName) && R.sheet[0] === 'Product,Variant,SKU,Barcode,Price,Cost' && R.sheet.length === 7
+check('the costs sheet: heading, one row per simple product and per variant (not the kit itself), price and cost now', /^costs-RC-/.test(R.sheetName) && R.sheet[0] === 'Product,Variant,SKU,Barcode,Price,Cost' && R.sheet.length === 9
   && R.sheet.includes('Gecko Kit,Large,LGK-L,6002,1899.00,0.00') && R.sheet.includes('Gecko Kit,Small,LGK-S,,1299.00,0.00') && R.sheet.includes('Heat Mat 8W,,HM8,6001,249.00,0.00') && R.sheet.includes('Basking Lamp,,,,195.00,100.00') && !R.sheet.some(l => /furniture/.test(l)), R.sheet);
 
 // ---- a filled-in sheet the way Excel saves it where the decimal mark is a comma
-const filled = ['SKU;Barcode;Product;Variant;Cost', 'HM8;;;;120,50', 'LGK-S;;;;300', ';6002;;;R 1 450.00', ';;Basking Lamp;;100.00', 'DUP;;;;55', 'NOPE;;;;10', ';;Heat Mat 8W;;abc', ';;Basking Lamp;;', ';7002;;;12.5'].join('\r\n');
+const filled = ['SKU;Barcode;Product;Variant;Cost', 'HM8;;;;120,50', 'LGK-S;;;;300', ';6002;;;R 1 450.00', ';;Basking Lamp;;100.00', 'DUP;;;;55', 'NOPE;;;;10', ';;Heat Mat 8W;;abc', ';;Basking Lamp;;', ';7002;;;12.5', 'UVL601;;Giangarden UVL601 UVB & UVA LED Fixture Plus;;500,25', 'TH32;;Giangarden TH32 Digital Thermo-hygrometer;;100,05'].join('\r\n');
 await p.setInputFiles('#ci-file', { name: 'costs.csv', mimeType: 'text/csv', buffer: Buffer.from(filled) });
 await p.waitForSelector('#ci-plan .ci-sum'); R.plan = await txt('#ci-plan');
-check('the preview: 5 to change (the kit from its variants), 1 the same, 1 blank, 2 not found, 1 not a number', /5 costs to change · 1 the same · 1 left blank · 2 not found · 1 not a number/.test(R.plan), R.plan);
+check('the preview: 7 to change (the kit from its variants), 1 the same, 1 blank, 2 not found, 1 not a number', /7 costs to change · 1 the same · 1 left blank · 2 not found · 1 not a number/.test(R.plan), R.plan);
 check('the preview lines', /Heat Mat 8W R 0\.00 → R 120\.50/.test(R.plan) && /Gecko Kit · Small R 0\.00 → R 300\.00/.test(R.plan) && /Gecko Kit · Large R 0\.00 → R 1,450\.00/.test(R.plan) && /Gecko Kit R 0\.00 → R 300\.00 \(from its variants\)/.test(R.plan) && /Dup B R 0\.00 → R 12\.50/.test(R.plan), R.plan);
 await p.click('.ci-miss summary >> nth=0'); R.miss = await txt('.ci-miss >> nth=0');
 check('not found: the shared SKU says so, the unknown one by line', /Line 6: DUP \(more than one product matches\)/.test(R.miss) && /Line 7: NOPE/.test(R.miss), R.miss);
 await p.click('#modal-ok'); R.saved = await toast();
-check('saved', /5 costs saved/.test(R.saved) && await p.locator('#modal').count() === 0, R.saved);
+check('saved', /7 costs saved/.test(R.saved) && await p.locator('#modal').count() === 0, R.saved);
 await p.waitForTimeout(600);
 const mat = await one('products/p_mat'), kit = await one('products/p_kit'), vs = await one('variants/v_s'), vl = await one('variants/v_l'), lamp = await one('products/p_lamp'), d1 = await one('products/p_d1'), d2 = await one('products/p_d2'), bf = await one('products/p_bf');
 check('the costs in cents', mat.costCents === 12050 && vs.costCents === 30000 && vl.costCents === 145000 && kit.costCents === 30000 && d2.costCents === 1250 && d1.costCents === 0 && lamp.costCents === 10000, [mat.costCents, vs.costCents, vl.costCents, kit.costCents, d1.costCents, d2.costCents, lamp.costCents]);
 check('nothing else changed: price, name, both barcodes, both pictures, VAT class, the stamps; who and when written', mat.priceCents === 24900 && mat.name === 'Heat Mat 8W' && mat.barcodes.join() === '6001,6001-old' && mat.images.length === 2 && mat.vatClass === 'zero' && mat.createdBy === 'server' && mat.updatedBy === mgr.localId && vl.priceCents === 189900 && vs.priceCents === null, mat);
+const uv = await one('products/p_uv'), th = await one('products/p_th');
+check('a supplier list: "UVB & UVA" found as "UVB &UVA" (letters and digits only), TH32 found inside another name', uv.costCents === 50025 && th.costCents === 10005, [uv.costCents, th.costCents]);
 check('the furniture shop’s HM8 untouched', bf.costCents === 9900 && !bf.updatedBy, bf);
 R.audit = (await coll('auditLog')).find(a => a.action === 'product.costImport');
-check('one audit row with before and after', R.audit && R.audit.entityId === 'RC' && R.audit.details.changed === 5 && R.audit.details.changes.some(c => c.id === 'p_mat' && c.fromCents === 0 && c.toCents === 12050) && R.audit.details.changes.some(c => c.id === 'v_s' && c.fromCents === null), R.audit);
+check('one audit row with before and after', R.audit && R.audit.entityId === 'RC' && R.audit.details.changed === 7 && R.audit.details.changes.some(c => c.id === 'p_mat' && c.fromCents === 0 && c.toCents === 12050) && R.audit.details.changes.some(c => c.id === 'v_s' && c.fromCents === null), R.audit);
 R.list = await txt('.pr-tbl'); check('the list shows the cost and margin', /Heat Mat 8W/.test(R.list) && /R 120\.50 R 249\.00 51\.6%/.test(R.list), R.list.slice(0, 500));
 
 // ---- the Shopify product CSV as a costs file: only the edited cost changes
@@ -98,7 +102,7 @@ shop = shop.replace(R.shopRow, R.shopRow.replace(/,120\.50$/, ',130.00'));
 await p.click('[data-act=pr-costs]'); await p.waitForSelector('#modal');
 await p.setInputFiles('#ci-file', { name: 'products.csv', mimeType: 'text/csv', buffer: Buffer.from(shop) });
 await p.waitForSelector('#ci-plan .ci-sum'); R.plan2 = await txt('#ci-plan');
-check('the Shopify CSV: one cost to change, the rest the same (found by SKU and handle with options)', /^1 cost to change · 5 the same · 0 left blank/.test(R.plan2) && /Heat Mat 8W R 120\.50 → R 130\.00/.test(R.plan2), [R.plan2, R.shopRow]);
+check('the Shopify CSV: one cost to change, the rest the same (found by SKU and handle with options)', /^1 cost to change · 7 the same · 0 left blank/.test(R.plan2) && /Heat Mat 8W R 120\.50 → R 130\.00/.test(R.plan2), [R.plan2, R.shopRow]);
 await p.click('#modal-ok'); await toast(); await p.waitForTimeout(500);
 check('saved: R 130', (await one('products/p_mat')).costCents === 13000);
 
