@@ -102,7 +102,7 @@ await p.click('#modal [data-rc=a4]'); await p.waitForTimeout(200); R.a4 = await 
 await p.click('#modal-ok'); await p.waitForTimeout(300);
 
 // 4. the Sales tab: today's three, a reprint marked COPY
-await p.click('#nav [data-view=sales]'); await p.waitForTimeout(800);
+await p.evaluate(() => document.querySelector('#nav [data-view=sales]').click()); await p.waitForTimeout(800);
 R.salesRows = await p.$$eval('#screen .tbl tbody tr', r => r.map(x => x.innerText.replace(/\s+/g, ' ').trim()));
 check('three sales listed, newest first, with their kinds', R.salesRows.length === 3 && /BF-000003 Tax invoice/.test(R.salesRows[0]) && /Sipho Dlamini/.test(R.salesRows[0]) && /BF-000001 Till slip/.test(R.salesRows[2]), R.salesRows);
 await p.click('[data-act=sa-open][data-id]'); await p.waitForSelector('#modal .rc-paper'); await p.waitForTimeout(300);

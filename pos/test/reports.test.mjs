@@ -49,12 +49,12 @@ await ctx.addInitScript(() => { window.__printed = []; window.open = () => { con
 const p = await ctx.newPage();
 p.on('pageerror', e => errs.push('PAGEERROR ' + e.message)); p.on('console', m => { if (m.type() === 'error' && !/ERR_|net::|favicon|emulator|WebChannel|transport errored|Failed to load resource/i.test(m.text())) errs.push(m.text().slice(0, 200)); });
 const toast = async () => { await p.waitForTimeout(500); return (await p.locator('#toast').innerText().catch(() => '')).trim(); };
-const nav = async (v) => { await p.click('#nav [data-view=' + v + ']'); await p.waitForTimeout(600); };
+const nav = async (v) => { await p.evaluate((v) => document.querySelector('#nav [data-view="' + v + '"]').click(), v); await p.waitForTimeout(600); };
 const screenText = () => p.locator('#screen').innerText().then(t => t.replace(/\s+/g, ' ').trim());
 
 await p.goto(BASE, { waitUntil: 'load' });
 await p.waitForSelector('#login-form'); await p.fill('#login-email', 'owner@shop.co.za'); await p.fill('#login-pass', 'secret123'); await p.click('#login-submit');
-await p.waitForSelector('#nav [data-view=reports]'); await p.waitForTimeout(1500);
+await p.waitForSelector('#nav [data-view=reports]', { state: 'attached' }); await p.waitForTimeout(1500);
 
 // ---- the dashboard on Home
 await nav('home'); await p.waitForSelector('.dash-card', { timeout: 15000 }); await p.waitForTimeout(300);

@@ -53,7 +53,10 @@ async function main() {
     if (b) { openMobileMenu(false); const t = $('nav').querySelector(`[data-view="${b.dataset.view}"]`); if (t) t.click(); window.scrollTo(0, 0); }
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('mnav').hidden) openMobileMenu(false); });
-  $('nav').addEventListener('click', (e) => { const b = e.target.closest('[data-view]'); if (b) { if (view === 'stock' && b.dataset.view !== 'stock' && stock.st.camera) stock.action('st-camera', b); view = b.dataset.view; editId = ''; if (view === 'register') register.reg.stale = true; paint(); } });
+  // a click outside an open drop-down, or Escape, puts it away
+  document.addEventListener('click', (e) => { if (!e.target.closest('#nav')) closeMenus(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenus(); });
+  $('nav').addEventListener('click', (e) => { const g = e.target.closest('[data-group]'); if (g) return toggleMenu(g); const b = e.target.closest('[data-view]'); if (b) { closeMenus(); if (view === 'stock' && b.dataset.view !== 'stock' && stock.st.camera) stock.action('st-camera', b); view = b.dataset.view; editId = ''; if (view === 'register') register.reg.stale = true; paint(); } });
   await auth.boot();
   sync.setContext({ repaint: () => { paintBanner(); reloadOffsets(); if (view === 'register') paint(); }, storeId: sellStoreId });   // reloadOffsets repaints Sell itself
   sync.watchNetwork();
@@ -278,16 +281,49 @@ function openMobileMenu(open) {
   $('menu-btn').setAttribute('aria-expanded', open ? 'true' : 'false');
   document.documentElement.classList.toggle('mnav-open', !!open);
 }
+// The screens this person may open, in menu order. Those with a group sit in
+// a drop-down on the bar (a group with one screen shows as a plain tab); the
+// phone sheet lists them all in the same order.
+const GROUPS = { sales: 'Sales', stock: 'Stock', office: 'Office' };
 function navItems() {
   const out = [];
-  if (sellStoreId()) out.push({ key: 'sell', label: 'Sell' }, { key: 'sales', label: 'Sales' }, { key: 'returns', label: 'Returns' }, { key: 'laybys', label: 'Lay-bys' }, { key: 'orders', label: 'Custom orders' });
-  if (sellStoreId()) out.push({ key: 'customers', label: 'Customers' });
-  if (sellStoreId() && auth.atLeast('supervisor')) out.push({ key: 'stock', label: 'Stock' }, { key: 'buying', label: 'Buying' }, { key: 'online', label: 'Online' });
+  const store = !!sellStoreId();
+  if (store) out.push({ key: 'sell', label: 'Sell' });
   if (register.registerId()) out.push({ key: 'register', label: 'Register' });
-  out.push({ key: 'home', label: 'Home' }, { key: 'products', label: 'Products' });
-  if (auth.atLeast('manager')) out.push({ key: 'reports', label: 'Reports' }, { key: 'admin', label: 'Admin' });
+  out.push({ key: 'home', label: 'Home' });
+  if (store) out.push({ key: 'sales', label: 'Sales', group: 'sales' }, { key: 'returns', label: 'Returns', group: 'sales' }, { key: 'laybys', label: 'Lay-bys', group: 'sales' }, { key: 'orders', label: 'Custom orders', group: 'sales' }, { key: 'customers', label: 'Customers', group: 'sales' });
+  if (store && auth.atLeast('supervisor')) out.push({ key: 'stock', label: 'Stock', group: 'stock' }, { key: 'buying', label: 'Buying', group: 'stock' });
+  out.push({ key: 'products', label: 'Products', group: 'stock' });
+  if (store && auth.atLeast('supervisor')) out.push({ key: 'online', label: 'Online', group: 'stock' });
+  if (auth.atLeast('manager')) out.push({ key: 'reports', label: 'Reports', group: 'office' }, { key: 'admin', label: 'Admin', group: 'office' });
   out.push({ key: 'me', label: 'My PIN' });
   return out;
+}
+// The bar: plain tabs, and a drop-down per group (it says which of its
+// screens is open, so you always see where you are).
+function navHtml(items) {
+  const seen = new Set(), parts = [];
+  items.forEach(n => {
+    if (!n.group) { parts.push(`<button class="tab${n.key === view ? ' on' : ''}" data-view="${n.key}">${esc(n.label)}</button>`); return; }
+    if (seen.has(n.group)) return;
+    seen.add(n.group);
+    const members = items.filter(x => x.group === n.group);
+    if (members.length === 1) { parts.push(`<button class="tab${n.key === view ? ' on' : ''}" data-view="${n.key}">${esc(n.label)}</button>`); return; }
+    const cur = members.find(x => x.key === view);
+    parts.push(`<div class="tab-wrap"><button class="tab tab-group${cur ? ' has-on' : ''}" data-group="${n.group}" aria-haspopup="true" aria-expanded="false"><span>${esc(GROUPS[n.group])}</span>${cur ? `<span class="tg-now">· ${esc(cur.label)}</span>` : ''}<i class="caret" aria-hidden="true"></i></button>
+      <div class="tab-menu" data-menu="${n.group}" hidden role="menu">${members.map(x => `<button class="tab tab-item${x.key === view ? ' on' : ''}" data-view="${x.key}" role="menuitem">${esc(x.label)}</button>`).join('')}</div></div>`);
+  });
+  return parts.join('');
+}
+function closeMenus() {
+  document.querySelectorAll('#nav .tab-menu').forEach(m => { m.hidden = true; });
+  document.querySelectorAll('#nav [data-group]').forEach(g => g.setAttribute('aria-expanded', 'false'));
+}
+function toggleMenu(g) {
+  const m = $('nav').querySelector(`[data-menu="${g.dataset.group}"]`); if (!m) return;
+  const open = m.hidden;
+  closeMenus();
+  m.hidden = !open; g.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 // the Admin sub-screens: companies and stores are the owner's; the rest a manager's too
 function adminSubs() {
@@ -305,7 +341,7 @@ const prEntityId = () => { const t = document.querySelector('.pr-tbl'); if (t) r
 function paint() {
   if (!auth.session.user) return;
   const items = navItems();
-  $('nav').innerHTML = items.map(n => `<button class="tab${n.key === view ? ' on' : ''}" data-view="${n.key}">${esc(n.label)}</button>`).join('');
+  $('nav').innerHTML = navHtml(items);
   $('menu-now').textContent = (items.find(n => n.key === view) || { label: '' }).label;
   if (!$('mnav').hidden) paintMobileMenu(items);
   const screen = $('screen');
