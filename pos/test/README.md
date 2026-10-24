@@ -130,6 +130,13 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
 - `reports.test.mjs` — step 16 in the browser: the dashboard on Home, the
   Reports tab running daily sales, the CSV and the print, the Xero journal
   built and downloaded. `node pos/test/reports.test.mjs`
+- `overview.test.mjs` — All businesses, the owner's screen: two shop companies
+  (one with two stores) and two Factory Manager companies on the same login;
+  today, this week and this month against the same days before, refunds,
+  void invoices, credit notes and cancelled orders, what a factory invoiced
+  the owner's own shop kept out of the total, a new sale arriving live, a
+  phone with no sideways scroll, and no screen for a manager.
+  `node pos/test/overview.test.mjs`
 - `shopify-api.test.mjs` — step 17: `pos-shopify` against a mock Shopify in
   the test: connect, locations mapped, products linked by SKU with content
   pulled, stock pushed after a sale and by "push all", a webhook order

@@ -21,6 +21,7 @@ import * as reports from './reports.js';
 import * as online from './online.js';
 import * as assist from './assist.js';
 import * as tasks from './tasks.js';
+import * as overview from './overview.js';
 import { EMULATOR } from './db.js';
 
 const $ = (id) => document.getElementById(id);
@@ -60,6 +61,7 @@ async function main() {
   await auth.boot();
   sync.setContext({ repaint: () => { paintBanner(); reloadOffsets(); if (view === 'register') paint(); }, storeId: sellStoreId });   // reloadOffsets repaints Sell itself
   sync.watchNetwork();
+  overview.setContext({ repaint: () => { if (view === 'overview') paint(); }, shops: () => ({ entities, stores }) });
   if ('serviceWorker' in navigator && !EMULATOR) navigator.serviceWorker.register('./sw.js').catch(() => {});
   window.POS = { requireOverride: auth.requireOverride, forceIdle: auth.forceIdle, session: auth.session, version: APP_VERSION };   // for tests and the console
 }
@@ -97,6 +99,7 @@ function startData() {
   if (eid) getOne('settings', eid).then(s => auth.setIdleMinutes((s && s.session && s.session.idleLogoutMinutes) || DEFAULTS.idleLogoutMinutes)).catch(() => {});
 }
 function stopData() {
+  overview.stop();
   while (unwatch.length) { try { unwatch.pop()(); } catch (e) {} }
   if (unwatchStore) { try { unwatchStore(); } catch (e) {} unwatchStore = null; } watchedStore = ''; storeSales = []; storeLaybys = []; storeSpecials = []; storeSalesOrders = []; storeTasks = []; storeTakes = []; storePOs = []; storeGrvs = []; transfersOut = []; transfersIn = []; suppliers = []; discountCodes = []; stockLevels = [];   // or it would go on listening as the next person
   entities = []; stores = []; registers = []; users = []; devices = []; settings = {}; catalogue = []; variants = []; stockLevels = []; customers = [];
@@ -295,6 +298,7 @@ function navItems() {
   if (store && auth.atLeast('supervisor')) out.push({ key: 'stock', label: 'Stock', group: 'stock' }, { key: 'buying', label: 'Buying', group: 'stock' });
   out.push({ key: 'products', label: 'Products', group: 'stock' });
   if (store && auth.atLeast('supervisor')) out.push({ key: 'online', label: 'Online', group: 'stock' });
+  if (auth.session.user.role === 'owner') out.push({ key: 'overview', label: 'All businesses', group: 'office' });
   if (auth.atLeast('manager')) out.push({ key: 'reports', label: 'Reports', group: 'office' }, { key: 'admin', label: 'Admin', group: 'office' });
   out.push({ key: 'me', label: 'My PIN' });
   return out;
@@ -359,6 +363,7 @@ function paint() {
   if (view === 'buying') { startStoreData(); screen.innerHTML = buying.buyingHtml(); return; }
   if (view === 'customers') { screen.innerHTML = customersTab.customersHtml(); return; }
   if (view === 'reports') { screen.innerHTML = reports.reportsHtml(); return; }
+  if (view === 'overview') { screen.innerHTML = overview.overviewHtml(); return; }
   if (view === 'online') { screen.innerHTML = online.onlineHtml(); online.ensure(); return; }
   if (view === 'stock') { startStoreData(); screen.innerHTML = stock.stockHtml(); const sc = $('tk-scan'); if (sc && !document.activeElement.closest('#screen')) sc.focus(); return; }
   if (view === 'returns') { startStoreData(); screen.innerHTML = returns.returnsHtml(); const q = $('rt-q'); if (q && !document.activeElement.closest('#screen')) q.focus(); return; }
@@ -380,7 +385,7 @@ function goSub(sub) { adminSub = sub; editId = ''; paint(); }
 
 function homeHtml() {
   const u = auth.session.user, d = auth.session.device;
-  return `<div class="page-head"><h1>Home</h1></div>
+  return `<div class="page-head"><h1>Home</h1>${u.role === 'owner' ? '<button class="btn ghost" data-act="go-overview">All businesses</button>' : ''}</div>
     ${auth.atLeast('manager') ? '<div id="dash" class="dash"><p class="muted">Loading today’s figures…</p></div>' : ''}
     ${tasks.tasksHtml()}
     <div class="grid two">
@@ -509,6 +514,7 @@ async function onAction(e) {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const id = b.dataset.id;
   const w = $('screen');
+  if (b.dataset.act === 'go-overview') { view = 'overview'; paint(); window.scrollTo(0, 0); return; }
   if (b.dataset.act.startsWith('sl-')) return sell.action(b.dataset.act, b);
   if (b.dataset.act === 'sa-open') return salesTab.openSale(id, { ...sellData(), sales: storeSales });
   if (b.dataset.act.startsWith('rg-')) return register.action(b.dataset.act, b);

@@ -422,3 +422,20 @@ button.link { background: none; border: 0; padding: 0; color: var(--ink-2); text
 .billing-bar .btn.sm { padding: .35rem .7rem; }
 .billing-bar .link { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
 .login-link { display: block; width: 100%; margin-top: .8rem; background: none; border: 0; color: var(--ink-2); text-decoration: underline; cursor: pointer; font: inherit; font-size: 13px; }
+
+/* All businesses: every shop and factory, live */
+.ov-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr)); gap: .8rem; margin-bottom: 1rem; }
+.ov-biz { margin-bottom: 0; } .ov-all { margin-bottom: 1rem; }
+.ov-head { display: flex; align-items: center; justify-content: space-between; gap: .6rem; margin-bottom: .4rem; } .ov-head h2 { margin: 0; }
+.ov-periods { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem; }
+.ov-period { border: 1px solid var(--line); border-radius: 8px; padding: .55rem .65rem; min-width: 0; }
+.ov-plabel { font-family: var(--font-ui); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-bottom: .2rem; }
+.ov-big { font-family: var(--font-ui); font-weight: 700; font-size: 19px; margin-bottom: .15rem; overflow-wrap: anywhere; }
+.ov-was { font-size: 12px; } .ov-orders { font-size: 12.5px; margin-top: .35rem; padding-top: .35rem; border-top: 1px dashed var(--line); }
+.ov-note { font-size: 12.5px; margin: .1rem 0 .5rem; } .ov-periods + .ov-note { margin: .5rem 0 0; }
+.ov-stores { margin-top: .7rem; } .ov-stores td, .ov-stores th { font-size: 12.5px; }
+.ov-feed .tbl td { vertical-align: top; } .ov-when { white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; width: 1%; }
+.ov-refund td.r { color: var(--red); } .ov-order td.r { color: var(--muted); }
+@media (max-width: 640px) { .ov-periods { grid-template-columns: 1fr; } .ov-stores { display: block; overflow-x: auto; } }
+.ov-big .dash-delta, .ov-stores .dash-delta, .ov-feed td.r { white-space: nowrap; }
+@media (max-width: 640px) { .ov-when { white-space: normal; width: 3.4rem; font-size: 12px; } .ov-feed .chip { display: none; } .ov-feed td { padding-left: .35rem; padding-right: .35rem; } }
