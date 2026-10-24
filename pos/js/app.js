@@ -22,6 +22,7 @@ import * as online from './online.js';
 import * as assist from './assist.js';
 import * as tasks from './tasks.js';
 import * as overview from './overview.js';
+import { openCostImport } from './costimport.js';
 import { EMULATOR } from './db.js';
 
 const $ = (id) => document.getElementById(id);
@@ -545,6 +546,7 @@ async function onAction(e) {
     case 'pr-new': return products.openProductForm(prData(), '', prEntityId());
     case 'pr-edit': return products.openProductForm(prData(), id, '');
     case 'pr-export': { const n = products.exportCsv(prData(), prEntityId()); toast(n + ' rows exported'); return; }
+    case 'pr-costs': return openCostImport(prData(), prEntityId());
     case 'pr-labels': return products.printLabels(prData(), [...w.querySelectorAll('[data-lbl]:checked')].map(c => c.dataset.lbl), prEntityId());
     case 'rate-add': return admin.rateAdd(w);
     case 'rate-del': return admin.rateDel(w, b.dataset.i);

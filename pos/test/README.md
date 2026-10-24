@@ -137,6 +137,13 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   the owner's own shop kept out of the total, a new sale arriving live, a
   phone with no sideways scroll, and no screen for a manager.
   `node pos/test/overview.test.mjs`
+- `costimport.test.mjs` — Import costs on Products: the costs sheet out, a
+  filled-in sheet back with Excel's semicolons and decimal commas, found by
+  SKU, barcode or name; a product with variants takes its variants' lowest
+  cost; blank, unknown, doubtful and non-number rows left alone; only the
+  cost changes (prices, barcodes, pictures, VAT class, stamps kept); another
+  company's same SKU untouched; the audit row; the Shopify product CSV used
+  as a costs file. `node pos/test/costimport.test.mjs`
 - `shopify-api.test.mjs` — step 17: `pos-shopify` against a mock Shopify in
   the test: connect, locations mapped, products linked by SKU with content
   pulled, stock pushed after a sale and by "push all", a webhook order
