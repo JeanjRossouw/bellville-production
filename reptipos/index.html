@@ -4455,6 +4455,7 @@
             <button class="btn btn-pay" style="flex:1" onclick="addSupplier()">+ Add supplier</button>
             <button class="btn btn-ghost" style="flex:1" onclick="loadVendorSuppliers()" title="Create suppliers from your Shopify product vendors">↻ Load from Shopify</button>
           </div>
+          ${suppliersCache.length ? '<button class="btn btn-ghost" style="width:100%;margin-top:0.5rem" onclick="exportSuppliersForNewPos()" title="A CSV file to bring into Factory Manager POS: Buying → Suppliers → Import CSV">⬇ Download for the new POS</button>' : ''}
         </div>
         ${suppliersCache.length ? suppliersCache.map(s => { const b = balBySup[s.id] || 0; return `<div class="cust-result" style="cursor:default"><div><div style="font-weight:600">${esc(s.name)}</div><div style="font-size:0.72rem;color:var(--muted)">${esc(s.phone || '')}${s.phone && s.email ? ' · ' : ''}${esc(s.email || '')}</div></div><div style="text-align:right"><div style="font-size:0.7rem;color:var(--muted)">owing</div><div style="font-weight:700;color:${b > 0 ? 'var(--warn)' : 'var(--accent2)'}">${money(b)}</div></div></div>`; }).join('') : '<div class="empty" style="padding:1rem">No suppliers yet</div>'}`;
     } catch (e) { body.innerHTML = `<div class="empty" style="padding:1.5rem;color:var(--warn)">${esc(String(e.message || e))}</div>`; }
@@ -4466,6 +4467,29 @@
       await fbAdd('suppliers', { name, phone: (document.getElementById('sup-phone').value || '').trim(), email: (document.getElementById('sup-email').value || '').trim(), createdAt: new Date().toISOString() });
       toast('Supplier added'); suppliersCache = await fbList('suppliers', 'name', 'asc'); renderSuppliers();
     } catch (e) { toast('Failed: ' + (e.message || e)); }
+  }
+  // Moving to Factory Manager POS: every supplier as a CSV row (name, phone,
+  // email, what is still owed on unpaid GRVs and which ones), to bring in under
+  // Buying → Suppliers → Import CSV there.
+  async function exportSuppliersForNewPos() {
+    if (!fbReady()) { toast('Need a connection to read the suppliers'); return; }
+    try {
+      suppliersCache = await fbList('suppliers', 'name', 'asc');
+      let grvs = grvsCache; try { grvs = await fbList('grvs', 'createdAt', 'desc'); grvsCache = grvs; } catch (e) {}
+      const cell = (v) => { const t = v == null ? '' : String(v); return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+      const rows = [['Name', 'Phone', 'Email', 'Owing', 'Unpaid GRVs']];
+      suppliersCache.forEach(sp => {
+        const open = grvs.filter(g => g.supplierId === sp.id && (g.totalCents || 0) - (g.amountPaidCents || 0) > 0);
+        const owing = open.reduce((t, g) => t + (g.totalCents || 0) - (g.amountPaidCents || 0), 0);
+        rows.push([sp.name || '', sp.phone || '', sp.email || '', (owing / 100).toFixed(2),
+          open.map(g => (g.grvNumber || '') + (g.supplierRef ? ' inv ' + g.supplierRef : '') + ' R' + (((g.totalCents || 0) - (g.amountPaidCents || 0)) / 100).toFixed(2)).join('; ')]);
+      });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob(['\ufeff' + rows.map(r => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+      a.download = 'repticube-suppliers-' + new Date().toISOString().slice(0, 10) + '.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+      toast(suppliersCache.length + ' suppliers saved — import the file in the new POS: Buying → Suppliers → Import CSV');
+    } catch (e) { toast('Could not export: ' + (e.message || e)); }
   }
   async function loadVendorSuppliers() {
     const vendors = [...new Set(catalogue.map(p => p.vendor).filter(Boolean))];
@@ -5353,7 +5377,7 @@
     openDocs, closeDocs, docsTab, loadQuote, soAddPayment, soMarkReady, soFulfil, soCancel, printDocById,
     openDashboard, closeDashboard, setDashPeriod,
     openProfile, closeProfile, profileAttach, openClients, closeClients, clientSearch, clientOpen,
-    openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier, loadVendorSuppliers, receivePO, deletePO,
+    openGrv, closeGrv, grvTab, renderGrvSearch, grvSearchEnter, addGrvLine, grvSetQty, grvSetCost, grvRemove, confirmGrv, grvPay, printGrvById, addSupplier, loadVendorSuppliers, exportSuppliersForNewPos, receivePO, deletePO,
     openStocktake, closeStocktake, startStocktake, cancelStocktake, stSetFilter, stSetCount, stClear, stScanEnter, stAddItem, reconcileStocktake, exportStockCsv, exportStockXlsx, importStockFile, importCostsFile,
     openReorder, closeReorder, setReorderLevel, startPO, startBlankPO, poSetSupplier, poSearch, poAddItem, poBack, poSetQty, poSetCost, poRemove, sendPO,
     lockPOS, pinKey, openReg, closeReg, doOpenRegister, payInOut, printXZ, closeRegister, addStaff, removeStaff, editStaff, saveTaxSettings, saveLoyaltySettings, saveEnclosureSettings,
