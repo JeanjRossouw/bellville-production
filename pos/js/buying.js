@@ -14,6 +14,7 @@ import { poHtml, grvHtml, transferHtml } from './buying-doc.js';
 import { printLabelItems } from './products.js';
 import { items as stockItems } from './stock.js';
 import { icon } from './icons.js';
+import { parseCsv, csvObjects } from './csv.js';
 
 export const by = { sub: 'po', q: '', filter: 'open', edit: null, rcv: null, tr: null };
 let ctx = { repaint() {}, data: () => ({}) };
@@ -44,8 +45,8 @@ export function buyingHtml() {
 // ------------------------------------------------------- suppliers --
 function suppliersHtml(dd) {
   const list = suppliers();
-  return `<div class="toolbar">${mgr() ? `<button class="btn primary sm" data-act="by-sup-new">${icon('plus')} New supplier</button>` : ''}</div>
-    ${list.length ? `<div class="card" style="padding:0;overflow:auto"><table class="tbl"><thead><tr><th>Supplier</th><th>Contact</th><th>Terms</th><th>Lead</th><th>Products</th><th></th></tr></thead><tbody>${list.map(s => `<tr><td><strong>${esc(s.name)}</strong>${s.accountNo ? `<div class="muted">Account ${esc(s.accountNo)}</div>` : ''}</td><td>${esc(s.contact || '')}<div class="muted">${esc([s.phone, s.email].filter(Boolean).join(' · '))}</div></td><td>${s.termsDays ? s.termsDays + ' days' : '—'}</td><td>${s.leadDays ? s.leadDays + ' days' : '—'}</td><td>${(dd.products || []).filter(p => p.supplierId === s.id && !p.archived).length}</td><td class="r">${mgr() ? `<button class="btn ghost sm" data-act="by-sup-edit" data-id="${esc(s.id)}">Edit</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : empty('No suppliers yet', 'Add the people you buy from; products carry a supplier so orders can be suggested.')}`;
+  return `<div class="toolbar">${mgr() ? `<button class="btn primary sm" data-act="by-sup-new">${icon('plus')} New supplier</button><button class="btn sm" data-act="by-sup-import" title="A CSV with a Name column (and Phone, Email, Contact, Account no, Terms, Lead, Notes, Owing if you have them), e.g. the old ReptiCube POS's download">Import CSV</button>` : ''}</div>
+    ${list.length ? `<div class="card" style="padding:0;overflow:auto"><table class="tbl"><thead><tr><th>Supplier</th><th>Contact</th><th>Terms</th><th>Lead</th><th>Products</th><th></th></tr></thead><tbody>${list.map(s => `<tr><td><strong>${esc(s.name)}</strong>${s.accountNo ? `<div class="muted">Account ${esc(s.accountNo)}</div>` : ''}${s.openingOwedCents ? `<div class="muted">Owed when moved over: ${esc(money(s.openingOwedCents))}</div>` : ''}</td><td>${esc(s.contact || '')}<div class="muted">${esc([s.phone, s.email].filter(Boolean).join(' · '))}</div></td><td>${s.termsDays ? s.termsDays + ' days' : '—'}</td><td>${s.leadDays ? s.leadDays + ' days' : '—'}</td><td>${(dd.products || []).filter(p => p.supplierId === s.id && !p.archived).length}</td><td class="r">${mgr() ? `<button class="btn ghost sm" data-act="by-sup-edit" data-id="${esc(s.id)}">Edit</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : empty('No suppliers yet', 'Add the people you buy from; products carry a supplier so orders can be suggested.')}`;
 }
 function supplierForm(id) {
   const s = (d().suppliers || []).find(x => x.id === id) || {};
@@ -57,6 +58,68 @@ function supplierForm(id) {
       catch (e) { toast('Could not save: ' + e.message, 'warn'); return false; }
     }
   });
+}
+
+// Suppliers from a CSV (a spreadsheet, or the old ReptiCube POS's "Download
+// for the new POS"): new names are added to this company; ones already here
+// keep what they have and only get the details they were missing. What was
+// still owed in the old system is kept on the supplier, as a note of the
+// opening balance (it is paid and settled outside the till, e.g. in Xero).
+const COLS = { name: ['name', 'supplier', 'supplier name', 'vendor'], phone: ['phone', 'tel', 'telephone', 'cell', 'mobile'], email: ['email', 'e-mail'], contact: ['contact', 'contact person'],
+  accountNo: ['account no', 'account', 'account number', 'our account no'], termsDays: ['terms', 'terms days', 'payment terms', 'payment terms (days)'], leadDays: ['lead', 'lead days', 'lead time', 'lead time (days)'],
+  notes: ['notes', 'note'], owing: ['owing', 'owed', 'balance', 'amount owed'], unpaid: ['unpaid grvs', 'unpaid'] };
+function readSupplierCsv(text) {
+  const rows = csvObjects(parseCsv(text));
+  const pick = (r, k) => { const key = Object.keys(r).find(h => COLS[k].includes(h.trim().toLowerCase())); return key ? String(r[key] || '').trim() : ''; };
+  return rows.map(r => ({ name: pick(r, 'name'), phone: pick(r, 'phone'), email: pick(r, 'email'), contact: pick(r, 'contact'), accountNo: pick(r, 'accountNo'),
+    termsDays: Number(pick(r, 'termsDays')) || 0, leadDays: Number(pick(r, 'leadDays')) || 0, notes: pick(r, 'notes'),
+    owedCents: Math.max(0, centsOf(pick(r, 'owing'))), unpaid: pick(r, 'unpaid') })).filter(x => x.name);
+}
+function importSuppliers() {
+  const input = document.createElement('input'); input.type = 'file'; input.accept = '.csv,text/csv';
+  input.addEventListener('change', async () => {
+    const f = input.files && input.files[0]; if (!f) return;
+    let rows; try { rows = readSupplierCsv(await f.text()); } catch (e) { return toast('Could not read that file: ' + e.message, 'warn'); }
+    if (!rows.length) return toast('No suppliers in that file: it needs a column called Name.', 'warn');
+    const here = (d().suppliers || []).filter(s => s.entityId === d().entity.id);
+    const byName = (n) => here.find(s => String(s.name || '').trim().toLowerCase() === n.toLowerCase());
+    const plan = rows.map(r => {
+      const s = byName(r.name);
+      if (!s) return { r, kind: 'new' };
+      const fill = {}; ['phone', 'email', 'contact', 'accountNo'].forEach(k => { if (r[k] && !s[k]) fill[k] = r[k]; });
+      if (r.termsDays && !s.termsDays) fill.termsDays = r.termsDays;
+      if (r.leadDays && !s.leadDays) fill.leadDays = r.leadDays;
+      if (r.owedCents && !s.openingOwedCents) fill.openingOwedCents = r.owedCents;
+      return { r, s, kind: Object.keys(fill).length ? 'fill' : 'same', fill };
+    });
+    const n = (k) => plan.filter(x => x.kind === k).length;
+    const owed = rows.reduce((t, r) => t + r.owedCents, 0);
+    openModal('Import suppliers into ' + (d().entity.tradingName || d().entity.legalName || ''), `
+      <p>${rows.length} in the file: <strong>${n('new')} new</strong>, ${n('fill')} already here get missing details, ${n('same')} already here unchanged.${owed ? ` Owed in total when moved over: <strong>${esc(money(owed))}</strong> (kept on each supplier as its opening balance).` : ''}</p>
+      <div class="card" style="padding:0;max-height:50vh;overflow:auto"><table class="tbl"><thead><tr><th>Supplier</th><th>Contact</th><th class="r">Owing</th><th></th></tr></thead><tbody>
+      ${plan.map(x => `<tr><td><strong>${esc(x.r.name)}</strong>${x.r.unpaid ? `<div class="muted">${esc(x.r.unpaid)}</div>` : ''}</td><td class="muted">${esc([x.r.phone, x.r.email].filter(Boolean).join(' · '))}</td><td class="r">${x.r.owedCents ? esc(money(x.r.owedCents)) : ''}</td><td>${x.kind === 'new' ? '<span class="chip ok">new</span>' : x.kind === 'fill' ? '<span class="chip">add details</span>' : '<span class="chip off">already here</span>'}</td></tr>`).join('')}</tbody></table></div>`, {
+      okLabel: n('new') + n('fill') ? 'Import' : 'Close', onOk: async () => {
+        let done = 0;
+        try {
+          for (const x of plan) {
+            const owedNote = x.r.owedCents ? 'Owed ' + money(x.r.owedCents) + ' when moved over (' + niceDate(new Date().toISOString()) + ')' + (x.r.unpaid ? ': ' + x.r.unpaid : '') : '';
+            if (x.kind === 'new') {
+              await setOne('suppliers', newId('suppliers'), { name: x.r.name, contact: x.r.contact, phone: x.r.phone, email: x.r.email, accountNo: x.r.accountNo, termsDays: x.r.termsDays, leadDays: x.r.leadDays,
+                notes: [x.r.notes, owedNote].filter(Boolean).join(' · '), archived: false, openingOwedCents: x.r.owedCents, ...auth.stamp(d().entity.id, '') });
+              done++;
+            } else if (x.kind === 'fill') {
+              const notes = x.fill.openingOwedCents && owedNote ? [x.s.notes, owedNote].filter(Boolean).join(' · ') : undefined;
+              await patchOne('suppliers', x.s.id, { ...x.fill, ...(notes !== undefined ? { notes } : {}), ...auth.touch() });
+              done++;
+            }
+          }
+        } catch (e) { toast('Stopped after ' + done + ': ' + e.message, 'warn'); return false; }
+        toast(done ? done + ' supplier' + (done === 1 ? '' : 's') + ' imported' : 'Nothing to change');
+        return true;
+      }
+    });
+  });
+  input.click();
 }
 
 // ------------------------------------------------- purchase orders --
@@ -303,6 +366,7 @@ export async function action(act, b) {
     case 'by-sub': by.sub = b.dataset.to; by.q = ''; return ctx.repaint();
     case 'by-sup-new': return supplierForm('');
     case 'by-sup-edit': return supplierForm(id);
+    case 'by-sup-import': return importSuppliers();
     case 'by-po-new': by.edit = newEdit(null); return ctx.repaint();
     case 'by-po-suggest': { by.edit = newEdit(null); suggest('').forEach(x => by.edit.lines.push({ productId: x.productId, variantId: x.variantId, itemId: x.itemId, sku: x.sku, name: x.name, barcode: x.barcodes[0] || '', qty: x.qty, unitCostCents: x.costCents, receivedQty: 0 })); if (!by.edit.lines.length) toast('Nothing is low.', 'warn'); return ctx.repaint(); }
     case 'by-po-suggest-here': { const e = readEdit(); const list = suggest(e.supplierId); if (!list.length) return toast(e.supplierId ? 'Nothing of this supplier’s is low.' : 'Nothing is low.', 'warn'); list.forEach(x => { if (!e.lines.some(l => l.itemId === x.itemId)) e.lines.push({ productId: x.productId, variantId: x.variantId, itemId: x.itemId, sku: x.sku, name: x.name, barcode: x.barcodes[0] || '', qty: x.qty, unitCostCents: x.costCents, receivedQty: 0 }); }); toast(list.length + ' suggested'); return ctx.repaint(); }

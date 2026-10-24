@@ -117,6 +117,19 @@ R.trList = await screenText(); check('listed as outgoing, in transit', /Outgoing
 check('lamps left Bellville: 8 − 3 = 5', (await getDoc('pos/retail/stockLevels/BF-BELL_p_lamp')).onHandQty === 5);
 R.printed3 = await p.evaluate(() => window.__printed); check('the transfer note printed', /Stock transfer/.test(R.printed3[R.printed3.length - 1]) && /BF-TR-000001/.test(R.printed3[R.printed3.length - 1]));
 
+// ---- suppliers from a CSV: the old ReptiCube POS's "Download for the new POS"
+await nav('buying'); await p.click('[data-act=by-sub][data-to=suppliers]'); await p.waitForTimeout(300);
+const csv = '\ufeffName,Phone,Email,Owing,Unpaid GRVs\r\nAkwa,,alex@akwa.co.za,0.00,\r\nRSK Reef,,rskreef@hotmail.com,5961.95,GRV-20261001-003 inv 7781 R5961.95\r\nfoam co,021 555 9999,other@foam.co.za,0.00,\r\n';
+const [chooser] = await Promise.all([p.waitForEvent('filechooser'), p.click('[data-act=by-sup-import]')]);
+await chooser.setFiles({ name: 'repticube-suppliers.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) }); await p.waitForSelector('#modal .tbl');
+R.imp = await p.locator('#modal').innerText();
+check('the import shows what it will do first: two new, Foam Co already here, R 5,961.95 owed', /2 new/.test(R.imp) && /already here/i.test(R.imp) && /5[ ,]?961\.95/.test(R.imp) && /GRV-20261001-003/.test(R.imp), R.imp.slice(0, 500));
+await p.click('#modal-ok'); R.impToast = await toast(); await p.waitForTimeout(800);
+R.sups = await listColl('suppliers');
+const rsk = R.sups.find(x => x.name === 'RSK Reef'), foam = R.sups.filter(x => /foam co/i.test(x.name));
+check('imported: Akwa and RSK Reef added to this company, RSK Reef with what was owed; Foam Co not doubled and kept its own phone', R.sups.some(x => x.name === 'Akwa' && x.email === 'alex@akwa.co.za' && x.entityId === 'BF') && rsk && rsk.openingOwedCents === 596195 && /Owed R ?5[ ,]?961\.95 when moved over/.test(rsk.notes) && foam.length === 1 && foam[0].phone === '0215550001', [R.impToast, R.sups.map(x => [x.name, x.openingOwedCents, x.phone])]);
+check('the list shows the opening balance', /Owed when moved over: R ?5[ ,]?961\.95/.test(await screenText()));
+
 console.log(JSON.stringify({ fails, errs, ...R, printed: undefined, printed2: undefined, printed3: undefined }, null, 1).slice(0, 6000));
 await b.close();
 if (server) server.kill();
