@@ -34,7 +34,7 @@ const p = await ctx.newPage();
 p.on('pageerror', e => errs.push('PAGEERROR ' + e.message)); p.on('console', m => { if (m.type() === 'error' && !/ERR_|net::|favicon|emulator|WebChannel|transport errored|Failed to load resource/i.test(m.text())) errs.push(m.text().slice(0, 200)); });
 p.on('dialog', d => d.accept());
 const toast = async () => { await p.waitForTimeout(500); return (await p.locator('#toast').innerText().catch(() => '')).trim(); };
-const sub = async (s) => { await p.click('#nav [data-view=admin]'); await p.waitForTimeout(250); await p.click('[data-sub=' + s + ']'); await p.waitForTimeout(500); };
+const sub = async (s) => { await p.evaluate(() => document.querySelector('#nav [data-view=admin]').click()); await p.waitForTimeout(250); await p.click('[data-sub=' + s + ']'); await p.waitForTimeout(500); };
 const signIn = async (email, pass) => { await p.waitForSelector('#login:not([hidden])'); const sw = p.locator('#login-switch [data-mode=email]'); if (await sw.isVisible()) await sw.click(); await p.fill('#login-email', email); await p.fill('#login-pass', pass); await p.click('#login-submit'); };
 
 // owner claims the group

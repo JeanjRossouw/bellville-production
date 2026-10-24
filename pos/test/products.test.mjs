@@ -48,7 +48,7 @@ const toast = async () => { await p.waitForTimeout(500); return (await p.locator
 await p.goto(BASE, { waitUntil: 'load' });
 await p.waitForSelector('#login:not([hidden])'); await p.fill('#login-email', 'owner@shop.co.za'); await p.fill('#login-pass', 'secret123'); await p.click('#login-submit');
 await p.waitForSelector('#app:not([hidden])', { timeout: 15000 }); await p.waitForTimeout(600);
-await p.click('#nav [data-view=products]'); await p.waitForTimeout(500);
+await p.evaluate(() => document.querySelector('#nav [data-view=products]').click()); await p.waitForTimeout(500);
 check('empty list', /No products yet/i.test(await p.locator('#screen').innerText()));
 
 // ---- a simple product with a live margin

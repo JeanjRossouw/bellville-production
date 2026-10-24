@@ -62,6 +62,16 @@ check('Sign out from the sheet signs out', await p.evaluate(() => !document.getE
 const d = await open({ width: 1280, height: 900 }, false);
 R.desk = await d.evaluate(() => ({ nav: getComputedStyle(document.getElementById('nav')).display, btn: getComputedStyle(document.getElementById('menu-btn')).display, out: getComputedStyle(document.getElementById('sign-out')).display }));
 check('laptop: the tabs and Sign out stay, no Menu button', R.desk.nav !== 'none' && R.desk.out !== 'none' && R.desk.btn === 'none', R.desk);
+// the bar groups its screens into drop-downs: Sales, Stock, Office
+R.bar2 = await d.evaluate(() => ({ plain: [...document.querySelectorAll('#nav > .tab')].map(x => x.dataset.view), groups: [...document.querySelectorAll('#nav [data-group]')].map(x => x.textContent.trim()), menusShut: [...document.querySelectorAll('#nav .tab-menu')].every(m => m.hidden) }));
+check('laptop: Sell, Home and My PIN as tabs; Sales, Stock and Office as drop-downs, shut', R.bar2.plain.includes('sell') && R.bar2.plain.includes('home') && R.bar2.plain.includes('me') && R.bar2.groups.map(g => g.replace(/·.*/, '').trim()).join() === 'Sales,Stock,Office' && R.bar2.menusShut, R.bar2);
+await d.click('#nav [data-group=sales]'); await d.waitForTimeout(150);
+R.open = await d.evaluate(() => [...document.querySelectorAll('#nav [data-menu=sales]:not([hidden]) [data-view]')].map(x => x.textContent));
+await d.click('#nav [data-menu=sales] [data-view=returns]'); await d.waitForTimeout(600);
+R.after2 = await d.evaluate(() => ({ group: document.querySelector('#nav [data-group=sales]').textContent.replace(/\s+/g, ' ').trim(), shut: document.querySelector('#nav [data-menu=sales]').hidden, h1: (document.querySelector('#screen h1') || {}).textContent }));
+check('the Sales drop-down opens with its screens; picking Returns goes there, shuts it and the bar says Sales · Returns', R.open.join() === 'Sales,Returns,Lay-bys,Custom orders,Customers' && R.after2.shut && /Sales\s*· Returns/.test(R.after2.group) && /Returns/i.test(R.after2.h1 || ''), [R.open, R.after2]);
+await d.click('#nav [data-group=office]'); await d.waitForTimeout(150); await d.mouse.click(700, 600); await d.waitForTimeout(150);
+check('a click elsewhere shuts an open drop-down', await d.evaluate(() => document.querySelector('#nav [data-menu=office]').hidden));
 console.log(JSON.stringify({ fails, errs, ...R }, null, 1));
 await b.close();
 process.exit(fails.length || errs.length ? 1 : 0);

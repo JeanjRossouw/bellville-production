@@ -56,7 +56,7 @@ const emailIn = async (p, email) => {
   await p.fill('#login-email', email); await p.fill('#login-pass', 'secret123'); await p.click('#login-submit');
   await p.waitForSelector('#nav [data-view=admin]', { state: 'attached', timeout: 20000 }); await p.waitForTimeout(1200);
 };
-const companies = async (p) => { await p.click('#nav [data-view=admin]', { force: true }).catch(() => {}); await p.waitForTimeout(300); await p.click('[data-sub=companies]').catch(() => {}); await p.waitForTimeout(1200); return (await p.locator('#screen').innerText()).replace(/\s+/g, ' '); };
+const companies = async (p) => { await p.evaluate(() => document.querySelector('#nav [data-view=admin]').click()).catch(() => {}); await p.waitForTimeout(300); await p.click('[data-sub=companies]').catch(() => {}); await p.waitForTimeout(1200); return (await p.locator('#screen').innerText()).replace(/\s+/g, ' '); };
 
 // ---- the second business's owner, by email
 const p2 = await page(null);

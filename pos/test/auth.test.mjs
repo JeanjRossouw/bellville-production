@@ -53,7 +53,7 @@ const p = await ctx.newPage();
 p.on('pageerror', e => errs.push('PAGEERROR ' + e.message)); p.on('console', m => { if (m.type() === 'error' && !/ERR_|net::|favicon|emulator|WebChannel|transport errored|Failed to load resource/i.test(m.text())) errs.push(m.text().slice(0, 200)); });
 p.on('dialog', d => d.accept());
 const toast = async () => { await p.waitForTimeout(500); return (await p.locator('#toast').innerText().catch(() => '')).trim(); };
-const nav = async (v) => { if (['staff', 'devices'].includes(v)) { await p.click('#nav [data-view=admin]'); await p.waitForTimeout(300); await p.click('[data-sub=' + v + ']'); } else await p.click('#nav [data-view=' + v + ']'); await p.waitForTimeout(500); };
+const nav = async (v) => { if (['staff', 'devices'].includes(v)) { await p.evaluate(() => document.querySelector('#nav [data-view=admin]').click()); await p.waitForTimeout(300); await p.click('[data-sub=' + v + ']'); } else await p.evaluate((v) => document.querySelector('#nav [data-view="' + v + '"]').click(), v); await p.waitForTimeout(500); };
 const who = () => p.locator('#who').innerText().then(t => t.replace(/\s+/g, ' ').trim());
 const pinType = async (scope, pin) => { for (const d of pin) await p.locator(scope + ' [data-key="' + d + '"]').click(); await p.waitForTimeout(900); };
 
@@ -69,7 +69,7 @@ await p.waitForSelector('#claim:not([hidden])', { timeout: 15000 });
 await p.fill('#claim-name', 'Jean'); await p.fill('#claim-group', 'Rossouw Retail'); await p.click('#claim-form button[type=submit]');
 await p.waitForSelector('#app:not([hidden])', { timeout: 15000 }); await p.waitForTimeout(800);
 R.ownerWho = await who(); check('owner signed in', /Jean.*Owner/i.test(R.ownerWho), R.ownerWho);
-R.nav = await p.$$eval('#nav [data-view]', x => x.map(y => y.dataset.view)); check('owner menu: every tab, Reports and Admin included', R.nav.join() === 'sell,sales,returns,laybys,orders,customers,stock,buying,online,home,products,reports,admin,me', R.nav);
+R.nav = await p.$$eval('#nav [data-view]', x => x.map(y => y.dataset.view)); check('owner menu: every tab, Reports and Admin included', R.nav.join() === 'sell,home,sales,returns,laybys,orders,customers,stock,buying,products,online,reports,admin,me', R.nav);
 const group = await (await fetch(`${docs}/pos/retail`, { headers: H })).json(); check('group doc written', fromFs(group.fields.name) === 'Rossouw Retail');
 
 mark('claimed');
@@ -123,7 +123,7 @@ await p.screenshot({ path: S + '/shots/pos2-pinpad.png' });
 await pinType('#login-pin', '999999'); R.wrongPin = await p.locator('#login-pin .pin-msg').innerText(); check('wrong PIN refused', /not known/.test(R.wrongPin), R.wrongPin);
 await pinType('#login-pin', '111111'); await p.waitForSelector('#app:not([hidden])', { timeout: 15000 }); await p.waitForTimeout(800);
 R.cashWho = await who(); check('cashier signed in by PIN', /Cathy.*Cashier/i.test(R.cashWho), R.cashWho);
-R.cashNav = await p.$$eval('#nav [data-view]', x => x.map(y => y.dataset.view)); check('cashier menu on a till with a register: the selling tabs and Register, no Stock, Reports or Admin', R.cashNav.join() === 'sell,sales,returns,laybys,orders,customers,register,home,products,me', R.cashNav);
+R.cashNav = await p.$$eval('#nav [data-view]', x => x.map(y => y.dataset.view)); check('cashier menu on a till with a register: the selling tabs and Register, no Stock, Reports or Admin', R.cashNav.join() === 'sell,register,home,sales,returns,laybys,orders,customers,products,me', R.cashNav);
 R.fbUser = await p.evaluate(() => window.POS.session.uid); check('signed in as her own uid', R.fbUser === uid('Cathy'), R.fbUser);
 check('lock button shows for a PIN user', await p.locator('#lock').isVisible());
 

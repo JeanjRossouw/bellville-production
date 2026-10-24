@@ -53,7 +53,7 @@ const mine = (members.documents || []).map(d => ({ uid: d.name.split('/').pop(),
 check('one new business, the login in it', mine.length === 1 && /^g/.test(mine[0].g), mine);
 const G = mine[0] && mine[0].g;
 // she adds her company in the trial
-await p.click('#nav [data-view=admin]', { force: true }); await p.waitForTimeout(400); await p.click('[data-sub=companies]').catch(() => {}); await p.waitForTimeout(600);
+await p.evaluate(() => document.querySelector('#nav [data-view=admin]').click()); await p.waitForTimeout(400); await p.click('[data-sub=companies]').catch(() => {}); await p.waitForTimeout(600);
 if (OUT) await p.screenshot({ path: OUT + '/signup-1-trial.png' });
 // ---- the trial runs out unpaid
 await fetch(`${docs}/posGroups/${G}?updateMask.fieldPaths=trialEndsAt`, { method: 'PATCH', headers: H, body: JSON.stringify({ fields: { trialEndsAt: { timestampValue: new Date(Date.now() - 3600000).toISOString() } } }) });

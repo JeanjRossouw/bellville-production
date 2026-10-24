@@ -56,7 +56,7 @@ p.on('dialog', d => d.accept(d.type() === 'prompt' ? 'Customer request (POPIA)' 
 const toast = async () => { await p.waitForTimeout(500); return (await p.locator('#toast').innerText().catch(() => '')).trim(); };
 const pinType = async (scope, pin) => { for (const ch of pin) await p.locator(scope + ' [data-key="' + ch + '"]').click(); await p.waitForTimeout(900); };
 const scan = async (code) => { await p.evaluate(() => { if (document.activeElement) document.activeElement.blur(); }); await p.keyboard.type(code); await p.keyboard.press('Enter'); await p.waitForTimeout(350); };
-const nav = async (v) => { await p.click('#nav [data-view=' + v + ']'); await p.waitForTimeout(600); };
+const nav = async (v) => { await p.evaluate((v) => document.querySelector('#nav [data-view="' + v + '"]').click(), v); await p.waitForTimeout(600); };
 const screenText = () => p.locator('#screen').innerText().then(t => t.replace(/\s+/g, ' ').trim());
 const modalText = () => p.locator('#modal').innerText().then(t => t.replace(/\s+/g, ' ').trim());
 const paper = () => p.locator('#modal .rc-paper').innerText().then(t => t.replace(/\s+/g, ' '));
@@ -109,7 +109,7 @@ await p.waitForSelector('#modal .lb-detail'); await closeModal();
 // ---- a manager merges a duplicate and anonymises
 await p.click('[data-act=cu-new]'); await p.waitForSelector('#modal #cf-name'); await p.fill('#cf-name', 'Thandi M (dup)'); await p.fill('#cf-phone', '0825550199'); await p.click('#modal-ok'); R.new = await toast(); await p.waitForTimeout(800);
 check('a second profile made from the tab', /Saved Thandi M \(dup\)/.test(R.new), R.new);
-await p.click('#lock'); await p.waitForSelector('#login-pin .pinpad'); await pinType('#login-pin', '222222'); await p.waitForSelector('#nav [data-view=customers]'); await p.waitForTimeout(1000);
+await p.click('#lock'); await p.waitForSelector('#login-pin .pinpad'); await pinType('#login-pin', '222222'); await p.waitForSelector('#nav [data-view=customers]', { state: 'attached' }); await p.waitForTimeout(1000);
 await nav('customers'); await p.waitForSelector('.cu-tbl');
 await p.click('.cu-tbl tr:has-text("Thandi Mokoena") [data-act=cu-open]'); await p.waitForSelector('#modal [data-act=cu-merge]'); await p.waitForTimeout(600);
 await p.click('[data-act=cu-merge]'); await p.waitForSelector('#modal #mg-drop');

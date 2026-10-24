@@ -70,6 +70,18 @@ small { font-size: 12px; }
 .tabs { display: flex; gap: 0; background: #0b0b0b; border-bottom: 1px solid #262626; padding: 0 .6rem; overflow-x: auto; }
 .tab { font-family: var(--font-ui); font-weight: 500; font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase; color: #9a9a96; background: none; border: 0; border-bottom: 2px solid transparent; padding: .8rem .8rem .7rem; cursor: pointer; white-space: nowrap; }
 .tab:hover { color: #fff; } .tab.on { color: #fff; border-bottom-color: #fff; }
+/* the drop-downs on the bar: a group button, its menu under it */
+.tabs { overflow: visible; flex-wrap: wrap; }
+.tab-wrap { position: relative; }
+.tab-group { display: inline-flex; align-items: center; gap: .35rem; }
+.tab-group.has-on { color: #fff; border-bottom-color: #fff; }
+.tab-group .tg-now { letter-spacing: .08em; text-transform: none; font-size: 12px; color: #d6d6d2; }
+.tab-group .caret { width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid currentColor; margin-left: .15rem; }
+.tab-group[aria-expanded="true"] .caret { transform: rotate(180deg); }
+.tab-menu { position: absolute; top: 100%; left: 0; z-index: 60; min-width: 190px; background: #0b0b0b; border: 1px solid #262626; border-top: 0; padding: .3rem 0; box-shadow: 0 12px 30px rgba(0, 0, 0, .35); }
+.tab-menu .tab-item { display: block; width: 100%; text-align: left; border-bottom: 0; border-left: 2px solid transparent; padding: .65rem 1rem; }
+.tab-menu .tab-item.on { border-left-color: #fff; border-bottom: 0; }
+.tab-menu .tab-item:hover { background: #1a1a1a; }
 .shell { max-width: 1200px; margin: 0 auto; padding: 1.1rem 1rem 4rem; }
 .page-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
 .page-head .sub { color: var(--muted); font-size: 12.5px; margin: 0; }
