@@ -224,6 +224,15 @@ export function settingsHtml(d) {
         <div class="grid two">${field('Minimum deposit %', 'se-so-dep', { value: (s.specialOrder || {}).minDepositPct == null ? 50 : s.specialOrder.minDepositPct, type: 'number', min: 0, max: 100 })}${field('Usual lead time (days)', 'se-so-lead', { value: (s.specialOrder || {}).leadDays == null ? 21 : s.specialOrder.leadDays, type: 'number', min: 1 })}</div>
         <p class="muted">The customer signs the specification off; no change of mind once it is in production.</p>
       </div>
+      <div class="card"><h2>Deliveries</h2>
+        ${(() => { const dl = s.delivery || {}; const days = Array.isArray(dl.days) && dl.days.length ? dl.days : [1, 2, 3, 4, 5, 6]; return `
+        <div class="grid two">${field('Delivery fee (R, incl. VAT), the default on the till', 'se-dl-fee', { value: dl.defaultFeeCents ? randsOf(dl.defaultFeeCents) : '', inputmode: 'decimal' })}${field('Deliveries per time slot', 'se-dl-per', { value: dl.perSlot || 4, type: 'number', min: 1 })}</div>
+        <div class="fld"><label>Delivery days</label><div class="btn-row">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((n, i) => `<label class="chk"><input type="checkbox" data-dlday="${i + 1}"${days.includes(i + 1) ? ' checked' : ''}> ${n}</label>`).join('')}</div></div>
+        <div class="grid two">${field('Time slots (comma between)', 'se-dl-slots', { value: (Array.isArray(dl.slots) && dl.slots.length ? dl.slots : ['08:00–12:00', '12:00–17:00']).join(', ') })}${field('Earliest: days from today', 'se-dl-lead', { value: dl.leadDays == null ? 1 : dl.leadDays, type: 'number', min: 0 })}</div>
+        <p class="muted">Once an order is ready and paid, the client picks a day and a slot on their order page; you confirm it on To do. Dispatch gives it to a driver and writes the tax invoice.</p>`; })()}
+        <h3>Drivers</h3>
+        <div id="se-drivers" data-entity="${esc(eid)}"><p class="muted">Loading…</p></div>
+      </div>
       ${owner ? `<div class="card"><h2>Factory</h2>
         <p class="muted">The Factory Manager company that builds this company's custom orders. Once a deposit is paid the order goes into that factory's orders by itself, with the <em>store</em> as the customer: the factory sees what to make, for which store and by when, never the retail customer. The factory's status comes back to the till.</p>
         <div id="se-factory" data-entity="${esc(eid)}"><p class="muted">Loading…</p></div>
@@ -274,6 +283,7 @@ export function settingsRead(w) {
     cash: { varianceLimitCents: centsOf(val(w, 'se-variance')) },
     layby: { minDepositPct: num('se-lb-dep', 0, 100, 20), termDays: num('se-lb-term', 7, 3650, 90), penaltyPct: num('se-lb-pen', 0, 1, 1), frequency: val(w, 'se-lb-freq') || 'monthly', reminderDays: num('se-lb-rem', 0, 60, 3) },
     specialOrder: { minDepositPct: num('se-so-dep', 0, 100, 50), leadDays: num('se-so-lead', 1, 365, 21) },
+    delivery: { defaultFeeCents: centsOf(val(w, 'se-dl-fee')), perSlot: num('se-dl-per', 1, 100, 4), leadDays: num('se-dl-lead', 0, 30, 1), days: [...w.querySelectorAll('[data-dlday]')].filter(x => x.checked).map(x => Number(x.dataset.dlday)), slots: val(w, 'se-dl-slots').split(',').map(x => x.trim()).filter(Boolean).slice(0, 8) },
     buying: { updateCostsOnReceive: !!w.querySelector('#se-buy-cost').checked },
     xero: { autoDaily: !!w.querySelector('#se-xero-auto').checked, accounts: Object.fromEntries(['sales', 'vat', 'cash', 'card', 'eft', 'qr', 'account', 'storeCredit', 'voucher', 'layby', 'specialOrder', 'points', 'exchange', 'rounding', 'penalty'].map(k => [k, val(w, 'se-xa-' + k)])) },
     loyalty: { enabled: !!w.querySelector('#se-loy-on').checked, pointsPerRand: Number(val(w, 'se-loy-rate')) || 0, pointValueCents: num('se-loy-value', 1, 100000, 5), minRedeemPoints: num('se-loy-min', 0, 1000000, 100), expiryMonths: num('se-loy-exp', 0, 120, 12), tiers: [0, 1, 2].map(i => ({ name: val(w, 'se-tier-name-' + i) || 'Tier ' + (i + 1), fromCents: Math.round((Number(val(w, 'se-tier-from-' + i)) || 0) * 100), multiplier: Number(val(w, 'se-tier-mult-' + i)) || 1 })) },

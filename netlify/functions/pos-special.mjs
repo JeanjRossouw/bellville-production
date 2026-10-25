@@ -10,6 +10,9 @@
 //   book      { orderId, kind: 'deliver'|'collect', date, slot, address, phone, note, driverName }
 //   deliver   { orderId, saleId, signedBy, signature, note, + where }       made (ready) and balance nil: the tax invoice written as a sale
 //             paid by the special order; the signed delivery note kept; status delivered or collected
+//   dispatch  { orderId, driverId, saleId, + where }                    ready, paid, a delivery booked: the tax invoice written,
+//             the order out for delivery with the driver (who marks it delivered on their own page)
+//   drivers   { entityId } / driverSave { driverId?, name, phone, active, newLink? }   a manager: the drivers and their links
 //   cancel    { orderId, kind, reason, feeCents, refunds: [ { method, amountCents, ref } ], approvalToken? }   a manager
 //   quote     { quoteId, customerId?, lines [ sale lines + spec ], saleDiscount…, totals, validDays?, note, + where } → a numbered quotation
 //   quoteCancel { quoteId, reason }                                         an open quote withdrawn
@@ -25,9 +28,10 @@
 //   factorySync      { orderId }                      any member: read the factory's status now
 //
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
-import { json, Reject, clean, randomId, nowIso, getDoc, query, patchDoc, serverStamp, bodyOf, audit, requireMember, inEntity, withGroup } from './lib/pos.mjs';
+import { json, Reject, clean, randomId, nowIso, getDoc, query, patchDoc, createDoc, serverStamp, bodyOf, audit, requireMember, inEntity, withGroup, rank } from './lib/pos.mjs';
 import { factoryCfg, listCompanies, companyNamed, noteHandover } from './lib/factory-link.mjs';
 import { ensureTrack, trackUrl } from './lib/track.mjs';
+import { completeDelivery, newDriverLink, driverUrl, signatureOk } from './lib/delivery.mjs';
 import { pushToFactory as pushBridge, syncFromFactory as syncBridge, cancelAtFactory } from './lib/factory-bridge.mjs';
 import { whoAndWhere, prepareSale, prepareTenders, runSale, nextFromCounter, approved, int, specOf, specNote, markQuoteUsed, saDay } from './lib/sale.mjs';
 import { pctOf } from '../../pos/js/money.js';
@@ -54,6 +58,29 @@ function moneyNow(ctx, tenders, total, customer) {
 const payRows = (ctx, so, pays, instalment, firstId, stamp, now) => pays.map((p, i) => ({ create: true, coll: 'payments', id: i === 0 && firstId ? firstId : randomId('pay_'), data: { docType: 'specialOrder', docId: so.id, docNo: so.docNo, instalment, registerId: ctx.registerId || '', shiftId: ctx.shiftId || '', ...p, ...stamp, serverReceivedAt: now } }));
 const auditRow = (ctx, action, so, details, approvers, stamp, now) => ({ create: true, coll: 'auditLog', id: randomId('au_'), data: { action, docType: 'specialOrder', docId: so.id, docNo: so.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, overrideUid: [...approvers.keys()][0] || '', overrideName: [...approvers.values()][0] || '', details, ...stamp, serverReceivedAt: now } });
 const hist = (so, status, by, source, note, now) => [...(so.statusHistory || []), { status, at: now, byName: by, source, note: note || '' }].slice(-50);
+
+// the tax invoice for a sales order: a sale paid by the order (its payments came in before), written once;
+// patchOf(cur, now) is what the order becomes in the same write
+async function invoiceOrder(ctx, so, saleId, patchOf, auditAction, auditMore = {}) {
+  if (!idOk(saleId)) throw new Reject(400, 'The sale has no id.');
+  const body = {
+    clientCreatedAt: nowIso(), customerId: so.customerId, specialOrderOf: so.docNo, note: 'Special order ' + so.docNo,
+    lines: so.lines.map(l => ({ productId: l.productId, variantId: l.variantId, qty: l.qty, unitPriceCents: l.unitPriceCents, discountCents: l.discountCents, discountPct: l.discountPct, discountReason: l.discountReason, note: [l.note, ...specNote(l.spec)].filter(Boolean).join(' · ').slice(0, 200), custom: l.custom, name: l.name, vatClass: l.vatClass })),
+    saleDiscountCents: so.saleDiscountCents, saleDiscountPct: so.saleDiscountPct, saleDiscountReason: so.saleDiscountReason, tenders: []
+  };
+  const prep = await prepareSale(ctx, body, { trusted: 'Special order ' + so.docNo, prepaid: { method: 'specialOrder', docNo: so.docNo, amountCents: so.totalCents } });
+  if (prep.total !== so.totalCents) throw new Reject(409, `The order's price (${money(so.totalCents)}) and the sale's (${money(prep.total)}) differ.`);
+  const r = await runSale(ctx, body, { saleId, prep, more: async (tx) => {
+    const cur = await getDoc('specialOrders', so.id, tx);
+    if (!cur || cur.balanceCents > 0 || cur.status !== 'ready') throw new Reject(409, `Order ${so.docNo} is no longer ready to go out.`);
+    const now = nowIso();
+    const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
+    const patch = { ...patchOf(cur, now), completedSaleId: saleId };
+    return { writes: [{ update: true, coll: 'specialOrders', id: so.id, data: patch }, auditRow(ctx, auditAction, so, { saleId, status: patch.status, ...auditMore }, new Map(), stamp, now)], result: { order: { ...cur, ...patch, id: so.id } } };
+  } });
+  if (r.sale && r.sale.docNo) { await patchDoc('specialOrders', so.id, { completedDocNo: r.sale.docNo }); r.order.completedDocNo = r.sale.docNo; }
+  return r;
+}
 
 const actions = {
   async open(event, b) {
@@ -234,47 +261,86 @@ const actions = {
     const address = kind === 'deliver' ? { line1: clean(a.line1, 120), line2: clean(a.line2, 120), city: clean(a.city, 80), code: clean(a.code, 12) } : null;
     if (kind === 'deliver' && !(address.line1 || address.city)) throw new Reject(400, 'A delivery needs an address.');
     const now = nowIso();
-    const delivery = { kind, date, slot: clean(b.slot, 40), address, phone: clean(b.phone, 30) || so.customerSnapshot.phone || '', note: clean(b.note, 300), driverName: clean(b.driverName, 80), bookedAt: now, bookedBy: ctx.user.name };
+    const delivery = { kind, date, slot: clean(b.slot, 40), address, phone: clean(b.phone, 30) || so.customerSnapshot.phone || '', note: clean(b.note, 300), driverName: clean(b.driverName, 80), bookedAt: now, bookedBy: ctx.user.name, confirmed: true, requested: !!(so.delivery && so.delivery.requested) };
+    if (so.status === 'outForDelivery' && so.delivery) Object.assign(delivery, { driverId: so.delivery.driverId, driverName: so.delivery.driverName, driverPhone: so.delivery.driverPhone || '', dispatchedAt: so.delivery.dispatchedAt, onTheWayAt: '', issue: null });
     await patchDoc('specialOrders', so.id, { delivery, updateDue: true, updatedAt: now });
     await audit({ action: 'specialOrder.book', docType: 'specialOrder', docId: so.id, docNo: so.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, details: { kind, date }, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
     return { ok: true, order: { ...so, delivery, updateDue: true }, delivery };
   },
 
-  // handed over: the tax invoice written as a sale paid by the order; the signed note kept
+  // handed over: the tax invoice written as a sale paid by the order; the signed note kept.
+  // An order already out for delivery (invoiced at dispatch) is only marked delivered here.
   async deliver(event, b) {
     const ctx = await whoAndWhere(event, b);
     const so = await loadOrder(ctx, b.orderId);
     if (['delivered', 'collected'].includes(so.status) && so.completedSaleId) { const sale = await getDoc('sales', so.completedSaleId); return { ok: true, again: true, order: so, sale: sale ? { ...sale, id: so.completedSaleId } : null, lines: await query('saleLines', [{ field: 'saleId', value: so.completedSaleId }], 500, { field: 'lineNo' }), payments: [] }; }
+    const signedBy = clean(b.signedBy, 120);
+    const signature = String(b.signature || '').slice(0, 200000);
+    if (!signatureOk(signature)) throw new Reject(400, 'The signature is not a PNG.');
+    if (so.status === 'outForDelivery') {
+      const order = await completeDelivery(so, { byName: ctx.user.name, byUid: ctx.user.id, source: 'till', signedBy, signature, note: clean(b.note, 300), deviceId: ctx.deviceId });
+      return { ok: true, order, sale: null };
+    }
     if (['inProduction', 'depositPaid'].includes(so.status)) throw new Reject(409, `${so.docNo} is not ready yet: once it is made, mark it Ready, then hand it over (the tax invoice is written then).`);
     if (so.status !== 'ready') throw new Reject(409, `Order ${so.docNo} is ${so.status}.`);
     if (so.balanceCents > 0) throw new Reject(400, `${money(so.balanceCents)} is still owed on ${so.docNo}: take the balance first.`);
-    const saleId = clean(b.saleId, 80);
-    if (!idOk(saleId)) throw new Reject(400, 'The sale has no id.');
-    const signedBy = clean(b.signedBy, 120);
-    const signature = String(b.signature || '').slice(0, 200000);
-    if (signature && !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(signature)) throw new Reject(400, 'The signature is not a PNG.');
     const kind = (so.delivery && so.delivery.kind) || (b.kind === 'collect' ? 'collect' : 'deliver');
-    const body = {
-      clientCreatedAt: nowIso(), customerId: so.customerId, specialOrderOf: so.docNo, note: 'Special order ' + so.docNo,
-      lines: so.lines.map(l => ({ productId: l.productId, variantId: l.variantId, qty: l.qty, unitPriceCents: l.unitPriceCents, discountCents: l.discountCents, discountPct: l.discountPct, discountReason: l.discountReason, note: [l.note, ...specNote(l.spec)].filter(Boolean).join(' · ').slice(0, 200), custom: l.custom, name: l.name, vatClass: l.vatClass })),
-      saleDiscountCents: so.saleDiscountCents, saleDiscountPct: so.saleDiscountPct, saleDiscountReason: so.saleDiscountReason, tenders: []
-    };
-    const prep = await prepareSale(ctx, body, { trusted: 'Special order ' + so.docNo, prepaid: { method: 'specialOrder', docNo: so.docNo, amountCents: so.totalCents } });
-    if (prep.total !== so.totalCents) throw new Reject(409, `The order's price (${money(so.totalCents)}) and the sale's (${money(prep.total)}) differ.`);
-    const r = await runSale(ctx, body, { saleId, prep, more: async (tx) => {
-      const cur = await getDoc('specialOrders', so.id, tx);
-      if (!cur || cur.balanceCents > 0 || cur.status !== 'ready') throw new Reject(409, `Order ${so.docNo} is no longer ready to hand over.`);
-      const now = nowIso();
-      const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
+    const r = await invoiceOrder(ctx, so, clean(b.saleId, 80), (cur, now) => {
       const status = kind === 'collect' ? 'collected' : 'delivered';
-      const patch = { status, statusHistory: hist(cur, status, ctx.user.name, 'till', clean(b.note, 200), now), updateDue: true, completedAt: now, completedSaleId: saleId, completedByUid: ctx.user.id, completedByName: ctx.user.name, deliveryNote: { signedBy, signature, at: now, byName: ctx.user.name, note: clean(b.note, 300), kind }, updatedAt: now };
-      const writes = [{ update: true, coll: 'specialOrders', id: so.id, data: patch }];
-      writes.push(auditRow(ctx, 'specialOrder.deliver', so, { saleId, status, signed: !!signature }, new Map(), stamp, now));
-      return { writes, result: { order: { ...cur, ...patch, id: so.id } } };
-    } });
-    if (r.sale && r.sale.docNo) { await patchDoc('specialOrders', so.id, { completedDocNo: r.sale.docNo }); r.order.completedDocNo = r.sale.docNo; }
+      return { status, statusHistory: hist(cur, status, ctx.user.name, 'till', clean(b.note, 200), now), updateDue: true, completedAt: now, completedByUid: ctx.user.id, completedByName: ctx.user.name, deliveryNote: { signedBy, signature, at: now, byName: ctx.user.name, note: clean(b.note, 300), kind }, updatedAt: now };
+    }, 'specialOrder.deliver', { signed: !!signature });
     if (so.factory && so.factory.orders && so.factory.orders.length) await noteHandover(so.factory.companyId, so.factory.orders, `${kind === 'collect' ? 'Collected by' : 'Delivered to'} the customer from the ${ctx.store.name} store on ${nowIso().slice(0, 10)} (${so.docNo}, invoice ${r.sale ? r.sale.docNo : ''})`).catch(() => {});
     return r;
+  },
+
+  // given to the driver: the tax invoice written now (paid by the order), the order out for delivery
+  async dispatch(event, b) {
+    const ctx = await whoAndWhere(event, b);
+    const so = await loadOrder(ctx, b.orderId);
+    const drv = await getDoc('drivers', clean(b.driverId, 80));
+    if (!drv || drv.entityId !== ctx.entityId || drv.active === false) throw new Reject(400, 'Pick one of your drivers.');
+    if (so.status === 'outForDelivery') {   // already invoiced: another driver, or the same again after a problem
+      const now = nowIso();
+      const patch = { delivery: { ...(so.delivery || {}), driverId: drv.id, driverName: drv.name, driverPhone: drv.phone || '', dispatchedAt: now, onTheWayAt: '', issue: null }, updatedAt: now };
+      await patchDoc('specialOrders', so.id, patch);
+      await audit({ action: 'specialOrder.redispatch', docType: 'specialOrder', docId: so.id, docNo: so.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, details: { driverId: drv.id }, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
+      return { ok: true, again: true, order: { ...so, ...patch } };
+    }
+    if (['inProduction', 'depositPaid', 'quoted'].includes(so.status)) throw new Reject(409, `${so.docNo} is not ready yet: mark it Ready once it is made.`);
+    if (so.status !== 'ready') throw new Reject(409, `Order ${so.docNo} is ${so.status}.`);
+    if (so.balanceCents > 0) throw new Reject(400, `${money(so.balanceCents)} is still owed on ${so.docNo}: it goes out once it is paid in full.`);
+    if (!so.delivery || so.delivery.kind !== 'deliver') throw new Reject(400, `Book the delivery of ${so.docNo} first (the day, the slot and the address).`);
+    const r = await invoiceOrder(ctx, so, clean(b.saleId, 80), (cur, now) => ({
+      status: 'outForDelivery', statusHistory: hist(cur, 'outForDelivery', ctx.user.name, 'till', 'with ' + drv.name, now), updateDue: true,
+      delivery: { ...(cur.delivery || {}), driverId: drv.id, driverName: drv.name, driverPhone: drv.phone || '', dispatchedAt: now, confirmed: true, issue: null }, updatedAt: now
+    }), 'specialOrder.dispatch', { driverId: drv.id });
+    return r;
+  },
+
+  // the drivers of a company: names, phones, their private links (a manager)
+  async drivers(event, b) {
+    const ctx = await whoAndWhere(event, b, { noShift: true });
+    const list = await query('drivers', [{ field: 'entityId', value: ctx.entityId }], 200);
+    const mgr = rank(ctx.user.role) >= rank('manager');
+    return { ok: true, drivers: list.map(d => ({ id: d.id, name: d.name, phone: d.phone || '', active: d.active !== false, link: mgr && d.linkToken ? driverUrl(event, d.linkToken) : '' })).sort((a, c) => a.name.localeCompare(c.name)) };
+  },
+  async driverSave(event, b) {
+    const ctx = await whoAndWhere(event, b, { noShift: true });
+    if (rank(ctx.user.role) < rank('manager')) throw new Reject(403, 'Only a manager adds or changes drivers.');
+    const name = clean(b.name, 80);
+    if (!name) throw new Reject(400, 'The driver’s name.');
+    const now = nowIso();
+    let drv = b.driverId ? await getDoc('drivers', clean(b.driverId, 80)) : null;
+    if (b.driverId && (!drv || drv.entityId !== ctx.entityId)) throw new Reject(404, 'No such driver.');
+    const data = { name, phone: clean(b.phone, 30), active: b.active !== false, updatedAt: now, updatedBy: ctx.user.id };
+    if (drv) { await patchDoc('drivers', drv.id, data); drv = { ...drv, ...data }; }
+    else { const id = randomId('drv_'); drv = { id, entityId: ctx.entityId, storeId: '', ...data, ...serverStamp(ctx.entityId, '', ctx.user.id, ctx.deviceId) }; const { id: _i, ...doc } = drv; await createDoc('drivers', id, doc); }
+    let link = '';
+    if (!drv.linkToken || b.newLink) { drv.linkToken = await newDriverLink(drv); }
+    link = driverUrl(event, drv.linkToken);
+    await audit({ action: b.driverId ? 'driver.update' : 'driver.create', docType: 'driver', docId: drv.id, actorUid: ctx.user.id, actorName: ctx.user.name, details: { name, active: data.active, newLink: !!b.newLink }, entityId: ctx.entityId, storeId: '', deviceId: ctx.deviceId });
+    const co = ctx.entity.tradingName || ctx.entity.legalName;
+    return { ok: true, driver: { id: drv.id, name, phone: data.phone, active: data.active, link }, text: `Hi ${name.split(' ')[0]}, ${co} here: your deliveries are on this page (keep it, it is yours alone): ${link}` };
   },
 
   // cancelled by a manager: the fee the manager sets (the deposit once production started), the rest refunded

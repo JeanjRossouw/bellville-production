@@ -25,7 +25,7 @@ const d = () => ctx.data();   // { store, entity, settings, specials, registerId
 const where = () => auth.session.device ? auth.deviceBody() : { entityId: d().entity.id, storeId: d().store.id, registerId: '' };
 const today = () => new Date().toISOString().slice(0, 10);
 const newId = (p) => p + '-' + (auth.deviceId() || 'web') + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
-const OPEN = ['quoted', 'depositPaid', 'inProduction', 'ready'];
+const OPEN = ['quoted', 'depositPaid', 'inProduction', 'ready', 'outForDelivery'];
 const CHIP = { quoted: '', depositPaid: 'prod', inProduction: 'prod', ready: 'ok', delivered: '', collected: '', cancelled: 'off' };
 const METHOD = { cash: 'Cash', card: 'Card', eft: 'EFT', qr: 'QR', storeCredit: 'Store credit' };
 const kindLabel = (k) => (CANCEL_KINDS.find(x => x[0] === k) || [k, k])[1];
@@ -45,7 +45,7 @@ export function specialsHtml() {
   return `<div class="page-head"><h1>Sales orders</h1><p class="sub">${open.length} open · ${esc(money(open.reduce((n, o) => n + o.balanceCents, 0)))} still to come in${due ? ' · ' + due + ' update' + (due === 1 ? '' : 's') + ' to send' : ''}${all.filter(o => o.status === 'ready').length ? ' · ' + all.filter(o => o.status === 'ready').length + ' ready' : ''}</p></div>
     <div class="toolbar">
       <input id="so-q" class="search" type="search" placeholder="Number, customer, phone, item, factory ref" value="${esc(so.q)}">
-      <select id="so-filter">${[['open', 'Open'], ['quoted', 'Quoted'], ['depositPaid', 'Deposit paid'], ['inProduction', 'In production'], ['ready', 'Ready'], ['done', 'Delivered / collected'], ['cancelled', 'Cancelled'], ['all', 'All']].map(x => `<option value="${x[0]}"${so.filter === x[0] ? ' selected' : ''}>${x[1]}</option>`).join('')}</select>
+      <select id="so-filter">${[['open', 'Open'], ['quoted', 'Quoted'], ['depositPaid', 'Deposit paid'], ['inProduction', 'In production'], ['ready', 'Ready'], ['outForDelivery', 'Out for delivery'], ['done', 'Delivered / collected'], ['cancelled', 'Cancelled'], ['all', 'All']].map(x => `<option value="${x[0]}"${so.filter === x[0] ? ' selected' : ''}>${x[1]}</option>`).join('')}</select>
       <span class="muted">New orders start from the cart under Sell (made-to-order items).</span>
     </div>
     ${rows.length ? `<div class="card" style="padding:0;overflow:auto"><table class="tbl lb-tbl"><thead><tr><th>No</th><th>Customer</th><th>What</th><th>Expected</th><th class="r">Price</th><th class="r">Paid</th><th class="r">Balance</th><th>Status</th><th></th></tr></thead>
@@ -147,6 +147,8 @@ export async function action(act, b) {
   if (act === 'so-pay') return pay(id);
   if (act === 'so-update') return update(id, b.dataset.status || '');
   if (act === 'so-link') return sendLink('order', id, where());
+  if (act === 'so-dispatch') return dispatch(id);
+  if (act === 'so-confirm') return confirmDay(id);
   if (act === 'so-status') return status(id, b.dataset.to);
   if (act === 'so-factory-sync') return factorySync(id);
   if (act === 'so-sales-open') return openSalesDetail(id);
@@ -284,7 +286,7 @@ function openDetail(id) {
       <div class="x-row tot"><span>Price</span><strong>${esc(money(o.totalCents))}</strong></div>
       <div class="lb-cols">
         <div><h3>Progress</h3>${(o.statusHistory || []).map(h => `<div class="x-row"><span>${esc(STATUS_LABEL[h.status] || h.status)}${h.note ? ' · ' + esc(h.note) : ''}</span><span class="muted">${esc(niceDate(h.at))} · ${esc(h.byName)}${h.source === 'factory' ? ' (factory)' : ''}</span></div>`).join('')}
-          ${dv ? `<p class="muted">${dv.kind === 'collect' ? 'Collection' : 'Delivery'} booked for ${esc(niceDate(dv.date))}${dv.slot ? ' · ' + esc(dv.slot) : ''}${dv.kind === 'deliver' ? ' · ' + esc(addr(dv.address)) : ''}${dv.driverName ? ' · ' + esc(dv.driverName) : ''}</p>` : ''}
+          ${dv && dv.requested && !dv.confirmed ? `<p class="warn">The client asked for this day on their order page: confirm it (or rebook).</p>` : ''}${dv && dv.issue ? `<p class="warn">Delivery problem (${esc(dv.issue.by || 'driver')}): ${esc(dv.issue.note)}</p>` : ''}${o.status === 'outForDelivery' ? `<p class="ok">Out for delivery with ${esc(dv.driverName || 'the driver')}${dv.onTheWayAt ? ' · on the way since ' + esc(niceTime(dv.onTheWayAt)) : ''} · tax invoice ${esc(o.completedDocNo || '')}</p>` : ''}${dv ? `<p class="muted">${dv.kind === 'collect' ? 'Collection' : 'Delivery'} booked for ${esc(niceDate(dv.date))}${dv.slot ? ' · ' + esc(dv.slot) : ''}${dv.kind === 'deliver' ? ' · ' + esc(addr(dv.address)) : ''}${dv.driverName ? ' · ' + esc(dv.driverName) : ''}</p>` : ''}
           ${(o.updates || []).length ? `<p class="muted">${o.updates.length} update${o.updates.length === 1 ? '' : 's'} sent, last ${esc(niceDate(o.lastUpdateAt))}</p>` : ''}</div>
         <div><h3>Money</h3><div class="x-row"><span>Deposit to start</span><span>${esc(money(o.minDepositCents))}</span></div>${(o.history || []).map(h => `<div class="x-row"><span>${esc(niceDate(h.at))} ${h.n ? 'payment ' + h.n : 'deposit'} · ${esc(h.methods.map(m => METHOD[m] || m).join(', '))}${h.storeId !== o.storeId ? ' · ' + esc(h.storeId) : ''}</span><span>${esc(money(h.amountCents))}</span></div>`).join('')}
           <div class="x-row tot"><span>Paid ${esc(money(o.paidCents))} · balance</span><strong>${esc(money(o.balanceCents))}</strong></div>
@@ -297,15 +299,18 @@ function openDetail(id) {
       ${['depositPaid', 'inProduction'].includes(o.status) ? `<p class="muted so-wait">Open until it is made: once it is <strong>Ready</strong> (and the balance is paid) it is handed over with the delivery note and the tax invoice.</p>` : ''}
       <div class="card-actions lb-acts">
         ${OPEN.includes(o.status) && o.balanceCents > 0 ? `<button class="btn primary" data-act="so-pay" data-id="${esc(o.id)}">${icon('cash')} Take a payment</button>` : ''}
-        ${o.status === 'ready' && o.balanceCents <= 0 ? `<button class="btn primary" data-act="so-deliver" data-id="${esc(o.id)}">${icon('truck')} Hand over: delivery note + tax invoice</button>` : ''}
+        ${o.status === 'ready' && dv && dv.requested && !dv.confirmed ? `<button class="btn primary" data-act="so-confirm" data-id="${esc(o.id)}">${icon('truck')} Confirm the client’s day</button>` : ''}
+        ${o.status === 'ready' && o.balanceCents <= 0 && dv && dv.kind === 'deliver' && dv.confirmed ? `<button class="btn primary" data-act="so-dispatch" data-id="${esc(o.id)}">${icon('truck')} Dispatch to driver: tax invoice</button>` : ''}
+        ${o.status === 'ready' && o.balanceCents <= 0 && !(dv && dv.kind === 'deliver' && dv.confirmed) ? `<button class="btn${dv && dv.kind === 'deliver' ? '' : ' primary'}" data-act="so-deliver" data-id="${esc(o.id)}">${icon('truck')} Hand over: delivery note + tax invoice</button>` : ''}
+        ${o.status === 'outForDelivery' ? `<button class="btn" data-act="so-deliver" data-id="${esc(o.id)}">${icon('truck')} Mark delivered (signed here)</button><button class="btn ghost" data-act="so-book" data-id="${esc(o.id)}">Rebook</button><button class="btn ghost" data-act="so-dispatch" data-id="${esc(o.id)}">Change driver</button>` : ''}
         ${o.status !== 'quoted' ? `<button class="btn${o.updateDue ? ' primary' : ''}" data-act="so-update" data-id="${esc(o.id)}">${icon('user')} WhatsApp update</button>` : ''}
         <button class="btn ghost" data-act="so-link" data-id="${esc(o.id)}">${icon('user')} Send the client their order page</button>
         ${o.factory && (o.factory.orders || []).length && OPEN.includes(o.status) ? `<button class="btn" data-act="so-factory-sync" data-id="${esc(o.id)}">Check factory</button>` : ''}
         ${sup && factoryLinked() && !(o.factory && (o.factory.orders || []).length) && ['depositPaid', 'inProduction', 'ready'].includes(o.status) ? `<button class="btn" data-act="so-factory-send" data-id="${esc(o.id)}">Send to factory</button>` : ''}
         ${sup && canStatus('inProduction') ? `<button class="btn" data-act="so-status" data-to="inProduction" data-id="${esc(o.id)}">In production</button>` : ''}
         ${sup && canStatus('ready') ? `<button class="btn" data-act="so-status" data-to="ready" data-id="${esc(o.id)}">Ready</button>` : ''}
-        ${OPEN.includes(o.status) && o.status !== 'quoted' ? `<button class="btn" data-act="so-book" data-id="${esc(o.id)}">${icon('truck')} ${dv ? 'Rebook' : 'Book delivery / collection'}</button>` : ''}
-        ${OPEN.includes(o.status) ? `<button class="btn ghost" data-act="so-cancel" data-id="${esc(o.id)}">Cancel order</button>` : ''}
+        ${OPEN.includes(o.status) && !['quoted', 'outForDelivery'].includes(o.status) ? `<button class="btn" data-act="so-book" data-id="${esc(o.id)}">${icon('truck')} ${dv ? 'Rebook' : 'Book delivery / collection'}</button>` : ''}
+        ${OPEN.includes(o.status) && o.status !== 'outForDelivery' ? `<button class="btn ghost" data-act="so-cancel" data-id="${esc(o.id)}">Cancel order</button>` : ''}
         <button class="btn ghost" data-act="so-print-order" data-id="${esc(o.id)}">${icon('printer')} Order</button>
         ${dv || /^(delivered|collected)$/.test(o.status) ? `<button class="btn ghost" data-act="so-print-delivery" data-id="${esc(o.id)}">${icon('printer')} Delivery note</button>` : ''}
         ${o.status === 'cancelled' ? `<button class="btn ghost" data-act="so-print-cancel" data-id="${esc(o.id)}">${icon('printer')} Cancellation</button>` : ''}
@@ -413,6 +418,33 @@ export async function factoryCard(host, entityId) {
     factoryCard(host, entityId);
   });
 }
+// Admin → Settings → Deliveries: the drivers and their private links (a manager adds and changes them)
+export async function driversCard(host, entityId, storeId) {
+  const el = host.querySelector('#se-drivers'); if (!el) return;
+  if (!storeId) { el.innerHTML = '<p class="muted">Add a store first.</p>'; return; }
+  const body = { entityId, storeId, registerId: '' };
+  let r;
+  try { r = await auth.api('drivers', body, API.special); } catch (e) { el.innerHTML = `<p class="warn">${esc(e.message)}</p>`; return; }
+  const list = r.drivers || [];
+  el.innerHTML = `${list.length ? `<table class="tbl"><tbody>${list.map(x => `<tr class="${x.active ? '' : 'off'}"><td><strong>${esc(x.name)}</strong><div class="muted">${esc(x.phone || 'no number')}${x.active ? '' : ' · inactive'}</div></td>
+      <td class="btn-row" style="margin:0">${x.link ? `<button class="btn ghost sm" data-drv="send" data-id="${esc(x.id)}">Send their link</button>` : ''}<button class="btn ghost sm" data-drv="edit" data-id="${esc(x.id)}">Edit</button><button class="btn ghost sm" data-drv="new" data-id="${esc(x.id)}">New link</button></td></tr>`).join('')}</tbody></table>` : '<p class="muted">No drivers yet.</p>'}
+    <div class="card-actions"><button class="btn" data-drv="add">Add a driver</button></div>`;
+  const send = (d, text) => { if (d.phone) window.open(whatsappUrl(d.phone, text), '_blank'); else navigator.clipboard.writeText(text).then(() => toast('No number: the link is copied.')).catch(() => {}); };
+  const save = async (b, done) => { try { const x = await auth.api('driverSave', { ...b, ...body }, API.special); done && done(x); driversCard(host, entityId, storeId); return x; } catch (e) { toast(e.message, 'warn'); return null; } };
+  if (el.dataset.wired) return;
+  el.dataset.wired = '1';
+  el.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-drv]'); if (!b) return; e.preventDefault();
+    const cur = (el._list || []).find(x => x.id === b.dataset.id);
+    if (b.dataset.drv === 'add' || b.dataset.drv === 'edit') {
+      openModal(cur ? 'Driver: ' + cur.name : 'New driver', row(field('Name', 'dv-name', { value: cur ? cur.name : '' }), field('Cell number', 'dv-phone', { value: cur ? cur.phone : '', inputmode: 'tel' })) + (cur ? `<label class="chk"><input type="checkbox" id="dv-active"${cur.active ? ' checked' : ''}> Active</label>` : ''), {
+        okLabel: 'Save', onOk: async (w) => { const x = await save({ driverId: cur ? cur.id : '', name: val(w, 'dv-name'), phone: val(w, 'dv-phone'), active: cur ? w.querySelector('#dv-active').checked : true }); if (x && !cur) { toast('Driver added: send them their link'); send(x.driver, x.text); } return !!x; } });
+    }
+    if (b.dataset.drv === 'new' && cur && confirm('A new link for ' + cur.name + '? The old one stops working.')) { const x = await save({ driverId: cur.id, name: cur.name, phone: cur.phone, active: cur.active, newLink: true }); if (x) send(x.driver, x.text); }
+    if (b.dataset.drv === 'send' && cur) { const x = await save({ driverId: cur.id, name: cur.name, phone: cur.phone, active: cur.active }); if (x) send(x.driver, x.text); }
+  });
+  el._list = list;
+}
 async function status(id, to) {
   const o = one(id); if (!o) return;
   const note = prompt((to === 'ready' ? 'Ready: ' : 'In production: ') + 'a note for the record (optional)', '') ; if (note === null) return;
@@ -456,11 +488,11 @@ function deliver(id) {
   if (dd.registerId && !dd.shiftOpen) return toast('The register is closed: open it under Register first.', 'warn');
   const kind = (o.delivery && o.delivery.kind) || 'collect';
   // over R 5 000 the tax invoice carries the address: asked now if the client has none on file (the booking's, when booked)
-  const ca = o.customerSnapshot.address || {}, ask = !!dd.entity.vatRegistered && o.totalCents > 500000 && !String(ca.line1 || ca.city || '').trim();
+  const ca = o.customerSnapshot.address || {}, ask = o.status !== 'outForDelivery' && !!dd.entity.vatRegistered && o.totalCents > 500000 && !String(ca.line1 || ca.city || '').trim();
   const ba = (o.delivery && o.delivery.address) || {};
   let busy = false;
   const { wrap, close } = openModal((kind === 'collect' ? 'Collected: ' : 'Delivered: ') + o.docNo, `
-    <p class="muted">${esc(o.lines.map(l => l.qty + ' × ' + l.name).join(', '))} · paid in full ${esc(money(o.paidCents))}. The tax invoice is written now.</p>
+    <p class="muted">${esc(o.lines.map(l => l.qty + ' × ' + l.name).join(', '))} · paid in full ${esc(money(o.paidCents))}. ${o.status === 'outForDelivery' ? 'The tax invoice (' + esc(o.completedDocNo || '') + ') was written at dispatch.' : 'The tax invoice is written now.'}</p>
     ${ask ? `<div class="card so-addr"><h3>${esc(o.customerSnapshot.name)}’s address</h3><p class="muted">Over R 5 000 the tax invoice carries it. Kept on the client.</p>
       ${row(field('Street', 'dn-a1', { value: ba.line1 || '' }), field('Suburb', 'dn-a2', { value: ba.line2 || '' }))}${field('City', 'dn-acity', { value: ba.city || '' })}</div>` : ''}
     ${row(field('Received by', 'dn-name', { value: o.customerSnapshot.name }), field('Note', 'dn-note', { placeholder: 'e.g. small scuff noted' }))}
@@ -485,6 +517,43 @@ function deliver(id) {
       return true;
     } catch (e) { busy = false; toast(noLine(e), 'warn'); return false; }
   }
+}
+
+// ---------------------------------------------------------- dispatch --
+// the client's own choice of day, confirmed as it stands
+async function confirmDay(id) {
+  const o = one(id); if (!o || !o.delivery) return;
+  const dv = o.delivery;
+  try {
+    const r = await auth.api('book', { orderId: o.id, kind: dv.kind, date: dv.date, slot: dv.slot, driverName: dv.driverName || '', address: dv.address || {}, phone: dv.phone || '', note: dv.note || '', ...where() }, API.special);
+    fresh(id, r); toast(o.docNo + ' confirmed for ' + niceDate(dv.date) + ' · send the client the update');
+    if (ctx.onChange) ctx.onChange(r);
+  } catch (e) { toast(noLine(e), 'warn'); }
+}
+// given to a driver: the tax invoice is written now; the driver marks it delivered on their own page
+async function dispatch(id) {
+  const o = one(id); if (!o) return;
+  const dd = d();
+  if (dd.registerId && !dd.shiftOpen) return toast('The register is closed: open it under Register first.', 'warn');
+  let drivers = [];
+  try { drivers = ((await auth.api('drivers', where(), API.special)).drivers || []).filter(x => x.active); } catch (e) { return toast(noLine(e), 'warn'); }
+  if (!drivers.length) return toast('Add a driver first: Admin → Settings → Deliveries.', 'warn');
+  const dv = o.delivery || {};
+  let busy = false;
+  openModal('Dispatch ' + o.docNo, `<p class="muted">${esc(o.lines.map(l => l.qty + ' × ' + l.name).join(', '))} · paid in full. ${esc(niceDate(dv.date))}${dv.slot ? ' · ' + esc(dv.slot) : ''} · ${esc(addr(dv.address))}</p>
+    ${field('Driver', 'dp-driver', { type: 'select', value: drivers[0].id, options: drivers.map(x => ({ value: x.id, label: x.name + (x.phone ? ' · ' + x.phone : '') })) })}
+    <p class="muted">${o.status === 'outForDelivery' ? 'Already invoiced (' + esc(o.completedDocNo || '') + '): only the driver changes.' : 'The tax invoice is written now.'} The order shows on the driver’s page; they tell the client they are on the way, and the client signs on their phone.</p>`, {
+    okLabel: o.status === 'outForDelivery' ? 'Give to this driver' : 'Dispatch and invoice', cancelLabel: 'Back', onOk: async (w) => {
+      if (busy) return false; busy = true;
+      try {
+        const r = await auth.api('dispatch', { orderId: o.id, driverId: val(w, 'dp-driver'), saleId: newId('sos'), ...where() }, API.special);
+        fresh(id, r);
+        toast(o.docNo + ' is out for delivery' + (r.again ? ' with the new driver' : ' · tax invoice ' + (r.sale ? r.sale.docNo : r.order.completedDocNo || '')));
+        if (ctx.onChange) ctx.onChange(r);
+        if (r.sale) openReceipt({ sale: r.sale, lines: r.lines, payments: r.payments, vouchersSold: [], entity: dd.entity, store: dd.store, settings: dd.settings });
+        return true;
+      } catch (e) { busy = false; toast(noLine(e), 'warn'); return false; }
+    } });
 }
 
 // ---------------------------------------------------------- cancel --

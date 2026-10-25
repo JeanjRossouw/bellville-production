@@ -2,10 +2,10 @@
 // the settings, the status flow, the sign-off text the customer signs
 // (the specification read back, no change of mind once in production),
 // and the WhatsApp update for each status.
-export const STATUSES = ['quoted', 'depositPaid', 'inProduction', 'ready', 'delivered', 'collected', 'cancelled'];
-export const STATUS_LABEL = { quoted: 'Quoted', depositPaid: 'Deposit paid', inProduction: 'In production', ready: 'Ready', delivered: 'Delivered', collected: 'Collected', cancelled: 'Cancelled' };
+export const STATUSES = ['quoted', 'depositPaid', 'inProduction', 'ready', 'outForDelivery', 'delivered', 'collected', 'cancelled'];
+export const STATUS_LABEL = { quoted: 'Quoted', depositPaid: 'Deposit paid', inProduction: 'In production', ready: 'Ready', outForDelivery: 'Out for delivery', delivered: 'Delivered', collected: 'Collected', cancelled: 'Cancelled' };
 // what may follow what
-export const NEXT = { quoted: ['depositPaid', 'cancelled'], depositPaid: ['inProduction', 'ready', 'cancelled'], inProduction: ['ready', 'cancelled'], ready: ['delivered', 'collected', 'cancelled'], delivered: [], collected: [], cancelled: [] };
+export const NEXT = { quoted: ['depositPaid', 'cancelled'], depositPaid: ['inProduction', 'ready', 'cancelled'], inProduction: ['ready', 'cancelled'], ready: ['outForDelivery', 'delivered', 'collected', 'cancelled'], outForDelivery: ['delivered'], delivered: [], collected: [], cancelled: [] };
 export const SPEC_FIELDS = [['model', 'Model'], ['size', 'Size'], ['fabric', 'Fabric'], ['colour', 'Colour'], ['legs', 'Legs'], ['notes', 'Notes']];
 // a sales order: a made-to-order item sold as an ordinary sale (invoiced), built by the factory and handed over
 export const SALES_STATUSES = ['open', 'inProduction', 'ready', 'delivered', 'collected', 'cancelled'];
@@ -53,6 +53,7 @@ export function updateText(entity, store, so, status) {
   if (status === 'depositPaid') return `Hi ${name}, ${co} here. Thank you for your deposit on order ${so.docNo} (${what}). It is in the queue for production; usual lead time is ${so.leadDays} days${so.expectedAt ? ', expected around ' + so.expectedAt : ''}. We will let you know as it moves along.`;
   if (status === 'inProduction') return `Hi ${name}, ${co} here: your order ${so.docNo} (${what}) is now in production${so.expectedAt ? ', expected around ' + so.expectedAt : ''}.`;
   if (status === 'ready') return `Hi ${name}, ${co} here: good news, your order ${so.docNo} (${what}) is ready. ${so.balanceCents > 0 ? 'The balance of ' + rands(so.balanceCents) + ' is due before ' : 'Let us arrange '}${so.delivery && so.delivery.kind === 'deliver' ? 'delivery' : 'collection at ' + store.name}. Please reply to book a day.`;
+  if (status === 'outForDelivery') return `Hi ${name}, ${co} here: your order ${so.docNo} (${what}) is out for delivery${so.delivery && so.delivery.date ? ' on ' + so.delivery.date + (so.delivery.slot ? ' (' + so.delivery.slot + ')' : '') : ''}${so.delivery && so.delivery.driverName ? ' with ' + so.delivery.driverName : ''}. The driver lets you know when they are on the way.`;
   if (status === 'delivered') return `Hi ${name}, ${co} here: your order ${so.docNo} was delivered today. Thank you — enjoy it, and tell us if anything is not right.`;
   if (status === 'collected') return `Hi ${name}, ${co} here: thank you for collecting your order ${so.docNo}. Enjoy it, and tell us if anything is not right.`;
   if (status === 'booked') return `Hi ${name}, ${co} here: your order ${so.docNo} is booked for ${so.delivery.kind === 'deliver' ? 'delivery' : 'collection'} on ${so.delivery.date}${so.delivery.slot ? ' (' + so.delivery.slot + ')' : ''}${so.delivery.kind === 'deliver' && so.delivery.address ? ' to ' + [so.delivery.address.line1, so.delivery.address.city].filter(Boolean).join(', ') : ''}.${so.balanceCents > 0 ? ' Please settle the balance of ' + rands(so.balanceCents) + ' before then: we deliver once it is paid in full.' : ''}`;
