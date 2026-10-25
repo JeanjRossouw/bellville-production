@@ -66,22 +66,24 @@ await p.waitForSelector('#nav [data-view=fabrics]', { state: 'attached' }); awai
 // ---- a price list in
 await nav('fabrics');
 R.empty = await txt('#screen'); check('the screen: none yet, the price rule said', /No fabrics yet/i.test(R.empty) && /cost \(excl\. VAT\) \+ the markup \+ 15% VAT, never under the lowest price/.test(R.empty), R.empty.slice(0, 300));
-const csv = ['supplier,design,collection,composition,widthCm,use,costPerMetre,Price per metre at 80% (R incl. VAT)',
-  'FibreGuard (Home Fabrics),Acapella,Grenoble,"87% Recycled Polyester, 13% Polyester",138,Upholstery,525.00,1086.75',
-  'U&G Fabrics,Ticino,Adventure,100% POLYESTER,145,Upholstery,70.00,250.00',
-  'Silkhouse,Archway,Affinity,100% Polyester,143,Upholstery,290.00,600.30',
-  'Silkhouse,Archway,Affinity,100% Polyester,143,Upholstery,290.00,600.30'].join('\n');
+const csv = ['supplier,design,collection,composition,widthCm,use,costPerMetre,retailPricePerMetre,Price per metre at 80% (R incl. VAT)',
+  'FibreGuard (Home Fabrics),Acapella,Grenoble,"87% Recycled Polyester, 13% Polyester",138,Upholstery,525.00,,1086.75',
+  'U&G Fabrics,Ticino,Adventure,100% POLYESTER,145,Upholstery,70.00,,250.00',
+  'Hertex (Stonehaus),Aaran,Highland Fling,100% PL,140,Upholstery,220.00,440.00,',
+  'Hertex (Stonehaus),Bayonne,Biarritz,100% PL,300,Upholstery,110.00,220.00,',
+  'Silkhouse,Archway,Affinity,100% Polyester,143,Upholstery,290.00,,600.30',
+  'Silkhouse,Archway,Affinity,100% Polyester,143,Upholstery,290.00,,600.30'].join('\n');
 await p.setInputFiles('#fb-file', { name: 'fabrics.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
 await p.waitForSelector('#fi-plan .ci-sum'); R.plan = await txt('#fi-plan');
-check('the preview: 3 new (the repeated row once), 80% and R 250 at the least', /3 new · 0 changed · 0 the same/.test(R.plan) && /Acapella \(Grenoble\) · FibreGuard \(Home Fabrics\) new R 525\.00 cost → R 1,086\.75 a metre/.test(R.plan) && /Ticino \(Adventure\) · U&G Fabrics new R 70\.00 cost → R 250\.00 a metre/.test(R.plan) && /Archway \(Affinity\) · Silkhouse new R 290\.00 cost → R 600\.30 a metre/.test(R.plan), R.plan);
+check('the preview: 5 new (the repeated row once), 80% and R 250 at the least, the supplier’s retail where given', /5 new · 0 changed · 0 the same/.test(R.plan) && /Aaran \(Highland Fling\) · Hertex \(Stonehaus\) new R 220\.00 cost → R 440\.00 a metre/.test(R.plan) && /Bayonne \(Biarritz\) · Hertex \(Stonehaus\) new R 110\.00 cost → R 250\.00 a metre/.test(R.plan) && /Acapella \(Grenoble\) · FibreGuard \(Home Fabrics\) new R 525\.00 cost → R 1,086\.75 a metre/.test(R.plan) && /Ticino \(Adventure\) · U&G Fabrics new R 70\.00 cost → R 250\.00 a metre/.test(R.plan) && /Archway \(Affinity\) · Silkhouse new R 290\.00 cost → R 600\.30 a metre/.test(R.plan), R.plan);
 await p.click('#modal-ok'); R.imported = await toast(); await p.waitForTimeout(800);
 const fabs = await coll('fabrics'), F = (d) => fabs.find(f => f.design === d);
-check('in through the rules: cents, the markup and the floor kept', /3 added, 0 updated/.test(R.imported) && F('Acapella').priceCents === 108675 && F('Acapella').costCents === 52500 && F('Acapella').markupPct === 80 && F('Ticino').priceCents === 25000 && F('Ticino').minPriceCents === 25000 && F('Archway').priceCents === 60030 && F('Acapella').entityId === 'BF', [R.imported, fabs.map(f => [f.design, f.priceCents])]);
+check('in through the rules: cents, the markup and the floor kept; the retail kept as the price', F('Aaran').priceCents === 44000 && F('Aaran').listPriceCents === 44000 && F('Aaran').costCents === 22000 && F('Bayonne').priceCents === 25000 && /5 added, 0 updated/.test(R.imported) && F('Acapella').priceCents === 108675 && F('Acapella').costCents === 52500 && F('Acapella').markupPct === 80 && F('Ticino').priceCents === 25000 && F('Ticino').minPriceCents === 25000 && F('Archway').priceCents === 60030 && F('Acapella').entityId === 'BF', [R.imported, fabs.map(f => [f.design, f.priceCents])]);
 R.list = await txt('.fb-tbl'); check('the list', /Acapella Grenoble FibreGuard \(Home Fabrics\)/.test(R.list) && /R 250\.00 \+80% · lowest price/.test(R.list), R.list.slice(0, 400));
 // the same list again with a new cost: one changed
 await p.setInputFiles('#fb-file', { name: 'fabrics.csv', mimeType: 'text/csv', buffer: Buffer.from(csv.replace('525.00', '550.00')) });
 await p.waitForSelector('#fi-plan .ci-sum'); R.plan2 = await txt('#fi-plan');
-check('again: 1 changed, 2 the same', /0 new · 1 changed · 2 the same/.test(R.plan2) && /R 1,086\.75 → R 550\.00 cost → R 1,138\.50/.test(R.plan2), R.plan2);
+check('again: 1 changed, 4 the same', /0 new · 1 changed · 4 the same/.test(R.plan2) && /R 1,086\.75 → R 550\.00 cost → R 1,138\.50/.test(R.plan2), R.plan2);
 await p.click('[data-close]'); await p.waitForTimeout(300);
 
 // ---- the product: fabric metres for made to order

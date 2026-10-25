@@ -10,7 +10,9 @@
 // works the same sum out again before anything is written.
 //
 //   fabrics/<id>  { entityId, storeId: '', supplier, design, collection, composition, widthCm, use,
-//                   costCents (per metre, excl. VAT), markupPct, minPriceCents, priceCents (per metre, incl. VAT), archived, stamps }
+//                   costCents (per metre, excl. VAT), markupPct, minPriceCents, listPriceCents (the supplier's
+//                   recommended retail, incl. VAT, when there is one: it is the price instead of the markup),
+//                   priceCents (per metre, incl. VAT), archived, stamps }
 import { batch, setOne, newId, patchOne } from './db.js';
 import * as auth from './auth.js';
 import { esc, toast, field, row, val, openModal, empty, money } from './ui.js';
@@ -20,6 +22,8 @@ import { fabricLabel, fabricPriceCents, FABRIC_MARKUP, FABRIC_MIN_CENTS } from '
 
 const MARKUP = FABRIC_MARKUP;
 const low = (s) => String(s == null ? '' : s).trim().toLowerCase();
+// the price per metre: the supplier's recommended retail when there is one, else cost + markup + VAT; never under the lowest price
+const priceFor = (f) => f.listPriceCents > 0 ? Math.max(f.listPriceCents, f.minPriceCents || 0) : fabricPriceCents(f.costCents, f.markupPct, f.minPriceCents);
 const keyOf = (f) => low(f.supplier) + '|' + low(f.design) + '|' + low(f.collection);
 let ctx = { repaint() {}, data: () => ({}) };
 export const setContext = (c) => { ctx = { ...ctx, ...c }; };
@@ -57,7 +61,7 @@ export function fabricsHtml() {
       <thead><tr><th>Design</th><th>Collection</th><th>Supplier</th><th>Composition</th><th class="r">Width</th><th>Use</th><th class="r">Cost / m</th><th class="r">Price / m</th><th></th></tr></thead>
       <tbody>${shown.map(f => `<tr class="${f.archived ? 'off' : ''}"><td><strong>${esc(f.design)}</strong>${f.archived ? ' <span class="chip">archived</span>' : ''}</td><td>${esc(f.collection || '')}</td><td>${esc(f.supplier || '')}</td>
         <td class="muted">${esc(f.composition || '')}</td><td class="r">${f.widthCm ? esc(f.widthCm) + ' cm' : ''}</td><td class="muted">${esc(f.use || '')}</td>
-        <td class="r">${esc(money(f.costCents))}</td><td class="r"><strong>${esc(money(f.priceCents))}</strong>${f.markupPct != null ? `<div class="muted">+${esc(f.markupPct)}%${f.minPriceCents && f.priceCents === f.minPriceCents ? ' · lowest price' : ''}</div>` : ''}</td>
+        <td class="r">${esc(money(f.costCents))}</td><td class="r"><strong>${esc(money(f.priceCents))}</strong>${f.listPriceCents > 0 ? `<div class="muted">${f.priceCents === f.listPriceCents ? 'supplier’s retail' : 'lowest price'}</div>` : f.markupPct != null ? `<div class="muted">+${esc(f.markupPct)}%${f.minPriceCents && f.priceCents === f.minPriceCents ? ' · lowest price' : ''}</div>` : ''}</td>
         <td>${edits ? `<button class="btn ghost sm" data-act="fb-edit" data-id="${esc(f.id)}">Edit</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`
       : empty(all.length ? 'No fabrics match' : 'No fabrics yet', all.length ? 'Change the search or the supplier.' : edits ? 'Import a supplier’s price list (CSV), or add one fabric.' : '')}`;
 }
@@ -83,13 +87,13 @@ function openFabric(f) {
     ${row(field('Collection', 'fe-collection', { value: x.collection }), field('Composition', 'fe-comp', { value: x.composition }))}
     ${row(field('Width (cm)', 'fe-width', { value: x.widthCm || '', inputmode: 'numeric' }), field('Use', 'fe-use', { value: x.use || '' }))}
     ${row(field('Cost per metre (R, excl. VAT)', 'fe-cost', { value: randsOf(x.costCents), inputmode: 'decimal' }), field('Markup %', 'fe-markup', { value: x.markupPct != null ? x.markupPct : MARKUP, inputmode: 'decimal' }))}
-    ${field('Lowest price per metre (R, incl. VAT)', 'fe-min', { value: randsOf(x.minPriceCents != null ? x.minPriceCents : FABRIC_MIN_CENTS), inputmode: 'decimal' })}
+    ${row(field('Lowest price per metre (R, incl. VAT)', 'fe-min', { value: randsOf(x.minPriceCents != null ? x.minPriceCents : FABRIC_MIN_CENTS), inputmode: 'decimal' }), field('Supplier’s retail per metre (R, incl. VAT; blank = cost + markup)', 'fe-list', { value: x.listPriceCents > 0 ? randsOf(x.listPriceCents) : '', inputmode: 'decimal' }))}
     <p>Price per metre, incl. VAT: <strong id="fe-price"></strong></p>
     ${f ? `<label class="chk"><input type="checkbox" id="fe-archived"${f.archived ? ' checked' : ''}> Archived (not offered on new orders)</label>` : ''}`, {
     okLabel: f ? 'Save' : 'Add fabric', onOk: async (w) => {
       const data = { supplier: val(w, 'fe-supplier'), design: val(w, 'fe-design'), collection: val(w, 'fe-collection'), composition: val(w, 'fe-comp'), widthCm: Math.round(Number(val(w, 'fe-width')) || 0) || '',
-        use: val(w, 'fe-use'), costCents: centsOf(val(w, 'fe-cost')), markupPct: Number(String(val(w, 'fe-markup')).replace(',', '.')) || 0, minPriceCents: centsOf(val(w, 'fe-min')) };
-      data.priceCents = fabricPriceCents(data.costCents, data.markupPct, data.minPriceCents);
+        use: val(w, 'fe-use'), costCents: centsOf(val(w, 'fe-cost')), markupPct: Number(String(val(w, 'fe-markup')).replace(',', '.')) || 0, minPriceCents: centsOf(val(w, 'fe-min')), listPriceCents: centsOf(val(w, 'fe-list')) || 0 };
+      data.priceCents = priceFor(data);
       if (!data.design || !data.supplier) { toast('A fabric needs its supplier and design.', 'warn'); return false; }
       if (!(data.costCents > 0)) { toast('The cost per metre, excl. VAT.', 'warn'); return false; }
       try {
@@ -99,7 +103,7 @@ function openFabric(f) {
       } catch (e) { toast('Could not save: ' + e.message, 'warn'); return false; }
     }
   });
-  const live = () => { m.wrap.querySelector('#fe-price').textContent = money(fabricPriceCents(centsOf(val(m.wrap, 'fe-cost')), Number(String(val(m.wrap, 'fe-markup')).replace(',', '.')) || 0, centsOf(val(m.wrap, 'fe-min')))); };
+  const live = () => { m.wrap.querySelector('#fe-price').textContent = money(priceFor({ costCents: centsOf(val(m.wrap, 'fe-cost')), markupPct: Number(String(val(m.wrap, 'fe-markup')).replace(',', '.')) || 0, minPriceCents: centsOf(val(m.wrap, 'fe-min')), listPriceCents: centsOf(val(m.wrap, 'fe-list')) || 0 })); };
   m.wrap.addEventListener('input', live); live();
 }
 
@@ -108,7 +112,8 @@ const norm = (h) => low(h).replace(/[^a-z0-9]/g, '');
 function columnsOf(head) {
   const h = head.map(norm), find = (names) => h.findIndex(x => names.includes(x));
   return { supplier: find(['supplier', 'brand', 'vendor']), design: find(['design', 'name', 'fabric', 'description']), collection: find(['collection', 'range', 'book', 'primarybookrange']),
-    composition: find(['composition']), width: find(['widthcm', 'width']), use: find(['use']), cost: find(['costpermetre', 'cost', 'cut', 'cutprice', 'price', 'costexclvat', 'trade']) };
+    composition: find(['composition']), width: find(['widthcm', 'width']), use: find(['use']), cost: find(['costpermetre', 'cost', 'cut', 'cutprice', 'price', 'costexclvat', 'trade']),
+    retail: find(['retailpricepermetre', 'retailprice', 'recommendedretail', 'recommendedretailprice', 'retailpermetre', 'retailinclvat']) };
 }
 export function planImport(text, existing, markupPct, minCents = FABRIC_MIN_CENTS) {
   const rows = parseCsv(text, sepOf(text));
@@ -126,10 +131,10 @@ export function planImport(text, existing, markupPct, minCents = FABRIC_MIN_CENT
     if (!f.design) return;
     if (!(cost > 0)) { bad.push({ line: n + 2, what: f.design }); return; }
     const k = keyOf(f); if (seen.has(k)) return; seen.add(k);
-    f.costCents = cost; f.markupPct = markupPct; f.minPriceCents = minCents; f.priceCents = fabricPriceCents(cost, markupPct, minCents);
+    f.costCents = cost; f.markupPct = markupPct; f.minPriceCents = minCents; f.listPriceCents = col.retail >= 0 ? centsOf(cell(r, col.retail).replace(/^R\s*/i, '')) || 0 : 0; f.priceCents = priceFor(f);
     const old = have.get(k);
     if (!old) adds.push(f);
-    else if (old.costCents === f.costCents && old.priceCents === f.priceCents && old.markupPct === f.markupPct && old.minPriceCents === f.minPriceCents && !old.archived && old.composition === f.composition && String(old.widthCm || '') === String(f.widthCm || '') && old.use === f.use) same++;
+    else if (old.costCents === f.costCents && old.priceCents === f.priceCents && old.markupPct === f.markupPct && old.minPriceCents === f.minPriceCents && (old.listPriceCents || 0) === f.listPriceCents && !old.archived && old.composition === f.composition && String(old.widthCm || '') === String(f.widthCm || '') && old.use === f.use) same++;
     else updates.push({ id: old.id, from: old, f });
   });
   return { adds, updates, same, bad };
@@ -141,7 +146,7 @@ function openImport(file) {
     const text = r.result;
     let plan = null, busy = false;
     const m = openModal('Import a fabric price list', `
-      <p>Costs are per metre, <strong>excl. VAT</strong> (the supplier’s cut price). The price per metre on the till is the cost + the markup + 15% VAT, never under the lowest price.</p>
+      <p>Costs are per metre, <strong>excl. VAT</strong> (the supplier’s cut price). The price per metre on the till is the cost + the markup + 15% VAT, never under the lowest price. When the list has a <strong>Retail price</strong> column (the supplier’s recommended retail, incl. VAT), that is the price instead.</p>
       ${row(field('Markup %', 'fi-markup', { value: MARKUP, inputmode: 'decimal' }), field('Lowest price per metre (R, incl. VAT)', 'fi-min', { value: randsOf(FABRIC_MIN_CENTS), inputmode: 'decimal' }))}
       <div id="fi-plan"></div>`, {
       okLabel: 'Bring them in', onOk: async () => {
