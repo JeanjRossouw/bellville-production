@@ -55,7 +55,7 @@ export function productsHtml(d) {
   return `<div class="page-head"><h1>Products</h1>
       <div class="btn-row" style="margin:0">
         ${mine.length > 1 ? `<select id="pr-entity" class="in-sm">${mine.map(e => `<option value="${esc(e.id)}"${e.id === eid ? ' selected' : ''}>${esc(e.tradingName || e.legalName)}</option>`).join('')}</select>` : ''}
-        ${edits ? `<label class="btn ghost" title="Shopify's product CSV">Import CSV<input type="file" id="pr-file" accept=".csv,text/csv" hidden></label><button class="btn ghost" data-act="pr-export">Export CSV</button><button class="btn ghost" data-act="pr-costs" title="Costs, and prices if you want, from a spreadsheet">Import costs &amp; prices</button>` : ''}
+        ${edits ? `<label class="btn ghost" title="Shopify's product CSV">Import CSV<input type="file" id="pr-file" accept=".csv,text/csv" hidden></label><button class="btn ghost" data-act="pr-export">Export CSV</button><button class="btn ghost" data-act="pr-costs" title="Costs, and prices if you want, from a spreadsheet">Import costs &amp; prices</button><button class="btn ghost" data-act="pr-reorder" title="The reorder level on every stock item at once">Set reorder level</button>` : ''}
         <button class="btn ghost" data-act="pr-labels" title="Barcode labels for the ticked products">Labels</button>
         ${edits ? '<button class="btn primary" data-act="pr-new">＋ New product</button>' : ''}
       </div></div>
@@ -360,4 +360,34 @@ export function printLabelItems(items, dflt = 1) {
       return true;
     }
   });
+}
+
+// the reorder level (and, if given, the reorder quantity) on every stock item of a company at once:
+// low stock and the suggested orders then pick them up; written in batches, one audit row
+export function setReorderAll(d, entityId) {
+  const items = (d.products || []).filter(p => p.entityId === entityId && !p.archived && p.type === 'stock' && p.trackStock !== false);
+  const ent = (d.entities || []).find(e => e.id === entityId) || {};
+  if (!items.length) return toast('No stock items for this company.', 'warn');
+  const { wrap } = openModal('Reorder level · ' + (ent.tradingName || ent.legalName || ''), `<p>${items.length} stock item${items.length === 1 ? '' : 's'} (archived ones left alone).</p>
+    ${row(field('Reorder when stock falls to', 'ro-level', { value: 2, type: 'number', min: 0 }), field('Reorder quantity (blank: leave as is)', 'ro-qty', { type: 'number', min: 1 }))}
+    <label class="chk"><input type="radio" name="ro-scope" value="all" checked> Every stock item (replaces what is set)</label>
+    <label class="chk"><input type="radio" name="ro-scope" value="empty"> Only items with no reorder level yet</label>
+    <p class="muted" id="ro-count"></p>`, {
+    okLabel: 'Set it', onOk: async (w) => {
+      const level = Number(val(w, 'ro-level')), qty = val(w, 'ro-qty') === '' ? null : Number(val(w, 'ro-qty'));
+      if (!(level >= 0) || !Number.isInteger(level)) { toast('A whole number for the reorder level.', 'warn'); return false; }
+      if (qty != null && !(qty >= 1 && Number.isInteger(qty))) { toast('A whole number of 1 or more for the quantity, or leave it blank.', 'warn'); return false; }
+      const only = (w.querySelector('input[name=ro-scope]:checked') || {}).value === 'empty';
+      const todo = items.filter(p => !only || p.reorderLevel == null).filter(p => p.reorderLevel !== level || (qty != null && p.reorderQty !== qty));
+      if (!todo.length) { toast('Nothing to change: they are set already.'); return true; }
+      const ops = todo.map(p => ({ op: 'update', coll: 'products', id: p.id, data: { reorderLevel: level, ...(qty != null ? { reorderQty: qty } : {}), ...(Number.isInteger(p.priceCents) ? {} : { priceCents: Math.round(Number(p.priceCents) || 0) }), ...(Number.isInteger(p.costCents) ? {} : { costCents: Math.round(Number(p.costCents) || 0) }), ...auth.touch() } }));   // the rules want whole cents on every product
+      try {
+        for (let i = 0; i < ops.length; i += 100) await batch(ops.slice(i, i + 100));
+        await setOne('auditLog', newId('auditLog'), { action: 'product.reorderAll', docType: 'product', docId: '', docNo: '', actorUid: auth.session.uid, actorName: auth.session.user.name, overrideUid: '', overrideName: '', details: { level, qty, items: todo.length, only }, ...auth.stamp(entityId, '') }).catch(() => {});
+        toast(`Reorder level ${level} set on ${todo.length} item${todo.length === 1 ? '' : 's'}${qty != null ? ', quantity ' + qty : ''}`);
+        return true;
+      } catch (e) { toast(e.message, 'warn'); return false; }
+    } });
+  const count = () => { const only = (wrap.querySelector('input[name=ro-scope]:checked') || {}).value === 'empty'; const n = items.filter(p => !only || p.reorderLevel == null).length; wrap.querySelector('#ro-count').textContent = n + ' item' + (n === 1 ? '' : 's') + ' will be set.'; };
+  wrap.addEventListener('change', count); count();
 }
