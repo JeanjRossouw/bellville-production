@@ -599,7 +599,7 @@ document.addEventListener('click', (e) => { const b = e.target.closest('#modal [
 online.setContext({ repaint: () => { if (view === 'online') paint(); }, data: () => ({ ...sellData(), stores }) });
 reports.setContext({ repaint: () => { if (view === 'reports') paint(); }, data: () => ({ ...sellData(), entities, stores, users }) });
 customersTab.setContext({ repaint: () => { if (view === 'customers') paint(); }, data: () => ({ ...sellData() }) });
-buying.setContext({ repaint: () => { if (view === 'buying') paint(); }, data: () => ({ ...sellData(), stores, suppliers, pos: storePOs, grvs: storeGrvs, transfers: [...transfersOut, ...transfersIn.filter(t => !transfersOut.some(o => o.id === t.id))] }), onChange: () => { reloadOffsets(); if (view === 'buying') paint(); } });
+buying.setContext({ repaint: () => { if (view === 'buying') paint(); }, data: () => ({ ...sellData(), stores, suppliers, specials: storeSpecials, pos: storePOs, grvs: storeGrvs, transfers: [...transfersOut, ...transfersIn.filter(t => !transfersOut.some(o => o.id === t.id))] }), onChange: () => { reloadOffsets(); if (view === 'buying') paint(); } });
 stock.setContext({ repaint: () => { if (view === 'stock') paint(); }, data: () => ({ ...sellData(), takes: storeTakes }), onChange: () => { reloadOffsets(); if (view === 'stock') paint(); } });
 todo.setContext({ data: () => ({ ...sellData(), specials: storeSpecials, quotes: storeQuotes }) });
 quotesTab.setContext({ repaint: () => { if (view === 'quotes') paint(); }, data: () => ({ ...sellData(), quotes: storeQuotes, cartLines: sell.sale.cart.lines.length }), onLoad: (q) => { const ok = sell.loadQuote(q); if (ok) { view = 'sell'; paint(); } return ok; } });
