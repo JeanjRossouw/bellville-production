@@ -128,6 +128,14 @@ check('no cost column: said so', /No cost column/.test(R.nocost), R.nocost);
 await p.click('#modal-ok'); R.nofile = await toast();
 check('Save with nothing to save stays open', /Choose the file first/.test(R.nofile) && await p.locator('#modal').count() === 1, R.nofile);
 
+// ---- the reorder level on every stock item at once
+if (await p.locator('#modal').count()) { await p.keyboard.press('Escape'); await p.waitForTimeout(300); if (await p.locator('#modal').count()) { await p.locator('#modal [data-close]').first().click().catch(() => {}); await p.waitForTimeout(300); } }
+await p.click('[data-act=pr-reorder]'); await p.waitForSelector('#ro-level');
+R.ro = await txt('#modal'); check('reorder: the stock items counted, 2 by default', /will be set/.test(R.ro) && (await p.inputValue('#ro-level')) === '2', R.ro);
+await p.click('#modal-ok'); R.roToast = await toast(); await p.waitForTimeout(800);
+const rc = (await coll('products')).filter(x => x.entityId === 'RC' && x.type === 'stock' && !x.archived && x.trackStock !== false);
+check('every RC stock item reorders at 2, the one with no cost written with whole cents', /Reorder level 2 set on \d+ item/.test(R.roToast) && rc.length > 0 && rc.every(x => x.reorderLevel === 2) && Number.isInteger((await one('products/p_mat')).costCents), [R.roToast, rc.map(x => [x.id, x.reorderLevel])]);
+
 check('no page errors', errs.length === 0, errs);
 await b.close(); if (server) server.kill();
 console.log(JSON.stringify({ fails, errs, ok: fails.length === 0 }, null, 1));

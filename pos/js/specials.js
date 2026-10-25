@@ -10,7 +10,7 @@ import { API } from './config.js';
 import * as auth from './auth.js';
 import { esc, toast, field, row, val, openModal, money, niceDate, niceTime, empty } from './ui.js';
 import { centsOf, randsOf, pctOf } from './money.js';
-import { specialSettings, signoffText, STATUS_LABEL, NEXT, SPEC_FIELDS, CANCEL_KINDS, SALES_LABEL, SALES_NEXT } from './special-terms.js';
+import { specialSettings, signoffText, STATUS_LABEL, NEXT, SPEC_FIELDS, CANCEL_KINDS, SALES_LABEL, SALES_NEXT, isUrgent } from './special-terms.js';
 import { openReceipt } from './receiptui.js';
 import { whatsappUrl, specLines } from './receipt.js';
 import { padHtml, wirePad } from './signpad.js';
@@ -39,7 +39,7 @@ export function specialsHtml() {
   const all = dd.specials || [];
   const q = so.q.trim().toLowerCase();
   const rows = all.filter(o => (so.filter === 'all' || (so.filter === 'open' ? OPEN.includes(o.status) : so.filter === 'done' ? /^(delivered|collected)$/.test(o.status) : o.status === so.filter)) && (!q || [o.docNo, o.customerSnapshot && o.customerSnapshot.name, o.customerSnapshot && o.customerSnapshot.phone, o.factoryRef, ...o.lines.map(l => l.name)].some(x => String(x || '').toLowerCase().includes(q))))
-    .sort((a, b) => (OPEN.includes(a.status) ? 0 : 1) - (OPEN.includes(b.status) ? 0 : 1) || String(a.expectedAt).localeCompare(String(b.expectedAt)));
+    .sort((a, b) => (OPEN.includes(a.status) ? 0 : 1) - (OPEN.includes(b.status) ? 0 : 1) || (isUrgent(b) ? 1 : 0) - (isUrgent(a) ? 1 : 0) || String(a.expectedAt).localeCompare(String(b.expectedAt)));
   const open = all.filter(o => OPEN.includes(o.status));
   const due = all.filter(o => o.updateDue && o.status !== 'quoted').length;
   return `<div class="page-head"><h1>Sales orders</h1><p class="sub">${open.length} open · ${esc(money(open.reduce((n, o) => n + o.balanceCents, 0)))} still to come in${due ? ' · ' + due + ' update' + (due === 1 ? '' : 's') + ' to send' : ''}${all.filter(o => o.status === 'ready').length ? ' · ' + all.filter(o => o.status === 'ready').length + ' ready' : ''}</p></div>
@@ -49,7 +49,7 @@ export function specialsHtml() {
       <span class="muted">New orders start from the cart under Sell (made-to-order items).</span>
     </div>
     ${rows.length ? `<div class="card" style="padding:0;overflow:auto"><table class="tbl lb-tbl"><thead><tr><th>No</th><th>Customer</th><th>What</th><th>Expected</th><th class="r">Price</th><th class="r">Paid</th><th class="r">Balance</th><th>Status</th><th></th></tr></thead>
-      <tbody>${rows.map(o => `<tr class="${OPEN.includes(o.status) ? '' : 'off'}"><td><strong>${esc(o.docNo)}</strong>${o.factoryRef ? `<div class="muted">${esc(o.factoryRef)}</div>` : ''}</td><td>${esc(o.customerSnapshot ? o.customerSnapshot.name : '')}<div class="muted">${esc(o.customerSnapshot ? o.customerSnapshot.phone : '')}</div></td><td>${esc(o.lines.map(l => l.qty + ' × ' + l.name).join(', '))}</td><td class="muted">${esc(niceDate(o.expectedAt))}</td><td class="r">${esc(money(o.totalCents))}</td><td class="r">${esc(money(o.paidCents))}</td><td class="r"><strong>${esc(money(o.balanceCents))}</strong></td><td><span class="chip ${CHIP[o.status] || ''}">${esc(STATUS_LABEL[o.status] || o.status)}</span>${o.updateDue && o.status !== 'quoted' ? '<span class="chip late">update to send</span>' : ''}</td><td class="r"><button class="btn ghost sm" data-act="so-open" data-id="${esc(o.id)}">Open</button></td></tr>`).join('')}</tbody></table></div>`
+      <tbody>${rows.map(o => `<tr class="${OPEN.includes(o.status) ? '' : 'off'}"><td><strong>${esc(o.docNo)}</strong>${isUrgent(o) && OPEN.includes(o.status) ? ' <span class="chip urgent">Urgent</span>' : ''}${o.source === 'shopify' ? `<div class="muted">Shopify ${esc((o.shopify || {}).name || '')}</div>` : ''}${o.factoryRef ? `<div class="muted">${esc(o.factoryRef)}</div>` : ''}</td><td>${esc(o.customerSnapshot ? o.customerSnapshot.name : '')}<div class="muted">${esc(o.customerSnapshot ? o.customerSnapshot.phone : '')}</div></td><td>${esc(o.lines.map(l => l.qty + ' × ' + l.name).join(', '))}</td><td class="muted">${esc(niceDate(o.expectedAt))}</td><td class="r">${esc(money(o.totalCents))}</td><td class="r">${esc(money(o.paidCents))}</td><td class="r"><strong>${esc(money(o.balanceCents))}</strong></td><td><span class="chip ${CHIP[o.status] || ''}">${esc(STATUS_LABEL[o.status] || o.status)}</span>${o.updateDue && o.status !== 'quoted' ? '<span class="chip late">update to send</span>' : ''}</td><td class="r"><button class="btn ghost sm" data-act="so-open" data-id="${esc(o.id)}">Open</button></td></tr>`).join('')}</tbody></table></div>`
       : empty(so.filter === 'open' ? 'No open sales orders' : 'Nothing here', so.filter === 'open' ? 'Ring a made-to-order item up under Sell, add the customer, and tap Sales order.' : '')}` + salesOrdersHtml();
 }
 
@@ -148,6 +148,7 @@ export async function action(act, b) {
   if (act === 'so-update') return update(id, b.dataset.status || '');
   if (act === 'so-link') return sendLink('order', id, where());
   if (act === 'so-dispatch') return dispatch(id);
+  if (act === 'so-urgent') return urgent(id);
   if (act === 'so-confirm') return confirmDay(id);
   if (act === 'so-status') return status(id, b.dataset.to);
   if (act === 'so-factory-sync') return factorySync(id);
@@ -281,7 +282,7 @@ function openDetail(id) {
   const canStatus = (to) => OPEN.includes(o.status) && NEXT[o.status] && NEXT[o.status].includes(to) && to !== 'cancelled' && to !== 'depositPaid';
   openModal(o.docNo + ' · ' + o.customerSnapshot.name, `
     <div class="lb-detail">
-      <div class="lb-head"><span class="chip ${CHIP[o.status] || ''}">${esc(STATUS_LABEL[o.status] || o.status)}</span>${o.updateDue && o.status !== 'quoted' ? '<span class="chip late">update to send</span>' : ''}<span class="muted">Opened ${esc(niceDate(o.openedAt))} by ${esc(o.cashierName)} · expected ${esc(niceDate(o.expectedAt))}${o.factoryRef ? ' · factory ref ' + esc(o.factoryRef) : ''} · ${esc(o.customerSnapshot.phone || 'no phone')}</span></div>
+      <div class="lb-head"><span class="chip ${CHIP[o.status] || ''}">${esc(STATUS_LABEL[o.status] || o.status)}</span>${isUrgent(o) ? '<span class="chip urgent">Urgent</span>' : ''}${o.updateDue && o.status !== 'quoted' ? '<span class="chip late">update to send</span>' : ''}<span class="muted">Opened ${esc(niceDate(o.openedAt))} by ${esc(o.cashierName)} · expected ${esc(niceDate(o.expectedAt))}${o.factoryRef ? ' · factory ref ' + esc(o.factoryRef) : ''} · ${esc(o.customerSnapshot.phone || 'no phone')}</span></div>
       ${o.lines.map(l => `<div class="so-line"><div class="x-row"><strong>${esc(l.qty + ' × ' + l.name)}</strong><span>${esc(money(l.netCents != null ? l.netCents : l.lineTotalCents))}</span></div>${specLines(l.spec).map(x => `<div class="muted">${esc(x)}</div>`).join('')}${l.spec && l.spec.photo ? `<img class="spec-thumb" src="${l.spec.photo}" alt="">` : ''}</div>`).join('')}
       <div class="x-row tot"><span>Price</span><strong>${esc(money(o.totalCents))}</strong></div>
       <div class="lb-cols">
@@ -304,6 +305,7 @@ function openDetail(id) {
         ${o.status === 'ready' && o.balanceCents <= 0 && !(dv && dv.kind === 'deliver' && dv.confirmed) ? `<button class="btn${dv && dv.kind === 'deliver' ? '' : ' primary'}" data-act="so-deliver" data-id="${esc(o.id)}">${icon('truck')} Hand over: delivery note + tax invoice</button>` : ''}
         ${o.status === 'outForDelivery' ? `<button class="btn" data-act="so-deliver" data-id="${esc(o.id)}">${icon('truck')} Mark delivered (signed here)</button><button class="btn ghost" data-act="so-book" data-id="${esc(o.id)}">Rebook</button><button class="btn ghost" data-act="so-dispatch" data-id="${esc(o.id)}">Change driver</button>` : ''}
         ${o.status !== 'quoted' ? `<button class="btn${o.updateDue ? ' primary' : ''}" data-act="so-update" data-id="${esc(o.id)}">${icon('user')} WhatsApp update</button>` : ''}
+        ${sup && OPEN.includes(o.status) ? `<button class="btn ghost" data-act="so-urgent" data-id="${esc(o.id)}">${isUrgent(o) ? 'Not urgent' : 'Mark urgent'}</button>` : ''}
         <button class="btn ghost" data-act="so-link" data-id="${esc(o.id)}">${icon('user')} Send the client their order page</button>
         ${o.factory && (o.factory.orders || []).length && OPEN.includes(o.status) ? `<button class="btn" data-act="so-factory-sync" data-id="${esc(o.id)}">Check factory</button>` : ''}
         ${sup && factoryLinked() && !(o.factory && (o.factory.orders || []).length) && ['depositPaid', 'inProduction', 'ready'].includes(o.status) ? `<button class="btn" data-act="so-factory-send" data-id="${esc(o.id)}">Send to factory</button>` : ''}
@@ -517,6 +519,12 @@ function deliver(id) {
       return true;
     } catch (e) { busy = false; toast(noLine(e), 'warn'); return false; }
   }
+}
+
+async function urgent(id) {
+  const o = one(id); if (!o) return;
+  try { const r = await auth.api('urgent', { orderId: o.id, urgent: !isUrgent(o), ...where() }, API.special); fresh(id, r); toast(o.docNo + (r.order.urgent ? ' is urgent' : ' is no longer urgent')); if (ctx.onChange) ctx.onChange(r); }
+  catch (e) { toast(noLine(e), 'warn'); }
 }
 
 // ---------------------------------------------------------- dispatch --

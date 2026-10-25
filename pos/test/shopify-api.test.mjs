@@ -203,6 +203,9 @@ check('#1001: deposit paid via Shopify, the balance, the lines, the fabric on th
 check('#1002 paid in full; the same client for both (matched by cell number)', s2 && s2.status === 'depositPaid' && s2.balanceCents === 0 && s2.customerId === s1.customerId, s2 && [s2.status, s2.customerId, s1.customerId]);
 const lindi = await getDoc('pos/retail/customers/' + s1.customerId);
 check('the client made once, tagged shopify, no marketing consent', lindi && lindi.name === 'Lindi Nkosi' && lindi.tags.includes('shopify') && !Object.values(lindi.consent || {}).some(c => c && c.granted), lindi);
+check('brought in from Shopify: urgent', s1.urgent === true && s2.urgent === true, [s1.urgent, s2.urgent]);
+R.urg = await call('pos-special', { action: 'urgent', orderId: 'shp-9002', urgent: false, ...bell }, sup.idToken);
+check('a supervisor clears the urgent mark', R.urg.ok && (await getDoc('pos/retail/specialOrders/shp-9002')).urgent === false, R.urg);
 R.imp2 = await call('pos-shopify', { action: 'importOpenOrders', ...bell }); check('again: nothing new, both already here', R.imp2.ok && R.imp2.imported.length === 0 && R.imp2.already === 2, R.imp2);
 const salesBeforeHO = (await listColl('sales')).length;
 check('no POS payment rows for Shopify money', !(await listColl('payments')).some(p => p.docId === 'shp-9001' || p.docId === 'shp-9002'));
