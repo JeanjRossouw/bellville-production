@@ -139,7 +139,7 @@ function poEditHtml(dd) {
   const sub = e.lines.reduce((n, l) => n + l.qty * l.unitCostCents, 0);
   return `<div class="card"><h2>${e.id ? 'Purchase order (draft)' : 'New purchase order'}</h2>
     <div class="grid three">${field('Supplier', 'po-supplier', { type: 'select', value: e.supplierId, options: [{ value: '', label: 'Choose…' }, ...sups.map(s => ({ value: s.id, label: s.name }))] })}${field('Expected by', 'po-expected', { type: 'date', value: e.expectedAt })}${field('Note to the supplier', 'po-note', { value: e.note })}</div>
-    <div class="tk-scanrow" style="margin:.4rem 0"><label class="pos-search-wrap" style="flex:1 1 260px">${icon('search')}<input id="po-add" class="pos-in" placeholder="Add an item: name, SKU or barcode" autocomplete="off"></label><button class="btn ghost sm" data-act="by-po-suggest-here">${icon('box')} Suggest from low stock</button></div>
+    <div class="tk-scanrow" style="margin:.4rem 0"><label class="pos-search-wrap" style="flex:1 1 260px">${icon('search')}<input id="po-add" class="pos-in" placeholder="Add an item: name, SKU or barcode" autocomplete="off"></label><button class="btn ghost sm" data-act="by-po-open-here" title="What open orders need of this supplier's items">${icon('box')} Open orders</button><button class="btn ghost sm" data-act="by-po-suggest-here">${icon('box')} Suggest from low stock</button></div>
     <div id="po-hits" class="pk-list"></div>
     ${e.lines.length ? `<table class="tbl po-lines"><thead><tr><th>Item</th><th class="r">Available</th><th class="r">On order</th><th class="r">Qty</th><th class="r">Unit cost (ex VAT)</th><th class="r">Total</th><th></th></tr></thead><tbody>${e.lines.map((l, i) => { const s = stockOf().find(x => x.itemId === l.itemId) || {}; return `<tr><td><strong>${esc(l.name)}</strong><div class="muted">${esc(l.sku || '')}</div></td><td class="r">${s.available == null ? '' : s.available}${s.reorderLevel != null ? ` <span class="muted">/ ${s.reorderLevel}</span>` : ''}</td><td class="r">${s.onOrder || ''}</td><td class="r"><input class="in-sm r" data-po-qty="${i}" type="number" min="1" value="${l.qty}" style="max-width:80px"></td><td class="r"><input class="in-sm r" data-po-cost="${i}" inputmode="decimal" value="${randsOf(l.unitCostCents)}" style="max-width:110px"></td><td class="r">${esc(money(l.qty * l.unitCostCents))}</td><td class="r"><button class="pos-icon-btn light" data-act="by-po-rm" data-i="${i}" title="Remove">${icon('x')}</button></td></tr>`; }).join('')}</tbody><tfoot><tr><td colspan="5" class="r"><strong>Subtotal (ex VAT)</strong></td><td class="r"><strong>${esc(money(sub))}</strong></td><td></td></tr></tfoot></table>` : '<p class="muted">No lines yet: add items above, or suggest them from low stock.</p>'}
     <div class="card-actions"><button class="btn" data-act="by-po-save">Save draft</button><button class="btn primary" data-act="by-po-send"${e.lines.length && e.supplierId ? '' : ' disabled'}>${icon('file')} Send to the supplier</button><button class="btn ghost" data-act="by-po-close">Back</button></div></div>`;
@@ -157,6 +157,7 @@ function addLine(it, qty) { const e = readEdit(); const had = e.lines.find(l => 
 // hold their stock (available falls below nothing when they are short), sales orders (those brought in from
 // Shopify too) take nothing until they go out, so their stock items count here; less what is on order
 const OPEN_SO = ['quoted', 'depositPaid', 'inProduction', 'ready'];
+const NONE = '__none';   // the items with no supplier set
 export function forOpenOrders(supplierId) {
   const dd = d(), need = new Map(), why = new Map();
   for (const o of dd.specials || []) {
@@ -169,8 +170,9 @@ export function forOpenOrders(supplierId) {
       why.set(id, [...(why.get(id) || []), o.docNo]);
     }
   }
-  return stockOf().filter(x => !supplierId || ((dd.products || []).find(p => p.id === x.productId) || {}).supplierId === supplierId)
-    .map(x => ({ ...x, need: need.get(x.itemId) || 0, orders: why.get(x.itemId) || [], qty: (need.get(x.itemId) || 0) - x.available - x.onOrder }))
+  const supOf = (x) => ((dd.products || []).find(p => p.id === x.productId) || {}).supplierId || '';
+  return stockOf().filter(x => !supplierId || (supplierId === NONE ? !supOf(x) : supOf(x) === supplierId))
+    .map(x => ({ ...x, supplierId: supOf(x), need: need.get(x.itemId) || 0, orders: why.get(x.itemId) || [], qty: (need.get(x.itemId) || 0) - x.available - x.onOrder }))
     .filter(x => x.qty > 0);
 }
 // what the low-stock list says to order: items at or under their reorder level counting what is on order, the reorder quantity each
@@ -389,7 +391,22 @@ export async function action(act, b) {
     case 'by-sup-import': return importSuppliers();
     case 'by-po-new': by.edit = newEdit(null); return ctx.repaint();
     case 'by-po-suggest': { by.edit = newEdit(null); suggest('').forEach(x => by.edit.lines.push({ productId: x.productId, variantId: x.variantId, itemId: x.itemId, sku: x.sku, name: x.name, barcode: x.barcodes[0] || '', qty: x.qty, unitCostCents: x.costCents, receivedQty: 0 })); if (!by.edit.lines.length) toast('Nothing is low.', 'warn'); return ctx.repaint(); }
-    case 'by-po-open': { by.edit = newEdit(null); const list = forOpenOrders(''); list.forEach(x => by.edit.lines.push({ productId: x.productId, variantId: x.variantId, itemId: x.itemId, sku: x.sku, name: x.name, barcode: x.barcodes[0] || '', qty: x.qty, unitCostCents: x.costCents, receivedQty: 0 })); by.edit.note = 'For open orders: ' + [...new Set(list.flatMap(x => x.orders))].slice(0, 20).join(', '); if (!list.length) toast('Open orders need nothing you do not have.', 'warn'); else toast(list.length + ' item' + (list.length === 1 ? '' : 's') + ' for open orders, low stock left out'); return ctx.repaint(); }
+    case 'by-po-open': {
+      const all = forOpenOrders(''); if (!all.length) return toast('Open orders need nothing you do not have.', 'warn');
+      const groups = new Map(); all.forEach(x => groups.set(x.supplierId || NONE, (groups.get(x.supplierId || NONE) || 0) + 1));
+      const opts = [...groups.entries()].map(([k, n]) => ({ value: k, label: (k === NONE ? 'No supplier set' : supplierName(k) || 'Unknown supplier') + ' · ' + n + ' item' + (n === 1 ? '' : 's') })).sort((a, b) => a.label.localeCompare(b.label));
+      openModal('Order for open orders only', `<p class="muted">Only what open sales orders and website orders need that you do not have (less what is on order). Reorder levels are left out.</p>${field('Supplier', 'oo-sup', { type: 'select', value: opts.length === 1 ? opts[0].value : '', options: [{ value: '', label: 'All suppliers · ' + all.length + ' item' + (all.length === 1 ? '' : 's') }, ...opts] })}`, {
+        okLabel: 'Make the order', onOk: (w) => {
+          const sid = val(w, 'oo-sup'), list = forOpenOrders(sid);
+          by.edit = newEdit(null); by.edit.supplierId = sid && sid !== NONE ? sid : '';
+          list.forEach(x => by.edit.lines.push({ productId: x.productId, variantId: x.variantId, itemId: x.itemId, sku: x.sku, name: x.name, barcode: x.barcodes[0] || '', qty: x.qty, unitCostCents: x.costCents, receivedQty: 0 }));
+          by.edit.note = 'For open orders: ' + [...new Set(list.flatMap(x => x.orders))].slice(0, 20).join(', ');
+          toast(list.length + ' item' + (list.length === 1 ? '' : 's') + ' for open orders' + (sid && sid !== NONE ? ' from ' + supplierName(sid) : ''));
+          ctx.repaint(); return true;
+        } });
+      return;
+    }
+    case 'by-po-open-here': { const e = readEdit(); const list = forOpenOrders(e.supplierId); if (!list.length) return toast(e.supplierId ? 'Open orders need nothing more of this supplier’s.' : 'Open orders need nothing you do not have.', 'warn'); let n = 0; list.forEach(x => { if (!e.lines.some(l => l.itemId === x.itemId)) { e.lines.push({ productId: x.productId, variantId: x.variantId, itemId: x.itemId, sku: x.sku, name: x.name, barcode: x.barcodes[0] || '', qty: x.qty, unitCostCents: x.costCents, receivedQty: 0 }); n++; } }); toast(n + ' added for open orders'); return ctx.repaint(); }
     case 'by-po-suggest-here': { const e = readEdit(); const list = suggest(e.supplierId); if (!list.length) return toast(e.supplierId ? 'Nothing of this supplier’s is low.' : 'Nothing is low.', 'warn'); list.forEach(x => { if (!e.lines.some(l => l.itemId === x.itemId)) e.lines.push({ productId: x.productId, variantId: x.variantId, itemId: x.itemId, sku: x.sku, name: x.name, barcode: x.barcodes[0] || '', qty: x.qty, unitCostCents: x.costCents, receivedQty: 0 }); }); toast(list.length + ' suggested'); return ctx.repaint(); }
     case 'by-po-edit': { const p = openPos(d()).find(x => x.id === id); if (p) { const m = document.getElementById('modal'); if (m) m.remove(); by.edit = newEdit(p); by.sub = 'po'; ctx.repaint(); } return; }
     case 'by-po-rm': { const e = readEdit(); e.lines.splice(Number(b.dataset.i), 1); return ctx.repaint(); }

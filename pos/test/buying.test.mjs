@@ -79,9 +79,13 @@ await fetch(`${docs}/pos/retail/products/p_cushion?updateMask.fieldPaths=supplie
 await p.click('[data-act=by-sub][data-to=po]'); await p.waitForTimeout(300);
 R.poList = await screenText(); check('the low-stock suggestion is offered', /Suggest from low stock \(1\)/i.test(R.poList), R.poList.slice(0, 300));
 check('the open-orders option offered: 1 item short', /Order for open orders only \(1\)/i.test(R.poList), R.poList.slice(0, 300));
-await p.click('[data-act=by-po-open]'); await p.waitForSelector('#po-supplier');
+await p.click('[data-act=by-po-open]'); await p.waitForSelector('#oo-sup');
+R.ooModal = await modalText(); check('pick the supplier: all, or the lamp’s (none set yet)', /All suppliers · 1 item/.test(R.ooModal) && /No supplier set · 1 item/.test(R.ooModal), R.ooModal);
+await p.click('#modal-ok'); await p.waitForSelector('#po-supplier');
 R.openEdit = await screenText();
 check('for open orders only: the lamp (8 wanted, 6 here) → 2; the low cushion left out', /Lamp/.test(R.openEdit) && !/Scatter Cushion/.test(R.openEdit) && (await p.inputValue('[data-po-qty="0"]')) === '2' && /BF-SO-000009/.test(await p.inputValue('#po-note')), R.openEdit.slice(0, 400));
+await p.selectOption('#po-supplier', supId); await p.click('[data-act=by-po-open-here]'); R.ooHere = await toast();
+check('for one supplier (Foam Co): open orders need nothing more of theirs', /nothing more of this supplier/.test(R.ooHere), R.ooHere);
 await p.click('[data-act=by-po-close]'); await p.waitForTimeout(300);
 await p.click('[data-act=by-po-suggest]'); await p.waitForSelector('#po-supplier');
 R.edit = await screenText(); check('the cushion suggested: 10 at R 50', /Scatter Cushion/.test(R.edit) && (await p.inputValue('[data-po-qty="0"]')) === '10' && (await p.inputValue('[data-po-cost="0"]')) === '50.00' && /Subtotal \(ex VAT\) R 500\.00/.test(R.edit), R.edit.slice(0, 400));
