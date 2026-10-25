@@ -179,6 +179,7 @@ export async function prepareSale(ctx, b, opts = {}) {
       const frame = framePriceOf(p, v), metres = f ? fabricMetresOf(p, v) : 0, perMetre = f ? int(f.priceCents) || 0 : 0;
       fabricCharge = { fabricId: f ? fid : '', fabric: f ? fabricLabel(f) : clean(l.spec.fabric, 120), fabricMetres: metres, fabricPerMetreCents: perMetre, fabricCents: fabricCentsFor(metres, perMetre), frame: frame > 0, framePriceCents: frame };
       listPrice = (frame > 0 ? frame : listPrice) + fabricCharge.fabricCents;
+      if (frame > 0) name = p.name + ' · frame';   // the fabric is on the spec, not the variant's
       if (type === 'stock') { type = 'mto'; trackStock = false; }
     }
     // the price: the list price, or an override a manager approved
