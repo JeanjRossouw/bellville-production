@@ -47,6 +47,8 @@ await prod('p_corner', { name: 'Mexico L Shape Corner', type: 'stock', trackStoc
 await put('pos/retail/variants/vg', { productId: 'p_corner', name: 'jamie-grey', optionValues: { Fabric: 'jamie-grey' }, sku: 'MX-G', barcodes: [], priceCents: null, costCents: null, storePrices: {}, archived: false, ...srv('BF') });
 await put('pos/retail/variants/vb', { productId: 'p_corner', name: 'acho-beige', optionValues: { Fabric: 'acho-beige' }, sku: 'MX-B', barcodes: [], priceCents: null, costCents: null, storePrices: {}, archived: false, ...srv('BF') });
 await put('pos/retail/customers/c1', { name: 'Thandi Mokoena', phone: '0825550101', email: '', vatNo: '', address: { line1: '5 Lane', city: 'Parow' }, accountEnabled: false, creditLimitCents: 0, storeCreditCents: 0, accountBalanceCents: 0, notes: '', archived: false, ...srv('BF') });
+await put('pos/retail/customers/c_na', { name: 'Jean Test', phone: '0825550202', email: '', vatNo: '', address: {}, accountEnabled: false, creditLimitCents: 0, storeCreditCents: 0, accountBalanceCents: 0, notes: 'keep me', tags: ['vip'], archived: false, ...srv('BF') });
+await put('pos/retail/customers/c_na2', { name: 'Mia Test', phone: '0825550303', email: '', vatNo: '', address: {}, accountEnabled: false, creditLimitCents: 0, storeCreditCents: 0, accountBalanceCents: 0, notes: '', archived: false, ...srv('BF') });
 // another company's fabric
 await put('pos/retail/fabrics/f_other', { supplier: 'X', design: 'Elsewhere', collection: '', costCents: 10000, markupPct: 80, minPriceCents: 25000, priceCents: 25000, archived: false, ...srv('ZZ') });
 
@@ -155,6 +157,30 @@ await p.click('.pos-tile:has-text("Mexico L Shape Corner")'); await p.waitForSel
 cl = (await p.evaluate(() => JSON.parse(Object.entries(localStorage).find(([k]) => k.startsWith('pos-cart-'))[1]))).lines;
 check('jamie-grey as shown: its own line from stock, no fabric question', cl.filter(l => l.productId === 'p_corner').length === 2 && cl.some(l => l.variantId === 'vg' && l.name === 'Mexico L Shape Corner · jamie-grey' && l.type === 'stock' && l.unitPriceCents === 2199900) && !(await p.$('input[name=fb-how]')), cl.filter(l => l.productId === 'p_corner'));
 
+// ---- Delivery again changes its line; a sales order asks a customer with no address for one; Delivery keeps it on the customer
+const cartLines = async () => (await p.evaluate(() => JSON.parse(Object.entries(localStorage).find(([k]) => k.startsWith('pos-cart-'))[1]))).lines;
+await p.click('[data-act=sl-delivery]'); await p.waitForSelector('#dl-line1');
+R.dlAgain = await txt('#modal'); check('Delivery again: the same line, to change', /Change delivery/i.test(R.dlAgain) && (await p.inputValue('#dl-fee')) === '450.00' && (await p.inputValue('#dl-city')) === 'Parow', R.dlAgain.slice(0, 200));
+await p.fill('#dl-fee', '500'); await p.click('#modal-ok'); await p.waitForTimeout(400);
+const dls = (await cartLines()).filter(l => l.delivery); check('still one delivery line, now R 500', dls.length === 1 && dls[0].unitPriceCents === 50000 && dls[0].delivery.city === 'Parow', dls);
+const pickCust = async (q) => { await p.click('[data-act=sl-customer]'); await p.waitForSelector('#modal #cu-q'); await p.fill('#cu-q', q); await p.waitForTimeout(300); await p.click('#cu-list .pk-row'); await p.waitForTimeout(400); };
+await p.click('[data-act=sl-void]'); await p.waitForSelector('#vd-reason'); await p.fill('#vd-reason', 'test'); await p.click('#modal-ok'); await p.waitForTimeout(500);
+await pickCust('0825550202');
+await p.click('.pos-tile:has-text("Mexico L Shape Corner")'); await p.waitForSelector('[data-frame]'); await p.click('[data-frame]'); await p.waitForSelector('input[name=fb-how]');
+await p.fill('#ln-fab2 .fb-pick-q', 'Customer’s own linen'); await p.waitForTimeout(200); await p.click('#modal-ok'); await p.waitForTimeout(400);
+await p.click('[data-act=sl-special]'); await p.waitForSelector('#modal #so-pad');
+R.soAddr = await txt('#modal .so-addr').catch(() => ''); check('the sales order asks for the address (over R 5 000)', /Jean Test’s address/.test(R.soAddr) && /Over R 5 000/.test(R.soAddr), R.soAddr);
+await p.uncheck('#so-depnow'); await p.check('#so-accept');
+{ const box = await p.locator('#so-pad').boundingBox(); await p.mouse.move(box.x + 20, box.y + 40); await p.mouse.down(); await p.mouse.move(box.x + 150, box.y + 70, { steps: 8 }); await p.mouse.up(); }
+await p.click('#modal-ok'); R.noAddr = await toast(); check('no address: not opened, asked for it', /needs Jean Test’s address/.test(R.noAddr), R.noAddr);
+await p.fill('#so-a1', '9 Oak St'); await p.fill('#so-acity', 'Durbanville'); await p.click('#modal-ok'); R.soOk = await toast();
+check('with the address: the sales order opens', /Sales order BF-SO-\d+/.test(R.soOk), R.soOk);
+const cna = await one('customers/c_na'); check('the address kept on the customer, nothing else touched', cna.address.line1 === '9 Oak St' && cna.address.city === 'Durbanville' && cna.notes === 'keep me' && cna.tags.join() === 'vip', cna);
+if (await p.locator('#modal').count()) { await p.click('#modal-ok'); await p.waitForTimeout(300); }
+await pickCust('0825550303');
+await p.click('[data-act=sl-delivery]'); await p.waitForSelector('#dl-line1'); await p.fill('#dl-line1', '7 Elm Rd'); await p.fill('#dl-city', 'Bellville'); await p.fill('#dl-fee', '0'); await p.click('#modal-ok'); R.dlKeep = await toast();
+const cna2 = await one('customers/c_na2'); check('Delivery keeps the address on a customer who had none', /address is kept on Mia Test/.test(R.dlKeep) && cna2.address.line1 === '7 Elm Rd' && cna2.address.city === 'Bellville', [R.dlKeep, cna2.address]);
+
 // ---- the server prices it again
 const call = async (fn, body, token = cas.idToken) => { const r = await fetch(FN + fn, { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify(body) }); return { status: r.status, ...(await r.json()) }; };
 const bell = { entityId: 'BF', storeId: 'BF-BELL', registerId: '' };
@@ -171,6 +197,7 @@ R.own = await call('pos-sale', saleBody([{ productId: 'p_daybed', variantId: '',
 check('the frame in the customer’s own fabric: R 15,000', R.own.ok && R.own.lines[0].unitPriceCents === 1500000 && R.own.lines[0].spec.fabric === 'Customer’s own linen' && R.own.lines[0].spec.fabricCents === 0, R.own.error || R.own.lines);
 R.mx = await call('pos-sale', saleBody([{ productId: 'p_corner', variantId: 'vg', qty: 1, unitPriceCents: 2921450, discountCents: 0, spec: { frame: true, fabricId: acap } }], 2921450));
 check('the L-shape frame + Acapella sold at R 29,214.50, named as the frame', R.mx.ok && R.mx.lines[0].name === 'Mexico L Shape Corner · frame' && R.mx.lines[0].type === 'mto' && R.mx.lines[0].spec.framePriceCents === 1400000, R.mx.error || R.mx.lines);
+R.addrEmpty = await call('pos-customer', { action: 'address', customerId: 'c_na2', address: {}, ...bell }); check('an empty address: refused', R.addrEmpty.status === 400, R.addrEmpty);
 R.cheap = await call('pos-sale', saleBody([{ productId: 'p_daybed', variantId: '', qty: 1, unitPriceCents: 1400000, discountCents: 0, spec: { frame: true } }], 1400000));
 check('under the frame price: refused', R.cheap.status === 403, R.cheap);
 R.tamper = await call('pos-sale', saleBody([{ productId: 'p_sofa', variantId: '', qty: 1, unitPriceCents: 900000, discountCents: 0, spec: { fabricId: acap } }], 900000));

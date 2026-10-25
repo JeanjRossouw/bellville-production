@@ -53,6 +53,8 @@ export async function action(act, b) {
 
 // ------------------------------------------------------------- forms --
 // the form the till's quick-add and this tab share: saveCustomer(body) → the customer
+// the address alone (a delivery, or a tax invoice over R 5 000), nothing else on the profile touched
+export async function saveAddress(customerId, address) { const r = await auth.api('address', { customerId, address, ...where() }, API.customer); return r.customer; }
 export async function saveCustomer(body) { const r = await auth.api('save', { ...body, ...where() }, API.customer); return r.customer; }
 export function consentFields(prefix, c = {}) {
   return `<div class="cu-consent"><span class="muted">May we contact them about specials? (POPIA: their choice, recorded with the date)</span>${CHANNELS.map(([k, l]) => `<label class="chk"><input type="checkbox" id="${prefix}-${k}"${c.consent && c.consent[k] && c.consent[k].granted ? ' checked' : ''}> ${l}</label>`).join('')}</div>`;

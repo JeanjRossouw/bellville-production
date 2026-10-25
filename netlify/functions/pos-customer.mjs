@@ -7,6 +7,7 @@
 //   save         { customerId?, name, contact, phone, email, vatNo, address, dob, tags, notes, consent { whatsapp, sms, email } (booleans), consentSource,
 //                  accountEnabled?, creditLimitCents? (a manager) }     → the customer; a cell number is one customer per company
 //   consent      { customerId, channel, granted, source }
+//   address      { customerId, address { line1, line2, city, code } }   the address only (from the till: a delivery, a tax invoice over R 5 000)
 //   history      { customerId }                                         → sales, credit notes, lay-bys, custom orders, the points ledger
 //   merge        { keepId, dropId }                                     a manager
 //   export       { customerId }                                         a manager: the profile and history
@@ -70,6 +71,18 @@ const actions = {
       const out = cur ? { ...cur, ...data } : { id: newId, ...writes.find(w => w.coll === 'customers').data };
       return { writes, result: { customer: { ...out, id: newId } } };
     } });
+  },
+
+  async address(event, b) {
+    const ctx = await whoAndWhere(event, b, { noShift: true });
+    const c = await loadCustomer(ctx, b.customerId);
+    if (c.anonymised) throw new Reject(409, 'This profile was anonymised.');
+    const a = b.address || {};
+    const address = { line1: clean(a.line1, 120), line2: clean(a.line2, 120), city: clean(a.city, 80), code: clean(a.code, 12) };
+    if (!address.line1 && !address.city) throw new Reject(400, 'The street or the city.');
+    const now = nowIso(); const stamp = serverStamp(ctx.entityId, '', ctx.user.id, ctx.deviceId);
+    await runSale(ctx, {}, { more: async () => ({ writes: [{ update: true, coll: 'customers', id: c.id, data: { address, updatedAt: now, updatedBy: ctx.user.id } }, auditRow(ctx, 'customer.address', c.id, { city: address.city }, stamp, now)], result: {} }) });
+    return { ok: true, customer: { ...c, address, id: c.id } };
   },
 
   async consent(event, b) {
