@@ -86,7 +86,7 @@ await p.check('#so-accept'); await sign('#so-pad');
 await p.click('#modal-ok'); R.opened = await toast(); await p.waitForTimeout(1500);
 check('order opened with the deposit', /Sales order BF-SO-000001 opened, deposit paid/.test(R.opened), R.opened);
 await p.waitForSelector('#modal .rc-paper'); R.orderDoc = await paper();
-check('the order prints: the spec, the payment plan, the signature', /SPECIAL ORDER/.test(R.orderDoc) && /Custom Sofa/.test(R.orderDoc) && /Fabric: Linen look/.test(R.orderDoc) && /Colour: Charcoal/.test(R.orderDoc) && /Paid R 7,500\.00/.test(R.orderDoc) && /Balance before delivery R 7,500\.00/.test(R.orderDoc) && /Signed: Thandi Mokoena/.test(R.orderDoc) && /BF-SO-000001/.test(R.orderDoc), R.orderDoc.slice(0, 500));
+check('the order prints: the spec, the payment plan, the signature', /SALES ORDER/.test(R.orderDoc) && /Custom Sofa/.test(R.orderDoc) && /Fabric: Linen look/.test(R.orderDoc) && /Colour: Charcoal/.test(R.orderDoc) && /Paid R 7,500\.00/.test(R.orderDoc) && /Balance before delivery R 7,500\.00/.test(R.orderDoc) && /Signed: Thandi Mokoena/.test(R.orderDoc) && /BF-SO-000001/.test(R.orderDoc), R.orderDoc.slice(0, 500));
 check('the spec photo is on the order', (await p.locator('#modal .rc-paper .spec-img').count()) === 1);
 await closeModal();
 check('the cart is cleared', /No items yet/.test(await p.locator('.pos-right').innerText()));
@@ -104,7 +104,7 @@ await p.click('[data-act=so-pay]'); await p.waitForSelector('#modal #sp-amount')
 check('the whole balance suggested', (await p.inputValue('#sp-amount')) === '7500.00');
 await p.selectOption('#sp-method', 'card'); await p.fill('#sp-ref', '1234'); await p.click('#modal-ok'); R.paid = await toast(); await p.waitForTimeout(1500);
 check('paid in full', /Paid R 7,500\.00 on BF-SO-000001/.test(R.paid) && /paid in full/.test(R.paid), R.paid);
-await p.waitForSelector('#modal .rc-paper'); R.payslip = await paper(); check('the payment receipt', /SPECIAL ORDER PAYMENT/.test(R.payslip) && /Paid now R 7,500\.00/.test(R.payslip) && /Balance R 0\.00/.test(R.payslip) && /Card ••1234 R 7,500\.00/.test(R.payslip), R.payslip);
+await p.waitForSelector('#modal .rc-paper'); R.payslip = await paper(); check('the payment receipt', /SALES ORDER PAYMENT/.test(R.payslip) && /Paid now R 7,500\.00/.test(R.payslip) && /Balance R 0\.00/.test(R.payslip) && /Card ••1234 R 7,500\.00/.test(R.payslip), R.payslip);
 await closeModal();
 await p.click('[data-act=so-open]'); await p.waitForSelector('#modal .lb-detail');
 await p.click('[data-act=so-deliver]'); await p.waitForSelector('#modal #dn-pad');
@@ -133,7 +133,7 @@ await p.click('[data-act=so-cancel]'); await p.waitForSelector('#modal #sc-kind'
 R.cancelModal = await modalText(); check('no fee before production', /Production has not started: no fee/.test(R.cancelModal) && /To refund R 0\.00/.test(R.cancelModal), R.cancelModal.slice(0, 300));
 await p.click('#modal-ok'); await p.waitForSelector('#modal .pinpad'); await pinType('#modal', '222222'); R.cancelled = await toast(); await p.waitForTimeout(1500);
 check('cancelled with the manager’s PIN', /BF-SO-000002 cancelled · refund R 0\.00/.test(R.cancelled), R.cancelled);
-R.cancelDoc = await paper(); check('the cancellation statement', /SPECIAL ORDER CANCELLATION/.test(R.cancelDoc) && /Cancellation fee R 0\.00/.test(R.cancelDoc) && /section 20\(2\)\(b\)/.test(R.cancelDoc), R.cancelDoc);
+R.cancelDoc = await paper(); check('the cancellation statement', /SALES ORDER CANCELLATION/.test(R.cancelDoc) && /Cancellation fee R 0\.00/.test(R.cancelDoc) && /section 20\(2\)\(b\)/.test(R.cancelDoc), R.cancelDoc);
 await closeModal();
 const o2 = (await listColl('specialOrders')).find(o => o.docNo === 'BF-SO-000002');
 check('written: cancelled, approver Mandla', o2.status === 'cancelled' && o2.approvers.some(a => a.name === 'Mandla'), o2 && [o2.status, o2.approvers]);

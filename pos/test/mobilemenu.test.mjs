@@ -69,7 +69,7 @@ await d.click('#nav [data-group=sales]'); await d.waitForTimeout(150);
 R.open = await d.evaluate(() => [...document.querySelectorAll('#nav [data-menu=sales]:not([hidden]) [data-view]')].map(x => x.textContent));
 await d.click('#nav [data-menu=sales] [data-view=returns]'); await d.waitForTimeout(600);
 R.after2 = await d.evaluate(() => ({ group: document.querySelector('#nav [data-group=sales]').textContent.replace(/\s+/g, ' ').trim(), shut: document.querySelector('#nav [data-menu=sales]').hidden, h1: (document.querySelector('#screen h1') || {}).textContent }));
-check('the Sales drop-down opens with its screens; picking Returns goes there, shuts it and the bar says Sales · Returns', R.open.join() === 'Sales,Returns,Lay-bys,Custom orders,Customers' && R.after2.shut && /Sales\s*· Returns/.test(R.after2.group) && /Returns/i.test(R.after2.h1 || ''), [R.open, R.after2]);
+check('the Sales drop-down opens with its screens; picking Returns goes there, shuts it and the bar says Sales · Returns', R.open.join() === 'Sales,Returns,Lay-bys,Sales orders,Quotes,Customers' && R.after2.shut && /Sales\s*· Returns/.test(R.after2.group) && /Returns/i.test(R.after2.h1 || ''), [R.open, R.after2]);
 await d.click('#nav [data-group=office]'); await d.waitForTimeout(150); await d.mouse.click(700, 600); await d.waitForTimeout(150);
 check('a click elsewhere shuts an open drop-down', await d.evaluate(() => document.querySelector('#nav [data-menu=office]').hidden));
 console.log(JSON.stringify({ fails, errs, ...R }, null, 1));
