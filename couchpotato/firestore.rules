@@ -532,6 +532,7 @@ service cloud.firestore {
       match /stockTakes/{id}     { allow read: if pReadsStore(gid); allow write: if false; }
       match /specialOrders/{id}  { allow read: if pReadsStore(gid); allow write: if false; }
       match /salesOrders/{id}    { allow read: if pReadsStore(gid); allow write: if false; }
+      match /quotes/{id}         { allow read: if pReadsStore(gid); allow write: if false; }   // quotations: the server prices and numbers them
       match /tasks/{id}          { allow read: if pReadsStore(gid); allow write: if false; }
       match /shifts/{id}         { allow read: if pReadsStore(gid); allow write: if false; }
       match /cashMovements/{id}  { allow read: if pReadsStore(gid); allow write: if false; }

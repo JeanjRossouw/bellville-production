@@ -73,7 +73,7 @@ export function findCode(code) {
 export function addItem(p, v, qty = 1) {
   const c = sale.cart;
   const itemId = v ? v.id : p.id;
-  const have = c.lines.find(l => l.itemId === itemId && !l.priceOverride && !(l.spec && (l.spec.fabricId || l.spec.fabric)));   // a second couch in another fabric is its own line
+  const have = c.lines.find(l => l.itemId === itemId && !l.priceOverride && !l.quote && !(l.spec && (l.spec.fabricId || l.spec.fabric)));   // a second couch in another fabric is its own line
   if (have && p.type !== 'voucher') { have.qty += qty; }
   else {
     c.lines.push({ lineId: newId('x'), productId: p.id, variantId: v ? v.id : '', itemId, name: p.name + (v ? ' · ' + v.name : ''), sku: (v && v.sku) || p.sku || '', barcode: ((v && v.barcodes) || p.barcodes || [])[0] || '',
@@ -146,7 +146,7 @@ export function sellHtml() {
           <strong class="pos-line-tot">${esc(money(l.lineTotalCents))}</strong>
         </div>
         <div class="pos-line-disc"><button class="btn ghost sm" data-act="sl-line-disc" data-i="${i}">${l.discountCents ? '− ' + esc(money(l.discountCents)) + (l.discountPct ? ' (' + esc(l.discountPct) + '%)' : '') + (l.discountBy ? ' · ' + esc(l.discountBy.name) : '') : 'Discount'}</button>
-          <button class="btn ghost sm" data-act="sl-note" data-i="${i}">${l.type === 'mto' ? (l.spec && (l.spec.fabric || l.spec.size || l.spec.colour) ? esc([l.spec.size, l.spec.fabric, l.spec.colour, l.spec.legs].filter(Boolean).join(' · ')) : 'Specification') + (l.note ? ' · ' + esc(l.note) : '') : l.note ? esc(l.note) : 'Note'}</button>${l.type === 'mto' ? '<span class="chip prod">made to order</span>' : ''}${l.fabricCents ? `<span class="chip">fabric +${esc(money(l.fabricCents))}</span>` : ''}${l.trackStock && stockOf(l.itemId) < l.qty ? '<span class="chip late">stock goes negative</span>' : ''}</div>
+          <button class="btn ghost sm" data-act="sl-note" data-i="${i}">${l.type === 'mto' ? (l.spec && (l.spec.fabric || l.spec.size || l.spec.colour) ? esc([l.spec.size, l.spec.fabric, l.spec.colour, l.spec.legs].filter(Boolean).join(' · ')) : 'Specification') + (l.note ? ' · ' + esc(l.note) : '') : l.note ? esc(l.note) : 'Note'}</button>${l.type === 'mto' ? '<span class="chip prod">made to order</span>' : ''}${l.fabricCents ? `<span class="chip">fabric +${esc(money(l.fabricCents))}</span>` : ''}${l.quote ? `<span class="chip ok" title="The price of quote ${esc(l.quote.docNo)}">quoted ${esc(l.quote.docNo)}</span>` : ''}${l.trackStock && stockOf(l.itemId) < l.qty ? '<span class="chip late">stock goes negative</span>' : ''}</div>
       </div>`).join('') : `<div class="pos-cart-empty">${icon('cart')}<span>No items yet</span><small>Scan a barcode or tap a product</small></div>`}</div>
       <div class="pos-totals">
         <div><span>Items (${t.pieces})</span><strong>${esc(money(t.grossCents))}</strong></div>
@@ -162,7 +162,8 @@ export function sellHtml() {
         <button data-act="sl-void"${c.lines.length ? '' : ' disabled'}>${icon('undo')}Void sale</button>
         <button data-act="sl-custom">${icon('plus')}Custom item</button>
         <button data-act="sl-layby"${c.lines.length && ctx.onLayby ? '' : ' disabled'} title="Put this sale on lay-by">${icon('box')}Lay-by</button>
-        <button data-act="sl-special"${c.lines.some(l => l.type === 'mto') && ctx.onSpecial ? '' : ' disabled'} title="A made-to-order item: the spec, the deposit, the sign-off">${icon('truck')}Custom order</button>
+        <button data-act="sl-special"${c.lines.some(l => l.type === 'mto') && ctx.onSpecial ? '' : ' disabled'} title="Made to order: the spec signed off, a deposit now and the rest before delivery">${icon('truck')}Sales order</button>
+        <button data-act="sl-quote"${c.lines.length && ctx.onQuote ? '' : ' disabled'} title="A numbered quotation of this sale, valid for some days, to print or send">${icon('file')}Quote</button>
       </div>
     </div></div>
     <div class="pos-mbar"><button class="${sale.mobileCart ? '' : 'on'}" data-act="sl-mview" data-to="shop">${icon('search')} Shop</button><button class="${sale.mobileCart ? 'on' : ''}" data-act="sl-mview" data-to="cart">${icon('cart')} Cart${t.pieces ? ' (' + t.pieces + ')' : ''}<b>${esc(money(t.totalCents))}</b></button></div>
@@ -192,6 +193,10 @@ export async function action(act, b) {
       if (!c.lines.length || !ctx.onSpecial) return;
       if (d().registerId && !d().shiftOpen) return toast('The register is closed: open it under Register first.', 'warn');
       return ctx.onSpecial(c, totals(), () => { sale.cart = freshCart(); persist(); ctx.repaint(); });
+    }
+    case 'sl-quote': {
+      if (!c.lines.length || !ctx.onQuote) return;
+      return ctx.onQuote(c, totals());
     }
     case 'sl-layby': {
       if (!c.lines.length || !ctx.onLayby) return;
@@ -256,6 +261,7 @@ function lineNote(i) {
     ${field('Notes for the maker', 'ln-notes', { type: 'textarea', rows: 2, value: sp.notes || '' })}
     ${field('Note on the slip', 'ln-note', { value: l.note, placeholder: 'e.g. deliver Friday' })}`, { okLabel: 'Save', onOk: (w) => {
       const fab = pickedFabric(w, 'ln-fab');
+      if (l.quote && (fab.fabricId || '') !== ((l.spec && l.spec.fabricId) || '')) delete l.quote;   // another fabric: the quote's price no longer applies
       l.spec = { model: val(w, 'ln-model'), size: val(w, 'ln-size'), fabric: fab.fabric, fabricId: fab.fabricId, colour: val(w, 'ln-colour'), legs: val(w, 'ln-legs'), notes: val(w, 'ln-notes') };
       l.note = val(w, 'ln-note'); priceWithFabric(l); persist(); ctx.repaint(); return true; } });
   wirePicker(m.wrap, 'ln-fab', fabs);
@@ -405,3 +411,23 @@ function voidSale() {
   });
 }
 export function clearCart() { sale.cart = freshCart(); persist(); }
+// a quote into the sale: its lines at the quoted prices, its discounts and its customer; the server holds the
+// till to those prices only while the quote is open and valid, and marks it used when the sale or the order is written
+export function loadQuote(q) {
+  const lines = [];
+  for (const ql of q.lines || []) {
+    const p = d().products.find(x => x.id === ql.productId) || null, v = p && ql.variantId ? d().variants.find(x => x.id === ql.variantId) || null : null;
+    if (!ql.custom && !p) { toast(ql.name + ' is no longer in the catalogue: the quote cannot be loaded.', 'warn'); return false; }
+    const l = { lineId: newId('x'), productId: ql.productId || '', variantId: ql.variantId || '', itemId: v ? v.id : p ? p.id : '', name: ql.name, sku: ql.sku || '', barcode: '', qty: ql.qty,
+      listPriceCents: ql.unitPriceCents, unitPriceCents: ql.unitPriceCents, priceOverride: null, discountCents: ql.discountCents || 0, discountPct: ql.discountPct || 0, discountReason: ql.discountReason || '', discountBy: null, note: '',
+      type: ql.custom ? 'nonstock' : p.type, vatClass: ql.vatClass || 'standard', trackStock: !!ql.trackStock, costCents: ql.costCents || 0, custom: !!ql.custom,
+      ...(ql.spec ? { spec: { model: ql.spec.model || '', size: ql.spec.size || '', fabric: ql.spec.fabric || '', fabricId: ql.spec.fabricId || '', colour: ql.spec.colour || '', legs: ql.spec.legs || '', notes: ql.spec.notes || '' } } : {}),
+      quote: { id: q.id, lineNo: ql.lineNo, docNo: q.docNo } };
+    if (p) { priceWithFabric(l); l.unitPriceCents = ql.unitPriceCents; l.fabricCents = ql.spec && ql.spec.fabricCents || 0; }
+    lines.push(l);
+  }
+  const cust = q.customerId ? (d().customers || []).find(x => x.id === q.customerId) || null : null;
+  sale.cart = { ...freshCart(), lines, customerId: cust ? cust.id : '', customer: cust, discountCents: q.saleDiscountCents || 0, discountPct: q.saleDiscountPct || 0, discountReason: q.saleDiscountReason || (q.saleDiscountCents ? 'Quote ' + q.docNo : ''), quoteId: q.id, quoteDocNo: q.docNo };
+  persist(); ctx.repaint();
+  return true;
+}

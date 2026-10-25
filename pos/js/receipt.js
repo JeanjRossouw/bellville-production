@@ -18,6 +18,7 @@ export const SLIP_MAX = 5000, ABRIDGED_MAX = 500000;
 export function receiptKind(sale, entity) {
   if (sale.series === 'LB') return 'layby-' + (sale.docKind || 'agreement');
   if (sale.series === 'SO') return 'so-' + (sale.docKind || 'order');
+  if (sale.series === 'QT') return 'quote';
   if (sale.series === 'CN') return 'creditnote';
   if (!entity.vatRegistered) return 'invoice';
   if (sale.totalCents <= SLIP_MAX) return 'slip';
@@ -25,7 +26,7 @@ export function receiptKind(sale, entity) {
   return 'full';
 }
 const LB_TITLES = { 'layby-agreement': 'Lay-by agreement', 'layby-payment': 'Lay-by payment', 'layby-collection': 'Collection slip', 'layby-cancel': 'Lay-by cancellation',
-  'so-order': 'Special order', 'so-quote': 'Quotation', 'so-payment': 'Special order payment', 'so-delivery': 'Delivery note', 'so-cancel': 'Special order cancellation' };
+  'so-order': 'Sales order', 'so-quote': 'Quotation', 'so-payment': 'Sales order payment', 'so-delivery': 'Delivery note', 'so-cancel': 'Sales order cancellation', quote: 'Quotation' };
 export const kindTitle = (kind) => LB_TITLES[kind] || (kind === 'slip' ? 'Till slip' : kind === 'abridged' ? 'Tax invoice' : kind === 'full' ? 'Tax invoice' : kind === 'creditnote' ? 'Credit note' : 'Invoice');
 // what a full tax invoice needs from the customer; '' when all is there
 export function fullInvoiceGap(customer) {
@@ -37,7 +38,7 @@ export function fullInvoiceGap(customer) {
 // the made-to-order spec as lines of text
 export const specLines = (sp) => sp ? [['Model', sp.model], ['Size', sp.size], ['Fabric', sp.fabric], ['Colour', sp.colour], ['Legs', sp.legs], ['Notes', sp.notes]].filter(x => x[1]).map(x => x[0] + ': ' + x[1]) : [];
 const addr = (a) => [a && a.line1, a && a.line2, a && a.city, a && a.code].filter(Boolean).join(', ');
-const methodLabel = (m) => ({ cash: 'Cash', card: 'Card', eft: 'EFT', qr: 'QR', voucher: 'Gift voucher', storeCredit: 'Store credit', account: 'On account', layby: 'Lay-by', specialOrder: 'Special order', creditNote: 'Credit note', points: 'Points' })[m] || m;
+const methodLabel = (m) => ({ cash: 'Cash', card: 'Card', eft: 'EFT', qr: 'QR', voucher: 'Gift voucher', storeCredit: 'Store credit', account: 'On account', layby: 'Lay-by', specialOrder: 'Sales order', creditNote: 'Credit note', points: 'Points' })[m] || m;
 
 // the facts every rendering shares
 export function receiptModel({ sale, lines, payments, entity, store, settings, copy }) {

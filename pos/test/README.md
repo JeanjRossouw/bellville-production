@@ -153,6 +153,13 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   again (a sale and a custom order go through, a till that leaves the fabric
   out, another company's or an archived fabric are refused); a cashier
   reads but cannot write the catalogue. `node pos/test/fabrics.test.mjs`
+- `quotes.test.mjs` — quotes and the Sales order button: a quote priced by
+  the server (fabric included), numbered, valid for some days, with or
+  without the customer; its prices hold in a sale or a sales order (a
+  deposit, the rest later) after the list price rose, once, while in date;
+  cancelled once; on the till Quote shows the Quotation, Sales → Quotes lists
+  it, Load into the sale puts it back at its prices, Sales order needs the
+  customer. `node pos/test/quotes.test.mjs`
 - `shopify-api.test.mjs` — step 17: `pos-shopify` against a mock Shopify in
   the test: connect, locations mapped, products linked by SKU with content
   pulled, stock pushed after a sale and by "push all", a webhook order

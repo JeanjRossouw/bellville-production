@@ -84,7 +84,7 @@ check('the photo is shown', await p.locator('#so-ph-0').isVisible() && (await p.
 R.terms = await p.locator('#so-terms').innerText(); check('the sign-off reads the spec back', /Size 2\.4 m, Fabric Linen look, Colour Charcoal, Legs Oak, Notes Firm seat \(photo attached\)/.test(R.terms), R.terms.slice(0, 400));
 await p.check('#so-accept'); await sign('#so-pad');
 await p.click('#modal-ok'); R.opened = await toast(); await p.waitForTimeout(1500);
-check('order opened with the deposit', /Custom order BF-SO-000001 opened, deposit paid/.test(R.opened), R.opened);
+check('order opened with the deposit', /Sales order BF-SO-000001 opened, deposit paid/.test(R.opened), R.opened);
 await p.waitForSelector('#modal .rc-paper'); R.orderDoc = await paper();
 check('the order prints: the spec, the payment plan, the signature', /SPECIAL ORDER/.test(R.orderDoc) && /Custom Sofa/.test(R.orderDoc) && /Fabric: Linen look/.test(R.orderDoc) && /Colour: Charcoal/.test(R.orderDoc) && /Paid R 7,500\.00/.test(R.orderDoc) && /Balance before delivery R 7,500\.00/.test(R.orderDoc) && /Signed: Thandi Mokoena/.test(R.orderDoc) && /BF-SO-000001/.test(R.orderDoc), R.orderDoc.slice(0, 500));
 check('the spec photo is on the order', (await p.locator('#modal .rc-paper .spec-img').count()) === 1);
@@ -111,12 +111,12 @@ await p.click('[data-act=so-deliver]'); await p.waitForSelector('#modal #dn-pad'
 await sign('#dn-pad'); await p.fill('#dn-note', 'Collected in good order'); await p.click('#modal-ok'); R.handed = await toast(); await p.waitForTimeout(1800);
 check('handed over: tax invoice BF-000001', /Collected: tax invoice BF-000001/.test(R.handed), R.handed);
 await p.waitForSelector('#modal .rc-paper'); R.inv = await paper();
-check('the full tax invoice over R 5 000: customer address, VAT, paid by the special order', /TAX INVOICE/.test(R.inv) && /5 Lane, Parow/.test(R.inv) && /Custom Sofa/.test(R.inv) && /VAT 15% R 1,956\.52/.test(R.inv) && /Special order R 15,000\.00/.test(R.inv), R.inv);
+check('the full tax invoice over R 5 000: customer address, VAT, paid by the special order', /TAX INVOICE/.test(R.inv) && /5 Lane, Parow/.test(R.inv) && /Custom Sofa/.test(R.inv) && /VAT 15% R 1,956\.52/.test(R.inv) && /Sales order R 15,000\.00/.test(R.inv), R.inv);
 await p.click('#modal .rc-acts button:has-text("Delivery note")'); await p.waitForTimeout(500);
 R.note = await paper(); check('the delivery note with the signature and the spec', /DELIVERY NOTE/.test(R.note) && /Collected at Bellville/.test(R.note) && /Fabric: Linen look/.test(R.note) && /Tax invoice BF-000001/.test(R.note) && /Signed: Thandi Mokoena/.test(R.note), R.note);
 check('the signature image is on the note', (await p.locator('#modal .rc-paper .sig img').count()) === 1);
 await closeModal();
-R.tab2 = await screenText(); check('collected orders leave the open list', /No open custom orders/i.test(R.tab2), R.tab2.slice(0, 200));
+R.tab2 = await screenText(); check('collected orders leave the open list', /No open sales orders/i.test(R.tab2), R.tab2.slice(0, 200));
 const o1b = (await listColl('specialOrders')).find(o => o.docNo === 'BF-SO-000001');
 check('written: collected, signed, invoice BF-000001', o1b.status === 'collected' && o1b.deliveryNote.signedBy === 'Thandi Mokoena' && o1b.deliveryNote.signature.startsWith('data:image/png') && o1b.completedDocNo === 'BF-000001', o1b && [o1b.status, o1b.completedDocNo]);
 
@@ -124,7 +124,7 @@ check('written: collected, signed, invoice BF-000001', o1b.status === 'collected
 await nav('sell'); await scan('SOFA'); await pickThandi();
 await p.click('[data-act=sl-special]'); await p.waitForSelector('#modal #so-pad');
 await p.uncheck('#so-depnow'); await p.check('#so-accept'); await sign('#so-pad'); await p.click('#modal-ok'); R.quoted = await toast(); await p.waitForTimeout(1500);
-check('quoted without a deposit', /Custom order BF-SO-000002 quoted/.test(R.quoted), R.quoted);
+check('quoted without a deposit', /Sales order BF-SO-000002 quoted/.test(R.quoted), R.quoted);
 R.quoteDoc = await paper(); check('printed as a quotation', /QUOTATION/.test(R.quoteDoc) && /Deposit to start R 7,500\.00/.test(R.quoteDoc), R.quoteDoc.slice(0, 300));
 await closeModal();
 await nav('orders'); await p.selectOption('#so-filter', 'quoted'); await p.waitForTimeout(300);

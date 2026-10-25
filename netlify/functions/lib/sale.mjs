@@ -6,7 +6,7 @@
 //   saleWrites(tx, ctx, prep, saleId, b)   inside a transaction: the number, stock, vouchers; → { writes, result }
 //   runSale(ctx, b, { more })    the transaction loop; `more(tx)` adds writes (an exchange's credit note) and a result
 import { SPEC_FIELDS, fabricLabel, fabricMetresOf, fabricCentsFor } from '../../../pos/js/special-terms.js';
-import { Reject, clean, randomId, nowIso, rank, getDoc, query, commit, beginTransaction, rollback, serverStamp, loginOf, loadUser, inEntity, inStore, verifyOverrideToken, loadDevice, createDoc } from './pos.mjs';
+import { Reject, clean, randomId, nowIso, rank, getDoc, query, commit, beginTransaction, rollback, serverStamp, loginOf, loadUser, inEntity, inStore, verifyOverrideToken, loadDevice, createDoc, patchDoc } from './pos.mjs';
 import { vatIn, rateOn, rateFor, lineTotals, roundTo10c } from '../../../pos/js/money.js';
 import { loyaltySettings, tierFor, earnPoints, pointsFor, sweep, earnLot, redeem, compactLots, blankLoyalty, blankStats } from '../../../pos/js/loyalty-terms.js';
 import { afterStock } from './shopify-pos.mjs';
@@ -113,7 +113,31 @@ export function approved(ctx, token, action, minRole, what) {
   return { uid: t.overrideUid, name: t.overrideName, self: false };
 }
 
+// a quote, while it is open and valid: its prices stand for the same items (the till names the quote and the line)
+export const saDay = (ms = Date.now()) => new Date(ms + 2 * 3600000).toISOString().slice(0, 10);
+async function quoteOf(ctx, id, cache) {
+  id = clean(id, 80); if (!id) return null;
+  if (!cache.has(id)) cache.set(id, await getDoc('quotes', id));
+  const q = cache.get(id);
+  return q && q.entityId === ctx.entityId && q.status === 'open' && String(q.validUntil || '') >= saDay() ? { ...q, id } : null;
+}
+async function quotedLine(ctx, l, p, v, cache) {
+  const q = await quoteOf(ctx, l.quoteId, cache); if (!q) return null;
+  const ql = (q.lines || []).find(x => x.lineNo === int(l.quoteLine));
+  const fab = (sp) => (sp && sp.fabricId) || '';
+  if (!ql || ql.productId !== p.id || (ql.variantId || '') !== (v ? v.id : '') || fab(ql.spec) !== fab(l.spec)) return null;
+  return { q, ql };
+}
+
+// once a sale or a sales order is written from a quote, the quote is used (it does not price a second one)
+export async function markQuoteUsed(ctx, quoteId, kind, docNo) {
+  const id = clean(quoteId, 80); if (!id) return;
+  try { const q = await getDoc('quotes', id); if (q && q.entityId === ctx.entityId && q.status === 'open') await patchDoc('quotes', id, { status: 'used', usedAs: { kind, docNo }, usedAt: nowIso(), usedBy: ctx.user.name, updatedAt: nowIso() }); }
+  catch (e) { console.error('quote not marked used', e); }
+}
+
 // opts.creditNote: { docNo, amountCents } — an exchange pays with the credit note first
+// opts.quote: a quotation, not a tax invoice (no customer address needed over R 5 000)
 export async function prepareSale(ctx, b, opts = {}) {
   const when = clean(b.clientCreatedAt, 40);
   const at = Date.parse(when);
@@ -126,7 +150,7 @@ export async function prepareSale(ctx, b, opts = {}) {
   if (b.customerId && (!customer || customer.entityId !== ctx.entityId)) throw new Reject(400, 'That customer is not known here.');
 
   // ---- the lines, priced by the server
-  const lines = [], moves = [], vouchersSold = [];
+  const lines = [], moves = [], vouchersSold = [], qCache = new Map();
   let n = 0, gross = 0, lineDisc = 0, sub = 0;
   const approvers = new Map();
   for (const l of inLines) {
@@ -157,7 +181,9 @@ export async function prepareSale(ctx, b, opts = {}) {
     // the price: the list price, or an override a manager approved
     let unit = int(l.unitPriceCents), override = null;
     if (!(unit >= 0)) throw new Reject(400, `Line ${n}: the price is wrong.`);
+    const quoted = p && l.quoteId ? await quotedLine(ctx, l, p, v, qCache) : null;
     if (unit !== listPrice && opts.trusted) override = { fromCents: listPrice, reason: opts.trusted, by: null };   // fixed when the lay-by was opened
+    else if (unit !== listPrice && quoted && unit === quoted.ql.unitPriceCents) override = { fromCents: listPrice, reason: 'Quote ' + quoted.q.docNo, by: null };
     else if (unit !== listPrice) {
       const t = verifyOverrideToken(l.priceOverride && l.priceOverride.token);
       const self = rank(ctx.user.role) >= rank('manager');
@@ -169,7 +195,7 @@ export async function prepareSale(ctx, b, opts = {}) {
     const disc = int(l.discountCents) || 0;
     if (disc < 0 || disc > qty * unit) throw new Reject(400, `Line ${n}: the discount is wrong.`);
     const pct = disc ? Math.round(disc / (qty * unit) * 1000) / 10 : 0;
-    const dOk = disc && !opts.trusted ? discountOk(ctx, pct, l.discountToken, name) : { by: null };
+    const dOk = disc && !opts.trusted && !(quoted && disc === (quoted.ql.discountCents || 0)) ? discountOk(ctx, pct, l.discountToken, name) : { by: null };
     if (dOk.by) approvers.set(dOk.by.uid, dOk.by.name);
     const lr = rateFor(vatClass, rateBp, !!ctx.entity.vatRegistered);
     const t = lineTotals({ qty, unitPriceCents: unit, discountCents: disc, rateBp: lr });
@@ -191,7 +217,8 @@ export async function prepareSale(ctx, b, opts = {}) {
   if (saleDisc < 0) throw new Reject(400, 'The sale discount is wrong.');
   let saleBy = null;
   let saleCode = '';
-  if (saleDisc && !opts.trusted) {
+  const saleQuote = b.quoteId ? await quoteOf(ctx, b.quoteId, qCache) : null;
+  if (saleDisc && !opts.trusted && !(saleQuote && saleDisc === (saleQuote.saleDiscountCents || 0))) {
     // a Shopify discount code the server knows needs no PIN; anything else goes by the role limits
     const code = clean(b.saleDiscountCode, 40).toUpperCase();
     const dc = code ? await getDoc('discountCodes', ctx.entityId + '_' + code) : null;
@@ -209,7 +236,7 @@ export async function prepareSale(ctx, b, opts = {}) {
   const told = b.totals || {};
   if (!opts.trusted && (int(told.totalCents) !== total || int(told.vatCents) !== vat)) throw new Reject(409, `The till’s total (${told.totalCents}) does not match the server’s (${total}). Reopen the sale and try again.`);
   // over R 5 000 a VAT-registered company must issue a full tax invoice: the customer's name and address go on it
-  if (ctx.entity.vatRegistered && total > 500000) {
+  if (ctx.entity.vatRegistered && total > 500000 && !opts.quote) {
     const a = customer && customer.address;
     if (!customer || !String(customer.name || '').trim()) throw new Reject(400, 'Over R 5 000 a full tax invoice is needed: add the customer with their name and address.');
     if (!a || !String(a.line1 || a.city || '').trim()) throw new Reject(400, `Over R 5 000 a full tax invoice is needed: add ${customer.name}’s address.`);

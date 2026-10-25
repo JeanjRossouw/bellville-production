@@ -12,7 +12,7 @@
 //
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
 import { json, Reject, clean, nowIso, getDoc, query, commit, beginTransaction, rollback, serverStamp, createDoc, patchDoc, bodyOf, audit, withGroup } from './lib/pos.mjs';
-import { whoAndWhere, prepareSale, runSale, int, pad6, blockId, BLOCK_SIZE_DEFAULT, specNote } from './lib/sale.mjs';
+import { whoAndWhere, prepareSale, runSale, int, pad6, blockId, BLOCK_SIZE_DEFAULT, specNote, markQuoteUsed } from './lib/sale.mjs';
 import { specialSettings } from '../../pos/js/special-terms.js';
 
 const actions = {
@@ -29,6 +29,7 @@ const actions = {
     const mto = prep.lines.filter(l => l.fulfilment === 'mto');
     if (mto.length && !prep.customer) throw new Reject(400, 'A made-to-order item needs the customer on the sale, so the store can tell them when it is ready.');
     const r = await runSale(ctx, b, { saleId, prep, after: mto.length ? async (tx, levels, s) => salesOrderWrites(ctx, b, prep, s, saleId) : null });
+    if (b.quoteId && r && r.ok) await markQuoteUsed(ctx, b.quoteId, 'sale', r.sale.docNo);
     // the sales order stays at the till until someone sends it to the factory (Send to factory on the order)
     return r;
   },
