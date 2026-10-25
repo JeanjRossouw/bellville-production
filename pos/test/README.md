@@ -143,7 +143,23 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   cost; blank, unknown, doubtful and non-number rows left alone; only the
   cost changes (prices, barcodes, pictures, VAT class, stamps kept); another
   company's same SKU untouched; the audit row; the Shopify product CSV used
-  as a costs file. `node pos/test/costimport.test.mjs`
+  as a costs file; selling prices from a Price column, listed apart and
+  saved only when ticked (product and variant prices, the audit row).
+  `node pos/test/costimport.test.mjs`
+- `fabrics.test.mjs` — the fabric catalogue: a price list in as CSV (cost
+  per metre excl. VAT + 80% + 15% VAT, never under R 250), a made-to-order
+  product's fabric metres and a variant's own; on the till the
+  specification picks a fabric and the price follows; the server prices it
+  again (a sale and a custom order go through, a till that leaves the fabric
+  out, another company's or an archived fabric are refused); a cashier
+  reads but cannot write the catalogue. `node pos/test/fabrics.test.mjs`
+- `quotes.test.mjs` — quotes and the Sales order button: a quote priced by
+  the server (fabric included), numbered, valid for some days, with or
+  without the customer; its prices hold in a sale or a sales order (a
+  deposit, the rest later) after the list price rose, once, while in date;
+  cancelled once; on the till Quote shows the Quotation, Sales → Quotes lists
+  it, Load into the sale puts it back at its prices, Sales order needs the
+  customer. `node pos/test/quotes.test.mjs`
 - `shopify-api.test.mjs` — step 17: `pos-shopify` against a mock Shopify in
   the test: connect, locations mapped, products linked by SKU with content
   pulled, stock pushed after a sale and by "push all", a webhook order

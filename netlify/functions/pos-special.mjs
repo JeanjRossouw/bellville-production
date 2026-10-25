@@ -11,6 +11,9 @@
 //   deliver   { orderId, saleId, signedBy, signature, note, + where }       balance nil: the tax invoice written as a sale
 //             paid by the special order; the signed delivery note kept; status delivered or collected
 //   cancel    { orderId, kind, reason, feeCents, refunds: [ { method, amountCents, ref } ], approvalToken? }   a manager
+//   quote     { quoteId, customerId?, lines [ sale lines + spec ], saleDiscount…, totals, validDays?, note, + where } → a numbered quotation
+//   quoteCancel { quoteId, reason }                                         an open quote withdrawn
+//   (a sale or an order may carry quoteId and each line quoteId + quoteLine: the quoted price stands while the quote is open and valid)
 //
 // The factory (Factory Manager, the same Firebase project): once the deposit
 // is paid the server writes the order into the linked factory company's own
@@ -25,7 +28,7 @@
 import { json, Reject, clean, randomId, nowIso, getDoc, query, patchDoc, serverStamp, bodyOf, audit, requireMember, inEntity, withGroup } from './lib/pos.mjs';
 import { factoryCfg, listCompanies, companyNamed, noteHandover } from './lib/factory-link.mjs';
 import { pushToFactory as pushBridge, syncFromFactory as syncBridge, cancelAtFactory } from './lib/factory-bridge.mjs';
-import { whoAndWhere, prepareSale, prepareTenders, runSale, nextFromCounter, approved, int, specOf, specNote } from './lib/sale.mjs';
+import { whoAndWhere, prepareSale, prepareTenders, runSale, nextFromCounter, approved, int, specOf, specNote, markQuoteUsed, saDay } from './lib/sale.mjs';
 import { pctOf } from '../../pos/js/money.js';
 import { specialSettings, signoffText, updateText, NEXT, STATUSES, SPEC_FIELDS, CANCEL_KINDS } from '../../pos/js/special-terms.js';
 
@@ -65,7 +68,7 @@ const actions = {
     const bad = prep.lines.find(l => l.type === 'stock' || l.type === 'voucher' || l.type === 'bundle');
     if (bad) throw new Reject(400, `${bad.name}: only made-to-order and non-stock items go on a special order; sell stock as a sale or a lay-by.`);
     if (!(prep.total > 0)) throw new Reject(400, 'The order comes to nothing.');
-    prep.lines.forEach((l, i) => { l.spec = specOf(inLines[i] && inLines[i].spec); if (l.type === 'mto' && !l.spec.model) l.spec.model = l.name; });
+    prep.lines.forEach((l, i) => { l.spec = specOf(inLines[i] && inLines[i].spec); if (l.type === 'mto' && !l.spec.model) l.spec.model = l.name; if (l.fabricCharge) Object.assign(l.spec, l.fabricCharge); });
     const minDeposit = pctOf(prep.total, ss.minDepositPct);
     const customer = prep.customer;
     const dep = Array.isArray(b.deposit) && b.deposit.length ? moneyNow(ctx, b.deposit, prep.total, customer) : null;
@@ -102,7 +105,50 @@ const actions = {
       writes.push(auditRow(ctx, 'specialOrder.open', so, { totalCents: prep.total, depositCents: paid, status, lines: prep.lines.length }, prep.approvers, stamp, now));
       return { writes, result: { order: so, payments: dep ? dep.pays : [] } };
     } });
+    if (b.quoteId && r && r.ok) await markQuoteUsed(ctx, b.quoteId, 'salesOrder', r.order.docNo);
     return r;    // it stays at the till until someone sends it to the factory (Send to factory on the order)
+  },
+
+  // a quotation: the cart priced by the server (fabric and discounts as on a sale), numbered, valid for some days.
+  // Its prices stand when it is loaded into a sale or a sales order while it is open and valid.
+  async quote(event, b) {
+    const ctx = await whoAndWhere(event, b, { noShift: true });
+    const id = clean(b.quoteId, 80);
+    if (!idOk(id)) throw new Reject(400, 'The quote has no id.');
+    const had = await getDoc('quotes', id);
+    if (had) { if (had.entityId !== ctx.entityId) throw new Reject(403, 'Not your quote.'); return { ok: true, quote: { ...had, id }, again: true }; }
+    const prep = await prepareSale(ctx, b, { noTenders: true, spec: true, quote: true });
+    if (!(prep.total > 0)) throw new Reject(400, 'The quote comes to nothing.');
+    const days = Math.min(90, Math.max(1, int(b.validDays) || int((ctx.settings.quotes || {}).validDays) || 14));
+    const customer = prep.customer;
+    const r = await runSale(ctx, {}, { more: async (tx) => {
+      const num = await nextFromCounter(tx, ctx, 'QT', ctx.entity.quotePrefix || (ctx.entity.invoicePrefix + '-QT'));
+      const now = nowIso();
+      const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
+      const q = {
+        id, series: 'QT', seq: num.seq, docNo: num.docNo, customerId: customer ? customer.id : '',
+        customerSnapshot: customer ? { name: customer.name, phone: customer.phone || '', email: customer.email || '', vatNo: customer.vatNo || '', address: customer.address || {} } : { name: clean(b.customerName, 120), phone: clean(b.customerPhone, 30), email: '', vatNo: '', address: {} },
+        lines: prep.lines, lineCount: prep.lines.length, subtotalCents: prep.gross, lineDiscountCents: prep.lineDisc, saleDiscountCents: prep.saleDisc, saleDiscountPct: Number(b.saleDiscountPct) || 0, saleDiscountReason: clean(b.saleDiscountReason, 120),
+        totalCents: prep.total, vatCents: prep.vat, vatRateBp: prep.rateBp, vatRegistered: !!ctx.entity.vatRegistered,
+        validDays: days, validUntil: saDay(Date.now() + days * 86400000), status: 'open', note: clean(b.note, 300), quotedAt: prep.when,
+        cashierUid: ctx.user.id, cashierName: ctx.user.name, approvers: [...prep.approvers].map(([uid, name]) => ({ uid, name })), ...stamp, serverReceivedAt: now, updatedAt: now
+      };
+      const { id: _id, ...data } = q;
+      const ar = auditRow(ctx, 'quote.create', q, { totalCents: q.totalCents, lines: q.lineCount, validUntil: q.validUntil }, prep.approvers, stamp, now); ar.data.docType = 'quote';
+      return { writes: [num.write, { create: true, coll: 'quotes', id, data }, ar], result: { quote: q } };
+    } });
+    return r;
+  },
+  // a quote withdrawn: it no longer prices anything
+  async quoteCancel(event, b) {
+    const ctx = await whoAndWhere(event, b, { noShift: true });
+    const id = clean(b.quoteId, 80), q = await getDoc('quotes', id);
+    if (!q || q.entityId !== ctx.entityId) throw new Reject(404, 'No such quote here.');
+    if (q.status !== 'open') throw new Reject(409, `Quote ${q.docNo} is already ${q.status}.`);
+    const now = nowIso();
+    await patchDoc('quotes', id, { status: 'cancelled', cancelledAt: now, cancelledBy: ctx.user.name, cancelReason: clean(b.reason, 200), updatedAt: now });
+    await audit({ action: 'quote.cancel', docType: 'quote', docId: id, docNo: q.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, details: { reason: clean(b.reason, 200) }, entityId: ctx.entityId, storeId: ctx.storeId || '', deviceId: ctx.deviceId || 'web' });
+    return { ok: true, quote: { ...q, id, status: 'cancelled', cancelledAt: now, cancelledBy: ctx.user.name } };
   },
 
   async pay(event, b) {

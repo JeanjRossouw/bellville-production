@@ -126,7 +126,8 @@ export function openPay(o) {
     busy = true; okBtn.disabled = true; okBtn.textContent = 'Writing the sale…';
     const body = {
       saleId: cart.id, clientCreatedAt: new Date().toISOString(), customerId: cart.customerId || '',
-      lines: cart.lines.map(l => ({ productId: l.productId, variantId: l.variantId, qty: l.qty, unitPriceCents: l.unitPriceCents, priceOverride: l.priceOverride ? { reason: l.priceOverride.reason, token: l.priceOverride.token } : null, discountCents: l.discountCents, discountPct: l.discountPct, discountReason: l.discountReason, discountToken: l.discountToken || '', note: l.note, custom: !!l.custom, name: l.name, vatClass: l.vatClass, spec: l.type === 'mto' && l.spec ? l.spec : null })),
+      lines: cart.lines.map(l => ({ quoteId: l.quote ? l.quote.id : '', quoteLine: l.quote ? l.quote.lineNo : 0, productId: l.productId, variantId: l.variantId, qty: l.qty, unitPriceCents: l.unitPriceCents, priceOverride: l.priceOverride ? { reason: l.priceOverride.reason, token: l.priceOverride.token } : null, discountCents: l.discountCents, discountPct: l.discountPct, discountReason: l.discountReason, discountToken: l.discountToken || '', note: l.note, custom: !!l.custom, name: l.name, vatClass: l.vatClass, spec: l.type === 'mto' && l.spec ? l.spec : null })),
+      quoteId: cart.quoteId || '',
       saleDiscountCents: cart.discountCents || 0, saleDiscountPct: cart.discountPct || 0, saleDiscountReason: cart.discountReason || '', saleDiscountToken: cart.discountToken || '', saleDiscountCode: cart.discountCode || '', note: cart.note || '',
       totals: { totalCents: t.totalCents, vatCents: t.vatCents },
       tenders: tenders.map(x => ({ method: x.method, amountCents: x.amountCents, tenderedCents: x.tenderedCents, ref: x.ref, cardLast4: x.cardLast4, approvalCode: x.approvalCode, status: x.status, voucherCode: x.voucherCode })),

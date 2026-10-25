@@ -1,4 +1,4 @@
-// Retail POS — the Custom orders tab: made-to-order furniture. A new order
+// Retail POS — the Sales orders tab: made-to-order furniture, a deposit now and the rest before delivery. A new order
 // is opened from the cart: the specification per item (model, size,
 // fabric, colour, legs, notes, a photo from the phone), the deposit, and the
 // customer's sign-off with the no-change-of-mind clause signed on the
@@ -33,14 +33,14 @@ const addr = (a) => a ? [a.line1, a.line2, a.city, a.code].filter(Boolean).join(
 // ---------------------------------------------------------------- html --
 export function specialsHtml() {
   const dd = d();
-  if (!dd.store) return `<div class="page-head"><h1>Custom orders</h1></div><div class="card muted">Pick a store first.</div>`;
+  if (!dd.store) return `<div class="page-head"><h1>Sales orders</h1></div><div class="card muted">Pick a store first.</div>`;
   const all = dd.specials || [];
   const q = so.q.trim().toLowerCase();
   const rows = all.filter(o => (so.filter === 'all' || (so.filter === 'open' ? OPEN.includes(o.status) : so.filter === 'done' ? /^(delivered|collected)$/.test(o.status) : o.status === so.filter)) && (!q || [o.docNo, o.customerSnapshot && o.customerSnapshot.name, o.customerSnapshot && o.customerSnapshot.phone, o.factoryRef, ...o.lines.map(l => l.name)].some(x => String(x || '').toLowerCase().includes(q))))
     .sort((a, b) => (OPEN.includes(a.status) ? 0 : 1) - (OPEN.includes(b.status) ? 0 : 1) || String(a.expectedAt).localeCompare(String(b.expectedAt)));
   const open = all.filter(o => OPEN.includes(o.status));
   const due = all.filter(o => o.updateDue && o.status !== 'quoted').length;
-  return salesOrdersHtml() + `<div class="page-head"><h1>Custom orders</h1><p class="sub">${open.length} open · ${esc(money(open.reduce((n, o) => n + o.balanceCents, 0)))} still to come in${due ? ' · ' + due + ' update' + (due === 1 ? '' : 's') + ' to send' : ''}${all.filter(o => o.status === 'ready').length ? ' · ' + all.filter(o => o.status === 'ready').length + ' ready' : ''}</p></div>
+  return `<div class="page-head"><h1>Sales orders</h1><p class="sub">${open.length} open · ${esc(money(open.reduce((n, o) => n + o.balanceCents, 0)))} still to come in${due ? ' · ' + due + ' update' + (due === 1 ? '' : 's') + ' to send' : ''}${all.filter(o => o.status === 'ready').length ? ' · ' + all.filter(o => o.status === 'ready').length + ' ready' : ''}</p></div>
     <div class="toolbar">
       <input id="so-q" class="search" type="search" placeholder="Number, customer, phone, item, factory ref" value="${esc(so.q)}">
       <select id="so-filter">${[['open', 'Open'], ['quoted', 'Quoted'], ['depositPaid', 'Deposit paid'], ['inProduction', 'In production'], ['ready', 'Ready'], ['done', 'Delivered / collected'], ['cancelled', 'Cancelled'], ['all', 'All']].map(x => `<option value="${x[0]}"${so.filter === x[0] ? ' selected' : ''}>${x[1]}</option>`).join('')}</select>
@@ -48,7 +48,7 @@ export function specialsHtml() {
     </div>
     ${rows.length ? `<div class="card" style="padding:0;overflow:auto"><table class="tbl lb-tbl"><thead><tr><th>No</th><th>Customer</th><th>What</th><th>Expected</th><th class="r">Price</th><th class="r">Paid</th><th class="r">Balance</th><th>Status</th><th></th></tr></thead>
       <tbody>${rows.map(o => `<tr class="${OPEN.includes(o.status) ? '' : 'off'}"><td><strong>${esc(o.docNo)}</strong>${o.factoryRef ? `<div class="muted">${esc(o.factoryRef)}</div>` : ''}</td><td>${esc(o.customerSnapshot ? o.customerSnapshot.name : '')}<div class="muted">${esc(o.customerSnapshot ? o.customerSnapshot.phone : '')}</div></td><td>${esc(o.lines.map(l => l.qty + ' × ' + l.name).join(', '))}</td><td class="muted">${esc(niceDate(o.expectedAt))}</td><td class="r">${esc(money(o.totalCents))}</td><td class="r">${esc(money(o.paidCents))}</td><td class="r"><strong>${esc(money(o.balanceCents))}</strong></td><td><span class="chip ${CHIP[o.status] || ''}">${esc(STATUS_LABEL[o.status] || o.status)}</span>${o.updateDue && o.status !== 'quoted' ? '<span class="chip late">update to send</span>' : ''}</td><td class="r"><button class="btn ghost sm" data-act="so-open" data-id="${esc(o.id)}">Open</button></td></tr>`).join('')}</tbody></table></div>`
-      : empty(so.filter === 'open' ? 'No open custom orders' : 'Nothing here', so.filter === 'open' ? 'Ring a made-to-order item up under Sell, add the customer, and tap Custom order.' : '')}`;
+      : empty(so.filter === 'open' ? 'No open sales orders' : 'Nothing here', so.filter === 'open' ? 'Ring a made-to-order item up under Sell, add the customer, and tap Sales order.' : '')}` + salesOrdersHtml();
 }
 
 // ---------------------------------------------------------- sales orders --
@@ -64,7 +64,7 @@ function salesOrdersHtml() {
     .sort((a, b) => (SX_OPEN.includes(a.status) ? 0 : 1) - (SX_OPEN.includes(b.status) ? 0 : 1) || String(a.expectedAt).localeCompare(String(b.expectedAt)));
   const open = all.filter(o => SX_OPEN.includes(o.status));
   const due = all.filter(o => o.updateDue).length;
-  return `<div class="page-head"><h1>Sales orders</h1><p class="sub">${open.length} open · made-to-order items sold on an invoice, built by the factory${all.filter(o => o.status === 'ready').length ? ' · ' + all.filter(o => o.status === 'ready').length + ' ready' : ''}${due ? ' · ' + due + ' update' + (due === 1 ? '' : 's') + ' to send' : ''}</p></div>
+  return `<div class="page-head"><h1>Paid in full, made to order</h1><p class="sub">${open.length} open · made-to-order items paid in full on an invoice, built by the factory${all.filter(o => o.status === 'ready').length ? ' · ' + all.filter(o => o.status === 'ready').length + ' ready' : ''}${due ? ' · ' + due + ' update' + (due === 1 ? '' : 's') + ' to send' : ''}</p></div>
     <div class="toolbar"><select id="sx-filter">${[['open', 'Open'], ['done', 'Handed over / cancelled'], ['all', 'All']].map(x => `<option value="${x[0]}"${sx.filter === x[0] ? ' selected' : ''}>${x[1]}</option>`).join('')}</select><span class="muted">A sales order starts under Sell: ring up a made-to-order item, fill in its specification on the line, add the customer and take payment.</span></div>
     ${rows.length ? `<div class="card" style="padding:0;overflow:auto"><table class="tbl lb-tbl"><thead><tr><th>Invoice</th><th>Customer</th><th>What</th><th>Expected</th><th class="r">Value</th><th>Status</th><th>Factory</th><th></th></tr></thead>
       <tbody>${rows.map(o => `<tr class="${SX_OPEN.includes(o.status) ? '' : 'off'}"><td><strong>${esc(o.docNo)}</strong></td><td>${esc((o.customerSnapshot || {}).name || '')}<div class="muted">${esc((o.customerSnapshot || {}).phone || '')}</div></td><td>${esc(o.lines.map(l => l.qty + ' × ' + l.name + (l.cancelledQty ? ' (' + l.cancelledQty + ' credited)' : '')).join(', '))}</td><td class="muted">${esc(niceDate(o.expectedAt))}</td><td class="r">${esc(money(o.totalCents))}</td><td><span class="chip ${SX_CHIP[o.status] || ''}">${esc(SALES_LABEL[o.status] || o.status)}</span>${o.updateDue ? '<span class="chip late">update to send</span>' : ''}</td><td class="muted">${esc(o.factoryRef || (o.factory && o.factory.error ? 'not sent' : ''))}</td><td class="r"><button class="btn ghost sm" data-act="so-sales-open" data-id="${esc(o.id)}">Open</button></td></tr>`).join('')}</tbody></table></div>` : empty('No open sales orders', '')}`;
@@ -169,9 +169,9 @@ export function docOf(o, docKind, extra = {}) {
   const base = { ...o, id: o.id, series: 'SO', docKind, clientCreatedAt: o.openedAt, cashierName: o.cashierName, entity: dd.entity, store: dd.store, settings: dd.settings };
   const common = { entity: dd.entity, store: dd.store, settings: dd.settings };
   if (docKind === 'order') return { sale: { ...base, docKind: o.status === 'quoted' ? 'quote' : 'order', terms: o.signoff.text, signature: o.signoff.signature, signedBy: o.signoff.signedBy, sections: [{ title: 'Payment', rows: [['Deposit to start', money(o.minDepositCents)], ['Paid', money(o.paidCents)], ['Balance before delivery', money(o.balanceCents), true], ['Expected', niceDate(o.expectedAt)]] }] }, lines: o.lines, payments: [], ...common, copy: !!extra.copy };
-  if (docKind === 'payment') return { sale: { ...base, clientCreatedAt: extra.at, cashierName: auth.session.user.name, noTotals: true, changeCents: extra.changeCents || 0, refLabel: `Special order ${o.docNo} · ${o.customerSnapshot.name}`, sections: [{ title: '', rows: [['Paid now', money(extra.amountCents), true], ['Paid so far', money(o.paidCents)], ['Balance', money(o.balanceCents), true], ['Status', STATUS_LABEL[o.status] || o.status]] }] }, lines: [], payments: extra.payments || [], ...common };
+  if (docKind === 'payment') return { sale: { ...base, clientCreatedAt: extra.at, cashierName: auth.session.user.name, noTotals: true, changeCents: extra.changeCents || 0, refLabel: `Sales order ${o.docNo} · ${o.customerSnapshot.name}`, sections: [{ title: '', rows: [['Paid now', money(extra.amountCents), true], ['Paid so far', money(o.paidCents)], ['Balance', money(o.balanceCents), true], ['Status', STATUS_LABEL[o.status] || o.status]] }] }, lines: [], payments: extra.payments || [], ...common };
   if (docKind === 'delivery') { const dv = o.delivery || {}; const dn = o.deliveryNote; const kind = (dn && dn.kind) || dv.kind || (o.status === 'collected' ? 'collect' : 'deliver'); return { sale: { ...base, clientCreatedAt: (dn && dn.at) || new Date().toISOString(), cashierName: (dn && dn.byName) || dv.driverName || auth.session.user.name, noTotals: true, refLabel: kind === 'collect' ? 'Collected at ' + dd.store.name : 'Delivered to ' + (addr(dv.address) || addr(o.customerSnapshot.address)), sections: [{ title: '', rows: [...(dv.date ? [[kind === 'collect' ? 'Collection' : 'Delivery', niceDate(dv.date) + (dv.slot ? ' · ' + dv.slot : '')]] : []), ...(dv.driverName ? [['Driver', dv.driverName]] : []), ['Paid in full', money(o.paidCents)], ...(o.completedDocNo ? [['Tax invoice', o.completedDocNo]] : [])] }], ...(dn && dn.signature ? { signature: dn.signature, signedBy: dn.signedBy } : { signLine: 'I have received the goods above, made to my specification, in good order.' }) }, lines: o.lines, payments: [], ...common }; }
-  return { sale: { ...base, clientCreatedAt: o.cancelledAt || new Date().toISOString(), cashierName: o.cancelledByName || auth.session.user.name, noTotals: true, refLabel: `Special order ${o.docNo} · ${o.customerSnapshot.name} · ${kindLabel(o.cancelKind)}${o.cancelReason ? ' · ' + o.cancelReason : ''}`,
+  return { sale: { ...base, clientCreatedAt: o.cancelledAt || new Date().toISOString(), cashierName: o.cancelledByName || auth.session.user.name, noTotals: true, refLabel: `Sales order ${o.docNo} · ${o.customerSnapshot.name} · ${kindLabel(o.cancelKind)}${o.cancelReason ? ' · ' + o.cancelReason : ''}`,
     sections: [{ title: 'Settlement', rows: [['Price', money(o.totalCents)], ['Paid in', money(o.paidCents)], ['Cancellation fee', money(o.feeCents || 0)], ...(o.feeReason ? [['Why', o.feeReason]] : []), ['Refunded', money(o.refundedCents || 0), true], ...(o.refunds || []).map(r => ['Refund by ' + (METHOD[r.method] || r.method), money(r.amountCents)])] }],
     terms: 'Goods made to the customer’s specification (Consumer Protection Act, section 20(2)(b)): once production has started the deposit covers the work and materials spent; before that nothing is charged.' }, lines: [], payments: [], ...common };
 }
@@ -189,8 +189,8 @@ function shrink(file) {
 // from the cart: openNew(cart, totals, onDone)
 export function openNew(cart, t, onDone) {
   const dd = d();
-  if (!cart.customer) return toast('A custom order needs the customer: add them to the sale first.', 'warn');
-  if (cart.lines.some(l => l.type === 'stock' || l.type === 'voucher' || l.type === 'bundle')) return toast('Only made-to-order and custom items go on a custom order: sell stock items on their own.', 'warn');
+  if (!cart.customer) return toast('A sales order needs the customer: add them to the sale first.', 'warn');
+  if (cart.lines.some(l => l.type === 'stock' || l.type === 'voucher' || l.type === 'bundle')) return toast('Only made-to-order and custom items go on a sales order: sell stock items on their own.', 'warn');
   if (!cart.lines.some(l => l.type === 'mto')) return toast('Nothing here is made to order.', 'warn');
   const ss = specialSettings(dd.settings);
   const methods = (dd.store.paymentMethods || ['cash', 'card']).filter(k => METHOD[k] && (k !== 'storeCredit' || cart.customer.storeCreditCents > 0));
@@ -198,13 +198,13 @@ export function openNew(cart, t, onDone) {
   const photos = {};
   let busy = false, pad = null;
   const expected = new Date(Date.now() + ss.leadDays * 86400000).toISOString().slice(0, 10);
-  const { wrap, close } = openModal('Custom order for ' + cart.customer.name, `
+  const { wrap, close } = openModal('Sales order for ' + cart.customer.name, `
     <div class="lb-new">
       <div class="lb-new-left">
         <div class="muted">${t.pieces} item${t.pieces === 1 ? '' : 's'} · <strong>${esc(money(t.totalCents))}</strong>${cart.customer.phone ? ' · ' + esc(cart.customer.phone) : ' · <span class="warn">no phone number for updates</span>'}</div>
         ${cart.lines.map((l, i) => l.type === 'mto' ? `<div class="card so-spec"><h3>${esc(l.qty + ' × ' + l.name)} · ${esc(money(l.qty * l.unitPriceCents - (l.discountCents || 0)))}</h3>
-          <div class="grid two">${field('Model', 'so-model-' + i, { value: l.name })}${field('Size', 'so-size-' + i, { placeholder: 'e.g. 2.4 m' })}${field('Fabric', 'so-fabric-' + i, { placeholder: 'e.g. Linen look' })}${field('Colour', 'so-colour-' + i, { placeholder: 'e.g. Charcoal' })}${field('Legs', 'so-legs-' + i, { placeholder: 'e.g. Oak, tapered' })}</div>
-          ${field('Notes', 'so-notes-' + i, { type: 'textarea', rows: 2, placeholder: 'Anything else the maker must know' })}
+          <div class="grid two">${field('Model', 'so-model-' + i, { value: (l.spec && l.spec.model) || l.name })}${field('Size', 'so-size-' + i, { value: (l.spec && l.spec.size) || '', placeholder: 'e.g. 2.4 m' })}${field(l.spec && l.spec.fabricId ? 'Fabric (from the catalogue: change it on the sale’s Specification)' : 'Fabric', 'so-fabric-' + i, { value: (l.spec && l.spec.fabric) || '', placeholder: 'e.g. Linen look, or pick one on the sale’s Specification', disabled: !!(l.spec && l.spec.fabricId) })}${field('Colour', 'so-colour-' + i, { value: (l.spec && l.spec.colour) || '', placeholder: 'e.g. Charcoal' })}${field('Legs', 'so-legs-' + i, { value: (l.spec && l.spec.legs) || '', placeholder: 'e.g. Oak, tapered' })}</div>
+          ${field('Notes', 'so-notes-' + i, { type: 'textarea', rows: 2, value: (l.spec && l.spec.notes) || '', placeholder: 'Anything else the maker must know' })}
           <label class="so-photo"><span class="btn ghost sm">${icon('camera')} Photo</span><input type="file" accept="image/*" capture="environment" data-photo="${i}" hidden><img id="so-ph-${i}" class="spec-thumb" alt="" hidden></label></div>` : `<div class="muted">${esc(l.qty + ' × ' + l.name)} · ${esc(money(l.qty * l.unitPriceCents - (l.discountCents || 0)))}</div>`).join('')}
         ${field('Expected by', 'so-expected', { type: 'date', value: expected })}
         <label class="chk"><input type="checkbox" id="so-depnow" checked> Take the deposit now (at least ${esc(money(minDep))}, ${ss.minDepositPct}%)</label>
@@ -217,10 +217,11 @@ export function openNew(cart, t, onDone) {
         ${padHtml('so-pad')}
         <label class="chk"><input type="checkbox" id="so-accept"> The customer has checked the specification and agrees: no change of mind once in production</label>
       </div>
-    </div>`, { okLabel: 'Open custom order', cancelLabel: 'Back', onOk: () => submit() });
+    </div>`, { okLabel: 'Open sales order', cancelLabel: 'Back', onOk: () => submit() });
   wrap.querySelector('.modal-card').classList.add('wide');
   pad = wirePad(wrap.querySelector('#so-pad'));
-  const specs = () => cart.lines.map((l, i) => l.type === 'mto' ? Object.fromEntries(SPEC_FIELDS.map(f => [f[0], val(wrap, 'so-' + f[0] + '-' + i)]).concat([['photo', photos[i] || '']])) : null);
+  // the specification as typed, keeping the catalogue fabric chosen on the sale (the server prices it again)
+  const specs = () => cart.lines.map((l, i) => l.type === 'mto' ? Object.fromEntries(SPEC_FIELDS.map(f => [f[0], val(wrap, 'so-' + f[0] + '-' + i)]).concat([['photo', photos[i] || ''], ['fabricId', (l.spec && l.spec.fabricId) || '']])) : null);
   const draft = () => ({ docNo: (dd.entity.specialOrderPrefix || dd.entity.invoicePrefix + '-SO') + '-(new)', customerSnapshot: { name: cart.customer.name }, lines: t.lines.map((l, i) => ({ ...l, spec: specs()[i] })), totalCents: t.totalCents, vatRegistered: !!dd.entity.vatRegistered, minDepositCents: minDep, minDepositPct: ss.minDepositPct, leadDays: ss.leadDays });
   const preview = () => {
     const depNow = wrap.querySelector('#so-depnow').checked;
@@ -247,18 +248,18 @@ export function openNew(cart, t, onDone) {
     const sp = specs();
     const body = {
       orderId: newId('so'), clientCreatedAt: new Date().toISOString(), customerId: cart.customerId, expectedAt: val(wrap, 'so-expected'),
-      lines: cart.lines.map((l, i) => ({ productId: l.productId, variantId: l.variantId, qty: l.qty, unitPriceCents: l.unitPriceCents, priceOverride: l.priceOverride ? { reason: l.priceOverride.reason, token: l.priceOverride.token } : null, discountCents: l.discountCents, discountPct: l.discountPct, discountReason: l.discountReason, discountToken: l.discountToken || '', note: l.note, custom: !!l.custom, name: l.name, vatClass: l.vatClass, spec: sp[i] })),
-      saleDiscountCents: cart.discountCents || 0, saleDiscountPct: cart.discountPct || 0, saleDiscountReason: cart.discountReason || '', saleDiscountToken: cart.discountToken || '', note: cart.note || '',
+      lines: cart.lines.map((l, i) => ({ quoteId: l.quote ? l.quote.id : '', quoteLine: l.quote ? l.quote.lineNo : 0, productId: l.productId, variantId: l.variantId, qty: l.qty, unitPriceCents: l.unitPriceCents, priceOverride: l.priceOverride ? { reason: l.priceOverride.reason, token: l.priceOverride.token } : null, discountCents: l.discountCents, discountPct: l.discountPct, discountReason: l.discountReason, discountToken: l.discountToken || '', note: l.note, custom: !!l.custom, name: l.name, vatClass: l.vatClass, spec: sp[i] })),
+      quoteId: cart.quoteId || '', saleDiscountCents: cart.discountCents || 0, saleDiscountPct: cart.discountPct || 0, saleDiscountReason: cart.discountReason || '', saleDiscountToken: cart.discountToken || '', note: cart.note || '',
       totals: { totalCents: t.totalCents, vatCents: t.vatCents }, deposit, signoff: { accepted: true, signedBy, signature: pad.dataUrl() }, ...where()
     };
     try {
       const r = await auth.api('open', body, API.special);
       close(true); onDone && onDone(r);
-      toast('Custom order ' + r.order.docNo + (r.order.status === 'depositPaid' ? ' opened, deposit paid' : ' quoted') + (r.payments && r.payments[0] && r.payments[0].changeCents ? ' · change ' + money(r.payments[0].changeCents) : ''));
+      toast('Sales order ' + r.order.docNo + (r.order.status === 'depositPaid' ? ' opened, deposit paid' : ' quoted') + (r.payments && r.payments[0] && r.payments[0].changeCents ? ' · change ' + money(r.payments[0].changeCents) : ''));
       openReceipt(docOf(r.order, 'order'));
       if (ctx.onChange) ctx.onChange(r);
       return true;
-    } catch (e) { busy = false; toast(e.offline ? 'A custom order needs the line: try again when connected.' : e.message, 'warn'); return false; }
+    } catch (e) { busy = false; toast(e.offline ? 'A sales order needs the line: try again when connected.' : e.message, 'warn'); return false; }
   }
 }
 
@@ -389,14 +390,14 @@ export async function factoryCard(host, entityId) {
   let r;
   try { r = await auth.api('factoryCompanies', { entityId }, API.special); } catch (e) { el.innerHTML = `<p class="warn">${esc(e.message)}</p>`; return; }
   const linked = r.linked;
-  el.innerHTML = `${linked ? `<p>Linked to <strong>${esc(linked.companyName)}</strong>.</p>` : '<p class="muted">Not linked: the till moves a custom order along by hand.</p>'}
+  el.innerHTML = `${linked ? `<p>Linked to <strong>${esc(linked.companyName)}</strong>.</p>` : '<p class="muted">Not linked: the till moves a sales order along by hand.</p>'}
     ${field('Factory company', 'fa-co', { type: 'select', value: linked ? linked.companyId : '', options: [{ value: '', label: 'None' }, ...(r.companies || []).map(c => ({ value: c.id, label: c.name }))] })}
     <div class="card-actions"><button class="btn primary" data-act="fa-link">Save factory link</button></div>`;
   if (el.dataset.wired) return;    // one listener per card element: a click on the select must not use it up
   el.dataset.wired = '1';
   el.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-act]'); if (!b || b.dataset.act !== 'fa-link') return; e.preventDefault();
-    try { const x = await auth.api('factoryLink', { entityId, companyId: val(el, 'fa-co') }, API.special); toast(x.linked ? 'Custom orders go to ' + x.linked.companyName : 'Factory link removed'); }
+    try { const x = await auth.api('factoryLink', { entityId, companyId: val(el, 'fa-co') }, API.special); toast(x.linked ? 'Sales orders go to ' + x.linked.companyName : 'Factory link removed'); }
     catch (err) { toast(err.message, 'warn'); }
     factoryCard(host, entityId);
   });

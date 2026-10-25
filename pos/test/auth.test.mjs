@@ -69,7 +69,7 @@ await p.waitForSelector('#claim:not([hidden])', { timeout: 15000 });
 await p.fill('#claim-name', 'Jean'); await p.fill('#claim-group', 'Rossouw Retail'); await p.click('#claim-form button[type=submit]');
 await p.waitForSelector('#app:not([hidden])', { timeout: 15000 }); await p.waitForTimeout(800);
 R.ownerWho = await who(); check('owner signed in', /Jean.*Owner/i.test(R.ownerWho), R.ownerWho);
-R.nav = await p.$$eval('#nav [data-view]', x => x.map(y => y.dataset.view)); check('owner menu: every tab, Reports and Admin included', R.nav.join() === 'sell,home,sales,returns,laybys,orders,customers,stock,buying,products,online,overview,reports,admin,me', R.nav);
+R.nav = await p.$$eval('#nav [data-view]', x => x.map(y => y.dataset.view)); check('owner menu: every tab, Reports and Admin included', R.nav.join() === 'sell,home,sales,returns,laybys,orders,quotes,customers,stock,buying,products,fabrics,online,overview,reports,admin,me', R.nav);
 const group = await (await fetch(`${docs}/pos/retail`, { headers: H })).json(); check('group doc written', fromFs(group.fields.name) === 'Rossouw Retail');
 
 mark('claimed');
@@ -123,7 +123,7 @@ await p.screenshot({ path: S + '/shots/pos2-pinpad.png' });
 await pinType('#login-pin', '999999'); R.wrongPin = await p.locator('#login-pin .pin-msg').innerText(); check('wrong PIN refused', /not known/.test(R.wrongPin), R.wrongPin);
 await pinType('#login-pin', '111111'); await p.waitForSelector('#app:not([hidden])', { timeout: 15000 }); await p.waitForTimeout(800);
 R.cashWho = await who(); check('cashier signed in by PIN', /Cathy.*Cashier/i.test(R.cashWho), R.cashWho);
-R.cashNav = await p.$$eval('#nav [data-view]', x => x.map(y => y.dataset.view)); check('cashier menu on a till with a register: the selling tabs and Register, no Stock, Reports or Admin', R.cashNav.join() === 'sell,register,home,sales,returns,laybys,orders,customers,products,me', R.cashNav);
+R.cashNav = await p.$$eval('#nav [data-view]', x => x.map(y => y.dataset.view)); check('cashier menu on a till with a register: the selling tabs and Register, no Stock, Reports or Admin', R.cashNav.join() === 'sell,register,home,sales,returns,laybys,orders,quotes,customers,products,me', R.cashNav);
 R.fbUser = await p.evaluate(() => window.POS.session.uid); check('signed in as her own uid', R.fbUser === uid('Cathy'), R.fbUser);
 check('lock button shows for a PIN user', await p.locator('#lock').isVisible());
 

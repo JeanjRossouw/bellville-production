@@ -67,7 +67,7 @@ await p.selectOption('#pr-entity', 'RC'); await p.waitForTimeout(500);
 // ---- the sheet
 await p.click('[data-act=pr-costs]'); await p.waitForSelector('#modal');
 R.intro = await txt('#modal .modal-body');
-check('the window says only the cost changes, and VAT included for a company not registered', /Only the cost changes/.test(R.intro) && /VAT included/.test(R.intro) && /not VAT registered/.test(R.intro), R.intro);
+check('the window says the cost changes (prices only when ticked), and VAT included for a company not registered', /The cost changes, and the selling price too/.test(R.intro) && /VAT included/.test(R.intro) && /not VAT registered/.test(R.intro), R.intro);
 const [dl] = await Promise.all([p.waitForEvent('download'), p.click('[data-ci=sheet]')]);
 R.sheetName = dl.suggestedFilename(); R.sheet = fs.readFileSync(await dl.path(), 'utf8').replace(/^﻿/, '').split('\r\n');
 check('the costs sheet: heading, one row per simple product and per variant (not the kit itself), price and cost now', /^costs-RC-/.test(R.sheetName) && R.sheet[0] === 'Product,Variant,SKU,Barcode,Price,Cost' && R.sheet.length === 9
@@ -106,9 +106,23 @@ check('the Shopify CSV: one cost to change, the rest the same (found by SKU and 
 await p.click('#modal-ok'); await toast(); await p.waitForTimeout(500);
 check('saved: R 130', (await one('products/p_mat')).costCents === 13000);
 
+// ---- prices from the spreadsheet: listed apart, saved only when ticked
+const priced = ['Product,Variant,SKU,Barcode,Price,Cost', 'Heat Mat 8W,,HM8,6001,"1,259.00",130.00', 'Gecko Kit,Large,LGK-L,6002,1999.00,1450.00', 'Gecko Kit,Small,LGK-S,,1299.00,', 'Basking Lamp,,,,0,'].join('\r\n');
+await p.click('[data-act=pr-costs]'); await p.waitForSelector('#modal');
+await p.setInputFiles('#ci-file', { name: 'prices.csv', mimeType: 'text/csv', buffer: Buffer.from(priced) });
+await p.waitForSelector('#ci-plan .ci-sum'); R.plan3 = await txt('#ci-plan');
+check('prices: two differ (the mat, the large kit), the small kit the same, a price of 0 left alone; costs the same', /0 costs to change/.test(R.plan3) && /Also change these 2 prices/.test(R.plan3) && /Heat Mat 8W R 249\.00 → R 1,259\.00/.test(R.plan3) && /Gecko Kit · Large R 1,899\.00 → R 1,999\.00/.test(R.plan3), R.plan3);
+await p.click('#modal-ok'); R.untick = await toast();
+check('not ticked: nothing to save, it says to tick', /Tick “Also change these prices”/.test(R.untick) && await p.locator('#modal').count() === 1, R.untick);
+await p.check('#ci-prices'); await p.click('#modal-ok'); R.saved3 = await toast(); await p.waitForTimeout(600);
+const mat2 = await one('products/p_mat'), vl2 = await one('variants/v_l'), vs2 = await one('variants/v_s'), lamp2 = await one('products/p_lamp');
+check('ticked: the mat R 1 259 and the large kit R 1 999 in cents, the small kit still the product’s, the lamp and the costs as they were', /2 prices saved/.test(R.saved3) && mat2.priceCents === 125900 && vl2.priceCents === 199900 && vs2.priceCents === null && lamp2.priceCents === 19500 && mat2.costCents === 13000 && vl2.costCents === 145000 && mat2.barcodes.join() === '6001,6001-old', [R.saved3, mat2.priceCents, vl2.priceCents, vs2.priceCents, lamp2.priceCents, mat2.costCents]);
+R.audit2 = (await coll('auditLog')).filter(a => a.action === 'product.costImport').find(a => a.details.pricesChanged === 2);
+check('the audit row has the prices before and after', R.audit2 && R.audit2.details.prices.some(c => c.id === 'p_mat' && c.fromCents === 24900 && c.toCents === 125900) && R.audit2.details.prices.some(c => c.id === 'v_l' && c.fromCents === 189900), R.audit2 && R.audit2.details);
+
 // ---- a file without a cost column
 await p.click('[data-act=pr-costs]'); await p.waitForSelector('#modal');
-await p.setInputFiles('#ci-file', { name: 'x.csv', mimeType: 'text/csv', buffer: Buffer.from('SKU,Price\nHM8,10\n') });
+await p.setInputFiles('#ci-file', { name: 'x.csv', mimeType: 'text/csv', buffer: Buffer.from('SKU,Qty\nHM8,10\n') });
 await p.waitForTimeout(500); R.nocost = await txt('#ci-plan');
 check('no cost column: said so', /No cost column/.test(R.nocost), R.nocost);
 await p.click('#modal-ok'); R.nofile = await toast();

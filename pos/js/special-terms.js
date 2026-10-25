@@ -11,6 +11,15 @@ export const SPEC_FIELDS = [['model', 'Model'], ['size', 'Size'], ['fabric', 'Fa
 export const SALES_STATUSES = ['open', 'inProduction', 'ready', 'delivered', 'collected', 'cancelled'];
 export const SALES_LABEL = { open: 'Ordered', inProduction: 'In production', ready: 'Ready', delivered: 'Delivered', collected: 'Collected', cancelled: 'Cancelled' };
 export const SALES_NEXT = { open: ['inProduction', 'ready', 'cancelled'], inProduction: ['ready', 'cancelled'], ready: ['delivered', 'collected', 'cancelled'], delivered: [], collected: [], cancelled: [] };
+// the fabric catalogue: what a fabric is called on an order, the metres a made-to-order item takes
+// (the variant's, else the product's), what that fabric adds to the item's price, and the
+// selling price per metre from the supplier's cost (excl. VAT) with the markup and 15% VAT on top,
+// never under the lowest price per metre (incl. VAT)
+export const FABRIC_MARKUP = 80, FABRIC_MIN_CENTS = 25000;
+export const fabricLabel = (f) => (f.design || '') + (f.collection && String(f.collection).toLowerCase() !== String(f.design || '').toLowerCase() ? ' (' + f.collection + ')' : '') + (f.supplier ? ' · ' + f.supplier : '');
+export const fabricMetresOf = (p, v) => { const m = Number(v && v.fabricMetres != null && v.fabricMetres !== '' ? v.fabricMetres : p && p.fabricMetres); return Number.isFinite(m) && m > 0 ? m : 0; };
+export const fabricCentsFor = (metres, perMetreCents) => Math.round((Number(metres) || 0) * (Number(perMetreCents) || 0));
+export const fabricPriceCents = (costCents, markupPct, minCents = 0) => Math.max(Math.round(Number(minCents) || 0), Math.round((Number(costCents) || 0) * (100 + (Number(markupPct) || 0)) * 115 / 10000));
 export const CANCEL_KINDS = [['customer', 'The customer cancels'], ['store', 'We cannot make it'], ['other', 'Other']];
 
 const num = (v, dflt) => (v == null || v === '' || !Number.isFinite(Number(v))) ? dflt : Number(v);

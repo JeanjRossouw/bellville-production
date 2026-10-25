@@ -94,7 +94,7 @@ await p.waitForSelector('[data-act=on-catalogue]', { timeout: 15000 });
 // the factory card the same way: click the select, pick, save
 await p.waitForSelector('#fa-co', { timeout: 15000 });
 await p.click('#fa-co'); await p.selectOption('#fa-co', 'CPTEST'); await p.click('[data-act=fa-link]'); R.link = await toast(); await p.waitForTimeout(1500);
-check('the factory link saves after clicking the select', /Custom orders go to Couch Potato Test/.test(R.link), R.link);
+check('the factory link saves after clicking the select', /Sales orders go to Couch Potato Test/.test(R.link), R.link);
 console.log(JSON.stringify({ fails, errs, ...R }, null, 1));
 await b.close(); await mock.close();
 process.exit(fails.length || errs.length ? 1 : 0);
