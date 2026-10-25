@@ -6,6 +6,8 @@ export const STATUSES = ['quoted', 'depositPaid', 'inProduction', 'ready', 'outF
 export const STATUS_LABEL = { quoted: 'Quoted', depositPaid: 'Deposit paid', inProduction: 'In production', ready: 'Ready', outForDelivery: 'Out for delivery', delivered: 'Delivered', collected: 'Collected', cancelled: 'Cancelled' };
 // what may follow what
 export const NEXT = { quoted: ['depositPaid', 'cancelled'], depositPaid: ['inProduction', 'ready', 'cancelled'], inProduction: ['ready', 'cancelled'], ready: ['outForDelivery', 'delivered', 'collected', 'cancelled'], outForDelivery: ['delivered'], delivered: [], collected: [], cancelled: [] };
+// urgent: marked so by a person, or brought in from Shopify (until someone clears it)
+export const isUrgent = (so) => !!so && (so.urgent === true || (so.urgent == null && so.source === 'shopify'));
 export const SPEC_FIELDS = [['model', 'Model'], ['size', 'Size'], ['fabric', 'Fabric'], ['colour', 'Colour'], ['legs', 'Legs'], ['notes', 'Notes']];
 // a sales order: a made-to-order item sold as an ordinary sale (invoiced), built by the factory and handed over
 export const SALES_STATUSES = ['open', 'inProduction', 'ready', 'delivered', 'collected', 'cancelled'];

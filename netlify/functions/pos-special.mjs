@@ -13,6 +13,7 @@
 //   dispatch  { orderId, driverId, saleId, + where }                    ready, paid, a delivery booked: the tax invoice written,
 //             the order out for delivery with the driver (who marks it delivered on their own page)
 //   drivers   { entityId } / driverSave { driverId?, name, phone, active, newLink? }   a manager: the drivers and their links
+//   urgent    { orderId, urgent }                                      a supervisor: the red Urgent tag (orders from Shopify start urgent)
 //   cancel    { orderId, kind, reason, feeCents, refunds: [ { method, amountCents, ref } ], approvalToken? }   a manager
 //   quote     { quoteId, customerId?, lines [ sale lines + spec ], saleDiscount…, totals, validDays?, note, + where } → a numbered quotation
 //   quoteCancel { quoteId, reason }                                         an open quote withdrawn
@@ -241,6 +242,17 @@ const actions = {
     await patchDoc('specialOrders', so.id, { updates: [...(so.updates || []), entry].slice(-50), updateDue: false, lastUpdateAt: now, updatedAt: now });
     await audit({ action: 'specialOrder.update', docType: 'specialOrder', docId: so.id, docNo: so.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, details: { status, how }, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
     return { ok: true, text, link, status, how, phone: so.customerSnapshot.phone || '', email: so.customerSnapshot.email || '', update: entry };
+  },
+
+  // marked urgent (or not): a red tag, listed first (a supervisor or higher)
+  async urgent(event, b) {
+    const ctx = await whoAndWhere(event, b, { noShift: true });
+    if (rank(ctx.user.role) < rank('supervisor')) throw new Reject(403, 'A supervisor or higher marks an order urgent.');
+    const so = await loadOrder(ctx, b.orderId);
+    const now = nowIso(), urgent = !!b.urgent;
+    await patchDoc('specialOrders', so.id, { urgent, updatedAt: now });
+    await audit({ action: 'specialOrder.urgent', docType: 'specialOrder', docId: so.id, docNo: so.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, details: { urgent }, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
+    return { ok: true, order: { ...so, urgent, updatedAt: now } };
   },
 
   // the client's private page for an order or a quotation: the link, and a message to send it with

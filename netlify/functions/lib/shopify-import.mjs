@@ -3,7 +3,7 @@
 // a sales order here, so it gets the client's page, To do, delivery slots and the driver:
 //
 //   specialOrders/shp-<shopify order number id>   status depositPaid (or quoted when nothing is paid),
-//     source 'shopify', invoiceBy 'shopify' (Shopify's order is the tax invoice: the POS writes none, at
+//     source 'shopify', urgent (a red tag, listed first), invoiceBy 'shopify' (Shopify's order is the tax invoice: the POS writes none, at
 //     dispatch or hand-over), shopify { id, name, createdAt, financialStatus }, the lines (matched to the
 //     POS products by Shopify id or SKU, else named lines; their Shopify options on the spec), what Shopify
 //     received as paid "via Shopify" (no POS payment rows: it is not in a till's cash-up), the balance.
@@ -95,7 +95,7 @@ export async function importShopifyOrders(ctx, plan) {
       const status = x.paidCents > 0 ? 'depositPaid' : 'quoted';
       const opened = x.createdAt || now;
       const so = {
-        series: 'SO', seq: num.seq, docNo: num.docNo, source: 'shopify', invoiceBy: 'shopify', shopify: { id: x._o.id, name: x.name, createdAt: x.createdAt, financialStatus: x.financialStatus },
+        series: 'SO', seq: num.seq, docNo: num.docNo, source: 'shopify', invoiceBy: 'shopify', urgent: true, shopify: { id: x._o.id, name: x.name, createdAt: x.createdAt, financialStatus: x.financialStatus },
         customerId, customerSnapshot: { name: x.client.name, phone: x.client.phone, email: x.client.email, vatNo: '', address },
         lines, lineCount: lines.length, subtotalCents: x.totalCents, saleDiscountCents: 0, saleDiscountPct: 0, saleDiscountReason: '', totalCents: x.totalCents,
         vatCents: lines.reduce((n, l) => n + l.vatCents, 0), vatRegistered: !!ctx.entity.vatRegistered,

@@ -4,6 +4,7 @@
 // button for its next step (the Sales orders and Quotes tabs do the work).
 import { esc, money, niceDate, empty } from './ui.js';
 import { icon } from './icons.js';
+import { isUrgent } from './special-terms.js';
 
 let ctx = { data: () => ({}) };
 export const setContext = (c) => { ctx = { ...ctx, ...c }; };
@@ -15,6 +16,8 @@ const who = (c) => `${esc((c || {}).name || '—')}${c && c.phone ? `<div class=
 const what = (lines) => (lines || []).filter(l => !l.delivery).map(l => esc(l.qty + ' × ' + l.name)).join('<br>');
 const btn = (act, id, label, primary) => `<button class="btn ${primary ? 'primary' : 'ghost'} sm" data-act="${act}" data-id="${esc(id)}">${label}</button>`;
 
+// urgent orders first in each bucket (the order within otherwise kept)
+const urgentFirst = (bs) => bs.map(b => ({ ...b, rows: [...b.rows.filter(r => r.kind === 'order' && isUrgent(r.x)), ...b.rows.filter(r => !(r.kind === 'order' && isUrgent(r.x)))] }));
 // the work, bucket by bucket
 export function buckets() {
   const dd = ctx.data(), now = today();
@@ -22,7 +25,7 @@ export function buckets() {
   const quotes = (dd.quotes || []).filter(q => q.status === 'open');
   const by = (f) => (a, b) => String(f(a) || '').localeCompare(String(f(b) || ''));
   const done = (dd.specials || []).filter(o => /^(delivered|collected)$/.test(o.status) && String(o.completedAt || '').slice(0, 10) >= addDays(now, -7));
-  return [
+  return urgentFirst([
     { key: 'accepted', title: 'Quotes accepted online', hint: 'Load it into the sale, then Sales order to take the deposit.', rows: quotes.filter(q => q.accepted).sort(by(q => q.accepted.at)).map(q => ({ kind: 'quote', x: q })) },
     { key: 'deposit', title: 'Waiting for the deposit', hint: 'Orders opened without the deposit: take it to start production.', rows: orders.filter(o => o.status === 'quoted').sort(by(o => o.openedAt)).map(o => ({ kind: 'order', x: o })) },
     { key: 'updates', title: 'Updates to send', hint: 'Something changed: one tap sends the client a WhatsApp with their order page.', rows: orders.filter(o => o.updateDue && o.status !== 'quoted').sort(by(o => o.updatedAt)).map(o => ({ kind: 'order', x: o })) },
@@ -35,7 +38,7 @@ export function buckets() {
     { key: 'collect', title: 'Collections', hint: 'Hand over at the shop: the tax invoice and the signed note.', rows: orders.filter(o => o.status === 'ready' && o.delivery && o.delivery.kind === 'collect' && o.delivery.confirmed).sort(by(o => o.delivery.date)).map(o => ({ kind: 'order', x: o })) },
     { key: 'out', title: 'Out for delivery', hint: 'With the driver: they mark it delivered when the client signs.', rows: orders.filter(o => o.status === 'outForDelivery' && !(o.delivery && o.delivery.issue)).sort(by(o => o.delivery && o.delivery.date)).map(o => ({ kind: 'order', x: o })) },
     { key: 'done', title: 'Delivered or collected this week', hint: '', rows: done.sort(by(o => o.completedAt)).reverse().map(o => ({ kind: 'order', x: o })) }
-  ];
+  ]);
 }
 
 function rowHtml(b, r) {
@@ -58,7 +61,7 @@ function rowHtml(b, r) {
     issues: `<span class="warn">${esc(dv && dv.issue ? dv.issue.note : '')}</span>` + btn('so-book', o.id, icon('truck') + ' Rebook', true) + btn('so-dispatch', o.id, 'Send again'),
     done: btn('so-print-delivery', o.id, 'Delivery note')
   }[b.key] || '';
-  return `<tr><td><strong>${esc(o.docNo)}</strong></td><td>${who(o.customerSnapshot)}</td><td>${what(o.lines)}</td><td class="r">${b.key === 'done' ? esc(money(o.totalCents)) : `<strong>${esc(money(o.balanceCents))}</strong><div class="muted">of ${esc(money(o.totalCents))}</div>`}</td>
+  return `<tr><td><strong>${esc(o.docNo)}</strong>${isUrgent(o) && b.key !== 'done' ? ' <span class="chip urgent">Urgent</span>' : ''}</td><td>${who(o.customerSnapshot)}</td><td>${what(o.lines)}</td><td class="r">${b.key === 'done' ? esc(money(o.totalCents)) : `<strong>${esc(money(o.balanceCents))}</strong><div class="muted">of ${esc(money(o.totalCents))}</div>`}</td>
     <td>${when}</td><td class="btn-row" style="margin:0">${acts}${btn('so-open', o.id, 'Open')}</td></tr>`;
 }
 
