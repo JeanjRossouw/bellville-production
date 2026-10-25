@@ -39,6 +39,8 @@ await prod('p_cushion', { name: 'Scatter Cushion', sku: 'CU-1', barcodes: ['CUSH
 await prod('p_lamp', { name: 'Lamp', sku: 'LA-1', barcodes: ['LAMP'], priceCents: 50000, costCents: 20000 });
 await put('pos/retail/stockLevels/BF-BELL_p_cushion', { productId: 'p_cushion', variantId: '', onHandQty: 3, reservedQty: 0, avgCostCents: 5000, ...srv('BF', 'BF-BELL') });
 await put('pos/retail/stockLevels/BF-BELL_p_lamp', { productId: 'p_lamp', variantId: '', onHandQty: 6, reservedQty: 0, avgCostCents: 20000, ...srv('BF', 'BF-BELL') });
+// an open sales order (e.g. brought in from Shopify) wanting 8 lamps; 6 on the shelf, no reorder level on the lamp
+await put('pos/retail/specialOrders/shp-1', { docNo: 'BF-SO-000009', status: 'depositPaid', source: 'shopify', lines: [{ lineNo: 1, productId: 'p_lamp', variantId: '', name: 'Lamp', qty: 8, unitPriceCents: 50000 }, { lineNo: 2, productId: '', variantId: '', name: 'Delivery', qty: 1, custom: true }], totalCents: 400000, paidCents: 400000, balanceCents: 0, customerSnapshot: { name: 'Web client' }, ...srv('BF', 'BF-BELL') });
 
 let server = null;
 if (!(await fetch('http://localhost:8788/pos/').then(r => r.ok).catch(() => false))) {
@@ -76,6 +78,11 @@ await fetch(`${docs}/pos/retail/products/p_cushion?updateMask.fieldPaths=supplie
 // ---- a purchase order suggested from low stock, sent
 await p.click('[data-act=by-sub][data-to=po]'); await p.waitForTimeout(300);
 R.poList = await screenText(); check('the low-stock suggestion is offered', /Suggest from low stock \(1\)/i.test(R.poList), R.poList.slice(0, 300));
+check('the open-orders option offered: 1 item short', /Order for open orders only \(1\)/i.test(R.poList), R.poList.slice(0, 300));
+await p.click('[data-act=by-po-open]'); await p.waitForSelector('#po-supplier');
+R.openEdit = await screenText();
+check('for open orders only: the lamp (8 wanted, 6 here) → 2; the low cushion left out', /Lamp/.test(R.openEdit) && !/Scatter Cushion/.test(R.openEdit) && (await p.inputValue('[data-po-qty="0"]')) === '2' && /BF-SO-000009/.test(await p.inputValue('#po-note')), R.openEdit.slice(0, 400));
+await p.click('[data-act=by-po-close]'); await p.waitForTimeout(300);
 await p.click('[data-act=by-po-suggest]'); await p.waitForSelector('#po-supplier');
 R.edit = await screenText(); check('the cushion suggested: 10 at R 50', /Scatter Cushion/.test(R.edit) && (await p.inputValue('[data-po-qty="0"]')) === '10' && (await p.inputValue('[data-po-cost="0"]')) === '50.00' && /Subtotal \(ex VAT\) R 500\.00/.test(R.edit), R.edit.slice(0, 400));
 await p.fill('#po-add', 'lamp'); await p.waitForTimeout(250); await p.click('#po-hits .pk-row'); await p.waitForTimeout(300);

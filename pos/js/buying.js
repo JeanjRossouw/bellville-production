@@ -128,10 +128,10 @@ function poListHtml(dd) {
   const all = openPos(dd).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   const q = by.q.trim().toLowerCase();
   const rows = all.filter(p => (by.filter === 'all' || (by.filter === 'open' ? ['draft', 'sent', 'part'].includes(p.status) : p.status === by.filter)) && (!q || [p.docNo, p.supplierName, supplierName(p.supplierId), ...(p.lines || []).map(l => l.name)].some(x => String(x || '').toLowerCase().includes(q))));
-  const low = stockOf().filter(x => x.low).length;
+  const low = stockOf().filter(x => x.low).length, short = mgr() ? forOpenOrders('').length : 0;
   return `<div class="toolbar"><input id="by-q" class="search" type="search" placeholder="Number, supplier, item" value="${esc(by.q)}">
       <select id="by-filter">${[['open', 'Open'], ['draft', 'Drafts'], ['sent', 'Sent'], ['part', 'Part received'], ['received', 'Received'], ['cancelled', 'Cancelled'], ['all', 'All']].map(x => `<option value="${x[0]}"${by.filter === x[0] ? ' selected' : ''}>${x[1]}</option>`).join('')}</select>
-      ${mgr() ? `<button class="btn primary sm" data-act="by-po-new">${icon('plus')} New purchase order</button>${low ? `<button class="btn ghost sm" data-act="by-po-suggest">${icon('box')} Suggest from low stock (${low})</button>` : ''}` : ''}</div>
+      ${mgr() ? `<button class="btn primary sm" data-act="by-po-new">${icon('plus')} New purchase order</button>${low ? `<button class="btn ghost sm" data-act="by-po-suggest">${icon('box')} Suggest from low stock (${low})</button>` : ''}${short ? `<button class="btn ghost sm" data-act="by-po-open" title="Only what open website orders and sales orders need that you do not have; reorder levels left out">${icon('box')} Order for open orders only (${short})</button>` : ''}` : ''}</div>
     ${rows.length ? `<div class="card" style="padding:0;overflow:auto"><table class="tbl"><thead><tr><th>No</th><th>Supplier</th><th>Lines</th><th>Expected</th><th class="r">Total</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(p => `<tr class="${/cancelled|received/.test(p.status) ? 'off' : ''}"><td><strong>${esc(p.docNo || 'Draft')}</strong><div class="muted">${esc(niceDate(p.sentAt || p.createdAt))}</div></td><td>${esc(p.supplierName || supplierName(p.supplierId))}</td><td>${(p.lines || []).length} · ${(p.lines || []).reduce((n, l) => n + (l.qty || 0), 0)} units${p.status === 'part' ? ` · ${(p.lines || []).reduce((n, l) => n + (l.receivedQty || 0), 0)} in` : ''}</td><td class="muted">${esc(niceDate(p.expectedAt))}</td><td class="r">${esc(money(p.totalCents || (p.lines || []).reduce((n, l) => n + l.qty * l.unitCostCents, 0)))}</td><td>${chip(p.status)}</td><td class="r nowrap">${p.status === 'draft' && mgr() ? `<button class="btn ghost sm" data-act="by-po-edit" data-id="${esc(p.id)}">Edit</button>` : ''}<button class="btn ghost sm" data-act="by-po-open" data-id="${esc(p.id)}">Open</button></td></tr>`).join('')}</tbody></table></div>` : empty('No purchase orders', mgr() ? 'Start one, or let the low-stock list suggest it.' : '')}`;
 }
 function poEditHtml(dd) {
@@ -153,6 +153,26 @@ function readEdit() {
   return e;
 }
 function addLine(it, qty) { const e = readEdit(); const had = e.lines.find(l => l.itemId === it.itemId); if (had) had.qty += qty || 1; else e.lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, sku: it.sku, name: it.name, barcode: it.barcodes ? it.barcodes[0] || '' : '', qty: qty || 1, unitCostCents: it.costCents || 0, receivedQty: 0 }); ctx.repaint(); }
+// what open customer orders need and the shelf cannot give, reorder levels left out: website orders already
+// hold their stock (available falls below nothing when they are short), sales orders (those brought in from
+// Shopify too) take nothing until they go out, so their stock items count here; less what is on order
+const OPEN_SO = ['quoted', 'depositPaid', 'inProduction', 'ready'];
+export function forOpenOrders(supplierId) {
+  const dd = d(), need = new Map(), why = new Map();
+  for (const o of dd.specials || []) {
+    if (!OPEN_SO.includes(o.status)) continue;
+    for (const l of o.lines || []) {
+      const p = l.productId && (dd.products || []).find(x => x.id === l.productId);
+      if (!p || p.type !== 'stock') continue;
+      const id = l.variantId || l.productId;
+      need.set(id, (need.get(id) || 0) + (Number(l.qty) || 0));
+      why.set(id, [...(why.get(id) || []), o.docNo]);
+    }
+  }
+  return stockOf().filter(x => !supplierId || ((dd.products || []).find(p => p.id === x.productId) || {}).supplierId === supplierId)
+    .map(x => ({ ...x, need: need.get(x.itemId) || 0, orders: why.get(x.itemId) || [], qty: (need.get(x.itemId) || 0) - x.available - x.onOrder }))
+    .filter(x => x.qty > 0);
+}
 // what the low-stock list says to order: items at or under their reorder level counting what is on order, the reorder quantity each
 function suggest(supplierId) {
   const dd = d();
@@ -369,6 +389,7 @@ export async function action(act, b) {
     case 'by-sup-import': return importSuppliers();
     case 'by-po-new': by.edit = newEdit(null); return ctx.repaint();
     case 'by-po-suggest': { by.edit = newEdit(null); suggest('').forEach(x => by.edit.lines.push({ productId: x.productId, variantId: x.variantId, itemId: x.itemId, sku: x.sku, name: x.name, barcode: x.barcodes[0] || '', qty: x.qty, unitCostCents: x.costCents, receivedQty: 0 })); if (!by.edit.lines.length) toast('Nothing is low.', 'warn'); return ctx.repaint(); }
+    case 'by-po-open': { by.edit = newEdit(null); const list = forOpenOrders(''); list.forEach(x => by.edit.lines.push({ productId: x.productId, variantId: x.variantId, itemId: x.itemId, sku: x.sku, name: x.name, barcode: x.barcodes[0] || '', qty: x.qty, unitCostCents: x.costCents, receivedQty: 0 })); by.edit.note = 'For open orders: ' + [...new Set(list.flatMap(x => x.orders))].slice(0, 20).join(', '); if (!list.length) toast('Open orders need nothing you do not have.', 'warn'); else toast(list.length + ' item' + (list.length === 1 ? '' : 's') + ' for open orders, low stock left out'); return ctx.repaint(); }
     case 'by-po-suggest-here': { const e = readEdit(); const list = suggest(e.supplierId); if (!list.length) return toast(e.supplierId ? 'Nothing of this supplier’s is low.' : 'Nothing is low.', 'warn'); list.forEach(x => { if (!e.lines.some(l => l.itemId === x.itemId)) e.lines.push({ productId: x.productId, variantId: x.variantId, itemId: x.itemId, sku: x.sku, name: x.name, barcode: x.barcodes[0] || '', qty: x.qty, unitCostCents: x.costCents, receivedQty: 0 }); }); toast(list.length + ' suggested'); return ctx.repaint(); }
     case 'by-po-edit': { const p = openPos(d()).find(x => x.id === id); if (p) { const m = document.getElementById('modal'); if (m) m.remove(); by.edit = newEdit(p); by.sub = 'po'; ctx.repaint(); } return; }
     case 'by-po-rm': { const e = readEdit(); e.lines.splice(Number(b.dataset.i), 1); return ctx.repaint(); }
