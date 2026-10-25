@@ -450,3 +450,5 @@ button.link { background: none; border: 0; padding: 0; color: var(--ink-2); text
 .fb-pick-row { display: flex; gap: .5rem; align-items: baseline; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); padding: .5rem .6rem; cursor: pointer; font: inherit; }
 .fb-pick-row:hover { background: var(--paper); } .fb-pick-row span:last-child { margin-left: auto; white-space: nowrap; font-weight: 600; }
 .fb-pick-note { font-size: 12.5px; margin-top: .25rem; min-height: 1em; }
+.fb-how { display: grid; gap: .45rem; margin-bottom: .8rem; } .fb-how .chk { align-items: flex-start; } .fb-total { margin-top: .6rem; font-size: 15px; }
+.pos-line-disc .btn svg { width: 14px; height: 14px; vertical-align: -2px; }

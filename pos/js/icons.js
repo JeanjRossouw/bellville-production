@@ -1,6 +1,8 @@
 // Line icons for the till (and anywhere else that wants one): 24×24 strokes
 // that take the text colour, so they sit quietly next to a label.
 const P = {
+  fabric: '<path d="M4.5 5.5c2-1.3 4-1.3 6 0s4 1.3 6 0l3-1.5v13l-3 1.5c-2 1.3-4 1.3-6 0s-4-1.3-6 0z"/><path d="M4.5 5.5v13"/><path d="M8 9.5c1.3.6 2.7.6 4 0s2.7-.6 4 0"/><path d="M8 13.5c1.3.6 2.7.6 4 0s2.7-.6 4 0"/>',
+  pin: '<path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/>',
   cart: '<circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/><path d="M2.5 3.5h3l2.4 11.2a1.5 1.5 0 0 0 1.5 1.2h8.3a1.5 1.5 0 0 0 1.5-1.1L21 7.5H6.4"/>',
   chart: '<path d="M3.5 20.5h17"/><path d="M6.5 16.5v-5"/><path d="M11.5 16.5v-9"/><path d="M16.5 16.5v-6"/>',
   users: '<circle cx="9" cy="8" r="3.2"/><path d="M3 19.5c.6-3.3 3-5 6-5s5.4 1.7 6 5"/><path d="M15.5 4.9a3.2 3.2 0 0 1 0 6.2"/><path d="M17.5 14.7c1.9.6 3.1 2.1 3.5 4.8"/>',
