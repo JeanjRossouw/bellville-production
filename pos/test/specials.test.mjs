@@ -107,6 +107,11 @@ check('paid in full', /Paid R 7,500\.00 on BF-SO-000001/.test(R.paid) && /paid i
 await p.waitForSelector('#modal .rc-paper'); R.payslip = await paper(); check('the payment receipt', /SALES ORDER PAYMENT/.test(R.payslip) && /Paid now R 7,500\.00/.test(R.payslip) && /Balance R 0\.00/.test(R.payslip) && /Card ••1234 R 7,500\.00/.test(R.payslip), R.payslip);
 await closeModal();
 await p.click('[data-act=so-open]'); await p.waitForSelector('#modal .lb-detail');
+R.notReady = await modalText(); check('paid but not made: still open, no hand-over until Ready', (await p.locator('[data-act=so-deliver]').count()) === 0 && /Open until it is made/.test(R.notReady), R.notReady.slice(0, 300));
+await closeModal();
+await fetch(`${docs}/pos/retail/specialOrders/${o1.id}?updateMask.fieldPaths=status`, { method: 'PATCH', headers: H, body: JSON.stringify({ fields: { status: { stringValue: 'ready' } } }) });   // the couch is made
+await p.waitForTimeout(800);
+await p.click('[data-act=so-open]'); await p.waitForSelector('#modal [data-act=so-deliver]');
 await p.click('[data-act=so-deliver]'); await p.waitForSelector('#modal #dn-pad');
 await sign('#dn-pad'); await p.fill('#dn-note', 'Collected in good order'); await p.click('#modal-ok'); R.handed = await toast(); await p.waitForTimeout(1800);
 check('handed over: tax invoice BF-000001', /Collected: tax invoice BF-000001/.test(R.handed), R.handed);

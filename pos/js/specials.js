@@ -14,6 +14,7 @@ import { specialSettings, signoffText, STATUS_LABEL, NEXT, SPEC_FIELDS, CANCEL_K
 import { openReceipt } from './receiptui.js';
 import { whatsappUrl, specLines } from './receipt.js';
 import { padHtml, wirePad } from './signpad.js';
+import { saveAddress } from './customers.js';
 import { icon } from './icons.js';
 
 export const so = { filter: 'open', q: '' };
@@ -198,6 +199,9 @@ export function openNew(cart, t, onDone) {
   const photos = {};
   let busy = false, pad = null;
   const expected = new Date(Date.now() + ss.leadDays * 86400000).toISOString().slice(0, 10);
+  // no address on the customer yet: asked here (the delivery's, when there is one), kept on the customer
+  const ca = cart.customer.address || {}, needsAddr = !String(ca.line1 || ca.city || '').trim();
+  const big = !!dd.entity.vatRegistered && t.totalCents > 500000, dl = cart.lines.find(l => l.delivery), da = (dl && dl.delivery.line1 != null && dl.delivery) || {};
   const { wrap, close } = openModal('Sales order for ' + cart.customer.name, `
     <div class="lb-new">
       <div class="lb-new-left">
@@ -206,6 +210,8 @@ export function openNew(cart, t, onDone) {
           <div class="grid two">${field('Model', 'so-model-' + i, { value: (l.spec && l.spec.model) || l.name })}${field('Size', 'so-size-' + i, { value: (l.spec && l.spec.size) || '', placeholder: 'e.g. 2.4 m' })}${field(l.spec && l.spec.fabricId ? 'Fabric (from the catalogue: change it on the sale’s Specification)' : 'Fabric', 'so-fabric-' + i, { value: (l.spec && l.spec.fabric) || '', placeholder: 'e.g. Linen look, or pick one on the sale’s Specification', disabled: !!(l.spec && l.spec.fabricId) })}${field('Colour', 'so-colour-' + i, { value: (l.spec && l.spec.colour) || '', placeholder: 'e.g. Charcoal' })}${field('Legs', 'so-legs-' + i, { value: (l.spec && l.spec.legs) || '', placeholder: 'e.g. Oak, tapered' })}</div>
           ${field('Notes', 'so-notes-' + i, { type: 'textarea', rows: 2, value: (l.spec && l.spec.notes) || '', placeholder: 'Anything else the maker must know' })}
           <label class="so-photo"><span class="btn ghost sm">${icon('camera')} Photo</span><input type="file" accept="image/*" capture="environment" data-photo="${i}" hidden><img id="so-ph-${i}" class="spec-thumb" alt="" hidden></label></div>` : `<div class="muted">${esc(l.qty + ' × ' + l.name)} · ${esc(money(l.qty * l.unitPriceCents - (l.discountCents || 0)))}</div>`).join('')}
+        ${needsAddr ? `<div class="card so-addr"><h3>${esc(cart.customer.name)}’s address</h3><p class="muted">${big ? 'Over R 5 000 the tax invoice carries it.' : 'For the delivery and the invoice.'} Kept on the customer.</p>
+          ${row(field('Street', 'so-a1', { value: da.line1 || '' }), field('Suburb', 'so-a2', { value: da.line2 || '' }))}${field('City', 'so-acity', { value: da.city || '' })}</div>` : ''}
         ${field('Expected by', 'so-expected', { type: 'date', value: expected })}
         <label class="chk"><input type="checkbox" id="so-depnow" checked> Take the deposit now (at least ${esc(money(minDep))}, ${ss.minDepositPct}%)</label>
         <div id="so-deprow">${row(field('Deposit (R)', 'so-dep', { value: randsOf(minDep), inputmode: 'decimal' }), field('Paid by', 'so-method', { type: 'select', value: methods[0], options: methods.map(k => ({ value: k, label: METHOD[k] })) }))}
@@ -243,6 +249,13 @@ export function openNew(cart, t, onDone) {
       if (method === 'cash') { tender.tenderedCents = centsOf(val(wrap, 'so-given')); if (tender.tenderedCents < tender.amountCents) { toast('Cash given is short.', 'warn'); return false; } }
       if (method === 'card') tender.cardLast4 = val(wrap, 'so-ref').replace(/\D/g, '').slice(-4);
       deposit.push(tender);
+    }
+    if (needsAddr) {
+      const parts = { line1: val(wrap, 'so-a1'), line2: val(wrap, 'so-a2'), city: val(wrap, 'so-acity') };
+      if (parts.line1 || parts.city) {
+        try { const c = await saveAddress(cart.customer.id || cart.customerId, parts); cart.customer.address = c.address; }
+        catch (e) { toast(e.message, 'warn'); return false; }
+      } else if (big) { toast('Over R 5 000 the tax invoice needs ' + cart.customer.name + '’s address: the street or the city.', 'warn'); wrap.querySelector('#so-a1').focus(); return false; }
     }
     busy = true;
     const sp = specs();
@@ -285,9 +298,10 @@ function openDetail(id) {
       </div>
       <p class="muted">Specification signed off by ${esc(sg.signedBy || '')} on ${esc(niceDate(sg.acceptedAt))}: no change of mind once in production.</p>
       ${factoryLine(o)}
+      ${['depositPaid', 'inProduction'].includes(o.status) ? `<p class="muted so-wait">Open until it is made: once it is <strong>Ready</strong> (and the balance is paid) it is handed over with the delivery note and the tax invoice.</p>` : ''}
       <div class="card-actions lb-acts">
         ${OPEN.includes(o.status) && o.balanceCents > 0 ? `<button class="btn primary" data-act="so-pay" data-id="${esc(o.id)}">${icon('cash')} Take a payment</button>` : ''}
-        ${OPEN.includes(o.status) && o.balanceCents <= 0 && o.status !== 'quoted' ? `<button class="btn primary" data-act="so-deliver" data-id="${esc(o.id)}">${icon('truck')} Hand over: delivery note + tax invoice</button>` : ''}
+        ${o.status === 'ready' && o.balanceCents <= 0 ? `<button class="btn primary" data-act="so-deliver" data-id="${esc(o.id)}">${icon('truck')} Hand over: delivery note + tax invoice</button>` : ''}
         ${o.status !== 'quoted' ? `<button class="btn${o.updateDue ? ' primary' : ''}" data-act="so-update" data-id="${esc(o.id)}">${icon('user')} WhatsApp update</button>` : ''}
         ${o.factory && (o.factory.orders || []).length && OPEN.includes(o.status) ? `<button class="btn" data-act="so-factory-sync" data-id="${esc(o.id)}">Check factory</button>` : ''}
         ${sup && factoryLinked() && !(o.factory && (o.factory.orders || []).length) && ['depositPaid', 'inProduction', 'ready'].includes(o.status) ? `<button class="btn" data-act="so-factory-send" data-id="${esc(o.id)}">Send to factory</button>` : ''}

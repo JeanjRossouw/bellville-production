@@ -12,7 +12,7 @@ import * as auth from './auth.js';
 import { esc, toast, field, row, val, openModal, money } from './ui.js';
 import { lineTotals, vatIn, pctOf, rateOn, rateFor, centsOf, randsOf } from './money.js';
 import { icon } from './icons.js';
-import { saveCustomer, consentFields, readConsent } from './customers.js';
+import { saveCustomer, saveAddress, consentFields, readConsent } from './customers.js';
 import { openPay } from './pay.js';
 import { pickerHtml, wirePicker, pickedFabric } from './fabrics.js';
 import { fabricMetresOf, fabricCentsFor, framePriceOf, upholsteredOf, fabricLabel } from './special-terms.js';
@@ -357,21 +357,30 @@ function lineFabric(i, preset) {
   wirePicker(w, 'ln-fab2', fabs, total);
   w.addEventListener('change', total); total();
 }
-// a delivery fee on the sale (or the sales order): a line with the address, standard VAT
+// a delivery fee on the sale (or the sales order): one line with the address, standard VAT (tapped again: that line
+// changed); a customer on the sale with no address yet gets this one
 function delivery() {
-  const cu = sale.cart.customer, a = (cu && cu.address) || {};
-  const fee = Number((settings().delivery || {}).defaultFeeCents) || 0;
+  const cu = sale.cart.customer, had = sale.cart.lines.find(l => l.delivery), a = (had && had.delivery.line1 != null ? had.delivery : (cu && cu.address)) || {};
+  const fee = had ? had.unitPriceCents : Number((settings().delivery || {}).defaultFeeCents) || 0;
   openModal('Delivery', `${row(field('Street', 'dl-line1', { value: a.line1 || '' }), field('Suburb', 'dl-line2', { value: a.line2 || '' }))}
-    ${row(field('City', 'dl-city', { value: a.city || '' }), field('Delivery fee (R, incl. VAT)', 'dl-fee', { value: fee ? randsOf(fee) : '', inputmode: 'decimal' }))}
-    ${field('Note for the driver (optional)', 'dl-note', { placeholder: 'e.g. 3rd floor, no lift' })}`, {
-    okLabel: 'Add delivery', onOk: (w) => {
-      const where = [val(w, 'dl-line1'), val(w, 'dl-line2'), val(w, 'dl-city')].filter(Boolean).join(', '), cents = centsOf(val(w, 'dl-fee'));
+    ${row(field('City', 'dl-city', { value: a.city || '' }), field('Delivery fee (R, incl. VAT)', 'dl-fee', { value: had || fee ? randsOf(fee) : '', inputmode: 'decimal' }))}
+    ${field('Note for the driver (optional)', 'dl-note', { value: had ? had.note : '', placeholder: 'e.g. 3rd floor, no lift' })}`, {
+    okLabel: had ? 'Change delivery' : 'Add delivery', onOk: async (w) => {
+      const parts = { line1: val(w, 'dl-line1'), line2: val(w, 'dl-line2'), city: val(w, 'dl-city') };
+      const where = [parts.line1, parts.line2, parts.city].filter(Boolean).join(', '), cents = centsOf(val(w, 'dl-fee'));
       if (!where) { toast('Where to: the street or the suburb.', 'warn'); return false; }
       if (!(cents >= 0) || val(w, 'dl-fee') === '') { toast('The delivery fee (0 for free delivery).', 'warn'); return false; }
-      sale.cart.lines.push({ lineId: newId('x'), productId: '', variantId: '', itemId: '', name: 'Delivery to ' + where, sku: '', barcode: '', qty: 1, listPriceCents: cents, unitPriceCents: cents, priceOverride: null, discountCents: 0, discountPct: 0, discountReason: '', discountBy: null, note: val(w, 'dl-note'), type: 'nonstock', vatClass: 'standard', trackStock: false, costCents: 0, custom: true, delivery: { address: where } });
+      const line = { name: 'Delivery to ' + where, listPriceCents: cents, unitPriceCents: cents, note: val(w, 'dl-note'), delivery: { address: where, ...parts } };
+      if (had) Object.assign(had, line);
+      else sale.cart.lines.push({ lineId: newId('x'), productId: '', variantId: '', itemId: '', sku: '', barcode: '', qty: 1, priceOverride: null, discountCents: 0, discountPct: 0, discountReason: '', discountBy: null, type: 'nonstock', vatClass: 'standard', trackStock: false, costCents: 0, custom: true, ...line });
+      if (cu && !hasAddress(cu)) {
+        try { const c = await saveAddress(cu.id, parts); cu.address = c.address; toast('Delivery added · the address is kept on ' + cu.name); }
+        catch (e) { toast('Delivery added, but the address was not kept on the customer: ' + e.message, 'warn'); }
+      }
       persist(); ctx.repaint(); return true; }
   });
 }
+export const hasAddress = (c) => !!(c && c.address && String(c.address.line1 || c.address.city || '').trim());
 // a discount needs a reason; over my limit, the PIN of a role that may give it
 async function approveDiscount(pct, what) {
   if (pct <= myLimit()) return { name: auth.session.user.name, uid: auth.session.uid, token: '' };

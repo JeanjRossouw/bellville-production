@@ -8,7 +8,7 @@
 //   status    { orderId, status: 'inProduction'|'ready', note, factoryRef?, expectedAt? }   a supervisor or higher at the till
 //   update    { orderId, status?, how }                                     → the WhatsApp text for the status, logged
 //   book      { orderId, kind: 'deliver'|'collect', date, slot, address, phone, note, driverName }
-//   deliver   { orderId, saleId, signedBy, signature, note, + where }       balance nil: the tax invoice written as a sale
+//   deliver   { orderId, saleId, signedBy, signature, note, + where }       made (ready) and balance nil: the tax invoice written as a sale
 //             paid by the special order; the signed delivery note kept; status delivered or collected
 //   cancel    { orderId, kind, reason, feeCents, refunds: [ { method, amountCents, ref } ], approvalToken? }   a manager
 //   quote     { quoteId, customerId?, lines [ sale lines + spec ], saleDiscount…, totals, validDays?, note, + where } → a numbered quotation
@@ -228,7 +228,8 @@ const actions = {
     const ctx = await whoAndWhere(event, b);
     const so = await loadOrder(ctx, b.orderId);
     if (['delivered', 'collected'].includes(so.status) && so.completedSaleId) { const sale = await getDoc('sales', so.completedSaleId); return { ok: true, again: true, order: so, sale: sale ? { ...sale, id: so.completedSaleId } : null, lines: await query('saleLines', [{ field: 'saleId', value: so.completedSaleId }], 500, { field: 'lineNo' }), payments: [] }; }
-    if (!['ready', 'inProduction', 'depositPaid'].includes(so.status)) throw new Reject(409, `Order ${so.docNo} is ${so.status}.`);
+    if (['inProduction', 'depositPaid'].includes(so.status)) throw new Reject(409, `${so.docNo} is not ready yet: once it is made, mark it Ready, then hand it over (the tax invoice is written then).`);
+    if (so.status !== 'ready') throw new Reject(409, `Order ${so.docNo} is ${so.status}.`);
     if (so.balanceCents > 0) throw new Reject(400, `${money(so.balanceCents)} is still owed on ${so.docNo}: take the balance first.`);
     const saleId = clean(b.saleId, 80);
     if (!idOk(saleId)) throw new Reject(400, 'The sale has no id.');
@@ -245,7 +246,7 @@ const actions = {
     if (prep.total !== so.totalCents) throw new Reject(409, `The order's price (${money(so.totalCents)}) and the sale's (${money(prep.total)}) differ.`);
     const r = await runSale(ctx, body, { saleId, prep, more: async (tx) => {
       const cur = await getDoc('specialOrders', so.id, tx);
-      if (!cur || cur.balanceCents > 0 || ['delivered', 'collected', 'cancelled'].includes(cur.status)) throw new Reject(409, `Order ${so.docNo} is no longer ready to hand over.`);
+      if (!cur || cur.balanceCents > 0 || cur.status !== 'ready') throw new Reject(409, `Order ${so.docNo} is no longer ready to hand over.`);
       const now = nowIso();
       const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
       const status = kind === 'collect' ? 'collected' : 'delivered';

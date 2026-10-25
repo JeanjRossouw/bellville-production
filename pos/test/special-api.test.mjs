@@ -100,6 +100,7 @@ R.syncSame = await call('pos-special', { action: 'factorySync', orderId: O.id, .
 await patchAt(FO(O.id), { status: 'in-production' });
 R.f1 = await call('pos-special', { action: 'factorySync', orderId: O.id, ...bell });
 check('the factory started: in production on the till, from the factory', R.f1.ok && R.f1.order.status === 'inProduction' && R.f1.order.updateDue === true && R.f1.order.statusHistory.at(-1).source === 'factory' && R.f1.order.statusHistory.at(-1).byName === 'Factory Manager' && /CP-1001 in-production/.test(R.f1.order.statusHistory.at(-1).note), R.f1.error || R.f1.order);
+R.notMade = await call('pos-special', { action: 'deliver', orderId: O.id, saleId: 'sos-notmade-' + Date.now().toString(36), signedBy: 'T', signature: sig, ...bell }); check('in production: no hand-over, no invoice until it is ready', R.notMade.status === 409 && /not ready yet/.test(R.notMade.error), R.notMade);
 R.cash = await call('pos-special', { action: 'status', orderId: O.id, status: 'ready', ...bell }); check('a cashier cannot move the status', R.cash.status === 403 && /supervisor/.test(R.cash.error), R.cash);
 R.sup = await call('pos-special', { action: 'status', orderId: O.id, status: 'ready', note: 'Checked', ...bell }, sup.idToken); check('a supervisor marks it ready', R.sup.ok && R.sup.order.status === 'ready' && R.sup.order.statusHistory.at(-1).note === 'Checked', R.sup.error || R.sup.order);
 await patchAt(FO(O.id), { status: 'ready' });
