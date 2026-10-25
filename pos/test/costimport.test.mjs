@@ -34,6 +34,7 @@ await put('pos/retail/entities/RC', { legalName: 'ReptiCube', tradingName: 'Rept
 await put('pos/retail/entities/BF', { legalName: 'Bellville Furniture (Pty) Ltd', tradingName: 'Bellville Furniture', vatRegistered: true, invoicePrefix: 'BF', active: true, ...st('BF') });
 for (const e of ['RC', 'BF']) await put('pos/retail/settings/' + e, { vat: { rates: [{ rateBp: 1500, effectiveFrom: '2018-04-01' }] }, session: { idleLogoutMinutes: 30, pinLength: 6 }, ...st(e) });
 const prod = (id, e, o) => put('pos/retail/products/' + id, { name: id, description: 'From Shopify', brand: 'ProRep', category: 'Heating', type: 'stock', vatClass: 'zero', trackStock: true, images: ['https://cdn.example.com/' + id + '.jpg', 'https://cdn.example.com/' + id + '-2.jpg'], archived: false, options: [], hasVariants: false, sku: '', barcodes: [], storePrices: {}, bundle: [], shopifyHandle: '', ...o, ...st(e) });
+await put('pos/retail/suppliers/sup_akwa', { name: 'Akwa', contact: '', phone: '', email: '', archived: false, ...st('RC') });
 await prod('p_mat', 'RC', { name: 'Heat Mat 8W', sku: 'HM8', barcodes: ['6001', '6001-old'], priceCents: 24900, shopifyHandle: 'heat-mat-8w' });          // no costCents at all
 await prod('p_kit', 'RC', { name: 'Gecko Kit', priceCents: 129900, costCents: 0, hasVariants: true, options: [{ name: 'Size', values: ['Small', 'Large'] }], shopifyHandle: 'gecko-kit' });
 await put('pos/retail/variants/v_s', { productId: 'p_kit', name: 'Small', optionValues: { Size: 'Small' }, sku: 'LGK-S', barcodes: [], priceCents: null, costCents: null, storePrices: {}, archived: false, ...st('RC') });
@@ -135,6 +136,18 @@ R.ro = await txt('#modal'); check('reorder: the stock items counted, 2 by defaul
 await p.click('#modal-ok'); R.roToast = await toast(); await p.waitForTimeout(800);
 const rc = (await coll('products')).filter(x => x.entityId === 'RC' && x.type === 'stock' && !x.archived && x.trackStock !== false);
 check('every RC stock item reorders at 2, the one with no cost written with whole cents', /Reorder level 2 set on \d+ item/.test(R.roToast) && rc.length > 0 && rc.every(x => x.reorderLevel === 2) && Number.isInteger((await one('products/p_mat')).costCents), [R.roToast, rc.map(x => [x.id, x.reorderLevel])]);
+
+// ---- the supplier on many products at once
+await p.waitForSelector('#pr-supplier');
+await p.selectOption('#pr-supplier', '__none'); await p.waitForTimeout(500);
+R.noSup = await txt('#screen');
+await p.click('[data-act=pr-supplier]'); await p.waitForSelector('#bs-sup');
+R.bsModal = await txt('#modal'); check('set supplier: the products shown by the filter, Akwa offered', /products? shown by the filters/.test(R.bsModal) && /Akwa/.test(R.bsModal), R.bsModal);
+await p.click('#modal-ok'); R.bsToast = await toast(); await p.waitForTimeout(800);
+const rcAll = (await coll('products')).filter(x => x.entityId === 'RC' && !x.archived);
+check('Akwa set on every RC product that had none; the other company untouched', /Supplier Akwa set on \d+ product/.test(R.bsToast) && rcAll.every(x => x.supplierId === 'sup_akwa') && !(await one('products/p_bf')).supplierId, [R.bsToast, rcAll.map(x => [x.id, x.supplierId])]);
+await p.selectOption('#pr-supplier', 'sup_akwa'); await p.waitForTimeout(500);
+R.akwa = await txt('#screen'); check('the Akwa filter shows them', new RegExp(rcAll.length + ' of').test(R.akwa), R.akwa.slice(0, 200));
 
 check('no page errors', errs.length === 0, errs);
 await b.close(); if (server) server.kill();
