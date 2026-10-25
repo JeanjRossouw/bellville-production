@@ -15,6 +15,7 @@ import { openReceipt } from './receiptui.js';
 import { whatsappUrl, specLines } from './receipt.js';
 import { padHtml, wirePad } from './signpad.js';
 import { saveAddress } from './customers.js';
+import { sendLink } from './clientlink.js';
 import { icon } from './icons.js';
 
 export const so = { filter: 'open', q: '' };
@@ -145,6 +146,7 @@ export async function action(act, b) {
   if (act === 'so-open') return openDetail(id);
   if (act === 'so-pay') return pay(id);
   if (act === 'so-update') return update(id, b.dataset.status || '');
+  if (act === 'so-link') return sendLink('order', id, where());
   if (act === 'so-status') return status(id, b.dataset.to);
   if (act === 'so-factory-sync') return factorySync(id);
   if (act === 'so-sales-open') return openSalesDetail(id);
@@ -297,6 +299,7 @@ function openDetail(id) {
         ${OPEN.includes(o.status) && o.balanceCents > 0 ? `<button class="btn primary" data-act="so-pay" data-id="${esc(o.id)}">${icon('cash')} Take a payment</button>` : ''}
         ${o.status === 'ready' && o.balanceCents <= 0 ? `<button class="btn primary" data-act="so-deliver" data-id="${esc(o.id)}">${icon('truck')} Hand over: delivery note + tax invoice</button>` : ''}
         ${o.status !== 'quoted' ? `<button class="btn${o.updateDue ? ' primary' : ''}" data-act="so-update" data-id="${esc(o.id)}">${icon('user')} WhatsApp update</button>` : ''}
+        <button class="btn ghost" data-act="so-link" data-id="${esc(o.id)}">${icon('user')} Send the client their order page</button>
         ${o.factory && (o.factory.orders || []).length && OPEN.includes(o.status) ? `<button class="btn" data-act="so-factory-sync" data-id="${esc(o.id)}">Check factory</button>` : ''}
         ${sup && factoryLinked() && !(o.factory && (o.factory.orders || []).length) && ['depositPaid', 'inProduction', 'ready'].includes(o.status) ? `<button class="btn" data-act="so-factory-send" data-id="${esc(o.id)}">Send to factory</button>` : ''}
         ${sup && canStatus('inProduction') ? `<button class="btn" data-act="so-status" data-to="inProduction" data-id="${esc(o.id)}">In production</button>` : ''}

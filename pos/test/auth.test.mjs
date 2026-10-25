@@ -69,7 +69,7 @@ await p.waitForSelector('#claim:not([hidden])', { timeout: 15000 });
 await p.fill('#claim-name', 'Jean'); await p.fill('#claim-group', 'Rossouw Retail'); await p.click('#claim-form button[type=submit]');
 await p.waitForSelector('#app:not([hidden])', { timeout: 15000 }); await p.waitForTimeout(800);
 R.ownerWho = await who(); check('owner signed in', /Jean.*Owner/i.test(R.ownerWho), R.ownerWho);
-R.nav = await p.$$eval('#nav [data-view]', x => x.map(y => y.dataset.view)); check('owner menu: every tab, Reports and Admin included', R.nav.join() === 'sell,home,sales,returns,laybys,orders,quotes,customers,stock,buying,products,fabrics,online,overview,reports,admin,me', R.nav);
+R.nav = await p.$$eval('#nav [data-view]', x => x.map(y => y.dataset.view)); check('owner menu: every tab, Reports and Admin included', R.nav.join() === 'sell,home,todo,sales,returns,laybys,orders,quotes,customers,stock,buying,products,fabrics,online,overview,reports,admin,me', R.nav);
 const group = await (await fetch(`${docs}/pos/retail`, { headers: H })).json(); check('group doc written', fromFs(group.fields.name) === 'Rossouw Retail');
 
 mark('claimed');

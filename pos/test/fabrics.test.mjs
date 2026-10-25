@@ -230,6 +230,44 @@ check('a cashier cannot write a fabric', casWrite.status === 403, casWrite.statu
 const casRead = await fetch(`${docs}/pos/retail/fabrics/${acap}`, { headers: { Authorization: 'Bearer ' + cas.idToken } });
 check('a cashier reads the catalogue', casRead.status === 200, casRead.status);
 
+// ---- the client's own page: a private link per order and quotation; a quotation accepted and signed there
+const track = async (body) => { const r = await fetch(FN + 'pos-track', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { status: r.status, ...(await r.json()) }; };
+R.oLink = await call('pos-special', { action: 'trackLink', kind: 'order', id: R.so.order.id, ...bell });
+const oTok = (/[?&]t=([\w-]+)/.exec(R.oLink.link || '') || [])[1];
+check('the order’s link: the client page, with a message to send it', R.oLink.ok && /\/pos\/track\.html\?t=/.test(R.oLink.link) && R.oLink.text.includes(R.oLink.link) && R.oLink.phone === '0825550101', R.oLink);
+R.oLink2 = await call('pos-special', { action: 'trackLink', kind: 'order', id: R.so.order.id, ...bell }); check('the same link every time', R.oLink2.link === R.oLink.link, R.oLink2.link);
+R.oView = await track({ action: 'view', t: oTok });
+check('the page: the order, its steps and the money, no costs', R.oView.kind === 'order' && R.oView.docNo === R.so.order.docNo && R.oView.status === 'quoted' && R.oView.balanceCents === total && R.oView.minDepositCents > 0 && R.oView.steps.length === 5 && R.oView.lines.length === 2 && !/costCents|signature|cashier/.test(JSON.stringify(R.oView)), R.oView);
+R.badTok = await track({ action: 'view', t: 'x'.repeat(24) }); check('a made-up link: not found', R.badTok.status === 404, R.badTok);
+R.upd = await call('pos-special', { action: 'update', orderId: R.so.order.id, ...bell }); check('every WhatsApp update carries the order page', R.upd.ok && R.upd.text.includes(R.oLink.link), R.upd.text);
+const qId = 'qt-fab-' + Date.now().toString(36);
+R.q = await call('pos-special', { action: 'quote', quoteId: qId, clientCreatedAt: new Date().toISOString(), customerId: 'c1', lines: [{ productId: 'p_sofa', variantId: '', qty: 1, unitPriceCents: 900000, discountCents: 0, spec: null }], saleDiscountCents: 0, totals: { totalCents: 900000, vatCents: vatIn(900000, 1500) }, ...bell });
+R.qLink = await call('pos-special', { action: 'trackLink', kind: 'quote', id: qId, ...bell });
+const qTok = (/[?&]t=([\w-]+)/.exec(R.qLink.link || '') || [])[1];
+check('a quotation’s link and message', R.q.ok && R.qLink.ok && /accept and sign it/.test(R.qLink.text), [R.q.error, R.qLink]);
+R.noSig = await track({ action: 'accept', t: qTok, name: 'Thandi Mokoena' }); check('accepting without signing: refused', R.noSig.status === 400 && /Sign/.test(R.noSig.error), R.noSig);
+R.oAcc = await track({ action: 'accept', t: oTok, name: 'x', signature: sig }); check('an order link cannot accept', R.oAcc.status === 400, R.oAcc);
+// the client opens the page on their phone, signs and accepts
+const cp = await ctx.newPage(); cp.on('pageerror', e => errs.push('CLIENT PAGEERROR ' + e.message));
+await cp.goto(R.qLink.link.replace(/^https?:\/\/[^/]+/, 'http://localhost:8788')); await cp.waitForSelector('#acc-go');
+R.qPage = (await cp.locator('#app').innerText()).replace(/\s+/g, ' ');
+check('the client sees the quotation: the shop, the items, the total, valid until', /BELLVILLE FURNITURE/i.test(R.qPage) && /Chesterfield 3 Seater/.test(R.qPage) && /R 9,000\.00/.test(R.qPage) && /Valid until/.test(R.qPage), R.qPage.slice(0, 400));
+await cp.fill('#acc-name', 'Thandi Mokoena');
+{ const box = await cp.locator('#acc-pad').boundingBox(); await cp.mouse.move(box.x + 20, box.y + 40); await cp.mouse.down(); await cp.mouse.move(box.x + 160, box.y + 80, { steps: 8 }); await cp.mouse.up(); }
+await cp.click('#acc-go'); await cp.waitForSelector('text=Accepted and signed by', { timeout: 8000 }).catch(() => {});
+R.qAcc = (await cp.locator('#app').innerText()).replace(/\s+/g, ' ');
+const qDoc = await one('quotes/' + qId);
+check('accepted and signed: on the quotation, the page says so', /Accepted and signed by Thandi Mokoena/.test(R.qAcc) && qDoc.accepted && qDoc.accepted.name === 'Thandi Mokoena' && /^data:image\/png/.test(qDoc.accepted.signature), [R.qAcc.slice(0, 300), qDoc && qDoc.accepted && qDoc.accepted.name]);
+R.again = await track({ action: 'accept', t: qTok, name: 'Someone else', signature: sig }); check('accepting twice: the first stands', R.again.again && R.again.accepted.name === 'Thandi Mokoena', R.again);
+await cp.goto('http://localhost:8788/pos/track.html?t=' + oTok); await cp.waitForSelector('.steps');
+R.oPage = (await cp.locator('#app').innerText()).replace(/\s+/g, ' ');
+check('the client’s order page: waiting for the deposit, the balance', /Waiting for the deposit/.test(R.oPage) && /Balance/.test(R.oPage) && new RegExp(R.so.order.docNo).test(R.oPage), R.oPage.slice(0, 400));
+await cp.close();
+// the shop's To do board
+await p.evaluate(() => document.querySelector('#nav [data-view="todo"]').click()); await p.waitForTimeout(1500);
+R.todo = await txt('#screen');
+check('To do: the quote accepted online, the order waiting for its deposit', /Quotes accepted online/.test(R.todo) && /Thandi Mokoena/.test(R.todo) && /Load into the sale/i.test(R.todo) && /Waiting for the deposit/.test(R.todo) && new RegExp(R.so.order.docNo).test(R.todo), R.todo.slice(0, 800));
+
 check('no page errors', errs.length === 0, errs);
 await b.close(); if (server) server.kill();
 console.log(JSON.stringify({ fails, errs, ok: fails.length === 0 }, null, 1));
