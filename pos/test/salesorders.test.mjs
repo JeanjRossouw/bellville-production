@@ -78,9 +78,9 @@ const finish = async () => { await p.click('#modal-ok'); const t = await toast()
 await scan('SOFA');
 R.cart = await p.locator('.pos-right').innerText(); check('the line says made to order and asks for the specification', /made to order/i.test(R.cart) && /Specification/i.test(R.cart), R.cart.slice(0, 300));
 await p.click('[data-act=sl-pay]'); R.noCust = await toast(); check('paying without a customer: refused on the till', /sales order: add the customer first/.test(R.noCust), R.noCust);
-await p.click('[data-act=sl-note][data-i="0"]'); await p.waitForSelector('#modal #ln-fabric');
+await p.click('[data-act=sl-note][data-i="0"]'); await p.waitForSelector('#modal #ln-fab');
 check('the model prefilled', (await p.inputValue('#ln-model')) === 'Custom Sofa');
-await p.fill('#ln-size', '2.4 m'); await p.fill('#ln-fabric', 'Linen look'); await p.fill('#ln-colour', 'Charcoal'); await p.fill('#ln-legs', 'Oak'); await p.fill('#ln-notes', 'Firm seat'); await p.fill('#ln-note', 'deliver Friday');
+await p.fill('#ln-size', '2.4 m'); await p.fill('#ln-fab .fb-pick-q', 'Linen look'); await p.fill('#ln-colour', 'Charcoal'); await p.fill('#ln-legs', 'Oak'); await p.fill('#ln-notes', 'Firm seat'); await p.fill('#ln-note', 'deliver Friday');
 await p.click('#modal-ok'); await p.waitForTimeout(300);
 R.cart2 = await p.locator('.pos-right').innerText(); check('the spec shows on the line', /2\.4 m · Linen look · Charcoal · Oak · deliver Friday/i.test(R.cart2), R.cart2.slice(0, 300));
 await pickThandi();
@@ -103,7 +103,7 @@ await p.click('[data-act=so-sales-open]'); await p.waitForSelector('#modal [data
 await p.click('[data-act=so-sales-send]'); R.sentToast = await toast(); await p.waitForTimeout(800);
 check('the manager sends it: at the factory as CP-1001', /BF-000001 is at the factory: CP-1001/.test(R.sentToast) && (await listColl('salesOrders'))[0].factoryRef === 'CP-1001', R.sentToast);
 if (await p.locator('#modal').count()) { await p.locator('#modal [data-close]').first().click(); await p.waitForTimeout(200); }
-await p.click('#lock'); await p.waitForSelector('#login-pin .pinpad'); await pinType('#login-pin', '111111'); await p.waitForSelector('#sl-q'); await p.waitForTimeout(1200);
+await p.click('#lock'); await p.waitForSelector('#login-pin .pinpad'); await pinType('#login-pin', '111111'); await p.waitForSelector('#nav [data-view=sell]', { state: 'attached' }); await p.waitForTimeout(1200);   // back on the screen it was locked on
 
 // ---- the Sales orders section, the factory, the update, the hand-over
 await nav('orders');
