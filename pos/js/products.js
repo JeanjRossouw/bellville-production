@@ -83,6 +83,8 @@ export function productsHtml(d) {
 
 // ------------------------------------------------------------- the form --
 const OPT_MAX = 3;
+// metres as typed (11.5, 11,5); null when blank or not a positive number
+const metresOf = (t) => { const n = Number(String(t == null ? '' : t).trim().replace(',', '.')); return String(t == null ? '' : t).trim() !== '' && Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null; };
 const variantKey = (vals) => Object.keys(vals).sort().map(k => k + '=' + vals[k]).join('|');
 export function openProductForm(d, productId, entityId) {
   const p = productId ? d.products.find(x => x.id === productId) : null;
@@ -100,6 +102,7 @@ export function openProductForm(d, productId, entityId) {
     ${row(field('Brand', 'pf-brand', { value: x.brand, list: 'pf-brands' }), field('Type', 'pf-type', { type: 'select', value: x.type, options: TYPES.map(t => ({ value: t.key, label: t.label })) }))}
     <div class="fld-row">${field('VAT class', 'pf-vat', { type: 'select', value: x.vatClass || 'standard', options: VAT_CLASSES.map(v => ({ value: v.key, label: v.label })) })}<div class="fld"><span>Stock and the till</span><label class="chk"><input type="checkbox" id="pf-track"${x.trackStock !== false ? ' checked' : ''}> Track stock on hand</label><label class="chk"><input type="checkbox" id="pf-fav"${x.favourite ? ' checked' : ''}> Show on the till’s favourites</label></div></div>
     <div class="grid three">${field('Cost (R, excl. VAT)', 'pf-cost', { value: randsOf(x.costCents), inputmode: 'decimal' })}${field('Selling price (R, incl. VAT)', 'pf-price', { value: randsOf(x.priceCents), inputmode: 'decimal' })}<div class="fld"><span>Margin</span><div class="pf-margin" id="pf-margin">–</div></div></div>
+    <div class="fld" id="pf-fabric"${x.type === 'mto' ? '' : ' hidden'}>${field('Fabric needed (metres): the till adds metres × the chosen fabric’s price per metre', 'pf-fabricm', { value: x.fabricMetres == null ? '' : x.fabricMetres, inputmode: 'decimal', placeholder: 'e.g. 11.5 for a 3-seater' })}</div>
     ${row(field('Reorder when stock falls to', 'pf-reorder', { value: x.reorderLevel == null ? '' : x.reorderLevel, type: 'number', min: 0 }), field('Reorder quantity', 'pf-reorderqty', { value: x.reorderQty == null ? '' : x.reorderQty, type: 'number', min: 0 }))}
     ${field('Pictures (web addresses, one per line)', 'pf-images', { type: 'textarea', value: (x.images || []).join('\n'), rows: 2 })}
     ${field('Description', 'pf-desc', { type: 'textarea', value: x.description, rows: 2 })}
@@ -123,7 +126,7 @@ export function openProductForm(d, productId, entityId) {
   const w = m.wrap;
   const live = () => { const r = rateFor(val(w, 'pf-vat'), entityRate(d, eid), !!ent.vatRegistered); const mg = marginPct(centsOf(val(w, 'pf-price')), centsOf(val(w, 'pf-cost')), r); const el = w.querySelector('#pf-margin'); el.textContent = mg == null ? '–' : mg + '%'; el.classList.toggle('warn', mg != null && mg < 0); };
   w.addEventListener('input', (e) => { if (['pf-cost', 'pf-price', 'pf-vat'].includes(e.target.id)) live(); });
-  w.addEventListener('change', (e) => { if (e.target.id === 'pf-type') w.querySelector('#pf-bundle').hidden = e.target.value !== 'bundle'; if (e.target.id === 'pf-vat') live(); });
+  w.addEventListener('change', (e) => { if (e.target.id === 'pf-type') { w.querySelector('#pf-bundle').hidden = e.target.value !== 'bundle'; w.querySelector('#pf-fabric').hidden = e.target.value !== 'mto'; } if (e.target.id === 'pf-vat') live(); });
   w.addEventListener('click', (e) => {
     const b = e.target.closest('[data-act]'); if (!b) return;
     if (b.dataset.act === 'pr-gen') buildVariants(w);
@@ -143,10 +146,10 @@ function bundleRowHtml(d, eid, b) {
 }
 function variantGridHtml(list) {
   if (!list.length) return '<p class="muted" style="margin:.3rem 0 0">No variants: one price, one stock count.</p>';
-  return `<table class="tbl var-tbl"><thead><tr><th>Variant</th><th>SKU</th><th>Barcode</th><th>Cost (R)</th><th>Price (R, blank = product’s)</th><th>Off</th><th></th></tr></thead><tbody>
+  return `<table class="tbl var-tbl"><thead><tr><th>Variant</th><th>SKU</th><th>Barcode</th><th>Cost (R)</th><th>Price (R, blank = product’s)</th><th title="Made to order: metres of fabric (blank = the product’s)">Fabric m</th><th>Off</th><th></th></tr></thead><tbody>
     ${list.map(v => `<tr data-key="${esc(variantKey(v.optionValues || {}))}" data-id="${esc(v._id || '')}"><td><strong>${esc(v.name)}</strong></td>
       <td><input data-vsku value="${esc(v.sku || '')}"></td><td><input data-vbar value="${esc((v.barcodes || []).join(' '))}"></td>
-      <td><input data-vcost value="${v.costCents == null ? '' : randsOf(v.costCents)}" inputmode="decimal"></td><td><input data-vprice value="${v.priceCents == null ? '' : randsOf(v.priceCents)}" inputmode="decimal"></td>
+      <td><input data-vcost value="${v.costCents == null ? '' : randsOf(v.costCents)}" inputmode="decimal"></td><td><input data-vprice value="${v.priceCents == null ? '' : randsOf(v.priceCents)}" inputmode="decimal"></td><td><input data-vfab value="${v.fabricMetres == null ? '' : esc(v.fabricMetres)}" inputmode="decimal" style="width:4.5rem"></td>
       <td><input type="checkbox" data-varch${v.archived ? ' checked' : ''}></td><td>${v._id ? '' : '<button class="icon-btn" data-act="pr-var-del" title="Remove">✕</button>'}</td></tr>`).join('')}</tbody></table>`;
 }
 // the options typed → every combination, keeping what is already in the grid
@@ -164,6 +167,7 @@ function readGrid(w) {
     sku: tr.querySelector('[data-vsku]').value.trim(), barcodes: codes(tr.querySelector('[data-vbar]').value),
     costCents: tr.querySelector('[data-vcost]').value.trim() === '' ? null : centsOf(tr.querySelector('[data-vcost]').value),
     priceCents: tr.querySelector('[data-vprice]').value.trim() === '' ? null : centsOf(tr.querySelector('[data-vprice]').value),
+    fabricMetres: metresOf(tr.querySelector('[data-vfab]').value),
     archived: tr.querySelector('[data-varch]').checked
   }));
 }
@@ -174,7 +178,7 @@ function buildVariants(w) {
   for (const o of options) combos = combos.flatMap(c => o.values.map(v => ({ ...c, [o.name]: v })));
   if (combos.length > 100) return toast('That is ' + combos.length + ' variants; keep it under 100.', 'warn');
   const had = Object.fromEntries(readGrid(w).map(g => [g.key, g]));
-  const list = combos.map(vals => { const key = variantKey(vals); const g = had[key]; return { optionValues: vals, name: options.map(o => vals[o.name]).join(' / '), sku: g ? g.sku : '', barcodes: g ? g.barcodes : [], costCents: g ? g.costCents : null, priceCents: g ? g.priceCents : null, archived: g ? g.archived : false, _id: g ? g._id : '' }; });
+  const list = combos.map(vals => { const key = variantKey(vals); const g = had[key]; return { optionValues: vals, name: options.map(o => vals[o.name]).join(' / '), sku: g ? g.sku : '', barcodes: g ? g.barcodes : [], costCents: g ? g.costCents : null, priceCents: g ? g.priceCents : null, fabricMetres: g ? g.fabricMetres : null, archived: g ? g.archived : false, _id: g ? g._id : '' }; });
   w.querySelector('#pf-variants').innerHTML = variantGridHtml(list);
 }
 async function saveProduct(w, d, p, existing) {
@@ -186,7 +190,8 @@ async function saveProduct(w, d, p, existing) {
     reorderLevel: val(w, 'pf-reorder') === '' ? null : Number(val(w, 'pf-reorder')), reorderQty: val(w, 'pf-reorderqty') === '' ? null : Number(val(w, 'pf-reorderqty')),
     images: val(w, 'pf-images').split(/\n+/).map(s => s.trim()).filter(s => /^https?:\/\//.test(s)), description: val(w, 'pf-desc'),
     storePrices: Object.fromEntries([...w.querySelectorAll('[data-sp]')].filter(i => i.value.trim() !== '').map(i => [i.dataset.sp, centsOf(i.value)])),
-    options: readOptions(w), bundle: [], archived: p ? !!w.querySelector('#pf-archived').checked : false
+    options: readOptions(w), bundle: [], archived: p ? !!w.querySelector('#pf-archived').checked : false,
+    fabricMetres: val(w, 'pf-type') === 'mto' ? metresOf(val(w, 'pf-fabricm')) : null
   };
   data.hasVariants = data.options.length > 0;
   if (data.type === 'bundle') data.bundle = [...w.querySelectorAll('.bundle-row')].map(r => { const [productId, variantId] = r.querySelector('[data-bp]').value.split(':'); return { productId, variantId: variantId || '', qty: Math.max(1, Math.round(Number(r.querySelector('[data-bq]').value) || 1)) }; }).filter(b => b.productId);
@@ -209,7 +214,7 @@ async function saveProduct(w, d, p, existing) {
     const keep = new Set();
     for (const g of grid) {
       const vals = Object.fromEntries(g.key.split('|').filter(Boolean).map(kv => kv.split('=')));
-      const body = { name: g.name, optionValues: vals, sku: g.sku, barcodes: g.barcodes, costCents: g.costCents, priceCents: g.priceCents, archived: g.archived, storePrices: {} };
+      const body = { name: g.name, optionValues: vals, sku: g.sku, barcodes: g.barcodes, costCents: g.costCents, priceCents: g.priceCents, fabricMetres: g.fabricMetres, archived: g.archived, storePrices: {} };
       if (g._id) { keep.add(g._id); await patchOne('variants', g._id, { ...body, ...auth.touch() }); }
       else { const vid = newId('variants'); keep.add(vid); await setOne('variants', vid, { ...body, productId: id, images: [], shopifyVariantId: '', ...auth.stamp(eid, '') }); }
     }

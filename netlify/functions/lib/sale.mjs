@@ -5,7 +5,7 @@
 //   prepareSale(ctx, b, opts)    prices every line, checks discounts, overrides, totals, VAT and tenders; no writes
 //   saleWrites(tx, ctx, prep, saleId, b)   inside a transaction: the number, stock, vouchers; → { writes, result }
 //   runSale(ctx, b, { more })    the transaction loop; `more(tx)` adds writes (an exchange's credit note) and a result
-import { SPEC_FIELDS } from '../../../pos/js/special-terms.js';
+import { SPEC_FIELDS, fabricLabel, fabricMetresOf, fabricCentsFor } from '../../../pos/js/special-terms.js';
 import { Reject, clean, randomId, nowIso, rank, getDoc, query, commit, beginTransaction, rollback, serverStamp, loginOf, loadUser, inEntity, inStore, verifyOverrideToken, loadDevice, createDoc } from './pos.mjs';
 import { vatIn, rateOn, rateFor, lineTotals, roundTo10c } from '../../../pos/js/money.js';
 import { loyaltySettings, tierFor, earnPoints, pointsFor, sweep, earnLot, redeem, compactLots, blankLoyalty, blankStats } from '../../../pos/js/loyalty-terms.js';
@@ -145,6 +145,15 @@ export async function prepareSale(ctx, b, opts = {}) {
       listPrice = await priceOf(ctx, p, v); name = p.name + (v ? ' · ' + v.name : ''); vatClass = p.vatClass || 'standard'; type = p.type || 'stock';
       trackStock = p.trackStock !== false && type === 'stock'; costCents = (v && v.costCents != null ? v.costCents : p.costCents) || 0; itemId = v ? v.id : p.id;
     }
+    // a made-to-order item in a catalogue fabric: the metres it takes at the fabric's price per metre, priced here, never by the till
+    let fabricCharge = null;
+    if (p && type === 'mto' && l.spec && typeof l.spec === 'object' && l.spec.fabricId) {
+      const fid = clean(l.spec.fabricId, 60), f = await getDoc('fabrics', fid);
+      if (!f || f.entityId !== ctx.entityId || (f.archived && !opts.trusted)) throw new Reject(400, `Line ${n}: that fabric is not in the catalogue.`);
+      const metres = fabricMetresOf(p, v), perMetre = int(f.priceCents) || 0;
+      fabricCharge = { fabricId: fid, fabric: fabricLabel(f), fabricMetres: metres, fabricPerMetreCents: perMetre, fabricCents: fabricCentsFor(metres, perMetre) };
+      listPrice += fabricCharge.fabricCents;
+    }
     // the price: the list price, or an override a manager approved
     let unit = int(l.unitPriceCents), override = null;
     if (!(unit >= 0)) throw new Reject(400, `Line ${n}: the price is wrong.`);
@@ -169,9 +178,10 @@ export async function prepareSale(ctx, b, opts = {}) {
     // a made-to-order line on an ordinary sale carries its specification (a sales order); it is read back on the invoice line's note
     const spec = opts.spec && type === 'mto' && l.spec && typeof l.spec === 'object' ? specOf(l.spec) : null;
     if (spec && !spec.model) spec.model = name;
+    if (spec && fabricCharge) Object.assign(spec, fabricCharge);
     const noteOf = [clean(l.note, 200), ...(spec ? specNote(spec).filter(x => x !== 'Model ' + name) : [])].filter(Boolean).join(' · ').slice(0, 200);
     lines.push({ lineNo: n, productId: p ? p.id : '', variantId: v ? v.id : '', itemId, sku: (v && v.sku) || (p && p.sku) || '', name, type, fulfilment, qty, unitPriceCents: unit, listPriceCents: listPrice, priceOverride: override,
-      discountCents: t.discountCents, discountPct: pct, discountReason: clean(l.discountReason, 120), discountBy: dOk.by, lineTotalCents: t.lineTotalCents, vatClass, vatRateBp: lr, costCents, trackStock, note: noteOf, custom: !!l.custom, ...(spec ? { spec } : {}) });
+      discountCents: t.discountCents, discountPct: pct, discountReason: clean(l.discountReason, 120), discountBy: dOk.by, lineTotalCents: t.lineTotalCents, vatClass, vatRateBp: lr, costCents, trackStock, note: noteOf, custom: !!l.custom, ...(spec ? { spec } : {}), ...(fabricCharge ? { fabricCharge } : {}) });
     if (p && type === 'bundle') for (const c of p.bundle || []) { const cp = await getDoc('products', c.productId); if (!cp) continue; const cv = c.variantId ? await getDoc('variants', c.variantId) : null; if (cp.trackStock !== false && cp.type === 'stock') moves.push({ productId: cp.id, variantId: cv ? cv.id : '', itemId: cv ? cv.id : cp.id, qty: -(qty * (int(c.qty) || 1)), unitCostCents: (cv && cv.costCents != null ? cv.costCents : cp.costCents) || 0, reason: 'bundle', name: cp.name + (cv ? ' · ' + cv.name : '') }); }
     else if (trackStock) moves.push({ productId: p.id, variantId: v ? v.id : '', itemId, qty: -qty, unitCostCents: costCents, reason: 'sale', name });
     if (type === 'voucher') for (let k = 0; k < qty; k++) vouchersSold.push({ lineNo: n, amountCents: unit });

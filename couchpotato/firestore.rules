@@ -474,6 +474,17 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      // the fabric catalogue: price per metre of each supplier's fabric, chosen on a made-to-order item;
+      // the server reads it to price the line, a manager keeps it (whole cents, the company's own)
+      match /fabrics/{id} {
+        allow read: if pReadsEntity(gid);
+        allow create: if pActive(gid) && pWritesEntity(gid, 'manager') && pStamped() && request.resource.data.storeId == ''
+                      && request.resource.data.costCents is int && request.resource.data.priceCents is int && request.resource.data.priceCents >= 0;
+        allow update: if pActive(gid) && pWritesEntity(gid, 'manager') && pStampsKept()
+                      && request.resource.data.costCents is int && request.resource.data.priceCents is int && request.resource.data.priceCents >= 0;
+        allow delete: if false;                    // archive instead
+      }
+
       // ---- customers ------------------------------------------------------
       match /customers/{id} {
         allow read: if pReadsEntity(gid);

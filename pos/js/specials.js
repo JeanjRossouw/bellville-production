@@ -203,8 +203,8 @@ export function openNew(cart, t, onDone) {
       <div class="lb-new-left">
         <div class="muted">${t.pieces} item${t.pieces === 1 ? '' : 's'} · <strong>${esc(money(t.totalCents))}</strong>${cart.customer.phone ? ' · ' + esc(cart.customer.phone) : ' · <span class="warn">no phone number for updates</span>'}</div>
         ${cart.lines.map((l, i) => l.type === 'mto' ? `<div class="card so-spec"><h3>${esc(l.qty + ' × ' + l.name)} · ${esc(money(l.qty * l.unitPriceCents - (l.discountCents || 0)))}</h3>
-          <div class="grid two">${field('Model', 'so-model-' + i, { value: l.name })}${field('Size', 'so-size-' + i, { placeholder: 'e.g. 2.4 m' })}${field('Fabric', 'so-fabric-' + i, { placeholder: 'e.g. Linen look' })}${field('Colour', 'so-colour-' + i, { placeholder: 'e.g. Charcoal' })}${field('Legs', 'so-legs-' + i, { placeholder: 'e.g. Oak, tapered' })}</div>
-          ${field('Notes', 'so-notes-' + i, { type: 'textarea', rows: 2, placeholder: 'Anything else the maker must know' })}
+          <div class="grid two">${field('Model', 'so-model-' + i, { value: (l.spec && l.spec.model) || l.name })}${field('Size', 'so-size-' + i, { value: (l.spec && l.spec.size) || '', placeholder: 'e.g. 2.4 m' })}${field(l.spec && l.spec.fabricId ? 'Fabric (from the catalogue: change it on the sale’s Specification)' : 'Fabric', 'so-fabric-' + i, { value: (l.spec && l.spec.fabric) || '', placeholder: 'e.g. Linen look, or pick one on the sale’s Specification', disabled: !!(l.spec && l.spec.fabricId) })}${field('Colour', 'so-colour-' + i, { value: (l.spec && l.spec.colour) || '', placeholder: 'e.g. Charcoal' })}${field('Legs', 'so-legs-' + i, { value: (l.spec && l.spec.legs) || '', placeholder: 'e.g. Oak, tapered' })}</div>
+          ${field('Notes', 'so-notes-' + i, { type: 'textarea', rows: 2, value: (l.spec && l.spec.notes) || '', placeholder: 'Anything else the maker must know' })}
           <label class="so-photo"><span class="btn ghost sm">${icon('camera')} Photo</span><input type="file" accept="image/*" capture="environment" data-photo="${i}" hidden><img id="so-ph-${i}" class="spec-thumb" alt="" hidden></label></div>` : `<div class="muted">${esc(l.qty + ' × ' + l.name)} · ${esc(money(l.qty * l.unitPriceCents - (l.discountCents || 0)))}</div>`).join('')}
         ${field('Expected by', 'so-expected', { type: 'date', value: expected })}
         <label class="chk"><input type="checkbox" id="so-depnow" checked> Take the deposit now (at least ${esc(money(minDep))}, ${ss.minDepositPct}%)</label>
@@ -220,7 +220,8 @@ export function openNew(cart, t, onDone) {
     </div>`, { okLabel: 'Open custom order', cancelLabel: 'Back', onOk: () => submit() });
   wrap.querySelector('.modal-card').classList.add('wide');
   pad = wirePad(wrap.querySelector('#so-pad'));
-  const specs = () => cart.lines.map((l, i) => l.type === 'mto' ? Object.fromEntries(SPEC_FIELDS.map(f => [f[0], val(wrap, 'so-' + f[0] + '-' + i)]).concat([['photo', photos[i] || '']])) : null);
+  // the specification as typed, keeping the catalogue fabric chosen on the sale (the server prices it again)
+  const specs = () => cart.lines.map((l, i) => l.type === 'mto' ? Object.fromEntries(SPEC_FIELDS.map(f => [f[0], val(wrap, 'so-' + f[0] + '-' + i)]).concat([['photo', photos[i] || ''], ['fabricId', (l.spec && l.spec.fabricId) || '']])) : null);
   const draft = () => ({ docNo: (dd.entity.specialOrderPrefix || dd.entity.invoicePrefix + '-SO') + '-(new)', customerSnapshot: { name: cart.customer.name }, lines: t.lines.map((l, i) => ({ ...l, spec: specs()[i] })), totalCents: t.totalCents, vatRegistered: !!dd.entity.vatRegistered, minDepositCents: minDep, minDepositPct: ss.minDepositPct, leadDays: ss.leadDays });
   const preview = () => {
     const depNow = wrap.querySelector('#so-depnow').checked;

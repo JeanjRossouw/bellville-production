@@ -14,6 +14,8 @@ import { lineTotals, vatIn, pctOf, rateOn, rateFor, centsOf, randsOf } from './m
 import { icon } from './icons.js';
 import { saveCustomer, consentFields, readConsent } from './customers.js';
 import { openPay } from './pay.js';
+import { pickerHtml, wirePicker, pickedFabric } from './fabrics.js';
+import { fabricMetresOf, fabricCentsFor } from './special-terms.js';
 
 const ROLE_ORDER = ['cashier', 'supervisor', 'manager', 'owner'];
 let ctx = { repaint() {}, data: () => ({}) };     // set by app.js
@@ -71,7 +73,7 @@ export function findCode(code) {
 export function addItem(p, v, qty = 1) {
   const c = sale.cart;
   const itemId = v ? v.id : p.id;
-  const have = c.lines.find(l => l.itemId === itemId && !l.priceOverride);
+  const have = c.lines.find(l => l.itemId === itemId && !l.priceOverride && !(l.spec && (l.spec.fabricId || l.spec.fabric)));   // a second couch in another fabric is its own line
   if (have && p.type !== 'voucher') { have.qty += qty; }
   else {
     c.lines.push({ lineId: newId('x'), productId: p.id, variantId: v ? v.id : '', itemId, name: p.name + (v ? ' · ' + v.name : ''), sku: (v && v.sku) || p.sku || '', barcode: ((v && v.barcodes) || p.barcodes || [])[0] || '',
@@ -144,7 +146,7 @@ export function sellHtml() {
           <strong class="pos-line-tot">${esc(money(l.lineTotalCents))}</strong>
         </div>
         <div class="pos-line-disc"><button class="btn ghost sm" data-act="sl-line-disc" data-i="${i}">${l.discountCents ? '− ' + esc(money(l.discountCents)) + (l.discountPct ? ' (' + esc(l.discountPct) + '%)' : '') + (l.discountBy ? ' · ' + esc(l.discountBy.name) : '') : 'Discount'}</button>
-          <button class="btn ghost sm" data-act="sl-note" data-i="${i}">${l.type === 'mto' ? (l.spec && (l.spec.fabric || l.spec.size || l.spec.colour) ? esc([l.spec.size, l.spec.fabric, l.spec.colour, l.spec.legs].filter(Boolean).join(' · ')) : 'Specification') + (l.note ? ' · ' + esc(l.note) : '') : l.note ? esc(l.note) : 'Note'}</button>${l.type === 'mto' ? '<span class="chip prod">made to order</span>' : ''}${l.trackStock && stockOf(l.itemId) < l.qty ? '<span class="chip late">stock goes negative</span>' : ''}</div>
+          <button class="btn ghost sm" data-act="sl-note" data-i="${i}">${l.type === 'mto' ? (l.spec && (l.spec.fabric || l.spec.size || l.spec.colour) ? esc([l.spec.size, l.spec.fabric, l.spec.colour, l.spec.legs].filter(Boolean).join(' · ')) : 'Specification') + (l.note ? ' · ' + esc(l.note) : '') : l.note ? esc(l.note) : 'Note'}</button>${l.type === 'mto' ? '<span class="chip prod">made to order</span>' : ''}${l.fabricCents ? `<span class="chip">fabric +${esc(money(l.fabricCents))}</span>` : ''}${l.trackStock && stockOf(l.itemId) < l.qty ? '<span class="chip late">stock goes negative</span>' : ''}</div>
       </div>`).join('') : `<div class="pos-cart-empty">${icon('cart')}<span>No items yet</span><small>Scan a barcode or tap a product</small></div>`}</div>
       <div class="pos-totals">
         <div><span>Items (${t.pieces})</span><strong>${esc(money(t.grossCents))}</strong></div>
@@ -247,10 +249,30 @@ function lineNote(i) {
   if (l.type !== 'mto') return openModal('Note on ' + l.name, field('Note', 'ln-note', { value: l.note, placeholder: 'e.g. Grey fabric, deliver Friday' }), { okLabel: 'Save', onOk: (w) => { l.note = val(w, 'ln-note'); persist(); ctx.repaint(); return true; } });
   // made to order: the specification is kept on the sale's sales order, for when someone sends it to the factory
   const sp = l.spec || {};
-  openModal('Made to order: ' + l.name, `<p class="muted">Sold as a sales order: when the sale is written the factory gets this specification, and the customer on the sale is told when it is ready.</p>
-    <div class="grid two">${field('Model', 'ln-model', { value: sp.model || l.name })}${field('Size', 'ln-size', { value: sp.size || '', placeholder: 'e.g. 2.4 m' })}${field('Fabric', 'ln-fabric', { value: sp.fabric || '', placeholder: 'e.g. Linen look' })}${field('Colour', 'ln-colour', { value: sp.colour || '', placeholder: 'e.g. Charcoal' })}${field('Legs', 'ln-legs', { value: sp.legs || '', placeholder: 'e.g. Oak, tapered' })}</div>
+  const { p, v } = itemOfLine(l), metres = p ? fabricMetresOf(p, v) : 0, fabs = fabricList();
+  const m = openModal('Made to order: ' + l.name, `<p class="muted">Sold as a sales order: when the sale is written the factory gets this specification, and the customer on the sale is told when it is ready.</p>
+    ${pickerHtml('ln-fab', fabs, sp.fabricId, sp.fabric, metres)}
+    <div class="grid two">${field('Model', 'ln-model', { value: sp.model || l.name })}${field('Size', 'ln-size', { value: sp.size || '', placeholder: 'e.g. 2.4 m' })}${field('Colour', 'ln-colour', { value: sp.colour || '', placeholder: 'e.g. Charcoal' })}${field('Legs', 'ln-legs', { value: sp.legs || '', placeholder: 'e.g. Oak, tapered' })}</div>
     ${field('Notes for the maker', 'ln-notes', { type: 'textarea', rows: 2, value: sp.notes || '' })}
-    ${field('Note on the slip', 'ln-note', { value: l.note, placeholder: 'e.g. deliver Friday' })}`, { okLabel: 'Save', onOk: (w) => { l.spec = { model: val(w, 'ln-model'), size: val(w, 'ln-size'), fabric: val(w, 'ln-fabric'), colour: val(w, 'ln-colour'), legs: val(w, 'ln-legs'), notes: val(w, 'ln-notes') }; l.note = val(w, 'ln-note'); persist(); ctx.repaint(); return true; } });
+    ${field('Note on the slip', 'ln-note', { value: l.note, placeholder: 'e.g. deliver Friday' })}`, { okLabel: 'Save', onOk: (w) => {
+      const fab = pickedFabric(w, 'ln-fab');
+      l.spec = { model: val(w, 'ln-model'), size: val(w, 'ln-size'), fabric: fab.fabric, fabricId: fab.fabricId, colour: val(w, 'ln-colour'), legs: val(w, 'ln-legs'), notes: val(w, 'ln-notes') };
+      l.note = val(w, 'ln-note'); priceWithFabric(l); persist(); ctx.repaint(); return true; } });
+  wirePicker(m.wrap, 'ln-fab', fabs);
+}
+// the company's fabric catalogue, for the specification
+const fabricList = () => (d().fabrics || []).filter(f => f.entityId === (entity() || {}).id);
+const itemOfLine = (l) => { const p = d().products.find(x => x.id === l.productId) || null; return { p, v: p && l.variantId ? d().variants.find(x => x.id === l.variantId) || null : null }; };
+// a made-to-order line's list price: the item's own, plus its metres × the chosen catalogue fabric's price per metre
+// (the server works it out the same way and refuses a sale that does not match)
+export function priceWithFabric(l) {
+  const { p, v } = itemOfLine(l); if (!p) return;
+  const f = l.spec && l.spec.fabricId ? fabricList().find(x => x.id === l.spec.fabricId) : null;
+  const base = priceOf(p, v), add = f ? fabricCentsFor(fabricMetresOf(p, v), f.priceCents) : 0;
+  l.fabricCents = add;
+  const list = base + add;
+  if (!l.priceOverride) { l.listPriceCents = list; l.unitPriceCents = list; } else l.listPriceCents = list;
+  if (l.discountPct) l.discountCents = pctOf(l.qty * l.unitPriceCents, l.discountPct);
 }
 // a discount needs a reason; over my limit, the PIN of a role that may give it
 async function approveDiscount(pct, what) {

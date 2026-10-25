@@ -146,6 +146,13 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   as a costs file; selling prices from a Price column, listed apart and
   saved only when ticked (product and variant prices, the audit row).
   `node pos/test/costimport.test.mjs`
+- `fabrics.test.mjs` — the fabric catalogue: a price list in as CSV (cost
+  per metre excl. VAT + 80% + 15% VAT, never under R 250), a made-to-order
+  product's fabric metres and a variant's own; on the till the
+  specification picks a fabric and the price follows; the server prices it
+  again (a sale and a custom order go through, a till that leaves the fabric
+  out, another company's or an archived fabric are refused); a cashier
+  reads but cannot write the catalogue. `node pos/test/fabrics.test.mjs`
 - `shopify-api.test.mjs` — step 17: `pos-shopify` against a mock Shopify in
   the test: connect, locations mapped, products linked by SKU with content
   pulled, stock pushed after a sale and by "push all", a webhook order

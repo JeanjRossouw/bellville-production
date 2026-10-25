@@ -65,7 +65,7 @@ const actions = {
     const bad = prep.lines.find(l => l.type === 'stock' || l.type === 'voucher' || l.type === 'bundle');
     if (bad) throw new Reject(400, `${bad.name}: only made-to-order and non-stock items go on a special order; sell stock as a sale or a lay-by.`);
     if (!(prep.total > 0)) throw new Reject(400, 'The order comes to nothing.');
-    prep.lines.forEach((l, i) => { l.spec = specOf(inLines[i] && inLines[i].spec); if (l.type === 'mto' && !l.spec.model) l.spec.model = l.name; });
+    prep.lines.forEach((l, i) => { l.spec = specOf(inLines[i] && inLines[i].spec); if (l.type === 'mto' && !l.spec.model) l.spec.model = l.name; if (l.fabricCharge) Object.assign(l.spec, l.fabricCharge); });
     const minDeposit = pctOf(prep.total, ss.minDepositPct);
     const customer = prep.customer;
     const dep = Array.isArray(b.deposit) && b.deposit.length ? moneyNow(ctx, b.deposit, prep.total, customer) : null;

@@ -443,3 +443,10 @@ button.link { background: none; border: 0; padding: 0; color: var(--ink-2); text
 .ci-steps { padding-left: 1.2rem; margin: .4rem 0 .8rem; } .ci-steps li { margin-bottom: .55rem; } .ci-steps .btn { margin-right: .4rem; }
 .ci-sum { margin: .4rem 0 .5rem; } .ci-miss { margin-top: .6rem; font-size: 12.5px; } .ci-miss summary { cursor: pointer; font-weight: 600; }
 .ci-prices { margin-top: .7rem; padding-top: .6rem; border-top: 1px dashed var(--line); } .ci-prices .pk-list { margin-top: .4rem; }
+/* the fabric catalogue and its picker on a made-to-order item */
+.fb-tbl td { font-size: 13px; vertical-align: top; }
+.fb-pick { position: relative; margin-bottom: .6rem; }
+.fb-pick-list { position: absolute; left: 0; right: 0; top: 100%; z-index: 30; max-height: 260px; overflow-y: auto; background: var(--card); border: 1px solid var(--line-2); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+.fb-pick-row { display: flex; gap: .5rem; align-items: baseline; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); padding: .5rem .6rem; cursor: pointer; font: inherit; }
+.fb-pick-row:hover { background: var(--paper); } .fb-pick-row span:last-child { margin-left: auto; white-space: nowrap; font-weight: 600; }
+.fb-pick-note { font-size: 12.5px; margin-top: .25rem; min-height: 1em; }

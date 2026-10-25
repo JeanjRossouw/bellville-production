@@ -23,6 +23,7 @@ import * as assist from './assist.js';
 import * as tasks from './tasks.js';
 import * as overview from './overview.js';
 import { openCostImport } from './costimport.js';
+import * as fabricsTab from './fabrics.js';
 import { EMULATOR } from './db.js';
 
 const $ = (id) => document.getElementById(id);
@@ -30,7 +31,7 @@ let view = '';                       // the tab on screen; a till starts on Sell
 let adminSub = 'companies';          // the Admin tab's sub-screen
 let editId = '', settingsEntity = '';  // what the admin forms are on
 let entities = [], stores = [], registers = [], users = [], devices = [], settings = {};
-let catalogue = [], variants = [], stockLevels = [], customers = [], storeSales = [], storeLaybys = [], storeSpecials = [], storeSalesOrders = [], storeTasks = [], storeTakes = [], discountCodes = [], suppliers = [], storePOs = [], storeGrvs = [], transfersOut = [], transfersIn = [], stockOffsets = {};
+let fabrics = [], catalogue = [], variants = [], stockLevels = [], customers = [], storeSales = [], storeLaybys = [], storeSpecials = [], storeSalesOrders = [], storeTasks = [], storeTakes = [], discountCodes = [], suppliers = [], storePOs = [], storeGrvs = [], transfersOut = [], transfersIn = [], stockOffsets = {};
 let sellStore = '';                 // the store being sold from: the till's, else chosen
 let prEntity = '', prFilter = { q: '', category: '', brand: '', type: '', archived: false };
 const unwatch = [];
@@ -81,9 +82,9 @@ function startData() {
   const ents = u.entityIds || [], sts = u.storeIds || [];
   const w = (name, wheres, set) => unwatch.push(watch(name, wheres, rows => { set(rows); paint(); }));
   const bySettings = (rows) => { settings = Object.fromEntries(rows.map(r => [r.id, r])); };
-  if (owner) { w('entities', [], r => { entities = r; }); w('stores', [], r => { stores = r; }); w('registers', [], r => { registers = r; }); w('settings', [], bySettings); w('products', [], r => { catalogue = r; }); w('variants', [], r => { variants = r; }); w('customers', [], r => { if (view === 'customers') setTimeout(paint, 0); customers = r; }); }
+  if (owner) { w('entities', [], r => { entities = r; }); w('stores', [], r => { stores = r; }); w('registers', [], r => { registers = r; }); w('settings', [], bySettings); w('products', [], r => { catalogue = r; }); w('variants', [], r => { variants = r; }); w('fabrics', [], r => { fabrics = r; }); w('customers', [], r => { if (view === 'customers') setTimeout(paint, 0); customers = r; }); }
   else {
-    if (ents.length) { w('entities', [['entityId', 'in', ents.slice(0, 30)]], r => { entities = r; }); w('settings', [['entityId', 'in', ents.slice(0, 30)]], bySettings); w('products', [['entityId', 'in', ents.slice(0, 30)]], r => { catalogue = r; }); w('variants', [['entityId', 'in', ents.slice(0, 30)]], r => { variants = r; }); w('customers', [['entityId', 'in', ents.slice(0, 30)]], r => { customers = r; }); }
+    if (ents.length) { w('entities', [['entityId', 'in', ents.slice(0, 30)]], r => { entities = r; }); w('settings', [['entityId', 'in', ents.slice(0, 30)]], bySettings); w('products', [['entityId', 'in', ents.slice(0, 30)]], r => { catalogue = r; }); w('variants', [['entityId', 'in', ents.slice(0, 30)]], r => { variants = r; }); w('fabrics', [['entityId', 'in', ents.slice(0, 30)]], r => { fabrics = r; }); w('customers', [['entityId', 'in', ents.slice(0, 30)]], r => { customers = r; }); }
     // a store-scoped query must name both the entity and the store for the rules to allow it
     if (ents.length && sts.length) { w('stores', [['entityId', 'in', ents.slice(0, 10)], ['storeId', 'in', sts.slice(0, 10)]], r => { stores = r; }); w('registers', [['entityId', 'in', ents.slice(0, 10)], ['storeId', 'in', sts.slice(0, 10)]], r => { registers = r; }); }
   }
@@ -103,7 +104,7 @@ function stopData() {
   overview.stop();
   while (unwatch.length) { try { unwatch.pop()(); } catch (e) {} }
   if (unwatchStore) { try { unwatchStore(); } catch (e) {} unwatchStore = null; } watchedStore = ''; storeSales = []; storeLaybys = []; storeSpecials = []; storeSalesOrders = []; storeTasks = []; storeTakes = []; storePOs = []; storeGrvs = []; transfersOut = []; transfersIn = []; suppliers = []; discountCodes = []; stockLevels = [];   // or it would go on listening as the next person
-  entities = []; stores = []; registers = []; users = []; devices = []; settings = {}; catalogue = []; variants = []; stockLevels = []; customers = [];
+  entities = []; stores = []; registers = []; users = []; devices = []; settings = {}; fabrics = []; catalogue = []; variants = []; stockLevels = []; customers = [];
 }
 // the store sold from: the till's own, else the person's default, else their first
 function sellStoreId() {
@@ -139,7 +140,7 @@ function startStoreData() {
   sell.loadCart(sid);
   reloadOffsets();
 }
-const sellData = () => { const sid = sellStoreId(); const st = stores.find(x => x.id === sid) || null; const ent = st ? entities.find(e => e.id === st.entityId) || null : null; return { store: st, entity: ent, settings: ent ? settings[ent.id] || {} : {}, products: catalogue, variants, stockLevels, stockOffsets, customers, discountCodes: ent ? discountCodes.filter(x => x.entityId === ent.id) : [], registerId: register.registerId(), shiftOpen: register.canSell(), shiftKnown: !register.registerId() || !!register.reg.state }; };
+const sellData = () => { const sid = sellStoreId(); const st = stores.find(x => x.id === sid) || null; const ent = st ? entities.find(e => e.id === st.entityId) || null : null; return { store: st, entity: ent, settings: ent ? settings[ent.id] || {} : {}, products: catalogue, variants, fabrics: ent ? fabrics.filter(f => f.entityId === ent.id) : [], stockLevels, stockOffsets, customers, discountCodes: ent ? discountCodes.filter(x => x.entityId === ent.id) : [], registerId: register.registerId(), shiftOpen: register.canSell(), shiftKnown: !register.registerId() || !!register.reg.state }; };
 async function reloadOffsets() { stockOffsets = await sync.stockOffsets(); if (view === 'sell') paint(); }
 function paintBanner() { const bar = $('offline-bar'); if (!bar) return; const html = sync.bannerHtml(); bar.hidden = !html; bar.className = sync.bannerClass(); bar.innerHTML = html; }
 
@@ -298,6 +299,7 @@ function navItems() {
   if (store) out.push({ key: 'sales', label: 'Sales', group: 'sales' }, { key: 'returns', label: 'Returns', group: 'sales' }, { key: 'laybys', label: 'Lay-bys', group: 'sales' }, { key: 'orders', label: 'Custom orders', group: 'sales' }, { key: 'customers', label: 'Customers', group: 'sales' });
   if (store && auth.atLeast('supervisor')) out.push({ key: 'stock', label: 'Stock', group: 'stock' }, { key: 'buying', label: 'Buying', group: 'stock' });
   out.push({ key: 'products', label: 'Products', group: 'stock' });
+  if (auth.atLeast('supervisor')) out.push({ key: 'fabrics', label: 'Fabrics', group: 'stock' });
   if (store && auth.atLeast('supervisor')) out.push({ key: 'online', label: 'Online', group: 'stock' });
   if (auth.session.user.role === 'owner') out.push({ key: 'overview', label: 'All businesses', group: 'office' });
   if (auth.atLeast('manager')) out.push({ key: 'reports', label: 'Reports', group: 'office' }, { key: 'admin', label: 'Admin', group: 'office' });
@@ -364,6 +366,7 @@ function paint() {
   if (view === 'buying') { startStoreData(); screen.innerHTML = buying.buyingHtml(); return; }
   if (view === 'customers') { screen.innerHTML = customersTab.customersHtml(); return; }
   if (view === 'reports') { screen.innerHTML = reports.reportsHtml(); return; }
+  if (view === 'fabrics') { screen.innerHTML = fabricsTab.fabricsHtml(); return; }
   if (view === 'overview') { screen.innerHTML = overview.overviewHtml(); return; }
   if (view === 'online') { screen.innerHTML = online.onlineHtml(); online.ensure(); return; }
   if (view === 'stock') { startStoreData(); screen.innerHTML = stock.stockHtml(); const sc = $('tk-scan'); if (sc && !document.activeElement.closest('#screen')) sc.focus(); return; }
@@ -517,6 +520,7 @@ async function onAction(e) {
   const w = $('screen');
   if (b.dataset.act === 'go-overview') { view = 'overview'; paint(); window.scrollTo(0, 0); return; }
   if (b.dataset.act.startsWith('sl-')) return sell.action(b.dataset.act, b);
+  if (b.dataset.act.startsWith('fb-')) return fabricsTab.action(b.dataset.act, b);
   if (b.dataset.act === 'sa-open') return salesTab.openSale(id, { ...sellData(), sales: storeSales });
   if (b.dataset.act.startsWith('rg-')) return register.action(b.dataset.act, b);
   if (b.dataset.act.startsWith('rt-')) return returns.action(b.dataset.act, b);
@@ -578,8 +582,8 @@ $('screen').addEventListener('change', (e) => {
 
 $('screen').addEventListener('input', (e) => { if (e.target.id === 'pr-q') { prFilter.q = e.target.value; paint(); } if (e.target.id === 'sl-q') sell.onSearchInput(e.target.value); if (e.target.id === 'sa-q') { salesTab.view.q = e.target.value; paint(); const q = $('sa-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } } });
 $('screen').addEventListener('keydown', (e) => { if (e.target.id === 'sl-q' && e.key === 'Enter') { e.preventDefault(); sell.onSearchEnter(e.target.value); } if (e.key === 'Enter' && returns.onEnter(e.target.id, e.target.value)) e.preventDefault(); if (e.key === 'Enter' && view === 'stock' && stock.onEnter(e.target.id, e.target.value)) e.preventDefault(); if (e.key === 'Enter' && view === 'buying' && buying.onEnter(e.target.id, e.target.value)) e.preventDefault(); });
-$('screen').addEventListener('change', (e) => { if (view === 'returns') returns.onChange(e); if (view === 'laybys') laybys.onChange(e); if (view === 'orders') specials.onChange(e); if (view === 'stock') stock.onChange(e); if (view === 'buying') buying.onChange(e); if (view === 'customers') customersTab.onChange(e); if (view === 'reports') reports.onChange(e); if (view === 'online') online.onChange(e); });
-$('screen').addEventListener('input', (e) => { if (view === 'returns') returns.onInput(e.target.id, e.target.value); if (view === 'laybys') laybys.onInput(e.target.id, e.target.value); if (view === 'orders') specials.onInput(e.target.id, e.target.value); if (view === 'stock') stock.onInput(e.target.id, e.target.value); if (view === 'buying') buying.onInput(e.target.id, e.target.value); if (view === 'customers') customersTab.onInput(e.target.id, e.target.value); });
+$('screen').addEventListener('change', (e) => { if (view === 'fabrics') fabricsTab.onChange(e); if (view === 'returns') returns.onChange(e); if (view === 'laybys') laybys.onChange(e); if (view === 'orders') specials.onChange(e); if (view === 'stock') stock.onChange(e); if (view === 'buying') buying.onChange(e); if (view === 'customers') customersTab.onChange(e); if (view === 'reports') reports.onChange(e); if (view === 'online') online.onChange(e); });
+$('screen').addEventListener('input', (e) => { if (view === 'fabrics') fabricsTab.onInput(e.target.id, e.target.value); if (view === 'returns') returns.onInput(e.target.id, e.target.value); if (view === 'laybys') laybys.onInput(e.target.id, e.target.value); if (view === 'orders') specials.onInput(e.target.id, e.target.value); if (view === 'stock') stock.onInput(e.target.id, e.target.value); if (view === 'buying') buying.onInput(e.target.id, e.target.value); if (view === 'customers') customersTab.onInput(e.target.id, e.target.value); });
 returns.setContext({ repaint: () => { if (view === 'returns') paint(); }, data: sellData, onDone: () => { register.reg.stale = true; } });
 laybys.setContext({ repaint: () => { if (view === 'laybys') paint(); }, data: () => ({ ...sellData(), laybys: storeLaybys }), onChange: () => { register.reg.stale = true; if (view === 'laybys') paint(); } });
 // a lay-by's own buttons sit in its modal, outside the screen
@@ -589,6 +593,7 @@ reports.setContext({ repaint: () => { if (view === 'reports') paint(); }, data: 
 customersTab.setContext({ repaint: () => { if (view === 'customers') paint(); }, data: () => ({ ...sellData() }) });
 buying.setContext({ repaint: () => { if (view === 'buying') paint(); }, data: () => ({ ...sellData(), stores, suppliers, pos: storePOs, grvs: storeGrvs, transfers: [...transfersOut, ...transfersIn.filter(t => !transfersOut.some(o => o.id === t.id))] }), onChange: () => { reloadOffsets(); if (view === 'buying') paint(); } });
 stock.setContext({ repaint: () => { if (view === 'stock') paint(); }, data: () => ({ ...sellData(), takes: storeTakes }), onChange: () => { reloadOffsets(); if (view === 'stock') paint(); } });
+fabricsTab.setContext({ repaint: () => { if (view === 'fabrics') paint(); }, data: () => ({ entities, fabrics }) });
 tasks.setContext({ repaint: () => { if (view === 'home') paint(); }, data: () => ({ ...sellData(), tasks: storeTasks, staff: users }) });
 specials.setContext({ repaint: () => { if (view === 'orders') paint(); }, data: () => ({ ...sellData(), specials: storeSpecials, salesOrders: storeSalesOrders }), onChange: () => { register.reg.stale = true; if (view === 'orders') paint(); } });
 document.addEventListener('keydown', (e) => { if (view === 'sell' && auth.session.user) sell.onDocumentKey(e); }, true);
