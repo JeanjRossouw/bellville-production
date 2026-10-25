@@ -62,6 +62,15 @@ const hist = (so, status, by, source, note, now) => [...(so.statusHistory || [])
 // the tax invoice for a sales order: a sale paid by the order (its payments came in before), written once;
 // patchOf(cur, now) is what the order becomes in the same write
 async function invoiceOrder(ctx, so, saleId, patchOf, auditAction, auditMore = {}) {
+  if (so.invoiceBy === 'shopify') {   // brought in from Shopify: the Shopify order is the tax invoice, the POS writes none
+    const cur = await getDoc('specialOrders', so.id);
+    if (!cur || cur.balanceCents > 0 || cur.status !== 'ready') throw new Reject(409, `Order ${so.docNo} is no longer ready to go out.`);
+    const now = nowIso();
+    const patch = { ...patchOf(cur, now), completedDocNo: 'Shopify ' + ((so.shopify || {}).name || '') };
+    await patchDoc('specialOrders', so.id, patch);
+    await audit({ action: auditAction, docType: 'specialOrder', docId: so.id, docNo: so.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, details: { status: patch.status, invoice: 'shopify', ...auditMore }, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
+    return { ok: true, order: { ...cur, ...patch, id: so.id }, sale: null };
+  }
   if (!idOk(saleId)) throw new Reject(400, 'The sale has no id.');
   const body = {
     clientCreatedAt: nowIso(), customerId: so.customerId, specialOrderOf: so.docNo, note: 'Special order ' + so.docNo,
@@ -347,6 +356,7 @@ const actions = {
   async cancel(event, b) {
     const ctx = await whoAndWhere(event, b);
     const so = await loadOrder(ctx, b.orderId);
+    if (so.source === 'shopify' && Array.isArray(b.refunds) && b.refunds.some(r => r && Number(r.amountCents) > 0)) throw new Reject(400, `${so.docNo} was paid on Shopify (${(so.shopify || {}).name || ''}): refund it there; cancel it here with no refund.`);
     if (!['quoted', 'depositPaid', 'inProduction', 'ready'].includes(so.status)) throw new Reject(409, `Order ${so.docNo} is ${so.status}.`);
     const approvers = new Map();
     const a = approved(ctx, b.approvalToken, 'specialOrder', 'manager', 'Cancelling a special order');

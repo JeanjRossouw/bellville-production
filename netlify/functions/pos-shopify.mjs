@@ -22,11 +22,14 @@
 //   orders      { entityId, storeId? }                         the online orders (click & collect first)
 //   collect     { orderId, status: 'ready'|'collected' }       a supervisor: mark it, and fulfil it on Shopify when collected
 //   log         { entityId }                                   the last sync entries
+//   openOrders  { + where }                                    a manager: the shop's open, unsent orders and what bringing them in would do
+//   importOpenOrders { + where }                               a manager: bring them in as sales orders (lib/shopify-import.mjs); again skips those here
 //   webhooks: POST ?hook=1&e=<entityId> with X-Shopify-Topic orders/create | orders/cancelled | refunds/create, signed with the client secret
 //
 // Env: FACTORY_SERVICE_ACCOUNT, SHOPIFY_API_BASE (tests only).
 import { json, Reject, clean, randomId, nowIso, getDoc, query, commit, createDoc, patchDoc, deleteDoc, loginOf, loadUser, inEntity, inStore, rank, serverStamp, bodyOf, audit, withGroup, groupId, DEFAULT_GROUP } from './lib/pos.mjs';
 import { whoAndWhere, runSale, moveWrites, approved } from './lib/sale.mjs';
+import { openShopifyOrders, planShopifyImport, importShopifyOrders } from './lib/shopify-import.mjs';
 import { gql, gidNum, secretsOf, settingsOf, patchShopify, verifyWebhook, logSync, queueStock, flushStock } from './lib/shopify-pos.mjs';
 import { pullCatalogue, planCatalogue, planStock, applyCatalogue } from './lib/shopify-catalogue.mjs';
 
@@ -416,6 +419,24 @@ const actions = {
     await patchDoc('onlineOrders', rec.id || clean(b.orderId, 80), patch);
     await audit({ action: 'online.' + status, docType: 'onlineOrder', docId: clean(b.orderId, 80), docNo: rec.orderNo, actorUid: ctx.user.id, actorName: ctx.user.name, details: { fulfilled }, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
     return { ok: true, status, fulfilled };
+  },
+  async openOrders(event, b) {
+    const ctx = await whoAndWhere(event, b, { noShift: true });
+    if (rank(ctx.user.role) < rank('manager')) throw new Reject(403, 'This is for managers and the owner.');
+    const cfg = await cfgOf(ctx.entityId);
+    let orders; try { orders = await openShopifyOrders(cfg); } catch (e) { throw new Reject(502, e.message); }
+    const plan = await planShopifyImport(ctx.entityId, orders);
+    return { ok: true, orders: plan.map(({ _o, ...x }) => x) };
+  },
+  async importOpenOrders(event, b) {
+    const ctx = await whoAndWhere(event, b, { noShift: true });
+    if (rank(ctx.user.role) < rank('manager')) throw new Reject(403, 'This is for managers and the owner.');
+    const cfg = await cfgOf(ctx.entityId);
+    let orders; try { orders = await openShopifyOrders(cfg); } catch (e) { throw new Reject(502, e.message); }
+    const plan = await planShopifyImport(ctx.entityId, orders);
+    const done = await importShopifyOrders(ctx, plan);
+    await logSync(ctx.entityId, 'import', 'ok', `${done.filter(x => !x.skipped).length} open Shopify order(s) brought in as sales orders`, { storeId: ctx.storeId });
+    return { ok: true, imported: done.filter(x => !x.skipped), already: plan.filter(x => x.already).length };
   },
   async log(event, b) {
     const w = await who(event, b);

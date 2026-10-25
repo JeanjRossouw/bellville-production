@@ -24,7 +24,7 @@ export function onlineHtml() {
     <div class="toolbar">
       <select id="on-filter">${[['open', 'Open orders'], ['pickup', 'Click & collect'], ['collected', 'Collected'], ['cancelled', 'Cancelled'], ['all', 'All']].map(x => `<option value="${x[0]}"${on.filter === x[0] ? ' selected' : ''}>${x[1]}</option>`).join('')}</select>
       <button class="btn ghost sm" data-act="on-refresh">${icon('refresh')} Refresh</button>
-      ${auth.atLeast('manager') && st && st.connected ? `<button class="btn ghost sm" data-act="on-sync"${on.busy ? ' disabled' : ''}>${icon('refresh')} Sync now</button><button class="btn ghost sm" data-act="on-link"${on.busy ? ' disabled' : ''}>Link products by SKU</button><button class="btn ghost sm" data-act="on-push"${on.busy ? ' disabled' : ''}>Push all stock</button><button class="btn ghost sm" data-act="on-log">Log</button>` : ''}</div>
+      ${auth.atLeast('manager') && st && st.connected ? `<button class="btn ghost sm" data-act="on-sync"${on.busy ? ' disabled' : ''}>${icon('refresh')} Sync now</button><button class="btn ghost sm" data-act="on-link"${on.busy ? ' disabled' : ''}>Link products by SKU</button><button class="btn ghost sm" data-act="on-push"${on.busy ? ' disabled' : ''}>Push all stock</button><button class="btn ghost sm" data-act="on-log">Log</button><button class="btn sm" data-act="on-import"${on.busy ? ' disabled' : ''}>Bring in open orders</button>` : ''}</div>
     ${on.orders === null ? '<div class="card muted">Loading orders…</div>' : rows.length ? `<div class="card" style="padding:0;overflow:auto"><table class="tbl"><thead><tr><th>Order</th><th>Customer</th><th>Lines</th><th class="r">Total</th><th>Delivery</th><th>Stock</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(o => `<tr class="${/cancelled|collected|refunded/.test(o.status) ? 'off' : ''}"><td><strong>${esc(o.orderNo)}</strong><div class="muted">${esc(niceDate(o.orderedAt))} ${esc(niceTime(o.orderedAt))}</div></td><td>${esc(o.customer.name)}<div class="muted">${esc([o.customer.phone, o.customer.email].filter(Boolean).join(' · '))}</div></td><td>${o.lines.map(l => `<div>${l.qty} × ${esc(l.name || l.title)}${l.itemId ? '' : ' <span class="warn">(not a POS item)</span>'}</div>`).join('')}</td><td class="r">${esc(money(o.totalCents))}<div class="muted">${esc(o.financialStatus)}</div></td><td>${o.pickup ? '<span class="chip ok">Click &amp; collect</span>' : esc(o.shippingTitle || 'delivery')}${o.address && !o.pickup ? `<div class="muted">${esc(o.address)}</div>` : ''}</td><td class="muted">${esc(o.stock)}</td><td><span class="chip ${(STATE[o.status] || ['', ''])[1]}">${esc((STATE[o.status] || [o.status])[0])}</span></td><td class="r nowrap">${o.status === 'new' && o.pickup ? `<button class="btn ghost sm" data-act="on-ready" data-id="${esc(o.id)}">Ready</button>` : ''}${/new|ready/.test(o.status) ? `<button class="btn primary sm" data-act="on-collected" data-id="${esc(o.id)}">${o.pickup ? 'Collected' : 'Handed over'}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : empty('No online orders here', 'Orders arrive by webhook as the shop takes them; click & collect ones show first.')}
     ${on.log ? `<h3 class="st-h3">Sync log</h3><div class="card" style="padding:0;overflow:auto"><table class="tbl"><tbody>${on.log.map(l => `<tr class="${l.status === 'failed' ? 'neg' : ''}"><td class="muted nowrap">${esc(niceDate(l.at))} ${esc(niceTime(l.at))}</td><td>${esc(l.kind)}</td><td><span class="chip${l.status === 'ok' ? ' ok' : l.status === 'failed' ? ' late' : ''}">${esc(l.status)}</span></td><td>${esc(l.message)}</td></tr>`).join('') || '<tr><td class="muted">Nothing yet.</td></tr>'}</tbody></table></div>` : ''}`;
 }
@@ -48,12 +48,43 @@ export async function action(act, b) {
   if (act === 'on-sync') return run('syncNow', {}, r => `Synced: ${r.stock.pushed || 0} stock updates${r.codes != null ? ', ' + r.codes + ' codes' : ''}${r.customers ? ', ' + r.customers.pushed + ' customers' : ''}`);
   if (act === 'on-link') return run('link', {}, r => `${r.linked} of ${r.seen} shop variants linked by SKU${r.unmatched.length ? ' · not matched: ' + r.unmatched.slice(0, 5).join(', ') : ''}`);
   if (act === 'on-push') return run('pushStock', {}, r => `${r.queued} items queued, ${r.pushed || 0} pushed now${r.failed ? ', ' + r.failed + ' retrying' : ''}`);
+  if (act === 'on-import') return importOpen();
   if (act === 'on-log') { try { on.log = (await auth.api('log', { entityId: dd.entity.id }, API.shopify)).log; } catch (e) { toast(e.message, 'warn'); } return ctx.repaint(); }
   if (act === 'on-ready' || act === 'on-collected') {
     try { const r = await auth.api('collect', { orderId: id, status: act === 'on-ready' ? 'ready' : 'collected', ...where() }, API.shopify); toast(act === 'on-ready' ? 'Marked ready: tell the customer' : 'Collected' + (r.fulfilled ? ' · ' + r.fulfilled : '')); }
     catch (e) { if (e.status === 403 && /PIN/.test(e.message)) { try { const a = await auth.requireOverride({ minRole: 'supervisor', action: 'online', details: { orderId: id }, text: e.message }); await auth.api('collect', { orderId: id, status: act === 'on-ready' ? 'ready' : 'collected', approvalToken: a.token, ...where() }, API.shopify); } catch (e2) { toast(e2.message, 'warn'); } } else toast(e.message, 'warn'); }
     return load();
   }
+}
+
+// ---- the shop's open, unsent orders brought in as sales orders (the client page, To do, delivery, the driver);
+// what Shopify received counts as paid "via Shopify"; the Shopify order stays the tax invoice
+async function importOpen() {
+  on.busy = true; ctx.repaint();
+  let r;
+  try { r = await auth.api('openOrders', where(), API.shopify); } catch (e) { toast(e.message, 'warn'); on.busy = false; return ctx.repaint(); }
+  on.busy = false; ctx.repaint();
+  const list = r.orders || [], todo = list.filter(o => !o.already);
+  if (!list.length) return toast('No open, unsent orders on Shopify.');
+  const { wrap, close } = openModal('Bring in open Shopify orders', `<p>${list.length} open order${list.length === 1 ? '' : 's'} on Shopify · <strong>${todo.length} to bring in</strong>${list.length - todo.length ? ` · ${list.length - todo.length} already here` : ''}.</p>
+    <p class="muted">Each becomes a sales order with the client, the items and what was paid on Shopify (shown as paid via Shopify, not in the till’s cash-up). The Shopify order stays the tax invoice: the POS writes none for these. Clients without a profile get one (no marketing consent).</p>
+    <div style="max-height:46vh;overflow:auto"><table class="tbl"><thead><tr><th>Order</th><th>Client</th><th>Items</th><th class="r">Total</th><th class="r">Paid</th><th class="r">Balance</th></tr></thead><tbody>
+    ${list.map(o => `<tr class="${o.already ? 'off' : ''}"><td><strong>${esc(o.name)}</strong><div class="muted">${esc(niceDate(o.createdAt))}${o.already ? ' · already ' + esc(o.alreadyDocNo) : ''}</div></td>
+      <td>${esc(o.client.name)}<div class="muted">${esc(o.client.phone || o.client.email || '')}${o.client.existing ? ' · on file' : ' · new'}</div></td>
+      <td>${o.lines.map(l => `<div>${esc(l.qty + ' × ' + l.name)}${l.matched ? '' : ' <span class="chip late">not matched</span>'}</div>`).join('')}</td>
+      <td class="r">${esc(money(o.totalCents))}</td><td class="r">${esc(money(o.paidCents))}</td><td class="r"><strong>${esc(money(o.balanceCents))}</strong></td></tr>`).join('')}</tbody></table></div>
+    ${list.some(o => o.unmatched) ? '<p class="muted">“Not matched”: no product here with that SKU; it comes in as a named line (fine for a custom couch).</p>' : ''}`, {
+    okLabel: todo.length ? `Bring in ${todo.length} order${todo.length === 1 ? '' : 's'}` : 'Close', cancelLabel: todo.length ? 'Back' : '', onOk: async () => {
+      if (!todo.length) return true;
+      try {
+        const x = await auth.api('importOpenOrders', where(), API.shopify);
+        close(true);
+        toast(`${x.imported.length} sales order${x.imported.length === 1 ? '' : 's'} made: see Sales orders and To do (send each client their page)`);
+        if (ctx.onImported) ctx.onImported(x);
+        return true;
+      } catch (e) { toast(e.message, 'warn'); return false; }
+    } });
+  wrap.querySelector('.modal-card').classList.add('wide');
 }
 
 // ---- the owner's card under Settings: connect, map locations to stores, the switches

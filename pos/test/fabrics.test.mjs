@@ -237,7 +237,7 @@ const oTok = (/[?&]t=([\w-]+)/.exec(R.oLink.link || '') || [])[1];
 check('the order’s link: the client page, with a message to send it', R.oLink.ok && /\/pos\/track\.html\?t=/.test(R.oLink.link) && R.oLink.text.includes(R.oLink.link) && R.oLink.phone === '0825550101', R.oLink);
 R.oLink2 = await call('pos-special', { action: 'trackLink', kind: 'order', id: R.so.order.id, ...bell }); check('the same link every time', R.oLink2.link === R.oLink.link, R.oLink2.link);
 R.oView = await track({ action: 'view', t: oTok });
-check('the page: the order, its steps and the money, no costs', R.oView.kind === 'order' && R.oView.docNo === R.so.order.docNo && R.oView.status === 'quoted' && R.oView.balanceCents === total && R.oView.minDepositCents > 0 && R.oView.steps.length === 5 && R.oView.lines.length === 2 && !/costCents|signature|cashier/.test(JSON.stringify(R.oView)), R.oView);
+check('the page: the order, its steps and the money, no costs', R.oView.kind === 'order' && R.oView.docNo === R.so.order.docNo && R.oView.status === 'quoted' && R.oView.balanceCents === total && R.oView.minDepositCents > 0 && R.oView.steps.length === 6 && R.oView.lines.length === 2 && !/costCents|signature|cashier/.test(JSON.stringify(R.oView)), R.oView);
 R.badTok = await track({ action: 'view', t: 'x'.repeat(24) }); check('a made-up link: not found', R.badTok.status === 404, R.badTok);
 R.upd = await call('pos-special', { action: 'update', orderId: R.so.order.id, ...bell }); check('every WhatsApp update carries the order page', R.upd.ok && R.upd.text.includes(R.oLink.link), R.upd.text);
 const qId = 'qt-fab-' + Date.now().toString(36);
