@@ -137,7 +137,8 @@ export async function markQuoteUsed(ctx, quoteId, kind, docNo) {
 }
 
 // opts.creditNote: { docNo, amountCents } — an exchange pays with the credit note first
-// opts.quote: a quotation, not a tax invoice (no customer address needed over R 5 000)
+// opts.quote: a quotation, not a tax invoice (no customer address needed over R 5 000); opts.order: a sales order, the same
+//   (its tax invoice is written at the hand-over, and needs the address then)
 export async function prepareSale(ctx, b, opts = {}) {
   const when = clean(b.clientCreatedAt, 40);
   const at = Date.parse(when);
@@ -240,7 +241,7 @@ export async function prepareSale(ctx, b, opts = {}) {
   const told = b.totals || {};
   if (!opts.trusted && (int(told.totalCents) !== total || int(told.vatCents) !== vat)) throw new Reject(409, `The till’s total (${told.totalCents}) does not match the server’s (${total}). Reopen the sale and try again.`);
   // over R 5 000 a VAT-registered company must issue a full tax invoice: the customer's name and address go on it
-  if (ctx.entity.vatRegistered && total > 500000 && !opts.quote) {
+  if (ctx.entity.vatRegistered && total > 500000 && !opts.quote && !opts.order) {
     const a = customer && customer.address;
     if (!customer || !String(customer.name || '').trim()) throw new Reject(400, 'Over R 5 000 a full tax invoice is needed: add the customer with their name and address.');
     if (!a || !String(a.line1 || a.city || '').trim()) throw new Reject(400, `Over R 5 000 a full tax invoice is needed: add ${customer.name}’s address.`);
