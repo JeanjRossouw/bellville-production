@@ -18,6 +18,7 @@ import { esc, toast, field, row, val, openModal, money, niceDate, empty } from '
 import { openReceipt } from './receiptui.js';
 import { specLines } from './receipt.js';
 import { newId } from './db.js';
+import { sendLink } from './clientlink.js';
 
 let ctx = { repaint() {}, data: () => ({}), onLoad: () => false };
 export const setContext = (c) => { ctx = { ...ctx, ...c }; };
@@ -93,14 +94,15 @@ export function quotesHtml() {
         <td>${esc((q.customerSnapshot && q.customerSnapshot.name) || '—')}${q.customerSnapshot && q.customerSnapshot.phone ? `<div class="muted">${esc(q.customerSnapshot.phone)}</div>` : ''}</td>
         <td>${(q.lines || []).map(l => `<div>${esc(l.qty + ' × ' + l.name)}${l.spec && l.spec.fabric ? ` <span class="muted">· ${esc(l.spec.fabric)}</span>` : ''}</div>`).join('')}</td>
         <td>${esc(niceDate(q.validUntil))}</td><td class="r"><strong>${esc(money(q.totalCents))}</strong></td>
-        <td><span class="chip ${CHIP[st]}">${esc(LABEL[st])}</span>${q.usedAs ? `<div class="muted">${esc(q.usedAs.docNo)}</div>` : ''}</td>
-        <td class="btn-row" style="margin:0;flex-wrap:nowrap">${`<button class="btn ghost sm" data-act="qt-print" data-id="${esc(q.id)}">Print / send</button>`}${st === 'open' ? `<button class="btn primary sm" data-act="qt-load" data-id="${esc(q.id)}">Load into the sale</button><button class="btn ghost sm" data-act="qt-cancel" data-id="${esc(q.id)}">Cancel</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`
+        <td><span class="chip ${CHIP[st]}">${esc(LABEL[st])}</span>${q.accepted ? `<div><span class="chip ok">Accepted online</span></div><div class="muted">${esc(q.accepted.name)} · ${esc(niceDate(q.accepted.at))}</div>` : ''}${q.usedAs ? `<div class="muted">${esc(q.usedAs.docNo)}</div>` : ''}</td>
+        <td class="btn-row" style="margin:0;flex-wrap:nowrap">${`<button class="btn ghost sm" data-act="qt-print" data-id="${esc(q.id)}">Print / send</button>`}${st === 'open' && !q.accepted ? `<button class="btn ghost sm" data-act="qt-link" data-id="${esc(q.id)}">Send link to accept</button>` : ''}${st === 'open' ? `<button class="btn primary sm" data-act="qt-load" data-id="${esc(q.id)}">Load into the sale</button><button class="btn ghost sm" data-act="qt-cancel" data-id="${esc(q.id)}">Cancel</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`
       : empty(qt.filter === 'open' ? 'No open quotes' : 'Nothing here', qt.filter === 'open' ? 'Ring the items up under Sell (pick the fabric on a made-to-order item) and tap Quote.' : '')}`;
 }
 
 export async function action(act, b) {
   const q = (d().quotes || []).find(x => x.id === b.dataset.id); if (!q) return;
   if (act === 'qt-print') return openReceipt(docOf(q));
+  if (act === 'qt-link') return sendLink('quote', q.id, where());
   if (act === 'qt-load') {
     if ((d().cartLines || 0) && !confirm('The sale in the cart is replaced by quote ' + q.docNo + '. Go ahead?')) return;
     if (ctx.onLoad(q)) toast('Quote ' + q.docNo + ' is in the sale at its quoted prices: Pay, or tap Sales order for a deposit.');

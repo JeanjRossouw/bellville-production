@@ -27,6 +27,7 @@
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
 import { json, Reject, clean, randomId, nowIso, getDoc, query, patchDoc, serverStamp, bodyOf, audit, requireMember, inEntity, withGroup } from './lib/pos.mjs';
 import { factoryCfg, listCompanies, companyNamed, noteHandover } from './lib/factory-link.mjs';
+import { ensureTrack, trackUrl } from './lib/track.mjs';
 import { pushToFactory as pushBridge, syncFromFactory as syncBridge, cancelAtFactory } from './lib/factory-bridge.mjs';
 import { whoAndWhere, prepareSale, prepareTenders, runSale, nextFromCounter, approved, int, specOf, specNote, markQuoteUsed, saDay } from './lib/sale.mjs';
 import { pctOf } from '../../pos/js/money.js';
@@ -197,12 +198,28 @@ const actions = {
     const so = await loadOrder(ctx, b.orderId);
     const status = STATUSES.includes(b.status) || b.status === 'booked' ? b.status : so.status;
     const how = ['whatsapp', 'phone', 'email'].includes(b.how) ? b.how : 'whatsapp';
-    const text = updateText(ctx.entity, ctx.store, so, status);
+    const link = trackUrl(event, await ensureTrack('order', so));
+    const text = updateText(ctx.entity, ctx.store, so, status) + '\n\nYour order, any time: ' + link;
     const now = nowIso();
     const entry = { at: now, status, how, byName: ctx.user.name };
     await patchDoc('specialOrders', so.id, { updates: [...(so.updates || []), entry].slice(-50), updateDue: false, lastUpdateAt: now, updatedAt: now });
     await audit({ action: 'specialOrder.update', docType: 'specialOrder', docId: so.id, docNo: so.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, details: { status, how }, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
-    return { ok: true, text, status, how, phone: so.customerSnapshot.phone || '', email: so.customerSnapshot.email || '', update: entry };
+    return { ok: true, text, link, status, how, phone: so.customerSnapshot.phone || '', email: so.customerSnapshot.email || '', update: entry };
+  },
+
+  // the client's private page for an order or a quotation: the link, and a message to send it with
+  async trackLink(event, b) {
+    const ctx = await whoAndWhere(event, b, { noShift: true });
+    const kind = b.kind === 'quote' ? 'quote' : 'order';
+    const id = clean(b.id, 80);
+    const doc = kind === 'order' ? await loadOrder(ctx, id) : await getDoc('quotes', id);
+    if (!doc || doc.entityId !== ctx.entityId) throw new Reject(404, kind === 'order' ? 'No such sales order here.' : 'No such quote here.');
+    const link = trackUrl(event, await ensureTrack(kind, { ...doc, id }));
+    const c = doc.customerSnapshot || {}, first = String(c.name || '').split(' ')[0], co = ctx.entity.tradingName || ctx.entity.legalName;
+    const text = kind === 'quote'
+      ? `Hi${first ? ' ' + first : ''}, ${co} here: your quotation ${doc.docNo} for ${money(doc.totalCents)}, valid until ${doc.validUntil}. See it, and accept and sign it, here: ${link}`
+      : `Hi${first ? ' ' + first : ''}, ${co} here: follow your order ${doc.docNo} any time (where it is, the dates, what is paid) here: ${link}`;
+    return { ok: true, link, text, phone: c.phone || '' };
   },
 
   // delivery or collection booked
