@@ -1,4 +1,4 @@
-// Retail POS — cost prices from a spreadsheet, and nothing else.
+// Retail POS — cost prices (and, when asked, selling prices) from a spreadsheet.
 //
 // A manager downloads the costs sheet (every product and variant of the
 // company with its SKU, barcode, price and cost), fills in the Cost column,
@@ -7,10 +7,13 @@
 // to find the item by. Names are compared on letters and digits only, and a
 // supplier's model code (UVL601) is found inside our own product names.
 //
-// It changes only costCents on products and variants that are already here
-// (and updatedBy/updatedAt). It never creates or deletes anything, and never
-// touches a price, name, barcode, picture or VAT class. One audit row records
-// the changes. Writes go in batches of 100.
+// It changes costCents on products and variants that are already here (and
+// updatedBy/updatedAt). When the file also has a Price column, the prices that
+// differ are listed apart and change only if the person ticks "Also change
+// these prices": priceCents on a product without variants, or on the variant
+// itself. Per-store prices, names, barcodes, pictures and VAT classes are never
+// touched, and nothing is created or deleted. One audit row records every
+// change, before and after. Writes go in batches of 100.
 import { batch, setOne, newId } from './db.js';
 import * as auth from './auth.js';
 import { esc, toast, openModal, money } from './ui.js';
@@ -41,8 +44,10 @@ function itemsOf(d, eid) {
   const out = [];
   for (const p of d.products.filter(x => x.entityId === eid)) {
     const vs = d.variants.filter(v => v.productId === p.id);
-    out.push({ coll: 'products', id: p.id, p, v: null, label: p.name, stored: Number.isInteger(p.costCents) ? p.costCents : 0, now: Number.isInteger(p.costCents) ? p.costCents : 0 });
-    for (const v of vs) out.push({ coll: 'variants', id: v.id, p, v, label: p.name + ' · ' + (v.name || ''), stored: Number.isInteger(v.costCents) ? v.costCents : null, now: Number.isInteger(v.costCents) ? v.costCents : (Number.isInteger(p.costCents) ? p.costCents : 0) });
+    const pp = Number.isInteger(p.priceCents) ? p.priceCents : 0;
+    out.push({ coll: 'products', id: p.id, p, v: null, label: p.name, stored: Number.isInteger(p.costCents) ? p.costCents : 0, now: Number.isInteger(p.costCents) ? p.costCents : 0, priceStored: pp, price: pp });
+    for (const v of vs) out.push({ coll: 'variants', id: v.id, p, v, label: p.name + ' · ' + (v.name || ''), stored: Number.isInteger(v.costCents) ? v.costCents : null, now: Number.isInteger(v.costCents) ? v.costCents : (Number.isInteger(p.costCents) ? p.costCents : 0),
+      priceStored: Number.isInteger(v.priceCents) ? v.priceCents : null, price: Number.isInteger(v.priceCents) ? v.priceCents : pp });
   }
   return out;
 }
@@ -53,8 +58,7 @@ export function sheetCsv(d, eid) {
   const items = itemsOf(d, eid).filter(it => it.v || !d.variants.some(v => v.productId === it.p.id))
     .sort((a, b) => a.label.localeCompare(b.label));
   for (const it of items) {
-    const price = it.v && Number.isInteger(it.v.priceCents) ? it.v.priceCents : it.p.priceCents;
-    rows.push([it.p.name, it.v ? it.v.name || '' : '', (it.v ? it.v.sku : it.p.sku) || '', ((it.v ? it.v.barcodes : it.p.barcodes) || [])[0] || '', randsOf(price), randsOf(it.now)]);
+    rows.push([it.p.name, it.v ? it.v.name || '' : '', (it.v ? it.v.sku : it.p.sku) || '', ((it.v ? it.v.barcodes : it.p.barcodes) || [])[0] || '', randsOf(it.price), randsOf(it.now)]);
   }
   return { text: toCsv(rows), count: rows.length - 1 };
 }
@@ -66,8 +70,10 @@ function columnsOf(head) {
   let cost = find(['newcost', 'cost', 'costperitem', 'costprice', 'unitcost', 'costr', 'costexclvat', 'costinclvat', 'costexvat', 'costincvat']);
   if (cost < 0) cost = h.findIndex(x => x.includes('cost') && !/current|old|total|avg|average/.test(x));
   const opts = [1, 2, 3].map(i => ({ name: find(['option' + i + 'name']), value: find(['option' + i + 'value']) }));
+  // the selling price, only under a heading that says so (never "Supplier price" or "RSK price excl. VAT")
+  const price = find(['price', 'newprice', 'sellingprice', 'priceincl', 'priceinclvat', 'variantprice', 'retailprice']);
   return {
-    cost, sku: find(['sku', 'variantsku', 'code', 'itemcode', 'productcode', 'stockcode']), barcode: find(['barcode', 'variantbarcode', 'barcodes', 'ean', 'upc']),
+    cost, price, sku: find(['sku', 'variantsku', 'code', 'itemcode', 'productcode', 'stockcode']), barcode: find(['barcode', 'variantbarcode', 'barcodes', 'ean', 'upc']),
     handle: find(['handle']), name: find(['product', 'productname', 'name', 'title', 'item', 'description']), variant: find(['variant', 'variantname']), opts
   };
 }
@@ -77,7 +83,7 @@ export function planCosts(text, d, eid) {
   const rows = parseCsv(text, sepOf(text));
   if (rows.length < 2) throw new Error('The file has no rows under its heading.');
   const col = columnsOf(rows[0]);
-  if (col.cost < 0) throw new Error('No cost column: the heading needs a column called Cost (or Cost per item, Cost price).');
+  if (col.cost < 0 && col.price < 0) throw new Error('No cost column: the heading needs a column called Cost (or Cost per item, Cost price).');
   if (col.sku < 0 && col.barcode < 0 && col.handle < 0 && col.name < 0) throw new Error('Nothing to find the products by: the file needs a SKU, Barcode, Handle or Product column.');
   const items = itemsOf(d, eid);
   const index = (keyOf) => { const m = new Map(); for (const it of items) for (const k of keyOf(it)) if (k) { if (!m.has(k)) m.set(k, []); if (!m.get(k).includes(it)) m.get(k).push(it); } return m; };
@@ -90,7 +96,7 @@ export function planCosts(text, d, eid) {
   const byModel = index(it => codesIn(it.v ? it.v.name : it.p.name));
   const byHandle = index(it => [low(it.p.shopifyHandle || handleOf(it.p.name)) + '|' + (it.v ? vkey(it.v.optionValues) : '')]);
   const cell = (r, i) => (i >= 0 ? String(r[i] == null ? '' : r[i]).trim() : '');
-  const changes = new Map(), same = [], missing = [], bad = [];
+  const changes = new Map(), prices = new Map(), same = [], missing = [], bad = [];
   let blank = 0, lastName = '', lastHandle = '';
   rows.slice(1).forEach((r, n) => {
     const line = n + 2;
@@ -98,10 +104,13 @@ export function planCosts(text, d, eid) {
     const name = cell(r, col.name) || (col.handle >= 0 && cell(r, col.handle) === lastHandle ? lastName : '');
     if (cell(r, col.name)) lastName = cell(r, col.name);
     if (col.handle >= 0) lastHandle = cell(r, col.handle);
-    const cents = costCentsOf(cell(r, col.cost));
+    let cents = costCentsOf(cell(r, col.cost)), price = costCentsOf(cell(r, col.price));
     const what = [cell(r, col.sku), cell(r, col.barcode), name, cell(r, col.variant)].filter(Boolean).join(' · ') || 'line ' + line;
-    if (cents === null) { blank++; return; }
-    if (Number.isNaN(cents) || cents < 0) { bad.push({ line, what, cost: cell(r, col.cost) }); return; }
+    if (Number.isNaN(cents) || cents < 0) { bad.push({ line, what, cost: cell(r, col.cost) }); cents = null; }
+    if (Number.isNaN(price) || price < 0) { bad.push({ line, what, cost: cell(r, col.price) }); price = null; }
+    if (price === 0) price = null;                    // a price of nothing is left alone
+    if (costCentsOf(cell(r, col.cost)) === null) blank++;
+    if (cents === null && price === null) return;
     const opts = {}; col.opts.forEach(o => { const k = cell(r, o.name), v = cell(r, o.value); if (v && v !== 'Default Title') opts[k || 'Option'] = v; });
     const tries = [
       bySku.get(skuKey(cell(r, col.sku))), byCode.get(low(cell(r, col.barcode))),
@@ -115,6 +124,8 @@ export function planCosts(text, d, eid) {
     const hit = tries.find(t => t && t.length === 1);
     if (!hit) { missing.push({ line, what, many: tries.some(t => t && t.length > 1) }); return; }
     const it = hit[0];
+    if (price !== null) { if (price === it.price) prices.delete(it.id); else prices.set(it.id, { it, to: price }); }
+    if (cents === null) return;
     if (cents === it.now) { changes.delete(it.id); same.push(it); return; }
     changes.set(it.id, { it, to: cents });
   });
@@ -123,18 +134,25 @@ export function planCosts(text, d, eid) {
     const vc = [...changes.values()].filter(c => c.it.v && c.it.p.id === p.id).map(c => c.to);
     if (vc.length) changes.set(p.id, { it: items.find(i => i.id === p.id && !i.v), to: Math.min(...vc), fromVariants: true });
   }
-  return { changes: [...changes.values()], same: same.length, blank, missing, bad, rows: rows.length - 1 };
+  return { changes: [...changes.values()], prices: [...prices.values()], same: same.length, blank, missing, bad, rows: rows.length - 1 };
 }
 
-async function applyCosts(plan, eid) {
-  const ops = plan.changes.map(c => ({ op: 'update', coll: c.it.coll, id: c.it.id, data: { costCents: c.to, ...auth.touch() } }));
+// one write per record: its new cost, and its new price when prices are wanted
+async function applyCosts(plan, eid, withPrices) {
+  const by = new Map();
+  const put = (it, patch) => { const o = by.get(it.id) || { op: 'update', coll: it.coll, id: it.id, data: { ...auth.touch() } }; Object.assign(o.data, patch); by.set(it.id, o); };
+  plan.changes.forEach(c => put(c.it, { costCents: c.to }));
+  const prices = withPrices ? plan.prices : [];
+  prices.forEach(c => put(c.it, { priceCents: c.to }));
+  const ops = [...by.values()];
   let done = 0;
   for (let i = 0; i < ops.length; i += 100) { await batch(ops.slice(i, i + 100)); done = Math.min(ops.length, i + 100); }
   try {
     await setOne('auditLog', newId('auditLog'), { action: 'product.costImport', docType: 'product', docId: '', docNo: '', actorUid: auth.session.uid, actorName: auth.session.user.name, overrideUid: '', overrideName: '',
-      details: { changed: ops.length, changes: plan.changes.slice(0, 300).map(c => ({ id: c.it.id, coll: c.it.coll, name: c.it.label, fromCents: c.it.stored, toCents: c.to })) }, ...auth.stamp(eid, '') });
+      details: { changed: plan.changes.length, changes: plan.changes.slice(0, 300).map(c => ({ id: c.it.id, coll: c.it.coll, name: c.it.label, fromCents: c.it.stored, toCents: c.to })),
+        pricesChanged: prices.length, prices: prices.slice(0, 300).map(c => ({ id: c.it.id, coll: c.it.coll, name: c.it.label, fromCents: c.it.priceStored, toCents: c.to })) }, ...auth.stamp(eid, '') });
   } catch (e) { console.error('audit failed', e); }
-  return done;
+  return { costs: plan.changes.length, prices: prices.length, records: done };
 }
 
 // the Import costs window: the sheet to fill in, then the file, a preview and Save
@@ -142,17 +160,18 @@ export function openCostImport(d, eid) {
   const ent = d.entities.find(e => e.id === eid) || {};
   const vat = ent.vatRegistered ? 'excluding VAT (you claim the VAT back)' : 'what you pay, VAT included (' + esc(ent.tradingName || ent.legalName || eid) + ' is not VAT registered)';
   let plan = null, busy = false;
-  const m = openModal('Import cost prices · ' + (ent.tradingName || ent.legalName || eid), `
-    <p>Only the cost changes: prices, names, barcodes and pictures stay as they are. Costs are in rands, ${vat}.</p>
+  const m = openModal('Import costs and prices · ' + (ent.tradingName || ent.legalName || eid), `
+    <p>The cost changes, and the selling price too if the file has a Price column and you tick it. Names, barcodes and pictures stay as they are. Costs are in rands, ${vat}.</p>
     <ol class="ci-steps"><li><button type="button" class="btn ghost" data-ci="sheet">Download the costs sheet</button> <span class="muted">every product and variant with its SKU, barcode, price and cost now</span></li>
-      <li>Fill in the <strong>Cost</strong> column in Excel or Google Sheets. Leave a cost blank to keep it as it is. Save as CSV.</li>
+      <li>Fill in the <strong>Cost</strong> column (and change the <strong>Price</strong> where you want) in Excel or Google Sheets. Leave a cost blank to keep it as it is. Save as CSV.</li>
       <li><label class="btn ghost">Choose the file<input type="file" id="ci-file" accept=".csv,text/csv,.txt" hidden></label> <span class="muted">a supplier’s list or the Shopify product CSV works too, if it has a Cost column and a SKU, barcode or product name</span></li></ol>
     <div id="ci-plan"></div>`, {
     okLabel: 'Save the costs', onOk: async () => {
-      if (!plan || !plan.changes.length) { toast(plan ? 'Nothing to change' : 'Choose the file first', 'warn'); return false; }
+      const withPrices = !!(m.wrap.querySelector('#ci-prices') || {}).checked;
+      if (!plan || (!plan.changes.length && !(withPrices && plan.prices.length))) { toast(plan ? (plan.prices.length ? 'Tick “Also change these prices” to save the prices' : 'Nothing to change') : 'Choose the file first', 'warn'); return false; }
       if (busy) return false; busy = true;
       const ok = m.wrap.querySelector('#modal-ok'); ok.disabled = true; ok.textContent = 'Saving…';
-      try { const n = await applyCosts(plan, eid); toast(n + ' cost' + (n === 1 ? '' : 's') + ' saved'); return true; }
+      try { const n = await applyCosts(plan, eid, withPrices); toast([n.costs ? n.costs + ' cost' + (n.costs === 1 ? '' : 's') : '', n.prices ? n.prices + ' price' + (n.prices === 1 ? '' : 's') : ''].filter(Boolean).join(' and ') + ' saved'); return true; }
       catch (e) { toast('Saving stopped: ' + e.message + '. Nothing after that was changed; try again.', 'warn'); busy = false; ok.disabled = false; ok.textContent = 'Save the costs'; return false; }
     }
   });
@@ -167,11 +186,13 @@ export function openCostImport(d, eid) {
     r.onload = () => {
       const el = m.wrap.querySelector('#ci-plan');
       try { plan = planCosts(r.result, d, eid); } catch (err) { plan = null; el.innerHTML = `<p class="warn">${esc(err.message)}</p>`; return; }
-      const c = plan.changes;
+      const c = plan.changes, pr = plan.prices;
       el.innerHTML = `<div class="ci-sum"><strong>${c.length} cost${c.length === 1 ? '' : 's'} to change</strong> · ${plan.same} the same · ${plan.blank} left blank${plan.missing.length ? ` · <span class="warn">${plan.missing.length} not found</span>` : ''}${plan.bad.length ? ` · <span class="warn">${plan.bad.length} not a number</span>` : ''}</div>
         ${c.length ? `<div class="pk-list">${c.slice(0, 60).map(x => `<div class="pk-row"><strong>${esc(x.it.label)}</strong><span>${esc(money(x.it.now))} → <strong>${esc(money(x.to))}</strong>${x.fromVariants ? ' <span class="muted">(from its variants)</span>' : ''}</span></div>`).join('')}${c.length > 60 ? `<div class="pk-row muted">… and ${c.length - 60} more</div>` : ''}</div>` : ''}
+        ${pr.length ? `<div class="ci-prices"><label class="chk"><input type="checkbox" id="ci-prices"> <strong>Also change these ${pr.length} price${pr.length === 1 ? '' : 's'}</strong></label> <span class="muted">the selling price in the file differs from the POS; left as they are unless ticked</span>
+          <div class="pk-list">${pr.slice(0, 60).map(x => `<div class="pk-row"><strong>${esc(x.it.label)}</strong><span>${esc(money(x.it.price))} → <strong>${esc(money(x.to))}</strong></span></div>`).join('')}${pr.length > 60 ? `<div class="pk-row muted">… and ${pr.length - 60} more</div>` : ''}</div></div>` : ''}
         ${plan.missing.length ? `<details class="ci-miss"><summary>Not found (left alone)</summary>${plan.missing.slice(0, 50).map(x => `<div class="muted">Line ${x.line}: ${esc(x.what)}${x.many ? ' (more than one product matches)' : ''}</div>`).join('')}${plan.missing.length > 50 ? `<div class="muted">… and ${plan.missing.length - 50} more</div>` : ''}</details>` : ''}
-        ${plan.bad.length ? `<details class="ci-miss"><summary>Cost not a number (left alone)</summary>${plan.bad.slice(0, 30).map(x => `<div class="muted">Line ${x.line}: ${esc(x.what)}: “${esc(x.cost)}”</div>`).join('')}</details>` : ''}`;
+        ${plan.bad.length ? `<details class="ci-miss"><summary>Cost or price not a number (left alone)</summary>${plan.bad.slice(0, 30).map(x => `<div class="muted">Line ${x.line}: ${esc(x.what)}: “${esc(x.cost)}”</div>`).join('')}</details>` : ''}`;
     };
     r.readAsText(f);
     e.target.value = '';

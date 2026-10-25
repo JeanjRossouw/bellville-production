@@ -55,7 +55,7 @@ export function productsHtml(d) {
   return `<div class="page-head"><h1>Products</h1>
       <div class="btn-row" style="margin:0">
         ${mine.length > 1 ? `<select id="pr-entity" class="in-sm">${mine.map(e => `<option value="${esc(e.id)}"${e.id === eid ? ' selected' : ''}>${esc(e.tradingName || e.legalName)}</option>`).join('')}</select>` : ''}
-        ${edits ? `<label class="btn ghost" title="Shopify's product CSV">Import CSV<input type="file" id="pr-file" accept=".csv,text/csv" hidden></label><button class="btn ghost" data-act="pr-export">Export CSV</button><button class="btn ghost" data-act="pr-costs" title="Cost prices from a spreadsheet: nothing else changes">Import costs</button>` : ''}
+        ${edits ? `<label class="btn ghost" title="Shopify's product CSV">Import CSV<input type="file" id="pr-file" accept=".csv,text/csv" hidden></label><button class="btn ghost" data-act="pr-export">Export CSV</button><button class="btn ghost" data-act="pr-costs" title="Costs, and prices if you want, from a spreadsheet">Import costs &amp; prices</button>` : ''}
         <button class="btn ghost" data-act="pr-labels" title="Barcode labels for the ticked products">Labels</button>
         ${edits ? '<button class="btn primary" data-act="pr-new">＋ New product</button>' : ''}
       </div></div>

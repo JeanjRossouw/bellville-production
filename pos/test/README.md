@@ -143,7 +143,9 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   cost; blank, unknown, doubtful and non-number rows left alone; only the
   cost changes (prices, barcodes, pictures, VAT class, stamps kept); another
   company's same SKU untouched; the audit row; the Shopify product CSV used
-  as a costs file. `node pos/test/costimport.test.mjs`
+  as a costs file; selling prices from a Price column, listed apart and
+  saved only when ticked (product and variant prices, the audit row).
+  `node pos/test/costimport.test.mjs`
 - `shopify-api.test.mjs` — step 17: `pos-shopify` against a mock Shopify in
   the test: connect, locations mapped, products linked by SKU with content
   pulled, stock pushed after a sale and by "push all", a webhook order

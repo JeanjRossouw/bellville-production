@@ -442,3 +442,4 @@ button.link { background: none; border: 0; padding: 0; color: var(--ink-2); text
 /* Import costs */
 .ci-steps { padding-left: 1.2rem; margin: .4rem 0 .8rem; } .ci-steps li { margin-bottom: .55rem; } .ci-steps .btn { margin-right: .4rem; }
 .ci-sum { margin: .4rem 0 .5rem; } .ci-miss { margin-top: .6rem; font-size: 12.5px; } .ci-miss summary { cursor: pointer; font-weight: 600; }
+.ci-prices { margin-top: .7rem; padding-top: .6rem; border-top: 1px dashed var(--line); } .ci-prices .pk-list { margin-top: .4rem; }
