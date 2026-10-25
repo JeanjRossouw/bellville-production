@@ -123,7 +123,7 @@ await p.screenshot({ path: S + '/shots/pos2-pinpad.png' });
 await pinType('#login-pin', '999999'); R.wrongPin = await p.locator('#login-pin .pin-msg').innerText(); check('wrong PIN refused', /not known/.test(R.wrongPin), R.wrongPin);
 await pinType('#login-pin', '111111'); await p.waitForSelector('#app:not([hidden])', { timeout: 15000 }); await p.waitForTimeout(800);
 R.cashWho = await who(); check('cashier signed in by PIN', /Cathy.*Cashier/i.test(R.cashWho), R.cashWho);
-R.cashNav = await p.$$eval('#nav [data-view]', x => x.map(y => y.dataset.view)); check('cashier menu on a till with a register: the selling tabs and Register, no Stock, Reports or Admin', R.cashNav.join() === 'sell,register,home,sales,returns,laybys,orders,quotes,customers,products,me', R.cashNav);
+R.cashNav = await p.$$eval('#nav [data-view]', x => x.map(y => y.dataset.view)); check('cashier menu on a till with a register: the selling tabs and Register, no Stock, Reports or Admin', R.cashNav.join() === 'sell,register,home,todo,sales,returns,laybys,orders,quotes,customers,products,me', R.cashNav);
 R.fbUser = await p.evaluate(() => window.POS.session.uid); check('signed in as her own uid', R.fbUser === uid('Cathy'), R.fbUser);
 check('lock button shows for a PIN user', await p.locator('#lock').isVisible());
 
