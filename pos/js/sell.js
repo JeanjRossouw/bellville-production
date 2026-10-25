@@ -15,7 +15,7 @@ import { icon } from './icons.js';
 import { saveCustomer, consentFields, readConsent } from './customers.js';
 import { openPay } from './pay.js';
 import { pickerHtml, wirePicker, pickedFabric } from './fabrics.js';
-import { fabricMetresOf, fabricCentsFor } from './special-terms.js';
+import { fabricMetresOf, fabricCentsFor, framePriceOf, upholsteredOf, fabricLabel } from './special-terms.js';
 
 const ROLE_ORDER = ['cashier', 'supervisor', 'manager', 'owner'];
 let ctx = { repaint() {}, data: () => ({}) };     // set by app.js
@@ -80,6 +80,8 @@ export function addItem(p, v, qty = 1) {
       qty, listPriceCents: priceOf(p, v), unitPriceCents: priceOf(p, v), priceOverride: null, discountCents: 0, discountPct: 0, discountReason: '', discountBy: null, note: '',
       type: p.type, vatClass: p.vatClass || 'standard', trackStock: p.trackStock !== false && p.type === 'stock', costCents: (v && v.costCents != null ? v.costCents : p.costCents) || 0 });
   }
+  const added = c.lines[c.lines.length - 1];
+  if (!have && framePriceOf(p, v) > 0 && added && added.itemId === itemId) { persist(); ctx.repaint(); return lineFabric(c.lines.length - 1); }
   if (p.trackStock !== false && p.type === 'stock') {
     const onHand = stockOf(itemId), inCart = c.lines.filter(l => l.itemId === itemId).reduce((n, l) => n + l.qty, 0);
     if (inCart > onHand) toast(`Only ${onHand} on hand here: this sale takes stock to ${onHand - inCart}.`, 'warn');
@@ -146,6 +148,7 @@ export function sellHtml() {
           <strong class="pos-line-tot">${esc(money(l.lineTotalCents))}</strong>
         </div>
         <div class="pos-line-disc"><button class="btn ghost sm" data-act="sl-line-disc" data-i="${i}">${l.discountCents ? '− ' + esc(money(l.discountCents)) + (l.discountPct ? ' (' + esc(l.discountPct) + '%)' : '') + (l.discountBy ? ' · ' + esc(l.discountBy.name) : '') : 'Discount'}</button>
+          ${lineCanFabric(l) ? `<button class="btn ghost sm" data-act="sl-fabric" data-i="${i}">${icon('fabric')} ${l.spec && (l.spec.fabricId || l.spec.frame) ? (l.spec.frame ? 'Frame + ' : '') + esc(l.spec.fabricId ? (fabricList().find(f => f.id === l.spec.fabricId) || {}).design || 'fabric' : l.spec.fabric || 'own fabric') : 'Fabric'}</button>` : ''}
           <button class="btn ghost sm" data-act="sl-note" data-i="${i}">${l.type === 'mto' ? (l.spec && (l.spec.fabric || l.spec.size || l.spec.colour) ? esc([l.spec.size, l.spec.fabric, l.spec.colour, l.spec.legs].filter(Boolean).join(' · ')) : 'Specification') + (l.note ? ' · ' + esc(l.note) : '') : l.note ? esc(l.note) : 'Note'}</button>${l.type === 'mto' ? '<span class="chip prod">made to order</span>' : ''}${l.fabricCents ? `<span class="chip">fabric +${esc(money(l.fabricCents))}</span>` : ''}${l.quote ? `<span class="chip ok" title="The price of quote ${esc(l.quote.docNo)}">quoted ${esc(l.quote.docNo)}</span>` : ''}${l.trackStock && stockOf(l.itemId) < l.qty ? '<span class="chip late">stock goes negative</span>' : ''}</div>
       </div>`).join('') : `<div class="pos-cart-empty">${icon('cart')}<span>No items yet</span><small>Scan a barcode or tap a product</small></div>`}</div>
       <div class="pos-totals">
@@ -161,6 +164,7 @@ export function sellHtml() {
         <button data-act="sl-recall"${park.length ? '' : ' disabled'}>${icon('list')}Recall${park.length ? ' (' + park.length + ')' : ''}</button>
         <button data-act="sl-void"${c.lines.length ? '' : ' disabled'}>${icon('undo')}Void sale</button>
         <button data-act="sl-custom">${icon('plus')}Custom item</button>
+        <button data-act="sl-delivery" title="A delivery fee, with the address, on this sale or sales order">${icon('pin')}Delivery</button>
         <button data-act="sl-layby"${c.lines.length && ctx.onLayby ? '' : ' disabled'} title="Put this sale on lay-by">${icon('box')}Lay-by</button>
         <button data-act="sl-special"${c.lines.some(l => l.type === 'mto') && ctx.onSpecial ? '' : ' disabled'} title="Made to order: the spec signed off, a deposit now and the rest before delivery">${icon('truck')}Sales order</button>
         <button data-act="sl-quote"${c.lines.length && ctx.onQuote ? '' : ' disabled'} title="A numbered quotation of this sale, valid for some days, to print or send">${icon('file')}Quote</button>
@@ -181,6 +185,8 @@ export async function action(act, b) {
     case 'sl-qty': { const l = c.lines[i]; if (!l) return; l.qty = Math.max(1, l.qty + Number(b.dataset.d)); if (l.discountPct) l.discountCents = pctOf(l.qty * l.unitPriceCents, l.discountPct); persist(); return ctx.repaint(); }
     case 'sl-void-line': return voidLine(i);
     case 'sl-note': return lineNote(i);
+    case 'sl-fabric': return lineFabric(i);
+    case 'sl-delivery': return delivery();
     case 'sl-line-disc': return lineDiscount(i);
     case 'sl-cart-disc': return cartDiscount();
     case 'sl-price': return priceOverride(i);
@@ -262,7 +268,7 @@ function lineNote(i) {
     ${field('Note on the slip', 'ln-note', { value: l.note, placeholder: 'e.g. deliver Friday' })}`, { okLabel: 'Save', onOk: (w) => {
       const fab = pickedFabric(w, 'ln-fab');
       if (l.quote && (fab.fabricId || '') !== ((l.spec && l.spec.fabricId) || '')) delete l.quote;   // another fabric: the quote's price no longer applies
-      l.spec = { model: val(w, 'ln-model'), size: val(w, 'ln-size'), fabric: fab.fabric, fabricId: fab.fabricId, colour: val(w, 'ln-colour'), legs: val(w, 'ln-legs'), notes: val(w, 'ln-notes') };
+      l.spec = { model: val(w, 'ln-model'), size: val(w, 'ln-size'), fabric: fab.fabric, fabricId: fab.fabricId, frame: !!(l.spec && l.spec.frame), colour: val(w, 'ln-colour'), legs: val(w, 'ln-legs'), notes: val(w, 'ln-notes') };
       l.note = val(w, 'ln-note'); priceWithFabric(l); persist(); ctx.repaint(); return true; } });
   wirePicker(m.wrap, 'ln-fab', fabs);
 }
@@ -273,12 +279,65 @@ const itemOfLine = (l) => { const p = d().products.find(x => x.id === l.productI
 // (the server works it out the same way and refuses a sale that does not match)
 export function priceWithFabric(l) {
   const { p, v } = itemOfLine(l); if (!p) return;
-  const f = l.spec && l.spec.fabricId ? fabricList().find(x => x.id === l.spec.fabricId) : null;
-  const base = priceOf(p, v), add = f ? fabricCentsFor(fabricMetresOf(p, v), f.priceCents) : 0;
+  const sp = l.spec || {}, chosen = upholsteredOf(p, v) && !!(sp.fabricId || sp.frame);
+  const f = chosen && sp.fabricId ? fabricList().find(x => x.id === sp.fabricId) : null;
+  const frame = chosen ? framePriceOf(p, v) : 0;
+  const base = frame > 0 ? frame : priceOf(p, v), add = f ? fabricCentsFor(fabricMetresOf(p, v), f.priceCents) : 0;
   l.fabricCents = add;
+  // a stocked couch made in a chosen fabric is made for the customer: no stock taken (the server does the same)
+  const made = p.type === 'mto' || chosen;
+  l.type = made ? 'mto' : p.type; l.trackStock = !made && p.trackStock !== false && p.type === 'stock';
   const list = base + add;
   if (!l.priceOverride) { l.listPriceCents = list; l.unitPriceCents = list; } else l.listPriceCents = list;
   if (l.discountPct) l.discountCents = pctOf(l.qty * l.unitPriceCents, l.discountPct);
+}
+const lineCanFabric = (l) => { const { p, v } = itemOfLine(l); return !l.custom && upholsteredOf(p, v); };
+// the fabric of a couch: as shown (its price, from stock when it is stocked), or the frame with a fabric of the
+// customer's choice: a catalogue fabric adds its metres × price per metre, the customer's own fabric adds nothing
+function lineFabric(i) {
+  const l = sale.cart.lines[i]; if (!l) return;
+  const { p, v } = itemOfLine(l); if (!p) return;
+  const frame = framePriceOf(p, v), metres = fabricMetresOf(p, v), fabs = fabricList(), sp = l.spec || {};
+  const how0 = sp.frame || (frame > 0 && sp.fabricId) ? 'frame' : sp.fabricId ? 'fabric' : 'shown';
+  const m = openModal('Fabric: ' + l.name, `
+    ${frame > 0 ? `<div class="fb-how">
+      <label class="chk"><input type="radio" name="fb-how" value="shown"${how0 === 'shown' ? ' checked' : ''}> <span><strong>As shown</strong> · ${esc(money(priceOf(p, v)))}${p.type === 'stock' ? ' · from stock' : ''}</span></label>
+      <label class="chk"><input type="radio" name="fb-how" value="frame"${how0 === 'frame' ? ' checked' : ''}> <span><strong>Frame</strong> · ${esc(money(frame))} + the fabric the customer chooses (made to order)</span></label></div>` : ''}
+    <div id="fb-pickwrap">${pickerHtml('ln-fab2', fabs, sp.fabricId, sp.fabric, metres)}</div>
+    <p class="muted">Search the catalogue, or type the customer’s own fabric (nothing is added for it).</p>
+    <div class="fb-total">Price: <strong id="fb-total"></strong></div>`, { okLabel: 'Use this', onOk: (w) => {
+      const how = frame > 0 ? (w.querySelector('input[name=fb-how]:checked') || {}).value : 'fabric';
+      const fab = pickedFabric(w, 'ln-fab2');
+      const had = (l.spec && l.spec.fabricId) || '';
+      if (how === 'shown') { if (l.spec) { delete l.spec.fabricId; delete l.spec.frame; if (!fab.fabricId) l.spec.fabric = ''; } }
+      else l.spec = { ...(l.spec || {}), model: (l.spec && l.spec.model) || p.name, fabric: fab.fabric, fabricId: fab.fabricId, frame: how === 'frame' };
+      if (l.quote && ((l.spec && l.spec.fabricId) || '') !== had) delete l.quote;
+      priceWithFabric(l); persist(); ctx.repaint(); return true; } });
+  const w = m.wrap;
+  const total = () => {
+    const how = frame > 0 ? (w.querySelector('input[name=fb-how]:checked') || {}).value : 'fabric';
+    w.querySelector('#fb-pickwrap').hidden = how === 'shown';
+    const f = fabs.find(x => x.id === (w.querySelector('#ln-fab2') || {}).dataset.fabric);
+    const cents = how === 'shown' ? priceOf(p, v) : (how === 'frame' ? frame : priceOf(p, v)) + (f ? fabricCentsFor(metres, f.priceCents) : 0);
+    w.querySelector('#fb-total').textContent = money(cents) + (f && how !== 'shown' ? ' (incl. ' + fabricLabel(f) + ')' : '');
+  };
+  wirePicker(w, 'ln-fab2', fabs, total);
+  w.addEventListener('change', total); total();
+}
+// a delivery fee on the sale (or the sales order): a line with the address, standard VAT
+function delivery() {
+  const cu = sale.cart.customer, a = (cu && cu.address) || {};
+  const fee = Number((settings().delivery || {}).defaultFeeCents) || 0;
+  openModal('Delivery', `${row(field('Street', 'dl-line1', { value: a.line1 || '' }), field('Suburb', 'dl-line2', { value: a.line2 || '' }))}
+    ${row(field('City', 'dl-city', { value: a.city || '' }), field('Delivery fee (R, incl. VAT)', 'dl-fee', { value: fee ? randsOf(fee) : '', inputmode: 'decimal' }))}
+    ${field('Note for the driver (optional)', 'dl-note', { placeholder: 'e.g. 3rd floor, no lift' })}`, {
+    okLabel: 'Add delivery', onOk: (w) => {
+      const where = [val(w, 'dl-line1'), val(w, 'dl-line2'), val(w, 'dl-city')].filter(Boolean).join(', '), cents = centsOf(val(w, 'dl-fee'));
+      if (!where) { toast('Where to: the street or the suburb.', 'warn'); return false; }
+      if (!(cents >= 0) || val(w, 'dl-fee') === '') { toast('The delivery fee (0 for free delivery).', 'warn'); return false; }
+      sale.cart.lines.push({ lineId: newId('x'), productId: '', variantId: '', itemId: '', name: 'Delivery to ' + where, sku: '', barcode: '', qty: 1, listPriceCents: cents, unitPriceCents: cents, priceOverride: null, discountCents: 0, discountPct: 0, discountReason: '', discountBy: null, note: val(w, 'dl-note'), type: 'nonstock', vatClass: 'standard', trackStock: false, costCents: 0, custom: true, delivery: { address: where } });
+      persist(); ctx.repaint(); return true; }
+  });
 }
 // a discount needs a reason; over my limit, the PIN of a role that may give it
 async function approveDiscount(pct, what) {
@@ -421,7 +480,7 @@ export function loadQuote(q) {
     const l = { lineId: newId('x'), productId: ql.productId || '', variantId: ql.variantId || '', itemId: v ? v.id : p ? p.id : '', name: ql.name, sku: ql.sku || '', barcode: '', qty: ql.qty,
       listPriceCents: ql.unitPriceCents, unitPriceCents: ql.unitPriceCents, priceOverride: null, discountCents: ql.discountCents || 0, discountPct: ql.discountPct || 0, discountReason: ql.discountReason || '', discountBy: null, note: '',
       type: ql.custom ? 'nonstock' : p.type, vatClass: ql.vatClass || 'standard', trackStock: !!ql.trackStock, costCents: ql.costCents || 0, custom: !!ql.custom,
-      ...(ql.spec ? { spec: { model: ql.spec.model || '', size: ql.spec.size || '', fabric: ql.spec.fabric || '', fabricId: ql.spec.fabricId || '', colour: ql.spec.colour || '', legs: ql.spec.legs || '', notes: ql.spec.notes || '' } } : {}),
+      ...(ql.spec ? { spec: { model: ql.spec.model || '', size: ql.spec.size || '', fabric: ql.spec.fabric || '', fabricId: ql.spec.fabricId || '', frame: !!ql.spec.frame, colour: ql.spec.colour || '', legs: ql.spec.legs || '', notes: ql.spec.notes || '' } } : {}),
       quote: { id: q.id, lineNo: ql.lineNo, docNo: q.docNo } };
     if (p) { priceWithFabric(l); l.unitPriceCents = ql.unitPriceCents; l.fabricCents = ql.spec && ql.spec.fabricCents || 0; }
     lines.push(l);

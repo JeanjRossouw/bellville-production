@@ -5,7 +5,7 @@
 //   prepareSale(ctx, b, opts)    prices every line, checks discounts, overrides, totals, VAT and tenders; no writes
 //   saleWrites(tx, ctx, prep, saleId, b)   inside a transaction: the number, stock, vouchers; → { writes, result }
 //   runSale(ctx, b, { more })    the transaction loop; `more(tx)` adds writes (an exchange's credit note) and a result
-import { SPEC_FIELDS, fabricLabel, fabricMetresOf, fabricCentsFor } from '../../../pos/js/special-terms.js';
+import { SPEC_FIELDS, fabricLabel, fabricMetresOf, fabricCentsFor, framePriceOf, upholsteredOf } from '../../../pos/js/special-terms.js';
 import { Reject, clean, randomId, nowIso, rank, getDoc, query, commit, beginTransaction, rollback, serverStamp, loginOf, loadUser, inEntity, inStore, verifyOverrideToken, loadDevice, createDoc, patchDoc } from './pos.mjs';
 import { vatIn, rateOn, rateFor, lineTotals, roundTo10c } from '../../../pos/js/money.js';
 import { loyaltySettings, tierFor, earnPoints, pointsFor, sweep, earnLot, redeem, compactLots, blankLoyalty, blankStats } from '../../../pos/js/loyalty-terms.js';
@@ -169,14 +169,17 @@ export async function prepareSale(ctx, b, opts = {}) {
       listPrice = await priceOf(ctx, p, v); name = p.name + (v ? ' · ' + v.name : ''); vatClass = p.vatClass || 'standard'; type = p.type || 'stock';
       trackStock = p.trackStock !== false && type === 'stock'; costCents = (v && v.costCents != null ? v.costCents : p.costCents) || 0; itemId = v ? v.id : p.id;
     }
-    // a made-to-order item in a catalogue fabric: the metres it takes at the fabric's price per metre, priced here, never by the till
+    // a couch in a fabric of the customer's choice, priced here, never by the till: the frame price when it has one (else
+    // its price) + the metres it takes × the catalogue fabric's price per metre (nothing for the customer's own fabric).
+    // A stocked couch made in another fabric is made for the customer: a made-to-order line, no stock taken.
     let fabricCharge = null;
-    if (p && type === 'mto' && l.spec && typeof l.spec === 'object' && l.spec.fabricId) {
-      const fid = clean(l.spec.fabricId, 60), f = await getDoc('fabrics', fid);
-      if (!f || f.entityId !== ctx.entityId || (f.archived && !opts.trusted)) throw new Reject(400, `Line ${n}: that fabric is not in the catalogue.`);
-      const metres = fabricMetresOf(p, v), perMetre = int(f.priceCents) || 0;
-      fabricCharge = { fabricId: fid, fabric: fabricLabel(f), fabricMetres: metres, fabricPerMetreCents: perMetre, fabricCents: fabricCentsFor(metres, perMetre) };
-      listPrice += fabricCharge.fabricCents;
+    if (upholsteredOf(p, v) && l.spec && typeof l.spec === 'object' && (l.spec.fabricId || l.spec.frame)) {
+      let f = null; const fid = clean(l.spec.fabricId, 60);
+      if (fid) { f = await getDoc('fabrics', fid); if (!f || f.entityId !== ctx.entityId || (f.archived && !opts.trusted)) throw new Reject(400, `Line ${n}: that fabric is not in the catalogue.`); }
+      const frame = framePriceOf(p, v), metres = f ? fabricMetresOf(p, v) : 0, perMetre = f ? int(f.priceCents) || 0 : 0;
+      fabricCharge = { fabricId: f ? fid : '', fabric: f ? fabricLabel(f) : clean(l.spec.fabric, 120), fabricMetres: metres, fabricPerMetreCents: perMetre, fabricCents: fabricCentsFor(metres, perMetre), frame: frame > 0, framePriceCents: frame };
+      listPrice = (frame > 0 ? frame : listPrice) + fabricCharge.fabricCents;
+      if (type === 'stock') { type = 'mto'; trackStock = false; }
     }
     // the price: the list price, or an override a manager approved
     let unit = int(l.unitPriceCents), override = null;

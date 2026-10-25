@@ -152,7 +152,11 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   specification picks a fabric and the price follows; the server prices it
   again (a sale and a custom order go through, a till that leaves the fabric
   out, another company's or an archived fabric are refused); a cashier
-  reads but cannot write the catalogue. `node pos/test/fabrics.test.mjs`
+  reads but cannot write the catalogue; a stocked couch with a frame price:
+  as shown from stock, or the frame + a fabric (made to order, no stock
+  taken), the line's Fabric button, a Delivery line; the server prices the
+  frame (with a catalogue or the customer's own fabric) and refuses less.
+  `node pos/test/fabrics.test.mjs`
 - `quotes.test.mjs` — quotes and the Sales order button: a quote priced by
   the server (fabric included), numbered, valid for some days, with or
   without the customer; its prices hold in a sale or a sales order (a

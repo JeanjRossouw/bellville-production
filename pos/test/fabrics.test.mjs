@@ -41,6 +41,7 @@ await prod('p_sofa', { name: 'Chesterfield 3 Seater', priceCents: 900000, fabric
 await prod('p_couch', { name: 'Modular Couch', priceCents: 900000, fabricMetres: 11, hasVariants: true, options: [{ name: 'Size', values: ['2 Seater', '3 Seater'] }] });
 await put('pos/retail/variants/v2', { productId: 'p_couch', name: '2 Seater', optionValues: { Size: '2 Seater' }, sku: 'MC2', barcodes: [], priceCents: 700000, costCents: null, fabricMetres: 8, storePrices: {}, archived: false, ...srv('BF') });
 await put('pos/retail/variants/v3', { productId: 'p_couch', name: '3 Seater', optionValues: { Size: '3 Seater' }, sku: 'MC3', barcodes: [], priceCents: null, costCents: null, storePrices: {}, archived: false, ...srv('BF') });
+await prod('p_daybed', { name: 'Kendra Daybed', type: 'stock', trackStock: true, priceCents: 2399900, framePriceCents: 1500000, fabricMetres: 10 });
 await put('pos/retail/customers/c1', { name: 'Thandi Mokoena', phone: '0825550101', email: '', vatNo: '', address: { line1: '5 Lane', city: 'Parow' }, accountEnabled: false, creditLimitCents: 0, storeCreditCents: 0, accountBalanceCents: 0, notes: '', archived: false, ...srv('BF') });
 // another company's fabric
 await put('pos/retail/fabrics/f_other', { supplier: 'X', design: 'Elsewhere', collection: '', costCents: 10000, markupPct: 80, minPriceCents: 25000, priceCents: 25000, archived: false, ...srv('ZZ') });
@@ -114,6 +115,24 @@ R.own = await txt('#ln-fab .fb-pick-note'); await p.click('#modal-ok'); await p.
 const line2 = await p.evaluate(() => JSON.parse(Object.entries(localStorage).find(([k]) => k.startsWith('pos-cart-'))[1]).lines[0]);
 check('the customer’s own fabric: nothing added, back to R 9,000', /Not from the catalogue: nothing is added/.test(R.own) && line2.unitPriceCents === 900000 && !line2.spec.fabricId && line2.spec.fabric === 'Customer’s own velvet', [R.own, line2.unitPriceCents, line2.spec]);
 
+// ---- a stocked couch with a frame price: as shown, or the frame + a fabric of choice; the Fabric button; a delivery
+await p.click('.pos-tile:has-text("Kendra Daybed")'); await p.waitForSelector('input[name=fb-how]');
+R.how = await txt('#modal'); check('adding it asks: as shown from stock, or the frame + a fabric', /As shown · R 23,999\.00 · from stock/.test(R.how) && /Frame · R 15,000\.00 \+ the fabric the customer chooses/.test(R.how), R.how.slice(0, 300));
+await p.check('input[name=fb-how][value=frame]'); await p.fill('#ln-fab2 .fb-pick-q', 'acap'); await p.waitForTimeout(200); await p.click('#ln-fab2 .fb-pick-row:has-text("Acapella")'); await p.waitForTimeout(200);
+R.tot = await txt('#fb-total'); check('frame R 15,000 + 10 m × R 1,086.75 = R 25,867.50', /R 25,867\.50/.test(R.tot), R.tot);
+await p.click('#modal-ok'); await p.waitForTimeout(400);
+let cl = (await p.evaluate(() => JSON.parse(Object.entries(localStorage).find(([k]) => k.startsWith('pos-cart-'))[1]))).lines;
+let dl = cl.find(l => l.productId === 'p_daybed');
+check('the line: R 25,867.50, made to order (no stock taken), the frame and the fabric kept', dl.unitPriceCents === 2586750 && dl.type === 'mto' && dl.trackStock === false && dl.spec.frame === true && dl.spec.fabricId === F('Acapella').id, dl);
+R.fbtn = await txt('.pos-line:has-text("Kendra Daybed") [data-act=sl-fabric]'); check('the line’s Fabric button says Frame + Acapella', /Frame \+ Acapella/i.test(R.fbtn), R.fbtn);
+await p.click('.pos-line:has-text("Kendra Daybed") [data-act=sl-fabric]'); await p.waitForSelector('input[name=fb-how]');
+await p.check('input[name=fb-how][value=shown]'); await p.click('#modal-ok'); await p.waitForTimeout(400);
+cl = (await p.evaluate(() => JSON.parse(Object.entries(localStorage).find(([k]) => k.startsWith('pos-cart-'))[1]))).lines; dl = cl.find(l => l.productId === 'p_daybed');
+check('as shown again: R 23,999.00 from stock', dl.unitPriceCents === 2399900 && dl.type === 'stock' && dl.trackStock === true && !dl.spec.frame && !dl.spec.fabricId, dl);
+await p.click('[data-act=sl-delivery]'); await p.waitForSelector('#dl-line1');
+await p.fill('#dl-line1', '5 Lane'); await p.fill('#dl-city', 'Parow'); await p.fill('#dl-fee', '450'); await p.click('#modal-ok'); await p.waitForTimeout(400);
+R.cart2 = await txt('.pos-cart'); check('the delivery line: to the address, R 450', /Delivery to 5 Lane, Parow/.test(R.cart2) && /R 450\.00/.test(R.cart2), R.cart2.slice(0, 600));
+
 // ---- the server prices it again
 const call = async (fn, body, token = cas.idToken) => { const r = await fetch(FN + fn, { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify(body) }); return { status: r.status, ...(await r.json()) }; };
 const bell = { entityId: 'BF', storeId: 'BF-BELL', registerId: '' };
@@ -123,6 +142,13 @@ const acap = F('Acapella').id, tic = F('Ticino').id, arch = F('Archway').id;
 R.sale = await call('pos-sale', saleBody([{ productId: 'p_sofa', variantId: '', qty: 1, unitPriceCents: 2204100, discountCents: 0, spec: { model: 'Chesterfield', fabric: 'whatever the till typed', fabricId: acap, colour: 'Charcoal' } }], 2204100));
 const sl = R.sale.lines && R.sale.lines[0];
 check('a sale in Acapella: priced by the server, the fabric on the spec', R.sale.ok && sl.listPriceCents === 2204100 && !sl.priceOverride && sl.spec.fabricId === acap && sl.spec.fabric === 'Acapella (Grenoble) · FibreGuard (Home Fabrics)' && sl.spec.fabricMetres === 12 && sl.spec.fabricPerMetreCents === 108675 && sl.spec.fabricCents === 1304100, R.sale.error || sl);
+R.frame = await call('pos-sale', saleBody([{ productId: 'p_daybed', variantId: '', qty: 1, unitPriceCents: 2586750, discountCents: 0, spec: { frame: true, fabricId: acap } }], 2586750));
+const fl = R.frame.lines && R.frame.lines[0];
+check('the frame + Acapella sold: R 25,867.50, made to order, no stock moved, the frame on the spec', R.frame.ok && fl.type === 'mto' && fl.fulfilment === 'mto' && !fl.trackStock && fl.spec.frame === true && fl.spec.framePriceCents === 1500000 && fl.spec.fabricCents === 1086750 && R.frame.salesOrder, R.frame.error || fl);
+R.own = await call('pos-sale', saleBody([{ productId: 'p_daybed', variantId: '', qty: 1, unitPriceCents: 1500000, discountCents: 0, spec: { frame: true, fabric: 'Customer’s own linen' } }], 1500000));
+check('the frame in the customer’s own fabric: R 15,000', R.own.ok && R.own.lines[0].unitPriceCents === 1500000 && R.own.lines[0].spec.fabric === 'Customer’s own linen' && R.own.lines[0].spec.fabricCents === 0, R.own.error || R.own.lines);
+R.cheap = await call('pos-sale', saleBody([{ productId: 'p_daybed', variantId: '', qty: 1, unitPriceCents: 1400000, discountCents: 0, spec: { frame: true } }], 1400000));
+check('under the frame price: refused', R.cheap.status === 403, R.cheap);
 R.tamper = await call('pos-sale', saleBody([{ productId: 'p_sofa', variantId: '', qty: 1, unitPriceCents: 900000, discountCents: 0, spec: { fabricId: acap } }], 900000));
 check('a till that leaves the fabric out: refused', R.tamper.status === 403 && /without a manager/.test(R.tamper.error), R.tamper);
 R.other = await call('pos-sale', saleBody([{ productId: 'p_sofa', variantId: '', qty: 1, unitPriceCents: 900000 + 300000, discountCents: 0, spec: { fabricId: 'f_other' } }], 1200000));

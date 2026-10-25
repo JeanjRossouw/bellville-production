@@ -221,7 +221,7 @@ export function openNew(cart, t, onDone) {
   wrap.querySelector('.modal-card').classList.add('wide');
   pad = wirePad(wrap.querySelector('#so-pad'));
   // the specification as typed, keeping the catalogue fabric chosen on the sale (the server prices it again)
-  const specs = () => cart.lines.map((l, i) => l.type === 'mto' ? Object.fromEntries(SPEC_FIELDS.map(f => [f[0], val(wrap, 'so-' + f[0] + '-' + i)]).concat([['photo', photos[i] || ''], ['fabricId', (l.spec && l.spec.fabricId) || '']])) : null);
+  const specs = () => cart.lines.map((l, i) => l.type === 'mto' ? Object.fromEntries(SPEC_FIELDS.map(f => [f[0], val(wrap, 'so-' + f[0] + '-' + i)]).concat([['photo', photos[i] || ''], ['fabricId', (l.spec && l.spec.fabricId) || ''], ['frame', !!(l.spec && l.spec.frame)]])) : null);
   const draft = () => ({ docNo: (dd.entity.specialOrderPrefix || dd.entity.invoicePrefix + '-SO') + '-(new)', customerSnapshot: { name: cart.customer.name }, lines: t.lines.map((l, i) => ({ ...l, spec: specs()[i] })), totalCents: t.totalCents, vatRegistered: !!dd.entity.vatRegistered, minDepositCents: minDep, minDepositPct: ss.minDepositPct, leadDays: ss.leadDays });
   const preview = () => {
     const depNow = wrap.querySelector('#so-depnow').checked;
