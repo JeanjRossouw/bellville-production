@@ -205,6 +205,7 @@ small { font-size: 12px; }
 .pos-extra button:nth-child(2n) { border-right: 0; } .pos-extra button:hover { background: var(--paper); } .pos-extra button:disabled { opacity: .4; cursor: default; } .pos-extra .ico { color: var(--muted); }
 .chip.late { color: var(--red); border-color: var(--red); }
 .var-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .5rem; }
+.var-frame { margin-top: .6rem; padding-top: .6rem; border-top: 1px dashed var(--line-2); } .var-frame .var-btn svg { width: 18px; height: 18px; }
 .var-btn { font: inherit; background: #fff; border: 1px solid var(--line-2); border-radius: 6px; padding: .7rem .6rem; cursor: pointer; display: grid; gap: .15rem; text-align: left; } .var-btn:hover { border-color: var(--ink); } .var-btn span { font-size: 12px; color: var(--muted); }
 .pk-row { width: 100%; text-align: left; background: #fff; border: 0; border-bottom: 1px solid var(--line); cursor: pointer; font: inherit; } .pk-row:hover { background: var(--paper); }
 .pos-mbar { display: none; }

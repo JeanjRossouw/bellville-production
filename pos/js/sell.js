@@ -7,7 +7,7 @@
 // the limit the manager-PIN pad opens and the approver is written on the
 // line. A price override always needs a manager. The cart in progress and
 // the parked sales live on the device until step 6 writes the sale.
-import { setOne, newId } from './db.js';
+import { setOne, patchOne, newId } from './db.js';
 import * as auth from './auth.js';
 import { esc, toast, field, row, val, openModal, money } from './ui.js';
 import { lineTotals, vatIn, pctOf, rateOn, rateFor, centsOf, randsOf } from './money.js';
@@ -73,7 +73,7 @@ export function findCode(code) {
 export function addItem(p, v, qty = 1) {
   const c = sale.cart;
   const itemId = v ? v.id : p.id;
-  const have = c.lines.find(l => l.itemId === itemId && !l.priceOverride && !l.quote && !(l.spec && (l.spec.fabricId || l.spec.fabric)));   // a second couch in another fabric is its own line
+  const have = c.lines.find(l => l.itemId === itemId && !l.priceOverride && !l.quote && !(l.spec && (l.spec.fabricId || l.spec.fabric || l.spec.frame)));   // a second couch in another fabric is its own line
   if (have && p.type !== 'voucher') { have.qty += qty; }
   else {
     c.lines.push({ lineId: newId('x'), productId: p.id, variantId: v ? v.id : '', itemId, name: p.name + (v ? ' · ' + v.name : ''), sku: (v && v.sku) || p.sku || '', barcode: ((v && v.barcodes) || p.barcodes || [])[0] || '',
@@ -81,7 +81,8 @@ export function addItem(p, v, qty = 1) {
       type: p.type, vatClass: p.vatClass || 'standard', trackStock: p.trackStock !== false && p.type === 'stock', costCents: (v && v.costCents != null ? v.costCents : p.costCents) || 0 });
   }
   const added = c.lines[c.lines.length - 1];
-  if (!have && framePriceOf(p, v) > 0 && added && added.itemId === itemId) { persist(); ctx.repaint(); return lineFabric(c.lines.length - 1); }
+  // a couch without variants asks at once: as shown or the frame (with variants the picker offers the frame)
+  if (!have && !v && framePriceOf(p, v) > 0 && added && added.itemId === itemId) { persist(); ctx.repaint(); return lineFabric(c.lines.length - 1); }
   if (p.trackStock !== false && p.type === 'stock') {
     const onHand = stockOf(itemId), inCart = c.lines.filter(l => l.itemId === itemId).reduce((n, l) => n + l.qty, 0);
     if (inCart > onHand) toast(`Only ${onHand} on hand here: this sale takes stock to ${onHand - inCart}.`, 'warn');
@@ -245,8 +246,39 @@ function pickProduct(id) {
   const p = items().find(x => x.id === id); if (!p) return;
   const vs = variantsOf(p.id);
   if (!vs.length) return addItem(p, null);
-  const { wrap, close } = openModal(p.name, `<div class="var-pick">${vs.map(v => `<button class="var-btn" data-v="${esc(v.id)}"><strong>${esc(v.name)}</strong><span>${esc(money(priceOf(p, v)))}${p.trackStock !== false && p.type === 'stock' ? ' · ' + stockOf(v.id) + ' in stock' : ''}</span></button>`).join('')}</div>`, { okLabel: 'Close', cancelLabel: '', onOk: () => true });
-  wrap.addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (!b) return; close(true); addItem(p, vs.find(v => v.id === b.dataset.v)); });
+  // a couch: as shown (a variant), or the frame in a fabric of the customer's choice
+  const fv = couchLike(p) ? vs.find(v => framePriceOf(p, v) > 0) || null : null, frame = fv ? framePriceOf(p, fv) : 0;
+  const { wrap, close } = openModal(p.name, `<div class="var-pick">${vs.map(v => `<button class="var-btn" data-v="${esc(v.id)}"><strong>${esc(v.name)}</strong><span>${esc(money(priceOf(p, v)))}${p.trackStock !== false && p.type === 'stock' ? ' · ' + stockOf(v.id) + ' in stock' : ''}</span></button>`).join('')}</div>
+    ${couchLike(p) ? `<div class="var-pick var-frame"><button class="var-btn" data-frame="1">${icon('fabric')}<strong>Frame + fabric of choice</strong><span>${frame > 0 ? 'frame ' + esc(money(frame)) + ' + the fabric · made to order' : auth.atLeast('manager') ? 'set the frame price first' : 'no frame price yet: ask a manager'}</span></button></div>` : ''}`, { okLabel: 'Close', cancelLabel: '', onOk: () => true });
+  wrap.addEventListener('click', (e) => {
+    if (e.target.closest('[data-frame]')) { close(true); return frame > 0 ? addFrame(p, fv) : setFrame(p, () => pickProduct(p.id)); }
+    const b = e.target.closest('[data-v]'); if (!b) return; close(true); addItem(p, vs.find(v => v.id === b.dataset.v));
+  });
+}
+// couches, chairs, beds …: anything upholstered, or named like it (so a manager can give it a frame price from here)
+const UPHOLSTERED = /sofa|couch|corner|chair|ottoman|\bbed|headboard|chaise|modular|daybed|lounger|bench|pouf|recliner|sleeper/i;
+const couchLike = (p) => !!p && (upholsteredOf(p, null) || variantsOf(p.id).some(v => upholsteredOf(p, v)) || (['stock', 'mto'].includes(p.type) && UPHOLSTERED.test(p.name + ' ' + (p.category || ''))));
+// the frame of a couch, then the fabric: its own line, made to order
+function addFrame(p, v) {
+  const c = sale.cart, itemId = v ? v.id : p.id;
+  c.lines.push({ lineId: newId('x'), productId: p.id, variantId: v ? v.id : '', itemId, name: p.name + ' · frame', sku: (v && v.sku) || p.sku || '', barcode: '', qty: 1,
+    listPriceCents: framePriceOf(p, v), unitPriceCents: framePriceOf(p, v), priceOverride: null, discountCents: 0, discountPct: 0, discountReason: '', discountBy: null, note: '',
+    type: 'mto', vatClass: p.vatClass || 'standard', trackStock: false, costCents: (v && v.costCents != null ? v.costCents : p.costCents) || 0, spec: { model: p.name, fabric: '', fabricId: '', frame: true } });
+  persist(); ctx.repaint(); lineFabric(c.lines.length - 1, 'frame');
+}
+// a manager gives a couch its frame price (and the metres of fabric it takes) from the till: kept on the product
+function setFrame(p, then) {
+  if (!auth.atLeast('manager')) return toast('Ask a manager to set the frame price of ' + p.name + ' (Products → Frame price).', 'warn');
+  openModal('Frame price: ' + p.name, `<p class="muted">The couch without its fabric. The till then offers it in any fabric: the frame + the metres it takes × the fabric’s price per metre. Kept on the product (Products → Frame price).</p>
+    ${row(field('Frame price (R, incl. VAT)', 'fr-price', { value: p.framePriceCents > 0 ? randsOf(p.framePriceCents) : '', inputmode: 'decimal' }), field('Fabric needed (metres)', 'fr-metres', { value: p.fabricMetres || '', inputmode: 'decimal', placeholder: 'e.g. 14 for an L-shape' }))}`, {
+    okLabel: 'Save', onOk: async (w) => {
+      const cents = centsOf(val(w, 'fr-price')), m = Number(String(val(w, 'fr-metres')).replace(',', '.'));
+      if (!(cents > 0)) { toast('The frame price.', 'warn'); return false; }
+      if (!(m > 0)) { toast('How many metres of fabric it takes.', 'warn'); return false; }
+      const data = { framePriceCents: cents, fabricMetres: Math.round(m * 100) / 100 };
+      try { await patchOne('products', p.id, { ...data, ...auth.touch() }); } catch (e) { toast(e.message, 'warn'); return false; }
+      Object.assign(p, data); toast('Frame price saved on ' + p.name); if (then) setTimeout(then, 0); return true;
+    } });
 }
 function customItem() {
   openModal('Custom item', row(field('What', 'ci-name', { placeholder: 'e.g. Delivery to Parow' }), field('Price (R, incl. VAT)', 'ci-price', { inputmode: 'decimal' })) + field('VAT class', 'ci-vat', { type: 'select', value: 'standard', options: [{ value: 'standard', label: 'Standard' }, { value: 'zero', label: 'Zero-rated' }, { value: 'exempt', label: 'Exempt' }] }), {
@@ -286,6 +318,7 @@ export function priceWithFabric(l) {
   l.fabricCents = add;
   // a stocked couch made in a chosen fabric is made for the customer: no stock taken (the server does the same)
   const made = p.type === 'mto' || chosen;
+  l.name = p.name + (chosen && frame > 0 ? ' · frame' : v ? ' · ' + v.name : '');   // as the server names it
   l.type = made ? 'mto' : p.type; l.trackStock = !made && p.trackStock !== false && p.type === 'stock';
   const list = base + add;
   if (!l.priceOverride) { l.listPriceCents = list; l.unitPriceCents = list; } else l.listPriceCents = list;
@@ -294,11 +327,11 @@ export function priceWithFabric(l) {
 const lineCanFabric = (l) => { const { p, v } = itemOfLine(l); return !l.custom && upholsteredOf(p, v); };
 // the fabric of a couch: as shown (its price, from stock when it is stocked), or the frame with a fabric of the
 // customer's choice: a catalogue fabric adds its metres × price per metre, the customer's own fabric adds nothing
-function lineFabric(i) {
+function lineFabric(i, preset) {
   const l = sale.cart.lines[i]; if (!l) return;
   const { p, v } = itemOfLine(l); if (!p) return;
   const frame = framePriceOf(p, v), metres = fabricMetresOf(p, v), fabs = fabricList(), sp = l.spec || {};
-  const how0 = sp.frame || (frame > 0 && sp.fabricId) ? 'frame' : sp.fabricId ? 'fabric' : 'shown';
+  const how0 = preset || sp.frame || (frame > 0 && sp.fabricId) ? 'frame' : sp.fabricId ? 'fabric' : 'shown';
   const m = openModal('Fabric: ' + l.name, `
     ${frame > 0 ? `<div class="fb-how">
       <label class="chk"><input type="radio" name="fb-how" value="shown"${how0 === 'shown' ? ' checked' : ''}> <span><strong>As shown</strong> · ${esc(money(priceOf(p, v)))}${p.type === 'stock' ? ' · from stock' : ''}</span></label>

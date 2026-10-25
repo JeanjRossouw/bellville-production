@@ -42,6 +42,10 @@ await prod('p_couch', { name: 'Modular Couch', priceCents: 900000, fabricMetres:
 await put('pos/retail/variants/v2', { productId: 'p_couch', name: '2 Seater', optionValues: { Size: '2 Seater' }, sku: 'MC2', barcodes: [], priceCents: 700000, costCents: null, fabricMetres: 8, storePrices: {}, archived: false, ...srv('BF') });
 await put('pos/retail/variants/v3', { productId: 'p_couch', name: '3 Seater', optionValues: { Size: '3 Seater' }, sku: 'MC3', barcodes: [], priceCents: null, costCents: null, storePrices: {}, archived: false, ...srv('BF') });
 await prod('p_daybed', { name: 'Kendra Daybed', type: 'stock', trackStock: true, priceCents: 2399900, framePriceCents: 1500000, fabricMetres: 10 });
+// an L-shape sold in its shown fabrics (variants), no frame price yet
+await prod('p_corner', { name: 'Mexico L Shape Corner', type: 'stock', trackStock: true, priceCents: 2199900, hasVariants: true, options: [{ name: 'Fabric', values: ['jamie-grey', 'acho-beige'] }] });
+await put('pos/retail/variants/vg', { productId: 'p_corner', name: 'jamie-grey', optionValues: { Fabric: 'jamie-grey' }, sku: 'MX-G', barcodes: [], priceCents: null, costCents: null, storePrices: {}, archived: false, ...srv('BF') });
+await put('pos/retail/variants/vb', { productId: 'p_corner', name: 'acho-beige', optionValues: { Fabric: 'acho-beige' }, sku: 'MX-B', barcodes: [], priceCents: null, costCents: null, storePrices: {}, archived: false, ...srv('BF') });
 await put('pos/retail/customers/c1', { name: 'Thandi Mokoena', phone: '0825550101', email: '', vatNo: '', address: { line1: '5 Lane', city: 'Parow' }, accountEnabled: false, creditLimitCents: 0, storeCreditCents: 0, accountBalanceCents: 0, notes: '', archived: false, ...srv('BF') });
 // another company's fabric
 await put('pos/retail/fabrics/f_other', { supplier: 'X', design: 'Elsewhere', collection: '', costCents: 10000, markupPct: 80, minPriceCents: 25000, priceCents: 25000, archived: false, ...srv('ZZ') });
@@ -132,6 +136,24 @@ check('as shown again: R 23,999.00 from stock', dl.unitPriceCents === 2399900 &&
 await p.click('[data-act=sl-delivery]'); await p.waitForSelector('#dl-line1');
 await p.fill('#dl-line1', '5 Lane'); await p.fill('#dl-city', 'Parow'); await p.fill('#dl-fee', '450'); await p.click('#modal-ok'); await p.waitForTimeout(400);
 R.cart2 = await txt('.pos-cart'); check('the delivery line: to the address, R 450', /Delivery to 5 Lane, Parow/.test(R.cart2) && /R 450\.00/.test(R.cart2), R.cart2.slice(0, 600));
+// ---- a couch with variants (its shown fabrics): the picker offers the frame; a manager sets the frame price from the till
+await p.click('.pos-tile:has-text("Mexico L Shape Corner")'); await p.waitForSelector('[data-frame]');
+R.vp = await txt('#modal'); check('the picker: the variants, and Frame + fabric of choice (set the frame price first)', /jamie-grey/.test(R.vp) && /Frame \+ fabric of choice/.test(R.vp) && /set the frame price first/.test(R.vp), R.vp);
+await p.click('[data-frame]'); await p.waitForSelector('#fr-price');
+await p.fill('#fr-price', '14000'); await p.fill('#fr-metres', '14'); await p.click('#modal-ok');
+await p.waitForSelector('[data-frame]:has-text("frame R 14,000.00")', { timeout: 5000 }).catch(() => {});
+R.vp2 = await txt('#modal'); check('saved on the product, the picker again: frame R 14,000.00 + the fabric', /frame R 14,000\.00 \+ the fabric/.test(R.vp2), R.vp2);
+await p.click('[data-frame]'); await p.waitForSelector('input[name=fb-how]');
+check('the frame is picked already', await p.isChecked('input[name=fb-how][value=frame]'));
+await p.fill('#ln-fab2 .fb-pick-q', 'acap'); await p.waitForTimeout(200); await p.click('#ln-fab2 .fb-pick-row:has-text("Acapella")'); await p.waitForTimeout(200);
+R.tot2 = await txt('#fb-total'); check('frame R 14,000 + 14 m × R 1,086.75 = R 29,214.50', /R 29,214\.50/.test(R.tot2), R.tot2);
+await p.click('#modal-ok'); await p.waitForTimeout(400);
+cl = (await p.evaluate(() => JSON.parse(Object.entries(localStorage).find(([k]) => k.startsWith('pos-cart-'))[1]))).lines;
+const ml = cl.find(l => l.productId === 'p_corner');
+check('the line: Mexico L Shape Corner · frame, R 29,214.50, made to order', ml && ml.name === 'Mexico L Shape Corner · frame' && ml.unitPriceCents === 2921450 && ml.type === 'mto' && !ml.trackStock && ml.spec.frame === true && ml.spec.fabricId === F('Acapella').id, ml);
+await p.click('.pos-tile:has-text("Mexico L Shape Corner")'); await p.waitForSelector('[data-v]'); await p.click('[data-v=vg]'); await p.waitForTimeout(400);
+cl = (await p.evaluate(() => JSON.parse(Object.entries(localStorage).find(([k]) => k.startsWith('pos-cart-'))[1]))).lines;
+check('jamie-grey as shown: its own line from stock, no fabric question', cl.filter(l => l.productId === 'p_corner').length === 2 && cl.some(l => l.variantId === 'vg' && l.name === 'Mexico L Shape Corner · jamie-grey' && l.type === 'stock' && l.unitPriceCents === 2199900) && !(await p.$('input[name=fb-how]')), cl.filter(l => l.productId === 'p_corner'));
 
 // ---- the server prices it again
 const call = async (fn, body, token = cas.idToken) => { const r = await fetch(FN + fn, { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify(body) }); return { status: r.status, ...(await r.json()) }; };
@@ -147,6 +169,8 @@ const fl = R.frame.lines && R.frame.lines[0];
 check('the frame + Acapella sold: R 25,867.50, made to order, no stock moved, the frame on the spec', R.frame.ok && fl.type === 'mto' && fl.fulfilment === 'mto' && !fl.trackStock && fl.spec.frame === true && fl.spec.framePriceCents === 1500000 && fl.spec.fabricCents === 1086750 && R.frame.salesOrder, R.frame.error || fl);
 R.own = await call('pos-sale', saleBody([{ productId: 'p_daybed', variantId: '', qty: 1, unitPriceCents: 1500000, discountCents: 0, spec: { frame: true, fabric: 'Customer’s own linen' } }], 1500000));
 check('the frame in the customer’s own fabric: R 15,000', R.own.ok && R.own.lines[0].unitPriceCents === 1500000 && R.own.lines[0].spec.fabric === 'Customer’s own linen' && R.own.lines[0].spec.fabricCents === 0, R.own.error || R.own.lines);
+R.mx = await call('pos-sale', saleBody([{ productId: 'p_corner', variantId: 'vg', qty: 1, unitPriceCents: 2921450, discountCents: 0, spec: { frame: true, fabricId: acap } }], 2921450));
+check('the L-shape frame + Acapella sold at R 29,214.50, named as the frame', R.mx.ok && R.mx.lines[0].name === 'Mexico L Shape Corner · frame' && R.mx.lines[0].type === 'mto' && R.mx.lines[0].spec.framePriceCents === 1400000, R.mx.error || R.mx.lines);
 R.cheap = await call('pos-sale', saleBody([{ productId: 'p_daybed', variantId: '', qty: 1, unitPriceCents: 1400000, discountCents: 0, spec: { frame: true } }], 1400000));
 check('under the frame price: refused', R.cheap.status === 403, R.cheap);
 R.tamper = await call('pos-sale', saleBody([{ productId: 'p_sofa', variantId: '', qty: 1, unitPriceCents: 900000, discountCents: 0, spec: { fabricId: acap } }], 900000));
