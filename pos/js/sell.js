@@ -370,7 +370,7 @@ function delivery() {
       const where = [parts.line1, parts.line2, parts.city].filter(Boolean).join(', '), cents = centsOf(val(w, 'dl-fee'));
       if (!where) { toast('Where to: the street or the suburb.', 'warn'); return false; }
       if (!(cents >= 0) || val(w, 'dl-fee') === '') { toast('The delivery fee (0 for free delivery).', 'warn'); return false; }
-      const line = { name: 'Delivery to ' + where, listPriceCents: cents, unitPriceCents: cents, note: val(w, 'dl-note'), delivery: { address: where, ...parts } };
+      const line = { name: 'Delivery', listPriceCents: cents, unitPriceCents: cents, note: val(w, 'dl-note'), delivery: { address: where, ...parts } };
       if (had) Object.assign(had, line);
       else sale.cart.lines.push({ lineId: newId('x'), productId: '', variantId: '', itemId: '', sku: '', barcode: '', qty: 1, priceOverride: null, discountCents: 0, discountPct: 0, discountReason: '', discountBy: null, type: 'nonstock', vatClass: 'standard', trackStock: false, costCents: 0, custom: true, ...line });
       if (cu && !hasAddress(cu)) {

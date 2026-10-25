@@ -64,7 +64,7 @@ const actions = {
     if (had) return { ok: true, order: { ...had, id }, again: true };
     if (!b.customerId) throw new Reject(400, 'A special order needs the customer: add them to the sale first.');
     const inLines = Array.isArray(b.lines) ? b.lines : [];
-    const prep = await prepareSale(ctx, b, { noTenders: true });
+    const prep = await prepareSale(ctx, b, { noTenders: true, order: true });   // no tax invoice yet: the address is asked at the hand-over
     const bad = prep.lines.find(l => l.type === 'stock' || l.type === 'voucher' || l.type === 'bundle');
     if (bad) throw new Reject(400, `${bad.name}: only made-to-order and non-stock items go on a special order; sell stock as a sale or a lay-by.`);
     if (!(prep.total > 0)) throw new Reject(400, 'The order comes to nothing.');
