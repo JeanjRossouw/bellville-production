@@ -178,6 +178,41 @@ R.catAgain = await call('pos-shopify', { action: 'catalogueImport', entityId: 'B
 check('importing again updates rather than duplicates, and takes no opening stock twice', R.catAgain.ok && R.catAgain.created === 0 && R.catAgain.updated === 4 && R.catAgain.stock.items === 0 && R.catAgain.stock.skipped === 3 && (await listColl('products')).length === prods.length && (await listColl('variants')).length === vars.length && (await getDoc('pos/retail/stockLevels/BF-BELL_' + hideS.id)).onHandQty === 7, [R.catAgain, (await listColl('products')).length, prods.length]);
 
 R.log = await call('pos-shopify', { action: 'log', entityId: 'BF' }); check('the log has orders, stock, codes, customers and the link', R.log.ok && ['order', 'stock', 'codes', 'customers', 'link', 'cancel', 'refund'].every(k => R.log.log.some(l => l.kind === k)), R.log.log && R.log.log.map(l => l.kind + ':' + l.status));
+// ---- open orders placed before connecting, brought in as sales orders (the Shopify order stays the invoice)
+const money = (r) => ({ shopMoney: { amount: r } });
+mock.state.openOrders = [
+  { id: 'gid://shopify/Order/9001', name: '#1001', createdAt: '2026-10-01T09:00:00Z', cancelledAt: null, displayFinancialStatus: 'PARTIALLY_PAID', displayFulfillmentStatus: 'UNFULFILLED', note: 'Deliver after the 20th', email: 'lindi@mail.co.za', phone: null,
+    totalPriceSet: money('15950.00'), totalReceivedSet: money('8000.00'), customer: { firstName: 'Lindi', lastName: 'Nkosi', email: 'lindi@mail.co.za', phone: '+27825559999' },
+    shippingAddress: { name: 'Lindi Nkosi', address1: '7 Oak Ave', address2: 'Durbanville', city: 'Cape Town', zip: '7550', phone: '+27825559999' },
+    shippingLines: { nodes: [{ title: 'Delivery Cape Town', originalPriceSet: money('450.00') }] },
+    lineItems: { nodes: [
+      { title: 'Custom L-shape couch', variantTitle: null, quantity: 1, sku: '', customAttributes: [{ key: 'Fabric', value: 'Linen sand' }, { key: '_hidden', value: 'x' }], discountedTotalSet: money('15000.00'), variant: null },
+      { title: 'Lamp', variantTitle: null, quantity: 1, sku: 'LA-1', customAttributes: [], discountedTotalSet: money('500.00'), variant: { id: 'gid://shopify/ProductVariant/1002' } } ] } },
+  { id: 'gid://shopify/Order/9002', name: '#1002', createdAt: '2026-10-05T09:00:00Z', cancelledAt: null, displayFinancialStatus: 'PAID', displayFulfillmentStatus: 'UNFULFILLED', note: '', email: 'lindi@mail.co.za', phone: null,
+    totalPriceSet: money('3000.00'), totalReceivedSet: money('3000.00'), customer: { firstName: 'Lindi', lastName: 'Nkosi', email: 'lindi@mail.co.za', phone: '+27825559999' },
+    shippingAddress: null, shippingLines: { nodes: [] },
+    lineItems: { nodes: [{ title: 'Ottoman', variantTitle: 'Grey', quantity: 2, sku: '', customAttributes: [], discountedTotalSet: money('3000.00'), variant: null }] } }
+];
+R.oo = await call('pos-shopify', { action: 'openOrders', ...bell });
+check('the open orders: what bringing them in would do', R.oo.ok && R.oo.orders.length === 2 && !R.oo.orders[0].already && R.oo.orders[0].paidCents === 800000 && R.oo.orders[0].balanceCents === 795000 && R.oo.orders[0].unmatched === 1 && R.oo.orders[0].lines.length === 3 && R.oo.orders[0].client.name === 'Lindi Nkosi', R.oo.error || R.oo.orders);
+R.ooCas = await call('pos-shopify', { action: 'openOrders', ...bell }, sup.idToken); check('a supervisor cannot bring them in', R.ooCas.status === 403, R.ooCas);
+R.imp = await call('pos-shopify', { action: 'importOpenOrders', ...bell });
+const s1 = await getDoc('pos/retail/specialOrders/shp-9001'), s2 = await getDoc('pos/retail/specialOrders/shp-9002');
+check('two sales orders made', R.imp.ok && R.imp.imported.length === 2 && /^BF-SO-/.test(R.imp.imported[0].docNo), R.imp);
+check('#1001: deposit paid via Shopify, the balance, the lines, the fabric on the spec, the delivery line', s1 && s1.status === 'depositPaid' && s1.source === 'shopify' && s1.invoiceBy === 'shopify' && s1.paidCents === 800000 && s1.balanceCents === 795000 && s1.history[0].methods[0] === 'shopify' && s1.lines.length === 3 && s1.lines[0].spec.notes === 'Fabric: Linen sand' && s1.lines[1].productId === 'p_lamp' && /Delivery/.test(s1.lines[2].name) && s1.customerSnapshot.address.line1 === '7 Oak Ave' && s1.updateDue === true, s1);
+check('#1002 paid in full; the same client for both (matched by cell number)', s2 && s2.status === 'depositPaid' && s2.balanceCents === 0 && s2.customerId === s1.customerId, s2 && [s2.status, s2.customerId, s1.customerId]);
+const lindi = await getDoc('pos/retail/customers/' + s1.customerId);
+check('the client made once, tagged shopify, no marketing consent', lindi && lindi.name === 'Lindi Nkosi' && lindi.tags.includes('shopify') && !Object.values(lindi.consent || {}).some(c => c && c.granted), lindi);
+R.imp2 = await call('pos-shopify', { action: 'importOpenOrders', ...bell }); check('again: nothing new, both already here', R.imp2.ok && R.imp2.imported.length === 0 && R.imp2.already === 2, R.imp2);
+const salesBeforeHO = (await listColl('sales')).length;
+check('no POS payment rows for Shopify money', !(await listColl('payments')).some(p => p.docId === 'shp-9001' || p.docId === 'shp-9002'));
+await call('pos-special', { action: 'status', orderId: 'shp-9002', status: 'ready', ...bell }, own.idToken);
+await call('pos-special', { action: 'book', orderId: 'shp-9002', kind: 'collect', date: '2026-11-02', ...bell }, own.idToken);
+R.ho = await call('pos-special', { action: 'deliver', orderId: 'shp-9002', saleId: 'sos-shp-' + Date.now().toString(36), signedBy: 'Lindi Nkosi', ...bell }, own.idToken);
+check('handed over: collected, the Shopify order is the invoice, no POS sale written', R.ho.ok && R.ho.order.status === 'collected' && R.ho.order.completedDocNo === 'Shopify #1002' && !R.ho.sale && (await listColl('sales')).length === salesBeforeHO, R.ho.error || R.ho.order);
+R.refund = await call('pos-special', { action: 'cancel', orderId: 'shp-9001', kind: 'customer', reason: 'x', feeCents: 0, refunds: [{ method: 'cash', amountCents: 800000 }], ...bell }, own.idToken);
+check('a Shopify-paid order: refund it on Shopify, not at the till', R.refund.status === 400 && /refund it there/.test(R.refund.error), R.refund);
+
 R.disc = await call('pos-shopify', { action: 'disconnect', entityId: 'BF' }, own.idToken); check('disconnected: our webhooks removed from the app, the secret gone, a webhook refused', R.disc.ok && R.disc.webhooksRemoved === 3 && mock.state.webhooks.length === 0 && (await getDoc('pos/retail/shopifySecrets/BF')) === null && (await hook('orders/create', order(9009))).status === 401, [R.disc, mock.state.webhooks]);
 
 console.log(JSON.stringify({ fails, ...R, log: undefined, list: undefined }, null, 1).slice(0, 10000));

@@ -14,7 +14,8 @@ export function startMockShopify(port = 8799, seed = {}) {
     inventory: {},   // inventoryItemId|locationId → qty
     fulfilled: [],
     webhooks: seed.webhooks || [],   // { id, topic, callbackUrl }
-    orders: seed.orders || {}
+    orders: seed.orders || {},
+    openOrders: seed.openOrders || []   // open, unsent orders (the import of orders placed before connecting)
   };
   const calls = [];
   const srv = http.createServer((req, res) => {
@@ -31,8 +32,9 @@ export function startMockShopify(port = 8799, seed = {}) {
       if (!req.url.endsWith('/graphql.json')) return send(404, { error: 'no' });
       if (req.headers['x-shopify-access-token'] !== 'shpat_mock') return send(401, { errors: [{ message: 'no token' }] });
       const { query, variables } = JSON.parse(body || '{}');
-      const op = /productVariants\(/.test(query) ? 'variants' : /\bproducts\(first/.test(query) ? 'products' : /inventorySetQuantities/.test(query) ? 'setStock' : /codeDiscountNodes/.test(query) ? 'codes' : /customerCreate/.test(query) ? 'customerCreate' : /customerUpdate/.test(query) ? 'customerUpdate' : /customers\(first: 1/.test(query) ? 'customerFind' : /fulfillmentCreateV2/.test(query) ? 'fulfil' : /fulfillmentOrders/.test(query) ? 'fulfillmentOrders' : /webhookSubscriptionCreate/.test(query) ? 'hookCreate' : /webhookSubscriptionUpdate/.test(query) ? 'hookUpdate' : /webhookSubscriptionDelete/.test(query) ? 'hookDelete' : /webhookSubscriptions\(/.test(query) ? 'hooks' : /locations\(/.test(query) && /shop \{/.test(query) ? 'shop' : /locations\(/.test(query) ? 'locations' : 'unknown';
+      const op = /\borders\(first: 40/.test(query) ? 'openOrders' : /productVariants\(/.test(query) ? 'variants' : /\bproducts\(first/.test(query) ? 'products' : /inventorySetQuantities/.test(query) ? 'setStock' : /codeDiscountNodes/.test(query) ? 'codes' : /customerCreate/.test(query) ? 'customerCreate' : /customerUpdate/.test(query) ? 'customerUpdate' : /customers\(first: 1/.test(query) ? 'customerFind' : /fulfillmentCreateV2/.test(query) ? 'fulfil' : /fulfillmentOrders/.test(query) ? 'fulfillmentOrders' : /webhookSubscriptionCreate/.test(query) ? 'hookCreate' : /webhookSubscriptionUpdate/.test(query) ? 'hookUpdate' : /webhookSubscriptionDelete/.test(query) ? 'hookDelete' : /webhookSubscriptions\(/.test(query) ? 'hooks' : /locations\(/.test(query) && /shop \{/.test(query) ? 'shop' : /locations\(/.test(query) ? 'locations' : 'unknown';
       calls.push({ op, variables });
+      if (op === 'openOrders') return send(200, { data: { orders: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: state.openOrders || [] } } });
       if (op === 'shop') return send(200, { data: { shop: { name: state.shop.name, primaryDomain: { host: state.shop.host } }, locations: { nodes: state.locations } } });
       if (op === 'locations') return send(200, { data: { locations: { nodes: state.locations } } });
       if (op === 'products') { const after = Number(variables.after || 0); const page = state.products.slice(after, after + 50); return send(200, { data: { products: { pageInfo: { hasNextPage: after + 50 < state.products.length, endCursor: String(after + 50) }, nodes: page } } }); }

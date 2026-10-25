@@ -25,12 +25,17 @@ const items = (lines) => lines.map(l => `<div class="item"><div class="x"><span>
 function orderHtml(v) {
   const dv = v.delivery;
   const head = v.cancelled ? `<span class="pill bad">Cancelled</span>` : v.done ? `<span class="pill">${v.status === 'collected' ? 'Collected' : 'Delivered'}</span>` : v.status === 'quoted' ? `<span class="pill warn">Waiting for the deposit</span>` : `<span class="pill">${esc((v.steps.find(s => s.current) || {}).label || '')}</span>`;
+  const picked = dv && dv.requested && !dv.confirmed;
   const when = v.done ? `${v.status === 'collected' ? 'Collected' : 'Delivered'} on ${day(v.completedAt)}${v.invoiceNo ? ' · tax invoice ' + esc(v.invoiceNo) : ''}`
+    : dv && dv.onTheWay ? `<strong>${esc(dv.driverName || 'The driver')} is on the way</strong> with your order`
+    : v.status === 'outForDelivery' ? `Out for delivery <strong>${day(dv.date)}</strong>${dv.slot ? ' · ' + esc(dv.slot) : ''}${dv.driverName ? ' with ' + esc(dv.driverName) : ''}`
+    : picked ? `You asked for <strong>${day(dv.date)}</strong>${dv.slot ? ' · ' + esc(dv.slot) : ''}: the shop will confirm it`
     : dv ? `${dv.kind === 'collect' ? 'Collection' : 'Delivery'} booked for <strong>${day(dv.date)}</strong>${dv.slot ? ' · ' + esc(dv.slot) : ''}`
     : v.expectedAt && !v.cancelled ? `Expected by <strong>${day(v.expectedAt)}</strong>` : '';
   return `<div class="card"><h3>Your order</h3><h2>${esc(v.docNo)}</h2>
       <p>${v.name ? 'Hi ' + esc(v.name) + ', ' : ''}${head}</p>${when ? `<p>${when}</p>` : ''}
       ${!v.cancelled ? `<ol class="steps">${v.steps.map(s => `<li class="${s.done ? 'done' : ''}${s.current ? ' current' : ''}">${esc(s.label)}</li>`).join('')}</ol>` : ''}</div>
+    ${v.slots ? pickHtml(v) : v.status === 'ready' && v.balanceCents > 0 ? `<div class="card"><h3>Delivery</h3><p>Your order is ready. Once the balance of <strong>${esc(money(v.balanceCents))}</strong> is paid you choose the delivery day here.</p></div>` : ''}
     <div class="card"><h3>What you ordered</h3>${items(v.lines)}</div>
     <div class="card"><h3>Payments</h3>
       <div class="row"><span>Total</span><strong>${esc(money(v.totalCents))}</strong></div>
@@ -39,6 +44,25 @@ function orderHtml(v) {
       ${v.minDepositCents > 0 ? `<p class="owed">A deposit of ${esc(money(v.minDepositCents))} starts your order.</p>` : ''}
       ${v.balanceCents > 0 && !v.cancelled && v.status !== 'quoted' ? `<p class="muted">The balance is paid before delivery or collection.</p>` : ''}</div>
     <p class="muted center no-print" style="padding:8px 0">This page updates as your order moves along: keep the link.</p>`;
+}
+
+// a ready, paid order: the client picks delivery (or collection), a day and a slot
+let pick = { kind: 'deliver', date: '', slot: '' };
+function pickHtml(v) {
+  const dv = v.delivery && v.delivery.requested ? v.delivery : null;
+  if (!pick.date) pick = dv ? { kind: dv.kind, date: dv.date, slot: dv.slot } : { kind: 'deliver', date: (v.slots[0] || {}).date || '', slot: '' };
+  const theDay = v.slots.find(x => x.date === pick.date) || v.slots[0] || { slots: [] };
+  const a = v.address || {};
+  if (!v.slots.length) return `<div class="card"><h3>Delivery</h3><p>No open slots in the next two weeks: the shop will contact you.</p></div>`;
+  return `<div class="card no-print" id="pick"><h3>${dv ? 'Change your day' : 'Choose your delivery day'}</h3>
+    <div class="seg"><label><input type="radio" name="pk-kind" value="deliver"${pick.kind === 'deliver' ? ' checked' : ''}> Deliver to me</label><label><input type="radio" name="pk-kind" value="collect"${pick.kind === 'collect' ? ' checked' : ''}> I'll collect</label></div>
+    <div class="daypick">${v.slots.map(x => `<button type="button" class="day${x.date === theDay.date ? ' on' : ''}" data-day="${esc(x.date)}">${esc(day(x.date).replace(/ \d{4}$/, ''))}</button>`).join('')}</div>
+    <div class="slots">${theDay.slots.map(x => `<label class="slot${pick.slot === x.slot ? ' on' : ''}"><input type="radio" name="pk-slot" value="${esc(x.slot)}"${pick.slot === x.slot ? ' checked' : ''}> ${esc(x.slot)}</label>`).join('')}</div>
+    ${pick.kind === 'deliver' ? `<label for="pk-1">Street</label><input type="text" id="pk-1" value="${esc(a.line1 || '')}"><div style="height:8px"></div>
+      <label for="pk-2">Suburb</label><input type="text" id="pk-2" value="${esc(a.line2 || '')}"><div style="height:8px"></div>
+      <label for="pk-3">City</label><input type="text" id="pk-3" value="${esc(a.city || '')}"><div style="height:8px"></div>` : ''}
+    <label for="pk-note">Anything the driver must know (optional)</label><input type="text" id="pk-note" placeholder="e.g. 3rd floor, no lift; gate code 1234">
+    <div class="actions" style="margin-top:12px"><button class="btn" id="pk-go">${dv ? 'Change my day' : 'Ask for this day'}</button></div><p class="err" id="pk-err"></p></div>`;
 }
 
 function quoteHtml(v) {
@@ -61,6 +85,19 @@ function quoteHtml(v) {
 function render(v) {
   document.title = (v.kind === 'quote' ? 'Quotation ' : 'Order ') + v.docNo + ' · ' + v.shop.name;
   app.innerHTML = shopHead(v.shop) + (v.kind === 'quote' ? quoteHtml(v) : orderHtml(v));
+  const pk = document.getElementById('pick');
+  if (pk) {
+    pk.addEventListener('click', (e) => { const b = e.target.closest('[data-day]'); if (b) { pick.date = b.dataset.day; pick.slot = ''; render(v); } });
+    pk.addEventListener('change', (e) => { if (e.target.name === 'pk-kind') { pick.kind = e.target.value; render(v); } if (e.target.name === 'pk-slot') { pick.slot = e.target.value; pk.querySelectorAll('.slot').forEach(x => x.classList.toggle('on', x.querySelector('input').checked)); } });
+    document.getElementById('pk-go').addEventListener('click', async (e) => {
+      const err = document.getElementById('pk-err'); err.textContent = '';
+      if (!pick.slot) { err.textContent = 'Pick a time slot.'; return; }
+      const val = (id) => (document.getElementById(id) || {}).value || '';
+      e.target.disabled = true;
+      try { pick.date = pick.date || (v.slots[0] || {}).date; render(await call('pickSlot', { kind: pick.kind, date: pick.date, slot: pick.slot, address: { line1: val('pk-1'), line2: val('pk-2'), city: val('pk-3') }, note: val('pk-note') })); window.scrollTo(0, 0); }
+      catch (x) { err.textContent = x.message; e.target.disabled = false; }
+    });
+  }
   const go = document.getElementById('acc-go');
   if (go) {
     const pad = wirePad(document.getElementById('acc-pad'));
