@@ -35,7 +35,7 @@ let editId = '', settingsEntity = '';  // what the admin forms are on
 let entities = [], stores = [], registers = [], users = [], devices = [], settings = {};
 let fabrics = [], catalogue = [], variants = [], stockLevels = [], customers = [], storeSales = [], storeLaybys = [], storeSpecials = [], storeSalesOrders = [], storeQuotes = [], storeTasks = [], storeTakes = [], discountCodes = [], suppliers = [], storePOs = [], storeGrvs = [], transfersOut = [], transfersIn = [], stockOffsets = {};
 let sellStore = '';                 // the store being sold from: the till's, else chosen
-let prEntity = '', prFilter = { q: '', category: '', brand: '', type: '', archived: false };
+let prEntity = '', prFilter = { q: '', category: '', brand: '', type: '', supplier: '', archived: false };
 const unwatch = [];
 let unwatchStore = null, watchedStore = '';   // the sell screen's own stock watch, by store
 
@@ -345,7 +345,7 @@ function adminSubs() {
   ].filter(x => x.show || owner);
 }
 const adminData = () => ({ entities, stores, registers, users, devices, settings, editId, settingsEntity });
-const prData = () => ({ entities, stores, settings, products: catalogue, variants, prEntity, prFilter });
+const prData = () => ({ entities, stores, settings, products: catalogue, variants, suppliers, prEntity, prFilter });
 // the company whose products are on screen
 const prEntityId = () => { const t = document.querySelector('.pr-tbl'); if (t) return t.dataset.entity; const sel = document.getElementById('pr-entity'); if (sel) return sel.value; const mine = entities.filter(e => auth.inEntity(e.id)); return prEntity && mine.some(e => e.id === prEntity) ? prEntity : (mine[0] || {}).id || ''; };
 function paint() {
@@ -559,6 +559,7 @@ async function onAction(e) {
     case 'pr-export': { const n = products.exportCsv(prData(), prEntityId()); toast(n + ' rows exported'); return; }
     case 'pr-costs': return openCostImport(prData(), prEntityId());
     case 'pr-reorder': return products.setReorderAll(prData(), prEntityId());
+    case 'pr-supplier': return products.setSupplierMany(prData(), prEntityId(), [...w.querySelectorAll('[data-lbl]:checked')].map(c => c.dataset.lbl));
     case 'pr-labels': return products.printLabels(prData(), [...w.querySelectorAll('[data-lbl]:checked')].map(c => c.dataset.lbl), prEntityId());
     case 'rate-add': return admin.rateAdd(w);
     case 'rate-del': return admin.rateDel(w, b.dataset.i);
@@ -578,6 +579,7 @@ $('screen').addEventListener('change', (e) => {
   if (e.target.id === 'pr-cat') { prFilter.category = e.target.value; return paint(); }
   if (e.target.id === 'pr-brand') { prFilter.brand = e.target.value; return paint(); }
   if (e.target.id === 'pr-type') { prFilter.type = e.target.value; return paint(); }
+  if (e.target.id === 'pr-supplier') { prFilter.supplier = e.target.value; return paint(); }
   if (e.target.id === 'pr-archived') { prFilter.archived = e.target.checked; return paint(); }
   if (e.target.id === 'pr-all') { document.querySelectorAll('[data-lbl]').forEach(c => { c.checked = e.target.checked; }); return; }
   if (e.target.id === 'pr-file') { const f = e.target.files && e.target.files[0]; if (f) products.openImport(f, prData(), prEntityId()); e.target.value = ''; return; }

@@ -38,6 +38,10 @@ async function logChange(entityId, action, docId, details) {
   catch (e) { console.error('audit failed', e); }
 }
 
+// the company's suppliers (Buying → Suppliers), for the product's supplier
+const supsOf = (d, eid) => (d.suppliers || []).filter(sp => sp.entityId === eid && !sp.archived).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+const NO_SUP = '__none';
+
 // ------------------------------------------------------------- the list --
 export function productsHtml(d) {
   const mine = d.entities.filter(e => auth.inEntity(e.id));
@@ -47,7 +51,7 @@ export function productsHtml(d) {
   const all = d.products.filter(p => p.entityId === eid);
   const cats = uniq(all.map(p => p.category)).sort(), brands = uniq(all.map(p => p.brand)).sort();
   const q = String(f.q || '').toLowerCase().trim();
-  const list = all.filter(p => (f.archived ? true : !p.archived) && (!f.category || p.category === f.category) && (!f.brand || p.brand === f.brand) && (!f.type || p.type === f.type)
+  const list = all.filter(p => (f.archived ? true : !p.archived) && (!f.category || p.category === f.category) && (!f.brand || p.brand === f.brand) && (!f.type || p.type === f.type) && (!f.supplier || (f.supplier === NO_SUP ? !p.supplierId : p.supplierId === f.supplier))
     && (!q || [p.name, p.sku, p.category, p.brand, ...(p.barcodes || []), ...itemVariants(d, p.id).flatMap(v => [v.sku, ...(v.barcodes || [])])].some(x => String(x || '').toLowerCase().includes(q))))
     .sort((a, b) => String(a.name).localeCompare(String(b.name)));
   const edits = auth.atLeast('manager');
@@ -55,7 +59,7 @@ export function productsHtml(d) {
   return `<div class="page-head"><h1>Products</h1>
       <div class="btn-row" style="margin:0">
         ${mine.length > 1 ? `<select id="pr-entity" class="in-sm">${mine.map(e => `<option value="${esc(e.id)}"${e.id === eid ? ' selected' : ''}>${esc(e.tradingName || e.legalName)}</option>`).join('')}</select>` : ''}
-        ${edits ? `<label class="btn ghost" title="Shopify's product CSV">Import CSV<input type="file" id="pr-file" accept=".csv,text/csv" hidden></label><button class="btn ghost" data-act="pr-export">Export CSV</button><button class="btn ghost" data-act="pr-costs" title="Costs, and prices if you want, from a spreadsheet">Import costs &amp; prices</button><button class="btn ghost" data-act="pr-reorder" title="The reorder level on every stock item at once">Set reorder level</button>` : ''}
+        ${edits ? `<label class="btn ghost" title="Shopify's product CSV">Import CSV<input type="file" id="pr-file" accept=".csv,text/csv" hidden></label><button class="btn ghost" data-act="pr-export">Export CSV</button><button class="btn ghost" data-act="pr-costs" title="Costs, and prices if you want, from a spreadsheet">Import costs &amp; prices</button><button class="btn ghost" data-act="pr-reorder" title="The reorder level on every stock item at once">Set reorder level</button><button class="btn ghost" data-act="pr-supplier" title="The supplier on the ticked products, or on all those shown">Set supplier</button>` : ''}
         <button class="btn ghost" data-act="pr-labels" title="Barcode labels for the ticked products">Labels</button>
         ${edits ? '<button class="btn primary" data-act="pr-new">＋ New product</button>' : ''}
       </div></div>
@@ -64,6 +68,7 @@ export function productsHtml(d) {
       ${sel('pr-cat', cats.map(c => ({ value: c, label: c })), f.category || '', 'All categories')}
       ${sel('pr-brand', brands.map(c => ({ value: c, label: c })), f.brand || '', 'All brands')}
       ${sel('pr-type', TYPES.map(t => ({ value: t.key, label: t.label })), f.type || '', 'All types')}
+      ${supsOf(d, eid).length ? sel('pr-supplier', [{ value: NO_SUP, label: 'No supplier set' }, ...supsOf(d, eid).map(sp => ({ value: sp.id, label: sp.name }))], f.supplier || '', 'All suppliers') : ''}
       <label class="chk"><input type="checkbox" id="pr-archived"${f.archived ? ' checked' : ''}> Show archived</label>
     </div>
     <p class="sub muted" style="margin:0 0 .6rem">${list.length} of ${all.length} product${all.length === 1 ? '' : 's'}</p>
@@ -104,6 +109,7 @@ export function openProductForm(d, productId, entityId) {
     <div class="grid three">${field('Cost (R, excl. VAT)', 'pf-cost', { value: randsOf(x.costCents), inputmode: 'decimal' })}${field('Selling price (R, incl. VAT)', 'pf-price', { value: randsOf(x.priceCents), inputmode: 'decimal' })}<div class="fld"><span>Margin</span><div class="pf-margin" id="pf-margin">–</div></div></div>
     <div id="pf-fabric"${x.type === 'mto' || x.type === 'stock' ? '' : ' hidden'}>${row(field('Fabric needed (metres): the till adds metres × the chosen fabric’s price per metre', 'pf-fabricm', { value: x.fabricMetres == null ? '' : x.fabricMetres, inputmode: 'decimal', placeholder: 'e.g. 11.5 for a 3-seater' }),
       field('Frame price (R, incl. VAT): the couch without fabric, offered on the till with a fabric of choice', 'pf-frame', { value: x.framePriceCents > 0 ? randsOf(x.framePriceCents) : '', inputmode: 'decimal', placeholder: 'blank = no frame option' }))}</div>
+    ${field('Supplier', 'pf-supplier', { type: 'select', value: x.supplierId || '', options: [{ value: '', label: 'None' }, ...supsOf(d, eid).map(sp => ({ value: sp.id, label: sp.name }))] })}
     ${row(field('Reorder when stock falls to', 'pf-reorder', { value: x.reorderLevel == null ? '' : x.reorderLevel, type: 'number', min: 0 }), field('Reorder quantity', 'pf-reorderqty', { value: x.reorderQty == null ? '' : x.reorderQty, type: 'number', min: 0 }))}
     ${field('Pictures (web addresses, one per line)', 'pf-images', { type: 'textarea', value: (x.images || []).join('\n'), rows: 2 })}
     ${field('Description', 'pf-desc', { type: 'textarea', value: x.description, rows: 2 })}
@@ -189,6 +195,7 @@ async function saveProduct(w, d, p, existing) {
     name: val(w, 'pf-name'), sku: val(w, 'pf-sku'), barcodes: codes(val(w, 'pf-barcodes')), category: val(w, 'pf-cat'), brand: val(w, 'pf-brand'),
     type: val(w, 'pf-type'), vatClass: val(w, 'pf-vat'), trackStock: !!w.querySelector('#pf-track').checked, favourite: !!w.querySelector('#pf-fav').checked,
     costCents: centsOf(val(w, 'pf-cost')), priceCents: centsOf(val(w, 'pf-price')),
+    supplierId: val(w, 'pf-supplier') || '',
     reorderLevel: val(w, 'pf-reorder') === '' ? null : Number(val(w, 'pf-reorder')), reorderQty: val(w, 'pf-reorderqty') === '' ? null : Number(val(w, 'pf-reorderqty')),
     images: val(w, 'pf-images').split(/\n+/).map(s => s.trim()).filter(s => /^https?:\/\//.test(s)), description: val(w, 'pf-desc'),
     storePrices: Object.fromEntries([...w.querySelectorAll('[data-sp]')].filter(i => i.value.trim() !== '').map(i => [i.dataset.sp, centsOf(i.value)])),
@@ -390,4 +397,31 @@ export function setReorderAll(d, entityId) {
     } });
   const count = () => { const only = (wrap.querySelector('input[name=ro-scope]:checked') || {}).value === 'empty'; const n = items.filter(p => !only || p.reorderLevel == null).length; wrap.querySelector('#ro-count').textContent = n + ' item' + (n === 1 ? '' : 's') + ' will be set.'; };
   wrap.addEventListener('change', count); count();
+}
+
+// the supplier on many products at once: the ticked ones, or (none ticked) all those the filters show
+export function setSupplierMany(d, entityId, ticked) {
+  const sups = supsOf(d, entityId);
+  if (!sups.length) return toast('Add the supplier first: Buying → Suppliers.', 'warn');
+  const f = d.prFilter, q = String(f.q || '').toLowerCase().trim();
+  const shown = d.products.filter(p => p.entityId === entityId && (f.archived ? true : !p.archived) && (!f.category || p.category === f.category) && (!f.brand || p.brand === f.brand) && (!f.type || p.type === f.type)
+    && (!f.supplier || (f.supplier === NO_SUP ? !p.supplierId : p.supplierId === f.supplier))
+    && (!q || [p.name, p.sku, p.category, p.brand, ...(p.barcodes || []), ...itemVariants(d, p.id).flatMap(v => [v.sku, ...(v.barcodes || [])])].some(x => String(x || '').toLowerCase().includes(q))));
+  const items = ticked.length ? d.products.filter(p => ticked.includes(p.id)) : shown;
+  if (!items.length) return toast('No products: tick some, or change the filters.', 'warn');
+  openModal('Set the supplier', `<p>${items.length} product${items.length === 1 ? '' : 's'} ${ticked.length ? 'ticked' : 'shown by the filters'}${ticked.length ? '' : (f.brand ? ' (brand ' + esc(f.brand) + ')' : '') + (f.category ? ' (' + esc(f.category) + ')' : '') + (q ? ' (search “' + esc(f.q) + '”)' : '')}.</p>
+    ${field('Supplier', 'bs-sup', { type: 'select', value: sups[0].id, options: [...sups.map(sp => ({ value: sp.id, label: sp.name })), { value: '', label: 'None (clear it)' }] })}`, {
+    okLabel: 'Set it', onOk: async (w) => {
+      const sid = val(w, 'bs-sup'), name = (sups.find(sp => sp.id === sid) || {}).name || 'none';
+      const todo = items.filter(p => (p.supplierId || '') !== sid);
+      if (!todo.length) { toast('They have that supplier already.'); return true; }
+      const ops = todo.map(p => ({ op: 'update', coll: 'products', id: p.id, data: { supplierId: sid, ...(Number.isInteger(p.priceCents) ? {} : { priceCents: Math.round(Number(p.priceCents) || 0) }), ...(Number.isInteger(p.costCents) ? {} : { costCents: Math.round(Number(p.costCents) || 0) }), ...auth.touch() } }));
+      try {
+        for (let i = 0; i < ops.length; i += 100) await batch(ops.slice(i, i + 100));
+        await setOne('auditLog', newId('auditLog'), { action: 'product.supplierMany', docType: 'product', docId: '', docNo: '', actorUid: auth.session.uid, actorName: auth.session.user.name, overrideUid: '', overrideName: '', details: { supplierId: sid, items: todo.length }, ...auth.stamp(entityId, '') }).catch(() => {});
+        toast(`Supplier ${name} set on ${todo.length} product${todo.length === 1 ? '' : 's'}`);
+        document.querySelectorAll('[data-lbl]:checked, #pr-all').forEach(c => { c.checked = false; });
+        return true;
+      } catch (e) { toast(e.message, 'warn'); return false; }
+    } });
 }
