@@ -79,7 +79,7 @@ await fetch(`${docs}/pos/retail/products/p_cushion?updateMask.fieldPaths=supplie
 await p.click('[data-act=by-sub][data-to=po]'); await p.waitForTimeout(300);
 R.poList = await screenText(); check('the low-stock suggestion is offered', /Suggest from low stock \(1\)/i.test(R.poList), R.poList.slice(0, 300));
 check('the open-orders option offered: 1 item short', /Order for open orders only \(1\)/i.test(R.poList), R.poList.slice(0, 300));
-await p.click('[data-act=by-po-open]'); await p.waitForSelector('#oo-sup');
+await p.click('[data-act=by-po-for-open]'); await p.waitForSelector('#oo-sup');
 R.ooModal = await modalText(); check('pick the supplier: all, or the lamp’s (none set yet)', /All suppliers · 1 item/.test(R.ooModal) && /No supplier set · 1 item/.test(R.ooModal), R.ooModal);
 await p.click('#modal-ok'); await p.waitForSelector('#po-supplier');
 R.openEdit = await screenText();
@@ -102,6 +102,15 @@ R.printed = await p.evaluate(() => window.__printed); check('the A4 order printe
 await closeModal();
 R.poList2 = await screenText(); check('listed as sent, R 1,035', /BF-PO-000001/.test(R.poList2) && /Sent/i.test(R.poList2) && /R 1,035\.00/.test(R.poList2), R.poList2.slice(0, 300));
 check('on order in the levels', (await getDoc('pos/retail/stockLevels/BF-BELL_p_cushion')).onOrderQty === 10);
+// ---- changed and sent again (nothing received yet): the same number, revision 2
+await p.click('tr:has-text("BF-PO-000001") [data-act=by-po-open]'); await p.waitForSelector('#modal [data-act=by-po-revise]');
+await p.click('#modal [data-act=by-po-revise]'); await p.waitForSelector('[data-act=by-po-revsend]');
+R.revEdit = await screenText(); check('the change screen: BF-PO-000001, revision 2', /Change BF-PO-000001 \(revision 2\)/i.test(R.revEdit), R.revEdit.slice(0, 300));
+await p.fill('#po-note', 'Deliver on Tuesday please'); await p.click('[data-act=by-po-revsend]'); R.revToast = await toast(); await p.waitForSelector('#modal [data-sh=mail]', { timeout: 8000 }).catch(() => {});
+const po1r = (await listColl('purchaseOrders')).find(x => x.docNo === 'BF-PO-000001');
+check('sent again as revision 2: the note, the same lines, still 10 on order', /BF-PO-000001 changed \(revision 2\)/.test(R.revToast) && po1r.revision === 2 && po1r.note === 'Deliver on Tuesday please' && (await getDoc('pos/retail/stockLevels/BF-BELL_p_cushion')).onOrderQty === 10, [R.revToast, po1r && po1r.revision]);
+if (await p.locator('#modal').count()) { await p.locator('#modal [data-close], #modal-ok').first().click().catch(() => {}); await p.waitForTimeout(300); }
+R.poList3 = await screenText(); check('the list says rev 2', /BF-PO-000001 rev 2/i.test(R.poList3), R.poList3.slice(0, 300));
 
 // ---- receive against it: 6 cushions and both lamps, freight R 70
 await p.click('[data-act=by-sub][data-to=receive]'); await p.waitForTimeout(300);

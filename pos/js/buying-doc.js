@@ -11,7 +11,7 @@ const head = (entity, store, title, docNo, date, extra = '') => `<div class="hea
 export function poHtml({ po, entity, store, supplier }) {
   const sup = supplier || { name: po.supplierName };
   return `<div class="a4">
-    ${head(entity, store, po.status === 'draft' ? 'Purchase order (draft)' : 'Purchase order', po.docNo || 'DRAFT', po.sentAt || po.createdAt, po.expectedAt ? `<div class="s">Expected by ${esc(niceDate(po.expectedAt))}</div>` : '')}
+    ${head(entity, store, po.status === 'draft' ? 'Purchase order (draft)' : po.revision > 1 ? 'Purchase order · revised' : 'Purchase order', (po.docNo || 'DRAFT') + (po.revision > 1 ? ' rev ' + po.revision : ''), po.revisedAt || po.sentAt || po.createdAt, (po.expectedAt ? `<div class="s">Expected by ${esc(niceDate(po.expectedAt))}</div>` : '') + (po.revision > 1 ? `<div class="s">Replaces the earlier version of ${esc(po.docNo)}</div>` : ''))}
     <div class="to"><div class="s">Supplier</div><b>${esc(sup.name)}</b>${sup.contact ? '<br>' + esc(sup.contact) : ''}${sup.phone ? '<br>' + esc(sup.phone) : ''}${sup.email ? '<br>' + esc(sup.email) : ''}${sup.accountNo ? '<br>Our account ' + esc(sup.accountNo) : ''}</div>
     <div class="to"><div class="s">Deliver to</div><b>${esc(store ? store.name : '')}</b>${store && addr(store.address) ? '<br>' + esc(addr(store.address)) : ''}${store && store.phone ? '<br>' + esc(store.phone) : ''}</div>
     <table><thead><tr><th>SKU</th><th>Item</th><th class="n">Qty</th><th class="n">Unit cost (ex VAT)</th><th class="n">Total</th></tr></thead>
@@ -21,7 +21,7 @@ export function poHtml({ po, entity, store, supplier }) {
     <div class="foot s">Please quote ${esc(po.docNo || 'the order')} on your invoice and delivery note. Prices are as agreed, excluding VAT.</div>
   </div>`;
 }
-export const poShareText = (po, entity, url) => `${entity.tradingName || entity.legalName}: purchase order ${po.docNo}, ${po.lines.length} line${po.lines.length === 1 ? '' : 's'}, ${money(po.totalCents)} incl. VAT${po.expectedAt ? ', expected by ' + niceDate(po.expectedAt) : ''}.${url ? '\n' + url : ''}`;
+export const poShareText = (po, entity, url) => `${entity.tradingName || entity.legalName}: ${po.revision > 1 ? 'CHANGED purchase order ' + po.docNo + ' (revision ' + po.revision + ', replaces the earlier one)' : 'purchase order ' + po.docNo}, ${po.lines.length} line${po.lines.length === 1 ? '' : 's'}, ${money(po.totalCents)} incl. VAT${po.expectedAt ? ', expected by ' + niceDate(po.expectedAt) : ''}.${url ? '\n' + url : ''}`;
 
 // ----------------------------------------------------------- GRV --
 export function grvHtml({ grv, entity, store }) {

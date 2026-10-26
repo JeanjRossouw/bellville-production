@@ -5,6 +5,9 @@
 //
 //   poSend          { poId, how }                                 a manager: the number, status 'sent', stock on order
 //   poCancel        { poId, reason }                              a manager: what was still on order is released
+//   poRevise        { poId, supplierId, expectedAt, note, lines [ { productId, variantId, qty, unitCostCents } ] }
+//                   a manager: a sent order nothing has been received on, changed: the same number, revision + 1,
+//                   the on-order figures moved by the difference; then sent to the supplier again
 //   receive         { grvId, purchaseOrderId?, supplierId?, supplierInvoiceNo, invoiceDate, lines [ { productId, variantId, qty, unitCostCents } ],
 //                     landed { freightCents, dutyCents, otherCents, method: 'value'|'qty' }, updateCosts, note }   a supervisor
 //   transferSend    { transferId, toStoreId, lines [ { productId, variantId, qty } ], note }    a supervisor at the sending store
@@ -76,6 +79,43 @@ const actions = {
       const patch = { seq: num.seq, docNo: num.docNo, lines, supplierName: supplier ? supplier.name : po.supplierName || '', supplierSnapshot: supplier ? { email: supplier.email || '', phone: supplier.phone || '', contact: supplier.contact || '' } : null, subtotalCents: sub, vatRateBp: rateBp, vatCents: vat, totalCents: sub + vat, status: 'sent', sentAt: now, sentBy: ctx.user.name, sentHow: clean(b.how, 20), grvs: [], updatedAt: now };
       writes.push({ update: true, coll: 'purchaseOrders', id: po.id, data: patch });
       writes.push(auditRow(ctx, 'po.send', { docType: 'purchaseOrder', docId: po.id, docNo: num.docNo }, { lines: lines.length, totalCents: sub + vat, supplier: patch.supplierName }, new Map(), stamp, now));
+      return { writes, result: { po: { ...cur, ...patch, id: po.id } } };
+    } });
+  },
+
+  async poRevise(event, b) {
+    const ctx = await whoAndWhere(event, b, { noShift: true });
+    approved(ctx, b.approvalToken, 'buy', 'manager', 'Changing a purchase order');
+    const po = await loadPo(ctx, b.poId);
+    if (po.status !== 'sent') throw new Reject(409, po.status === 'part' ? `${po.docNo} is part received: receive or cancel what is open, and order the rest anew.` : `Purchase order is ${po.status}.`);
+    if (po.storeId !== ctx.storeId) throw new Reject(400, 'That order is for another store.');
+    const raw = Array.isArray(b.lines) ? b.lines : [];
+    if (!raw.length) throw new Reject(400, 'The order needs at least one line (or cancel it).');
+    const lines = [];
+    for (const l of raw) { const it = await itemOf(ctx, l); const qty = int(l.qty), cost = int(l.unitCostCents); if (!(qty > 0) || !(cost >= 0)) throw new Reject(400, `${it.name}: quantity and cost must be whole numbers.`); lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, sku: it.sku, name: it.name, barcode: it.barcode, qty, unitCostCents: cost, receivedQty: 0 }); }
+    const sub = lines.reduce((n, l) => n + l.qty * l.unitCostCents, 0);
+    const rateBp = ctx.entity.vatRegistered ? rateOn((ctx.settings.vat || {}).rates, nowIso()) : 0;
+    const vat = Math.round(sub * rateBp / 10000);
+    const supplierId = clean(b.supplierId, 80) || po.supplierId;
+    const supplier = supplierId ? await getDoc('suppliers', supplierId) : null;
+    if (supplierId && (!supplier || supplier.entityId !== ctx.entityId)) throw new Reject(400, 'Choose one of your suppliers.');
+    return runSale(ctx, {}, { more: async (tx, levels) => {
+      const cur = await getDoc('purchaseOrders', po.id, tx);
+      if (!cur || cur.status !== 'sent' || (cur.lines || []).some(l => (l.receivedQty || 0) > 0)) throw new Reject(409, 'The order changed meanwhile (something was received?): look again.');
+      const now = nowIso(); const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
+      // on order: the new quantities less the old, item by item
+      const delta = new Map();
+      for (const l of cur.lines || []) delta.set(l.itemId, { line: l, d: (delta.get(l.itemId) || { d: 0 }).d - l.qty });
+      for (const l of lines) delta.set(l.itemId, { line: l, d: (delta.get(l.itemId) || { d: 0 }).d + l.qty });
+      const writes = [];
+      for (const { line, d } of delta.values()) if (d) { await levelFor(tx, ctx, levels, ctx.storeId, line.itemId); writes.push(onOrderWrite(ctx, levels, line, d, now)); }
+      const revision = (cur.revision || 1) + 1;
+      const revisions = [...(cur.revisions || []), { revision: cur.revision || 1, at: cur.revisedAt || cur.sentAt, by: cur.revisedBy || cur.sentBy, lines: (cur.lines || []).map(l => ({ name: l.name, qty: l.qty, unitCostCents: l.unitCostCents })), totalCents: cur.totalCents }].slice(-20);
+      const patch = { lines, supplierId, supplierName: supplier ? supplier.name : cur.supplierName || '', supplierSnapshot: supplier ? { email: supplier.email || '', phone: supplier.phone || '', contact: supplier.contact || '' } : cur.supplierSnapshot || null,
+        expectedAt: /^\d{4}-\d{2}-\d{2}$/.test(b.expectedAt || '') ? b.expectedAt : cur.expectedAt || '', note: clean(b.note, 300), subtotalCents: sub, vatRateBp: rateBp, vatCents: vat, totalCents: sub + vat,
+        revision, revisions, revisedAt: now, revisedBy: ctx.user.name, updatedAt: now };
+      writes.push({ update: true, coll: 'purchaseOrders', id: po.id, data: patch });
+      writes.push(auditRow(ctx, 'po.revise', { docType: 'purchaseOrder', docId: po.id, docNo: cur.docNo }, { revision, lines: lines.length, totalCents: sub + vat, was: cur.totalCents }, new Map(), stamp, now));
       return { writes, result: { po: { ...cur, ...patch, id: po.id } } };
     } });
   },
