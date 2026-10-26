@@ -9,7 +9,8 @@ import * as auth from './auth.js';
 import { setOne, patchOne, newId } from './db.js';
 import { esc, toast, field, row, val, openModal, openPrint, money, niceDate, niceTime, empty } from './ui.js';
 import { centsOf, randsOf } from './money.js';
-import { A4_CSS, whatsappUrl, mailtoUrl } from './receipt.js';
+import { A4_CSS, whatsappUrl } from './receipt.js';
+import { emailModal } from './email.js';
 import { poHtml, grvHtml, transferHtml } from './buying-doc.js';
 import { printLabelItems } from './products.js';
 import { items as stockItems } from './stock.js';
@@ -228,7 +229,7 @@ async function shareModal(p) {
     try {
       if (b.dataset.sh === 'print') return openPrint('Purchase order ' + p.docNo, poDoc(p), A4_CSS);
       const r = await getLink();
-      if (b.dataset.sh === 'mail') { const email = prompt('Email address', sup.email || ''); if (email) window.open(mailtoUrl(email, 'Purchase order ' + p.docNo + ' from ' + (dd.entity.tradingName || dd.entity.legalName), r.text), '_blank'); }
+      if (b.dataset.sh === 'mail') { emailModal({ title: 'Email ' + p.docNo, to: sup.email || '', subject: (p.revision > 1 ? 'Changed purchase order ' : 'Purchase order ') + p.docNo + (p.revision > 1 ? ' rev ' + p.revision : '') + ' from ' + (dd.entity.tradingName || dd.entity.legalName), text: r.text }); }
       else if (b.dataset.sh === 'wa') { const phone = prompt('WhatsApp number', sup.phone || ''); if (phone) window.open(whatsappUrl(phone, r.text), '_blank'); }
       else { await navigator.clipboard.writeText(r.url).catch(() => {}); toast('Link copied'); wrap.querySelector('.rc-acts').insertAdjacentHTML('beforeend', `<p class="muted" style="word-break:break-all;font-size:11px">${esc(r.url)}</p>`); }
     } catch (err) { toast(err.message, 'warn'); }

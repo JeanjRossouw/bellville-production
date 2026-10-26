@@ -8,7 +8,8 @@ import { API } from './config.js';
 import * as auth from './auth.js';
 import { esc, toast, field, row, val, openModal, openPrint, money, niceDate, niceTime } from './ui.js';
 import { centsOf, randsOf } from './money.js';
-import { whatsappUrl, mailtoUrl } from './receipt.js';
+import { whatsappUrl } from './receipt.js';
+import { emailModal } from './email.js';
 import { icon } from './icons.js';
 
 export const DENOMS = [20000, 10000, 5000, 2000, 1000, 500, 200, 100, 50, 20, 10];
@@ -174,7 +175,7 @@ function printZ(z, regName) { openPrint('Z-report', `<div class="zr"><h2>Z-repor
 function sendZ(z, regName, reports = {}, how = 'wa') {
   const d = ctx.data();
   const text = zText(z, regName || '', d.store && d.store.name);
-  if (how === 'mail') { const email = prompt('Owner’s email', reports.email || ''); if (email) window.open(mailtoUrl(email, 'Z-report ' + (regName || '') + ' ' + niceDate(z.closedAt), text), '_blank'); }
+  if (how === 'mail') emailModal({ title: 'Email the Z-report', to: reports.email || '', subject: 'Z-report ' + (regName || '') + ' ' + niceDate(z.closedAt), text });
   else { const phone = prompt('Owner’s WhatsApp number', reports.phone || ''); if (phone) window.open(whatsappUrl(phone, text), '_blank'); }
 }
 export function wireScreen(screen) {

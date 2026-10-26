@@ -4,7 +4,8 @@ import { API } from './config.js';
 import { setOne, newId } from './db.js';
 import * as auth from './auth.js';
 import { esc, toast, field, val, openModal, openPrint, money } from './ui.js';
-import { receiptModel, slipHtml, SLIP_CSS, a4Html, A4_CSS, escposBytes, shareText, whatsappUrl, mailtoUrl, kindTitle } from './receipt.js';
+import { receiptModel, slipHtml, SLIP_CSS, a4Html, A4_CSS, escposBytes, shareText, whatsappUrl, kindTitle } from './receipt.js';
+import { emailModal } from './email.js';
 import { icon } from './icons.js';
 
 // openReceipt({ sale, lines, payments, vouchersSold, entity, store, settings, copy })
@@ -40,7 +41,7 @@ export function openReceipt(o) {
         audit('escpos');
       }
       else if (how === 'wa') { const r = await getLink(); const phone = prompt('WhatsApp number', (m.customer && m.customer.phone) || ''); if (phone) { window.open(whatsappUrl(phone, r.text), '_blank'); audit('whatsapp'); } }
-      else if (how === 'mail') { const r = await getLink(); const email = prompt('Email address', (o.sale.customerSnapshot && o.sale.customerSnapshot.email) || ''); if (email) { window.open(mailtoUrl(email, m.title.replace(' · COPY', '') + ' ' + m.docNo + ' from ' + m.company.name, r.text), '_blank'); audit('email'); } }
+      else if (how === 'mail') { const r = await getLink(); emailModal({ title: 'Email ' + m.docNo, to: (o.sale.customerSnapshot && o.sale.customerSnapshot.email) || '', subject: m.title.replace(' · COPY', '') + ' ' + m.docNo + ' from ' + m.company.name, text: r.text, onSent: () => audit('email') }); }
       else if (how === 'copy') { const r = await getLink(); if (!r.url) { toast('No link for this document: share the text by WhatsApp or email.', 'warn'); return; } await navigator.clipboard.writeText(r.url).catch(() => {}); toast('Link copied'); wrap.querySelector('.rc-acts').insertAdjacentHTML('beforeend', `<p class="muted" style="word-break:break-all;font-size:11px" id="rc-link">${esc(r.url)}</p>`); }
     } catch (err) { toast(err.message, 'warn'); }
   });

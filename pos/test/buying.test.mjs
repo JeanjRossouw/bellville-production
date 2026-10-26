@@ -95,8 +95,14 @@ R.edit2 = await screenText(); check('the lamp added, 2 at R 200: subtotal R 900'
 await p.selectOption('#po-supplier', supId); await p.fill('#po-expected', '2026-11-01'); await p.fill('#po-note', 'Before 10 please');
 await p.click('[data-act=by-po-send]'); R.sent = await toast(); await p.waitForSelector('#modal [data-sh=mail]');
 check('sent as BF-PO-000001', /Sent: BF-PO-000001/.test(R.sent), R.sent);
-await p.click('#modal [data-sh=mail]'); await p.waitForTimeout(800);
-R.opened = await p.evaluate(() => window.__opened); check('the email carries the link to the PO page', R.opened.length === 1 && /^mailto:orders%40foam\.co\.za/.test(R.opened[0]) && /pos-doc/.test(decodeURIComponent(R.opened[0])) && /BF-PO-000001/.test(decodeURIComponent(R.opened[0])), R.opened);
+await p.click('#modal [data-sh=mail]'); await p.waitForSelector('#em-mailto');
+R.mail = await p.evaluate(() => ({ to: document.getElementById('em-to').value, m: document.getElementById('em-mailto').getAttribute('href'), g: document.getElementById('em-gmail').getAttribute('href'), o: document.getElementById('em-outlook').getAttribute('href'), opened: window.__opened.length }));
+check('the email window: the address, the PO link, no window opened by itself', R.mail.to === 'orders@foam.co.za' && /^mailto:orders@foam\.co\.za\?subject=Purchase%20order%20BF-PO-000001/.test(R.mail.m) && /pos-doc/.test(decodeURIComponent(R.mail.m)) && R.mail.opened === 0, R.mail);
+check('Gmail and Outlook links carry the address and the PO', [R.mail.g, R.mail.o].every(u => /orders%40foam\.co\.za/.test(u) && /BF-PO-000001/.test(decodeURIComponent(u)) && /pos-doc/.test(decodeURIComponent(u))) && /^https:\/\/mail\.google\.com\//.test(R.mail.g) && /^https:\/\/outlook\.office\.com\//.test(R.mail.o), [R.mail.g.slice(0, 120), R.mail.o.slice(0, 120)]);
+await p.fill('#em-to', ''); await p.click('#em-mailto'); R.noAddr = await toast(); check('no address: it asks for one', /email address first/i.test(R.noAddr), R.noAddr);
+await p.fill('#em-to', 'orders@foam.co.za, sales@foam.co.za'); R.two = await p.getAttribute('#em-mailto', 'href'); check('two addresses', /^mailto:orders@foam\.co\.za,sales@foam\.co\.za\?/.test(R.two), R.two.slice(0, 80));
+await p.click('#modal-ok'); await p.waitForTimeout(200);
+await p.click('tr:has-text("BF-PO-000001") [data-act=by-po-open]'); await p.waitForSelector('#modal [data-act=by-po-share]'); await p.click('#modal [data-act=by-po-share]'); await p.waitForSelector('#modal [data-sh=print]');
 await p.click('#modal [data-sh=print]'); await p.waitForTimeout(400);
 R.printed = await p.evaluate(() => window.__printed); check('the A4 order printed', R.printed.length === 1 && /Purchase order/.test(R.printed[0]) && /Foam Co/.test(R.printed[0]) && /1,035\.00/.test(R.printed[0]), R.printed.length);
 await closeModal();
