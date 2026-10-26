@@ -21,7 +21,53 @@ export function poHtml({ po, entity, store, supplier }) {
     <div class="foot s">Please quote ${esc(po.docNo || 'the order')} on your invoice and delivery note. Prices are as agreed, excluding VAT.</div>
   </div>`;
 }
-export const poShareText = (po, entity, url) => `${entity.tradingName || entity.legalName}: ${po.revision > 1 ? 'CHANGED purchase order ' + po.docNo + ' (revision ' + po.revision + ', replaces the earlier one)' : 'purchase order ' + po.docNo}, ${po.lines.length} line${po.lines.length === 1 ? '' : 's'}, ${money(po.totalCents)} incl. VAT${po.expectedAt ? ', expected by ' + niceDate(po.expectedAt) : ''}.${url ? '\n' + url : ''}`;
+// the order written out for an email: each line's code, description, quantity and price, then the totals
+const poTitle = (po) => (po.revision > 1 ? 'CHANGED purchase order ' : 'Purchase order ') + po.docNo + (po.revision > 1 ? ' rev ' + po.revision : '');
+export function poEmailText({ po, entity, store, supplier }) {
+  const co = entity.tradingName || entity.legalName, sup = supplier || {};
+  return [
+    'Good day' + (sup.contact ? ' ' + sup.contact : '') + ',', '',
+    po.revision > 1 ? `Please note the changed order below. It replaces the earlier version of ${po.docNo}.` : 'Please supply the order below.', '',
+    poTitle(po) + ' · ' + co,
+    'Date: ' + niceDate(po.revisedAt || po.sentAt || po.createdAt) + (po.expectedAt ? ' · Expected by: ' + niceDate(po.expectedAt) : ''),
+    store ? 'Deliver to: ' + [store.name, addr(store.address)].filter(Boolean).join(', ') : null,
+    sup.accountNo ? 'Our account: ' + sup.accountNo : null, '',
+    'Code | Description | Qty | Unit cost (ex VAT) | Total',
+    ...po.lines.map(l => `${l.sku || l.barcode || '-'} | ${l.name} | ${l.qty} | ${money(l.unitCostCents)} | ${money(l.qty * l.unitCostCents)}`), '',
+    'Subtotal (ex VAT): ' + money(po.subtotalCents),
+    po.vatCents ? `VAT ${(po.vatRateBp || 0) / 100}%: ${money(po.vatCents)}` : null,
+    'Total: ' + money(po.totalCents), '',
+    po.note ? 'Note: ' + po.note : null,
+    `Please quote ${po.docNo} on your invoice and delivery note.`, '',
+    'Regards', co, [entity.phone, entity.email].filter(Boolean).join(' · ') || null
+  ].filter(x => x != null).join('\n').trim();
+}
+// the same order as spreadsheet rows (for xlsxBytes): rands as numbers so the sheet adds up
+export function poSheet({ po, entity, store, supplier }) {
+  const sup = supplier || { name: po.supplierName }, r = (c) => Math.round(c) / 100;
+  return {
+    sheet: po.docNo || 'Order',
+    widths: [16, 44, 8, 18, 16],
+    rows: [
+      [{ v: poTitle(po), s: 'b' }],
+      [[entity.tradingName || entity.legalName, entity.vatNo ? 'VAT no ' + entity.vatNo : '', entity.phone, entity.email].filter(Boolean).join(' · ')],
+      ['Date', niceDate(po.revisedAt || po.sentAt || po.createdAt), '', po.expectedAt ? 'Expected by' : '', po.expectedAt ? niceDate(po.expectedAt) : ''],
+      ['Supplier', sup.name || po.supplierName || '', '', sup.accountNo ? 'Our account' : '', sup.accountNo || ''],
+      ['Deliver to', store ? [store.name, addr(store.address)].filter(Boolean).join(', ') : ''],
+      [],
+      [{ v: 'Code', s: 'b' }, { v: 'Description', s: 'b' }, { v: 'Qty', s: 'b' }, { v: 'Unit cost (ex VAT)', s: 'b' }, { v: 'Total (ex VAT)', s: 'b' }],
+      ...po.lines.map(l => [l.sku || l.barcode || '', l.name, l.qty, { v: r(l.unitCostCents), s: 'm' }, { v: r(l.qty * l.unitCostCents), s: 'm' }]),
+      [],
+      ['', '', '', 'Subtotal (ex VAT)', { v: r(po.subtotalCents), s: 'm' }],
+      ...(po.vatCents ? [['', '', '', `VAT ${(po.vatRateBp || 0) / 100}%`, { v: r(po.vatCents), s: 'm' }]] : []),
+      ['', '', '', { v: 'Total', s: 'b' }, { v: r(po.totalCents), s: 'bm' }],
+      [],
+      ...(po.note ? [['Note', po.note]] : []),
+      [`Please quote ${po.docNo} on your invoice and delivery note. Prices are as agreed, excluding VAT.`]
+    ]
+  };
+}
+export const poShareText =(po, entity, url) => `${entity.tradingName || entity.legalName}: ${po.revision > 1 ? 'CHANGED purchase order ' + po.docNo + ' (revision ' + po.revision + ', replaces the earlier one)' : 'purchase order ' + po.docNo}, ${po.lines.length} line${po.lines.length === 1 ? '' : 's'}, ${money(po.totalCents)} incl. VAT${po.expectedAt ? ', expected by ' + niceDate(po.expectedAt) : ''}.${url ? '\n' + url : ''}`;
 
 // ----------------------------------------------------------- GRV --
 export function grvHtml({ grv, entity, store }) {

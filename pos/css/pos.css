@@ -246,6 +246,8 @@ small { font-size: 12px; }
 .rc-paper .r { display: flex; justify-content: space-between; gap: 6px; } .rc-paper .hr { border-top: 1px dashed #000; margin: 4px 0; } .rc-paper .tot { font-size: 13.5px; font-weight: 700; }
 .rc-paper .box { border: 1px solid #000; padding: 3px 5px; margin: 4px 0; } .rc-paper .bar svg { width: 60mm; height: 12mm; display: block; margin: 6px auto 0; } .rc-paper .pol { margin-top: 6px; border-top: 1px dashed #000; padding-top: 4px; }
 .rc-acts { display: grid; gap: .5rem; align-content: start; } .rc-acts .btn { display: flex; align-items: center; gap: .5rem; justify-content: flex-start; }
+.em-acts { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-top: .5rem; } .em-acts .btn { justify-content: center; text-decoration: none; } .em-acts #em-mailto { grid-column: 1 / -1; }
+.em-file { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: .25rem 0 .75rem; } .em-file .muted { font-size: .85rem; }
 @media (max-width: 700px) { .rc { grid-template-columns: 1fr; } }
 
 /* --------------------------------------------------------------- register */

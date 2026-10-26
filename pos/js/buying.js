@@ -11,7 +11,8 @@ import { esc, toast, field, row, val, openModal, openPrint, money, niceDate, nic
 import { centsOf, randsOf } from './money.js';
 import { A4_CSS, whatsappUrl } from './receipt.js';
 import { emailModal } from './email.js';
-import { poHtml, grvHtml, transferHtml } from './buying-doc.js';
+import { poHtml, poEmailText, poSheet, grvHtml, transferHtml } from './buying-doc.js';
+import { xlsxBytes, XLSX_TYPE } from './xlsx.js';
 import { printLabelItems } from './products.js';
 import { items as stockItems } from './stock.js';
 import { icon } from './icons.js';
@@ -222,15 +223,18 @@ async function shareModal(p) {
   const dd = d(); const sup = (dd.suppliers || []).find(s => s.id === p.supplierId) || {};
   let link = null;
   const getLink = async () => { if (link) return link; link = await auth.api('link', { poId: p.id, ...where() }, API.doc); return link; };
-  const { wrap } = openModal('Send ' + p.docNo + ' to ' + (p.supplierName || sup.name || 'the supplier'), `<p class="muted">The supplier opens a link to the order as an A4 page and prints it or saves it as a PDF.</p>
+  const { wrap } = openModal('Send ' + p.docNo + ' to ' + (p.supplierName || sup.name || 'the supplier'), `<p class="muted">Email sends the order itself (codes, descriptions, quantities and prices), with the order sheet in Excel to attach. WhatsApp and Copy link send a link to the order as an A4 page to print or save as a PDF.</p>
     <div class="rc-acts"><button class="btn" data-sh="mail">${icon('file')} Email${sup.email ? ' ' + esc(sup.email) : ''}</button><button class="btn" data-sh="wa">${icon('user')} WhatsApp${sup.phone ? ' ' + esc(sup.phone) : ''}</button><button class="btn ghost" data-sh="copy">Copy link</button><button class="btn ghost" data-sh="print">${icon('printer')} Print / PDF here</button></div>`, { okLabel: 'Done', cancelLabel: '', onOk: () => true });
   wrap.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-sh]'); if (!b) return;
     try {
       if (b.dataset.sh === 'print') return openPrint('Purchase order ' + p.docNo, poDoc(p), A4_CSS);
+      // the email carries the order itself (codes, descriptions, quantities, prices) and the order sheet to attach
+      const doc = { po: p, entity: dd.entity, store: dd.store, supplier: sup };
+      if (b.dataset.sh === 'mail') return emailModal({ title: 'Email ' + p.docNo, to: sup.email || '', subject: (p.revision > 1 ? 'Changed purchase order ' : 'Purchase order ') + p.docNo + (p.revision > 1 ? ' rev ' + p.revision : '') + ' from ' + (dd.entity.tradingName || dd.entity.legalName), text: poEmailText(doc),
+        file: { label: 'Save the order sheet (Excel)', name: p.docNo + (p.revision > 1 ? '-rev' + p.revision : '') + '.xlsx', type: XLSX_TYPE, make: () => xlsxBytes(poSheet(doc)) } });
       const r = await getLink();
-      if (b.dataset.sh === 'mail') { emailModal({ title: 'Email ' + p.docNo, to: sup.email || '', subject: (p.revision > 1 ? 'Changed purchase order ' : 'Purchase order ') + p.docNo + (p.revision > 1 ? ' rev ' + p.revision : '') + ' from ' + (dd.entity.tradingName || dd.entity.legalName), text: r.text }); }
-      else if (b.dataset.sh === 'wa') { const phone = prompt('WhatsApp number', sup.phone || ''); if (phone) window.open(whatsappUrl(phone, r.text), '_blank'); }
+      if (b.dataset.sh === 'wa') { const phone = prompt('WhatsApp number', sup.phone || ''); if (phone) window.open(whatsappUrl(phone, r.text), '_blank'); }
       else { await navigator.clipboard.writeText(r.url).catch(() => {}); toast('Link copied'); wrap.querySelector('.rc-acts').insertAdjacentHTML('beforeend', `<p class="muted" style="word-break:break-all;font-size:11px">${esc(r.url)}</p>`); }
     } catch (err) { toast(err.message, 'warn'); }
   });
@@ -366,6 +370,8 @@ function hits(hostId, q, onPick) {
 export function onInput(id, value) {
   if (id === 'by-q') { by.q = value; ctx.repaint(); const q = document.getElementById('by-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
   if (id === 'po-add') hits('po-hits', value, (it) => { addLine(it, 1); });
+  // kept as typed, so a redraw of the editor (a supplier chosen, a line changed) does not lose them
+  if ((id === 'po-expected' || id === 'po-note') && by.edit) by.edit[id === 'po-note' ? 'note' : 'expectedAt'] = value;
   if (id === 'rc-add') hits('rc-hits', value, (it) => { const r = readRcv(); if (!r.lines.some(l => l.itemId === it.itemId)) r.lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, name: it.name, sku: it.sku, barcode: it.barcodes[0] || '', qty: 1, unitCostCents: it.costCents }); ctx.repaint(); });
   if (id === 'tr-add') hits('tr-hits', value, (it) => { const t = readTr(); if (!t.lines.some(l => l.itemId === it.itemId)) t.lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, name: it.name, sku: it.sku, qty: 1 }); ctx.repaint(); });
 }
