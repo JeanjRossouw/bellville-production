@@ -59,7 +59,7 @@ export function productsHtml(d) {
   return `<div class="page-head"><h1>Products</h1>
       <div class="btn-row" style="margin:0">
         ${mine.length > 1 ? `<select id="pr-entity" class="in-sm">${mine.map(e => `<option value="${esc(e.id)}"${e.id === eid ? ' selected' : ''}>${esc(e.tradingName || e.legalName)}</option>`).join('')}</select>` : ''}
-        ${edits ? `<label class="btn ghost" title="Shopify's product CSV">Import CSV<input type="file" id="pr-file" accept=".csv,text/csv" hidden></label><button class="btn ghost" data-act="pr-export">Export CSV</button><button class="btn ghost" data-act="pr-costs" title="Costs, and prices if you want, from a spreadsheet">Import costs &amp; prices</button><button class="btn ghost" data-act="pr-reorder" title="The reorder level on every stock item at once">Set reorder level</button><button class="btn ghost" data-act="pr-supplier" title="The supplier on the ticked products, or on all those shown">Set supplier</button>` : ''}
+        ${edits ? `<label class="btn ghost" title="Shopify's product CSV">Import CSV<input type="file" id="pr-file" accept=".csv,text/csv" hidden></label><button class="btn ghost" data-act="pr-export">Export CSV</button><button class="btn ghost" data-act="pr-costs" title="Costs, and prices if you want, from a spreadsheet">Import costs &amp; prices</button><button class="btn ghost" data-act="pr-reorder" title="The reorder level on every stock item at once">Set reorder level</button><button class="btn ghost" data-act="pr-supplier" title="The supplier on the ticked products, or on all those shown">Set supplier</button><button class="btn ghost" data-act="pr-archive" title="Archive the ticked products, or all those shown (or bring archived ones back)">Archive</button>` : ''}
         <button class="btn ghost" data-act="pr-labels" title="Barcode labels for the ticked products">Labels</button>
         ${edits ? '<button class="btn primary" data-act="pr-new">＋ New product</button>' : ''}
       </div></div>
@@ -399,29 +399,64 @@ export function setReorderAll(d, entityId) {
   wrap.addEventListener('change', count); count();
 }
 
-// the supplier on many products at once: the ticked ones, or (none ticked) all those the filters show
-export function setSupplierMany(d, entityId, ticked) {
-  const sups = supsOf(d, entityId);
-  if (!sups.length) return toast('Add the supplier first: Buying → Suppliers.', 'warn');
+// the products a bulk change applies to: the ticked ones, or (none ticked) all those the filters show
+function bulkItems(d, entityId, ticked) {
   const f = d.prFilter, q = String(f.q || '').toLowerCase().trim();
   const shown = d.products.filter(p => p.entityId === entityId && (f.archived ? true : !p.archived) && (!f.category || p.category === f.category) && (!f.brand || p.brand === f.brand) && (!f.type || p.type === f.type)
     && (!f.supplier || (f.supplier === NO_SUP ? !p.supplierId : p.supplierId === f.supplier))
     && (!q || [p.name, p.sku, p.category, p.brand, ...(p.barcodes || []), ...itemVariants(d, p.id).flatMap(v => [v.sku, ...(v.barcodes || [])])].some(x => String(x || '').toLowerCase().includes(q))));
   const items = ticked.length ? d.products.filter(p => ticked.includes(p.id)) : shown;
+  const what = `${items.length} product${items.length === 1 ? '' : 's'} ${ticked.length ? 'ticked' : 'shown by the filters'}${ticked.length ? '' : (f.brand ? ' (brand ' + esc(f.brand) + ')' : '') + (f.category ? ' (' + esc(f.category) + ')' : '') + (q ? ' (search “' + esc(f.q) + '”)' : '')}`;
+  return { items, what };
+}
+// a product update that also writes old prices and costs as whole cents (the rules want them so)
+const prodUpdate = (p, data) => ({ op: 'update', coll: 'products', id: p.id, data: { ...data, ...(Number.isInteger(p.priceCents) ? {} : { priceCents: Math.round(Number(p.priceCents) || 0) }), ...(Number.isInteger(p.costCents) ? {} : { costCents: Math.round(Number(p.costCents) || 0) }), ...auth.touch() } });
+const untick = () => document.querySelectorAll('[data-lbl]:checked, #pr-all').forEach(c => { c.checked = false; });
+
+// the supplier on many products at once: the ticked ones, or (none ticked) all those the filters show
+export function setSupplierMany(d, entityId, ticked) {
+  const sups = supsOf(d, entityId);
+  if (!sups.length) return toast('Add the supplier first: Buying → Suppliers.', 'warn');
+  const { items, what } = bulkItems(d, entityId, ticked);
   if (!items.length) return toast('No products: tick some, or change the filters.', 'warn');
-  openModal('Set the supplier', `<p>${items.length} product${items.length === 1 ? '' : 's'} ${ticked.length ? 'ticked' : 'shown by the filters'}${ticked.length ? '' : (f.brand ? ' (brand ' + esc(f.brand) + ')' : '') + (f.category ? ' (' + esc(f.category) + ')' : '') + (q ? ' (search “' + esc(f.q) + '”)' : '')}.</p>
+  openModal('Set the supplier', `<p>${what}.</p>
     ${field('Supplier', 'bs-sup', { type: 'select', value: sups[0].id, options: [...sups.map(sp => ({ value: sp.id, label: sp.name })), { value: '', label: 'None (clear it)' }] })}`, {
     okLabel: 'Set it', onOk: async (w) => {
       const sid = val(w, 'bs-sup'), name = (sups.find(sp => sp.id === sid) || {}).name || 'none';
       const todo = items.filter(p => (p.supplierId || '') !== sid);
       if (!todo.length) { toast('They have that supplier already.'); return true; }
-      const ops = todo.map(p => ({ op: 'update', coll: 'products', id: p.id, data: { supplierId: sid, ...(Number.isInteger(p.priceCents) ? {} : { priceCents: Math.round(Number(p.priceCents) || 0) }), ...(Number.isInteger(p.costCents) ? {} : { costCents: Math.round(Number(p.costCents) || 0) }), ...auth.touch() } }));
+      const ops = todo.map(p => prodUpdate(p, { supplierId: sid }));
       try {
         for (let i = 0; i < ops.length; i += 100) await batch(ops.slice(i, i + 100));
         await setOne('auditLog', newId('auditLog'), { action: 'product.supplierMany', docType: 'product', docId: '', docNo: '', actorUid: auth.session.uid, actorName: auth.session.user.name, overrideUid: '', overrideName: '', details: { supplierId: sid, items: todo.length }, ...auth.stamp(entityId, '') }).catch(() => {});
         toast(`Supplier ${name} set on ${todo.length} product${todo.length === 1 ? '' : 's'}`);
-        document.querySelectorAll('[data-lbl]:checked, #pr-all').forEach(c => { c.checked = false; });
+        untick();
         return true;
       } catch (e) { toast(e.message, 'warn'); return false; }
     } });
+}
+
+// archive many products at once (or bring archived ones back): off the till, the list and reorder
+// suggestions; sales, stock and orders already made keep them, so nothing is deleted
+export function archiveMany(d, entityId, ticked) {
+  const { items, what } = bulkItems(d, entityId, ticked);
+  if (!items.length) return toast('No products: tick some, or change the filters.', 'warn');
+  const live = items.filter(p => !p.archived), off = items.filter(p => p.archived);
+  const n = (k) => k + ' product' + (k === 1 ? '' : 's');
+  const run = async (list, archived) => {
+    try {
+      const ops = list.map(p => prodUpdate(p, { archived }));
+      for (let i = 0; i < ops.length; i += 100) await batch(ops.slice(i, i + 100));
+      await logChange(entityId, archived ? 'product.archiveMany' : 'product.restoreMany', '', { items: list.length, ids: list.slice(0, 500).map(p => p.id) });
+      toast(archived ? `Archived ${n(list.length)}` : `Brought back ${n(list.length)}`);
+      untick();
+      return true;
+    } catch (e) { toast(e.message, 'warn'); return false; }
+  };
+  const { wrap, close } = openModal(live.length ? 'Archive products' : 'Bring products back', `<p>${what}${off.length && live.length ? `: ${live.length} for sale, ${off.length} archived already` : ''}.</p>
+    ${live.length ? `<p class="muted">Archived products leave the till, the product list and the reorder suggestions. Sales, stock and orders already made keep them, and you can bring them back any time (tick Show archived).</p>
+    <ul class="muted">${live.slice(0, 8).map(p => `<li>${esc(p.name)}</li>`).join('')}${live.length > 8 ? `<li>and ${live.length - 8} more</li>` : ''}</ul>` : ''}
+    ${off.length && live.length ? `<button class="btn ghost" type="button" id="ba-back">Bring back the ${n(off.length)} archived instead</button>` : ''}`, {
+    okLabel: live.length ? 'Archive ' + n(live.length) : 'Bring back ' + n(off.length), onOk: () => live.length ? run(live, true) : run(off, false) });
+  const back = wrap.querySelector('#ba-back'); if (back) back.addEventListener('click', async () => { if (await run(off, false)) close(true); });
 }
