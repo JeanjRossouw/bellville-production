@@ -9,9 +9,10 @@
 //   takeReview { takeId }      counting closed, the variances to look at; a supervisor
 //   takePost   { takeId, approvalToken? }   a manager: one 'count' movement per variance against the frozen figure
 //   takeCancel { takeId }
+//   productDelete { entityId, productIds: [...] }   a manager: gone for good, only products never used anywhere
 //
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
-import { json, Reject, clean, randomId, nowIso, getDoc, query, createDoc, patchDoc, serverStamp, bodyOf, audit, withGroup } from './lib/pos.mjs';
+import { json, Reject, clean, randomId, nowIso, getDoc, query, createDoc, patchDoc, commit, serverStamp, bodyOf, audit, withGroup, requireMember, inEntity, atLeast } from './lib/pos.mjs';
 import { whoAndWhere, runSale, moveWrites, approved, int } from './lib/sale.mjs';
 
 export const ADJUST_CODES = ['damaged', 'stolen', 'found', 'correction', 'sample', 'writeoff', 'other'];
@@ -203,6 +204,49 @@ const actions = {
     await patchDoc('stockTakes', t.id, { status: 'cancelled', cancelledAt: now, updatedAt: now });
     await audit({ action: 'stock.takeCancel', docType: 'stockTake', docId: t.id, docNo: t.name, actorUid: ctx.user.id, actorName: ctx.user.name, details: {}, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
     return { ok: true, take: { ...t, status: 'cancelled' } };
+  },
+
+  // gone for good: a product made by mistake. Only one nothing points to can go (the rules block deletes
+  // from the till on purpose): no stock, no movement, no sale, no document line, not part of a bundle.
+  // Each refused product is named with the reason; the rest are deleted with their variants, their
+  // empty stock-level rows and their Shopify queue rows, one audit row each.
+  async productDelete(event, b) {
+    const { user } = await requireMember(event);
+    const entityId = clean(b.entityId, 40);
+    if (!entityId || !inEntity(user, entityId)) throw new Reject(403, 'Not your company.');
+    if (!atLeast(user, 'manager')) throw new Reject(403, 'Deleting products needs a manager.');
+    const ids = [...new Set((Array.isArray(b.productIds) ? b.productIds : []).map(x => clean(x, 60)).filter(Boolean))].slice(0, 200);
+    if (!ids.length) throw new Reject(400, 'Which products?');
+    // every document line in the company that names a product, read once for the whole batch
+    const q = (coll) => query(coll, [{ field: 'entityId', value: entityId }], 5000);
+    const [pos, grvs, trs, lbs, sos, qts, takes, bundles] = await Promise.all([q('purchaseOrders'), q('grvs'), q('transfers'), q('laybys'), q('specialOrders'), q('quotes'), q('stockTakes'), query('products', [{ field: 'entityId', value: entityId }, { field: 'type', value: 'bundle' }], 2000)]);
+    const onDoc = new Map();   // productId or itemId → the first document naming it
+    const note = (key, what) => { if (key && !onDoc.has(key)) onDoc.set(key, what); };
+    const scan = (docs, label, field = 'lines') => { for (const d of docs) { if (d.status === 'cancelled') continue; for (const l of d[field] || []) { const w = `on ${label} ${d.docNo || d.name || d.id}`; note(l.productId, w); note(l.itemId, w); note(l.variantId, w); } } };
+    scan(pos, 'purchase order'); scan(grvs, 'goods received'); scan(trs, 'transfer'); scan(lbs, 'lay-by'); scan(sos, 'sales order'); scan(qts, 'quote'); scan(takes, 'stock take', 'items');
+    for (const bp of bundles) for (const c of bp.bundle || []) { note(c.productId, `part of the bundle ${bp.name}`); note(c.variantId, `part of the bundle ${bp.name}`); }
+    const deleted = [], refused = [];
+    for (const id of ids) {
+      const p = await getDoc('products', id);
+      if (!p || p.entityId !== entityId) { refused.push({ id, name: id, why: 'not found' }); continue; }
+      const variants = await query('variants', [{ field: 'productId', value: id }], 500);
+      const itemIds = [id, ...variants.map(v => v.id)];
+      let why = '';
+      for (const k of itemIds) if (onDoc.has(k)) { why = onDoc.get(k); break; }
+      const [moves, sold, levels, queue] = why ? [[], [], [], []] : await Promise.all([
+        query('stockMovements', [{ field: 'productId', value: id }], 1), query('saleLines', [{ field: 'productId', value: id }], 1),
+        query('stockLevels', [{ field: 'productId', value: id }], 500), query('shopifyQueue', [{ field: 'productId', value: id }], 500)]);
+      if (!why && sold.length) why = 'sold on ' + (sold[0].docNo || 'a sale');
+      if (!why && moves.length) why = 'has stock movements';
+      if (!why) { const held = levels.find(l => (l.onHandQty || 0) || (l.quarantineQty || 0) || (l.reservedQty || 0) || (l.onOrderQty || 0)); if (held) why = (held.onHandQty || 0) ? `has ${held.onHandQty} on hand` : (held.onOrderQty || 0) ? `has ${held.onOrderQty} on order` : 'has stock in quarantine or reserved'; }
+      if (why) { refused.push({ id, name: p.name, why }); continue; }
+      const now = nowIso();
+      const writes = [{ delete: true, coll: 'products', id }, ...variants.map(v => ({ delete: true, coll: 'variants', id: v.id })), ...levels.map(l => ({ delete: true, coll: 'stockLevels', id: l.id })), ...queue.map(r => ({ delete: true, coll: 'shopifyQueue', id: r.id })),
+        { create: true, coll: 'auditLog', id: randomId('au_'), data: { action: 'product.delete', docType: 'product', docId: id, docNo: '', actorUid: user.id, actorName: user.name, overrideUid: '', overrideName: '', details: { name: p.name, sku: p.sku || '', variants: variants.length, shopifyProductId: p.shopifyProductId || '' }, ...serverStamp(entityId, '', user.id, 'web:' + user.id), serverReceivedAt: now } }];
+      await commit(writes);
+      deleted.push({ id, name: p.name, shopify: !!p.shopifyProductId });
+    }
+    return { ok: true, deleted, refused };
   }
 };
 
