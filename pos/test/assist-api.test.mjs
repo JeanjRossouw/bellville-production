@@ -74,7 +74,7 @@ await patchAt('pos/retail/products/p_lamp', { supplierId: 's1' });
 R.sale = await call('pos-sale', { action: 'commit', saleId: 'web-assist-' + Date.now().toString(36), clientCreatedAt: new Date().toISOString(), customerId: '', lines: [{ productId: 'p_lamp', variantId: '', qty: 1, unitPriceCents: 50000, discountCents: 0 }], saleDiscountCents: 0, totals: { totalCents: 50000, vatCents: vatIn(50000, 1500) }, tenders: [{ method: 'card', amountCents: 50000 }], ...bell }, own.idToken);
 check('a sale today', R.sale.ok && R.sale.sale.docNo === 'BF-000001', R.sale.error);
 // a custom order open, to be listed
-R.so = await call('pos-special', openBody(sofa(), 1500000, [{ method: 'card', amountCents: 750000 }]));
+R.so = await call('pos-special', openBody(sofa(), 1500000, [{ method: 'card', amountCents: 750000, cardLast4: '4242', approvalCode: '123456' }]));
 check('a custom order at the factory', R.so.ok && R.so.order.status === 'depositPaid', R.so.error);
 
 const ask = (q, token = cas.idToken, o = {}) => call('pos-assist', { action: 'ask', messages: [{ role: 'user', content: q }], screen: 'sell', ...bell, ...o }, token);

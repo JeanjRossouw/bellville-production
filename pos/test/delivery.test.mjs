@@ -50,7 +50,7 @@ const tokOf = (link) => (/[?&][td]=([\w-]+)/.exec(link || '') || [])[1];
 const readyOrder = async (cid, tag) => {
   const o = await call('pos-special', { action: 'open', orderId: 'so-dl-' + tag + '-' + Date.now().toString(36), clientCreatedAt: new Date().toISOString(), customerId: cid,
     lines: [{ productId: 'p_sofa', variantId: '', qty: 1, unitPriceCents: 900000, discountCents: 0, spec: { size: '2.4 m', fabric: 'Linen', colour: 'Sand' } }], saleDiscountCents: 0, totals: { totalCents: 900000, vatCents: vatIn(900000, 1500) },
-    deposit: [{ method: 'card', amountCents: 900000, ref: '1234', cardLast4: '1234' }], signoff: { accepted: true, signedBy: 'Client', signature: sig }, ...bell });
+    deposit: [{ method: 'card', amountCents: 900000, approvalCode: '123456', cardLast4: '1234' }], signoff: { accepted: true, signedBy: 'Client', signature: sig }, ...bell });
   if (!o.ok) throw new Error('open: ' + o.error);
   const r = await call('pos-special', { action: 'status', orderId: o.order.id, status: 'ready', ...bell });
   if (!r.ok) throw new Error('ready: ' + r.error);
@@ -75,7 +75,7 @@ const d2 = R.v2.slots.find(x => x.date === first.date);
 check('that slot is full now (one a slot): the other client cannot have it', d2 && !d2.slots.some(x => x.slot === '08:00–12:00') && d2.slots.some(x => x.slot === '12:00–17:00'), d2);
 R.full = await pub('pos-track', { action: 'pickSlot', t: t2, kind: 'deliver', date: first.date, slot: '08:00–12:00' });
 check('asking for a full slot: refused', R.full.status === 409 && /gone/.test(R.full.error), R.full);
-R.unpaid = await (async () => { const o = await call('pos-special', { action: 'open', orderId: 'so-dl-c-' + Date.now().toString(36), clientCreatedAt: new Date().toISOString(), customerId: 'c2', lines: [{ productId: 'p_sofa', variantId: '', qty: 1, unitPriceCents: 900000, discountCents: 0, spec: { size: '2 m' } }], saleDiscountCents: 0, totals: { totalCents: 900000, vatCents: vatIn(900000, 1500) }, deposit: [{ method: 'card', amountCents: 450000, cardLast4: '9999' }], signoff: { accepted: true, signedBy: 'P', signature: sig }, ...bell });
+R.unpaid = await (async () => { const o = await call('pos-special', { action: 'open', orderId: 'so-dl-c-' + Date.now().toString(36), clientCreatedAt: new Date().toISOString(), customerId: 'c2', lines: [{ productId: 'p_sofa', variantId: '', qty: 1, unitPriceCents: 900000, discountCents: 0, spec: { size: '2 m' } }], saleDiscountCents: 0, totals: { totalCents: 900000, vatCents: vatIn(900000, 1500) }, deposit: [{ method: 'card', amountCents: 450000, cardLast4: '9999', approvalCode: '123456' }], signoff: { accepted: true, signedBy: 'P', signature: sig }, ...bell });
   await call('pos-special', { action: 'status', orderId: o.order.id, status: 'ready', ...bell });
   const l = await call('pos-special', { action: 'trackLink', kind: 'order', id: o.order.id, ...bell });
   return { view: await pub('pos-track', { action: 'view', t: tokOf(l.link) }), pick: await pub('pos-track', { action: 'pickSlot', t: tokOf(l.link), kind: 'deliver', date: first.date, slot: '12:00–17:00' }) }; })();
