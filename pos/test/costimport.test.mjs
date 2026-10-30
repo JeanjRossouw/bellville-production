@@ -167,6 +167,21 @@ R.backOk = await txt('#modal-ok'); check('ticked archived ones: the window offer
 await p.click('#modal-ok'); R.backToast = await toast(); await p.waitForTimeout(800);
 check('brought back: for sale again', /Brought back 2 products/.test(R.backToast) && (await Promise.all(two.map(id => one('products/' + id)))).every(x => x.archived === false), R.backToast);
 
+// ---- delete for good: only what nothing points to; the rest refused and told why
+await put('pos/retail/stockLevels/RC-MAIN_p_lamp', { productId: 'p_lamp', variantId: '', onHandQty: 3, quarantineQty: 0, reservedQty: 0, onOrderQty: 0, avgCostCents: 10000, ...st('RC'), storeId: 'RC-MAIN' });
+await put('pos/retail/quotes/q1', { docNo: 'RC-QT-000001', status: 'open', lines: [{ productId: 'p_uv', variantId: '', itemId: 'p_uv', name: 'Giangarden', qty: 1 }], ...st('RC') });
+await p.uncheck('#pr-archived'); await p.waitForTimeout(400);
+for (const id of ['p_d1', 'p_d2', 'p_kit', 'p_lamp', 'p_uv']) await p.check(`[data-lbl="${id}"]`);
+await p.click('[data-act=pr-archive]'); await p.waitForSelector('#ba-delete'); await p.click('#ba-delete'); await p.waitForSelector('#modal-ok');
+R.delModal = await txt('#modal'); check('delete: the 5 named, the warning that it cannot be undone', /Delete 5 products for good/i.test(R.delModal) && /cannot be undone/.test(R.delModal) && /Dup A/.test(R.delModal), R.delModal);
+await p.click('#modal-ok'); R.delToast = await toast(); await p.waitForSelector('#bd-refused', { timeout: 8000 }); R.delResult = await txt('#modal');
+check('3 deleted, 2 refused', /Deleted 3 products, 2 refused/.test(R.delToast), R.delToast);
+check('the refused ones are named with the reason', /Basking Lamp — has 3 on hand/.test(R.delResult) && /Giangarden[^—]*— on quote RC-QT-000001/.test(R.delResult), R.delResult);
+check('the deleted products and the kit\'s variants are gone; the refused ones stay', (await Promise.all(['products/p_d1', 'products/p_d2', 'products/p_kit', 'variants/v_s', 'variants/v_l'].map(one))).every(x => x === null) && (await one('products/p_lamp')) && (await one('products/p_uv')) && (await one('stockLevels/RC-MAIN_p_lamp')).onHandQty === 3, '');
+check('one change-log row per deleted product', (await coll('auditLog')).filter(x => x.action === 'product.delete').map(x => x.details.name).sort().join() === 'Dup A,Dup B,Gecko Kit', '');
+await p.click('#modal-ok'); await p.waitForTimeout(500);
+R.afterDel = await txt('#screen'); check('the list shows the 4 left', /4 of 4 products/.test(R.afterDel), R.afterDel.slice(-200));
+
 check('no page errors', errs.length === 0, errs);
 await b.close(); if (server) server.kill();
 console.log(JSON.stringify({ fails, errs, ok: fails.length === 0 }, null, 1));

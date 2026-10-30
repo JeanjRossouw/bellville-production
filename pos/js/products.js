@@ -5,6 +5,7 @@
 //
 // Managers and the owner edit; everyone reads (the sale screen needs the
 // catalogue). Money is typed in rands and kept in cents.
+import { API } from './config.js';
 import { setOne, patchOne, newId, batch } from './db.js';
 import * as auth from './auth.js';
 import { esc, toast, field, row, val, openModal, empty, money, openPrint } from './ui.js';
@@ -456,7 +457,29 @@ export function archiveMany(d, entityId, ticked) {
   const { wrap, close } = openModal(live.length ? 'Archive products' : 'Bring products back', `<p>${what}${off.length && live.length ? `: ${live.length} for sale, ${off.length} archived already` : ''}.</p>
     ${live.length ? `<p class="muted">Archived products leave the till, the product list and the reorder suggestions. Sales, stock and orders already made keep them, and you can bring them back any time (tick Show archived).</p>
     <ul class="muted">${live.slice(0, 8).map(p => `<li>${esc(p.name)}</li>`).join('')}${live.length > 8 ? `<li>and ${live.length - 8} more</li>` : ''}</ul>` : ''}
-    ${off.length && live.length ? `<button class="btn ghost" type="button" id="ba-back">Bring back the ${n(off.length)} archived instead</button>` : ''}`, {
+    ${off.length && live.length ? `<button class="btn ghost" type="button" id="ba-back">Bring back the ${n(off.length)} archived instead</button>` : ''}
+    <p class="muted" style="margin-top:.8rem">Made by mistake? <button class="btn ghost sm" type="button" id="ba-delete">Delete for good</button> — only products never sold, received, counted, ordered or quoted can go; the rest are refused and told why.</p>`, {
     okLabel: live.length ? 'Archive ' + n(live.length) : 'Bring back ' + n(off.length), onOk: () => live.length ? run(live, true) : run(off, false) });
   const back = wrap.querySelector('#ba-back'); if (back) back.addEventListener('click', async () => { if (await run(off, false)) close(true); });
+  wrap.querySelector('#ba-delete').addEventListener('click', () => deleteMany(entityId, items));
+}
+
+// gone for good (the server checks nothing points to each product; the rules block deletes from the till)
+function deleteMany(entityId, items) {
+  const n = (k) => k + ' product' + (k === 1 ? '' : 's');
+  openModal('Delete ' + n(items.length) + ' for good', `<p class="warn">This cannot be undone.</p>
+    <p class="muted">Each product is checked first: one with stock, or on any sale, movement, purchase order, receipt, transfer, lay-by, sales order, quote or stock take, or in a bundle, is refused and the reason shown. Archive those instead.</p>
+    <ul class="muted">${items.slice(0, 12).map(p => `<li>${esc(p.name)}</li>`).join('')}${items.length > 12 ? `<li>and ${items.length - 12} more</li>` : ''}</ul>`, {
+    okLabel: 'Delete for good', onOk: async () => {
+      try {
+        const out = { deleted: [], refused: [] };
+        for (let i = 0; i < items.length; i += 100) { const r = await auth.api('productDelete', { entityId, productIds: items.slice(i, i + 100).map(p => p.id) }, API.stock); out.deleted.push(...r.deleted); out.refused.push(...r.refused); }
+        untick();
+        const shopify = out.deleted.filter(x => x.shopify).length;
+        toast(out.deleted.length ? `Deleted ${n(out.deleted.length)}` + (out.refused.length ? `, ${out.refused.length} refused` : '') : 'Nothing deleted: ' + (out.refused.length ? 'all refused' : 'no products'), out.refused.length ? 'warn' : '');
+        if (out.refused.length || shopify) setTimeout(() => openModal(out.deleted.length ? `Deleted ${n(out.deleted.length)}` : 'Nothing deleted', `${shopify ? `<p class="muted">${shopify} of them came from Shopify: delete them in Shopify too, or the next import brings them back.</p>` : ''}
+          ${out.refused.length ? `<p>${n(out.refused.length)} kept (archive these instead):</p><ul id="bd-refused">${out.refused.map(x => `<li><strong>${esc(x.name)}</strong> — ${esc(x.why)}</li>`).join('')}</ul>` : ''}`, { okLabel: 'OK', cancelLabel: '', onOk: () => true }), 50);
+        return true;
+      } catch (e) { toast(e.message, 'warn'); return false; }
+    } });
 }
