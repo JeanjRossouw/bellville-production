@@ -149,6 +149,24 @@ check('Akwa set on every RC product that had none; the other company untouched',
 await p.selectOption('#pr-supplier', 'sup_akwa'); await p.waitForTimeout(500);
 R.akwa = await txt('#screen'); check('the Akwa filter shows them', new RegExp(rcAll.length + ' of').test(R.akwa), R.akwa.slice(0, 200));
 
+// ---- archive many at once, then bring them back
+const two = (await p.$$eval('[data-lbl]', cs => cs.map(c => c.dataset.lbl))).slice(0, 2);
+for (const id of two) await p.check(`[data-lbl="${id}"]`);
+await p.click('[data-act=pr-archive]'); await p.waitForSelector('#modal-ok');
+R.arModal = await txt('#modal'); R.arOk = await txt('#modal-ok');
+check('archive: the 2 ticked products named, nothing deleted', /2 products ticked/.test(R.arModal) && /bring them back any time/i.test(R.arModal) && /Archive 2 products/i.test(R.arOk), [R.arModal, R.arOk]);
+await p.click('#modal-ok'); R.arToast = await toast(); await p.waitForTimeout(800);
+const arch = await Promise.all(two.map(id => one('products/' + id)));
+R.afterArch = await txt('#screen');
+check('the two are archived and leave the list; the rest stay for sale', /Archived 2 products/.test(R.arToast) && arch.every(x => x.archived === true && Number.isInteger(x.priceCents)) && (await coll('products')).filter(x => x.entityId === 'RC' && !x.archived).length === rcAll.length - 2 && new RegExp((rcAll.length - 2) + ' of').test(R.afterArch), [R.arToast, arch.map(x => x.archived)]);
+check('the archive is in the change log', (await coll('auditLog')).some(x => x.action === 'product.archiveMany' && x.details && x.details.items === 2), '');
+await p.check('#pr-archived'); await p.waitForTimeout(500);
+for (const id of two) await p.check(`[data-lbl="${id}"]`);
+await p.click('[data-act=pr-archive]'); await p.waitForSelector('#modal-ok');
+R.backOk = await txt('#modal-ok'); check('ticked archived ones: the window offers to bring them back', /Bring back 2 products/i.test(R.backOk), R.backOk);
+await p.click('#modal-ok'); R.backToast = await toast(); await p.waitForTimeout(800);
+check('brought back: for sale again', /Brought back 2 products/.test(R.backToast) && (await Promise.all(two.map(id => one('products/' + id)))).every(x => x.archived === false), R.backToast);
+
 check('no page errors', errs.length === 0, errs);
 await b.close(); if (server) server.kill();
 console.log(JSON.stringify({ fails, errs, ok: fails.length === 0 }, null, 1));

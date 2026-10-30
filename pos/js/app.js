@@ -560,6 +560,7 @@ async function onAction(e) {
     case 'pr-costs': return openCostImport(prData(), prEntityId());
     case 'pr-reorder': return products.setReorderAll(prData(), prEntityId());
     case 'pr-supplier': return products.setSupplierMany(prData(), prEntityId(), [...w.querySelectorAll('[data-lbl]:checked')].map(c => c.dataset.lbl));
+    case 'pr-archive': return products.archiveMany(prData(), prEntityId(), [...w.querySelectorAll('[data-lbl]:checked')].map(c => c.dataset.lbl));
     case 'pr-labels': return products.printLabels(prData(), [...w.querySelectorAll('[data-lbl]:checked')].map(c => c.dataset.lbl), prEntityId());
     case 'rate-add': return admin.rateAdd(w);
     case 'rate-del': return admin.rateDel(w, b.dataset.i);
