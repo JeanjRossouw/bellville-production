@@ -91,7 +91,7 @@ await patch('pos/retail/products/p_sofa', { priceCents: 1000000 });
 const sig = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 R.so = await call('pos-special', { action: 'open', orderId: 'so-qt-' + Date.now().toString(36), clientCreatedAt: new Date().toISOString(), customerId: 'c1', quoteId: R.q3.quote.id,
   lines: [sofaLine(2294100, { quoteId: R.q3.quote.id, quoteLine: 1 })], saleDiscountCents: 0, totals: { totalCents: 2294100, vatCents: vatIn(2294100, 1500) },
-  deposit: [{ method: 'card', amountCents: 1147050 }], signoff: { accepted: true, signedBy: 'T Mokoena', signature: sig }, ...bell });
+  deposit: [{ method: 'card', amountCents: 1147050, cardLast4: '4242', approvalCode: '123456' }], signoff: { accepted: true, signedBy: 'T Mokoena', signature: sig }, ...bell });
 check('the sales order: R 22 941 as quoted, half paid, the rest before delivery', R.so.ok && R.so.order.totalCents === 2294100 && R.so.order.status === 'depositPaid' && R.so.order.balanceCents === 1147050, R.so.error || R.so.order);
 const q3after = await one('quotes/' + R.q3.quote.id);
 check('quote 3 used by the sales order', q3after.status === 'used' && q3after.usedAs.kind === 'salesOrder' && q3after.usedAs.docNo === R.so.order.docNo, q3after);

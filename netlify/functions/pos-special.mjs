@@ -4,7 +4,11 @@
 //   open      { orderId, customerId (required), lines [ sale lines + spec { model, size, fabric, colour, legs, notes, photo } ],
 //               saleDiscountCents…, totals, deposit: [ tenders ] | [], signoff: { accepted, signedBy, signature }, expectedAt?, clientCreatedAt, + where }
 //             → status 'quoted', or 'depositPaid' when the deposit meets the minimum
-//   pay       { orderId, paymentId, tenders, clientCreatedAt, + where }     a deposit or the balance, at any till
+//   pay       { orderId, paymentId, tenders, clientCreatedAt, + where }     a deposit or the balance, at any till:
+//             cash only at an open register; card with the approval code and last 4; EFT and QR recorded as
+//             awaiting the bank (they do not count until a manager confirms them)
+//   confirmPayment { paymentId, bankRef, approvalToken? }    a manager: the EFT/QR shows on the bank statement, it counts now
+//   voidPayment    { paymentId, reason, approvalToken? }     a manager: the money never came; the order owes it again
 //   status    { orderId, status: 'inProduction'|'ready', note, factoryRef?, expectedAt? }   a supervisor or higher at the till
 //   update    { orderId, status?, how }                                     → the WhatsApp text for the status, logged
 //   book      { orderId, kind: 'deliver'|'collect', date, slot, address, phone, note, driverName }
@@ -49,14 +53,29 @@ async function loadOrder(ctx, id) {
   if (!so || so.entityId !== ctx.entityId) throw new Reject(404, 'No such special order here.');
   return { ...so, id };
 }
+// money on an order, so that none can go missing: cash only at an open register (it is counted in that
+// drawer's cash-up); a card payment with the approval code and the last 4 from the slip; EFT and QR
+// recorded as awaiting the bank until a manager confirms them against the statement. Only confirmed
+// money (t.confirmed) reduces the balance; t.awaiting waits.
 function moneyNow(ctx, tenders, total, customer) {
   const t = prepareTenders(ctx, tenders, { total, customer, partial: true });
   if (!(t.paid > 0)) throw new Reject(400, 'How much is being paid?');
-  const bad = t.pays.find(p => !NOW_METHODS.includes(p.method) || p.status === 'awaiting');
-  if (bad) throw new Reject(400, 'Pay a special order with cash, card, EFT, QR or store credit, received now.');
+  const bad = t.pays.find(p => !NOW_METHODS.includes(p.method));
+  if (bad) throw new Reject(400, 'Pay a special order with cash, card, EFT, QR or store credit.');
+  for (const p of t.pays) {
+    if (p.method === 'cash' && !ctx.shiftId) throw new Reject(400, 'Cash on an order is taken at an open register, so it is counted in the cash-up. The office takes card or EFT.');
+    if (p.method === 'card' && !(p.approvalCode && /^\d{4}$/.test(p.cardLast4 || ''))) throw new Reject(400, 'A card payment needs the approval code and the last 4 digits from the slip.');
+    if (p.method === 'eft' || p.method === 'qr') { if (!p.ref) throw new Reject(400, `The ${p.method === 'eft' ? 'EFT' : 'QR'} reference, as it will show on the bank statement.`); p.status = 'awaiting'; }
+  }
+  t.confirmed = t.pays.filter(p => p.status !== 'awaiting').reduce((n, p) => n + p.amountCents, 0);
+  t.awaiting = t.paid - t.confirmed;
   return t;
 }
-const payRows = (ctx, so, pays, instalment, firstId, stamp, now) => pays.map((p, i) => ({ create: true, coll: 'payments', id: i === 0 && firstId ? firstId : randomId('pay_'), data: { docType: 'specialOrder', docId: so.id, docNo: so.docNo, instalment, registerId: ctx.registerId || '', shiftId: ctx.shiftId || '', ...p, ...stamp, serverReceivedAt: now } }));
+const payIds = (pays, firstId) => pays.map((p, i) => i === 0 && firstId ? firstId : randomId('pay_'));
+const payRows = (ctx, so, pays, instalment, ids, stamp, now) => pays.map((p, i) => ({ create: true, coll: 'payments', id: ids[i], data: { docType: 'specialOrder', docId: so.id, docNo: so.docNo, instalment, registerId: ctx.registerId || '', shiftId: ctx.shiftId || '', ...p, ...stamp, serverReceivedAt: now } }));
+// the order's own record of each payment (what the till shows): one entry per tender, with its status
+const histRows = (ctx, pays, ids, n, now) => pays.map((p, i) => ({ n, at: now, amountCents: p.amountCents, methods: [p.method], ref: p.ref || '', storeId: ctx.storeId, byName: ctx.user.name, status: p.status === 'awaiting' ? 'awaiting' : 'paid', paymentId: ids[i] }));
+const OWED = (so) => `${money(so.balanceCents)} is still owed on ${so.docNo}` + ((so.awaitingCents || 0) ? ` (${money(so.awaitingCents)} by EFT or QR is awaiting the bank: a manager confirms it first)` : '');
 const auditRow = (ctx, action, so, details, approvers, stamp, now) => ({ create: true, coll: 'auditLog', id: randomId('au_'), data: { action, docType: 'specialOrder', docId: so.id, docNo: so.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, overrideUid: [...approvers.keys()][0] || '', overrideName: [...approvers.values()][0] || '', details, ...stamp, serverReceivedAt: now } });
 const hist = (so, status, by, source, note, now) => [...(so.statusHistory || []), { status, at: now, byName: by, source, note: note || '' }].slice(-50);
 
@@ -92,6 +111,37 @@ async function invoiceOrder(ctx, so, saleId, patchOf, auditAction, auditMore = {
   return r;
 }
 
+// a payment awaiting the bank, confirmed (it counts from now) or voided (never came), by a manager or with one's PIN
+async function bankPayment(event, b, confirm) {
+  const ctx = await whoAndWhere(event, b, { noShift: true });
+  const a = approved(ctx, b.approvalToken, 'specialOrder', 'manager', confirm ? 'Confirming a bank payment' : 'Marking a payment not received');
+  const approvers = new Map(); if (!a.self) approvers.set(a.uid, a.name);
+  const pay = await getDoc('payments', clean(b.paymentId, 80));
+  if (!pay || pay.entityId !== ctx.entityId || pay.docType !== 'specialOrder') throw new Reject(404, 'No such payment here.');
+  if (pay.status !== 'awaiting') throw new Reject(409, pay.status === 'void' ? 'That payment was marked not received.' : 'That payment is confirmed already.');
+  const so = await loadOrder(ctx, pay.docId);
+  const bankRef = clean(b.bankRef, 60), reason = clean(b.reason, 200);
+  if (!confirm && !reason) throw new Reject(400, 'Why was it not received?');
+  return runSale(ctx, {}, { more: async (tx) => {
+    const cur = await getDoc('specialOrders', so.id, tx); const p = await getDoc('payments', pay.id, tx);
+    if (!cur || !p || p.status !== 'awaiting') throw new Reject(409, 'That payment changed meanwhile: look again.');
+    if (['delivered', 'collected', 'cancelled'].includes(cur.status)) throw new Reject(409, `Order ${so.docNo} is ${cur.status}.`);
+    const now = nowIso();
+    const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
+    const awaiting = Math.max(0, (cur.awaitingCents || 0) - p.amountCents);
+    const mark = confirm ? { status: 'paid', confirmedAt: now, confirmedBy: a.name, bankRef } : { status: 'void', voidedAt: now, voidedBy: a.name, voidReason: reason };
+    const history = (cur.history || []).map(h => h.paymentId === pay.id ? { ...h, ...mark } : h);
+    const patch = confirm
+      ? { paidCents: cur.paidCents + p.amountCents, balanceCents: cur.balanceCents - p.amountCents, awaitingCents: awaiting, lastPaidAt: now, depositCents: Math.min(cur.paidCents + p.amountCents, cur.minDepositCents), updatedAt: now, history }
+      : { awaitingCents: awaiting, updatedAt: now, history };
+    if (confirm && cur.status === 'quoted' && patch.paidCents >= cur.minDepositCents) { patch.status = 'depositPaid'; patch.statusHistory = hist(cur, 'depositPaid', a.name, 'till', 'bank payment confirmed', now); patch.updateDue = true; }
+    const writes = [{ update: true, coll: 'specialOrders', id: so.id, data: patch },
+      { update: true, coll: 'payments', id: pay.id, data: confirm ? { status: 'paid', confirmedAt: now, confirmedByUid: a.uid, confirmedByName: a.name, bankRef } : { status: 'void', voidedAt: now, voidedByUid: a.uid, voidedByName: a.name, voidReason: reason } },
+      auditRow(ctx, confirm ? 'specialOrder.confirmPay' : 'specialOrder.voidPay', so, { paymentId: pay.id, amountCents: p.amountCents, method: p.method, ref: p.ref || '', bankRef, reason, balanceCents: patch.balanceCents != null ? patch.balanceCents : cur.balanceCents, status: patch.status || cur.status }, approvers, stamp, now)];
+    return { writes, result: { order: { ...cur, ...patch, id: so.id }, payment: { ...p, ...mark, id: pay.id } } };
+  } });
+}
+
 const actions = {
   async open(event, b) {
     const ctx = await whoAndWhere(event, b);
@@ -116,8 +166,9 @@ const actions = {
     const signature = String(sg.signature || '').slice(0, 200000);
     if (signature && !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(signature)) throw new Reject(400, 'The signature is not a PNG.');
     const expectedAt = /^\d{4}-\d{2}-\d{2}$/.test(b.expectedAt || '') ? b.expectedAt : new Date(Date.now() + ss.leadDays * 86400000).toISOString().slice(0, 10);
-    const paid = dep ? dep.paid : 0;
+    const paid = dep ? dep.confirmed : 0, awaiting = dep ? dep.awaiting : 0;
     const status = paid >= minDeposit && paid > 0 ? 'depositPaid' : 'quoted';
+    const depIds = dep ? payIds(dep.pays, '') : [];
 
     const r = await runSale(ctx, {}, { more: async (tx) => {
       const num = await nextFromCounter(tx, ctx, 'SO', ctx.entity.specialOrderPrefix || (ctx.entity.invoicePrefix + '-SO'));
@@ -128,8 +179,8 @@ const actions = {
         customerId: customer.id, customerSnapshot: { name: customer.name, phone: customer.phone || '', email: customer.email || '', vatNo: customer.vatNo || '', address: customer.address || {} },
         lines: prep.lines, lineCount: prep.lines.length, subtotalCents: prep.gross, lineDiscountCents: prep.lineDisc, saleDiscountCents: prep.saleDisc, saleDiscountPct: Number(b.saleDiscountPct) || 0, saleDiscountReason: clean(b.saleDiscountReason, 120),
         totalCents: prep.total, vatCents: prep.vat, vatRateBp: prep.rateBp, vatRegistered: !!ctx.entity.vatRegistered,
-        minDepositPct: ss.minDepositPct, minDepositCents: minDeposit, leadDays: ss.leadDays, depositCents: Math.min(paid, minDeposit), paidCents: paid, balanceCents: prep.total - paid, paymentCount: dep ? 1 : 0, lastPaidAt: dep ? now : '',
-        history: dep ? [{ n: 0, at: now, amountCents: paid, methods: dep.pays.map(p => p.method), storeId: ctx.storeId, byName: ctx.user.name }] : [],
+        minDepositPct: ss.minDepositPct, minDepositCents: minDeposit, leadDays: ss.leadDays, depositCents: Math.min(paid, minDeposit), paidCents: paid, balanceCents: prep.total - paid, awaitingCents: awaiting, paymentCount: dep ? 1 : 0, lastPaidAt: paid ? now : '',
+        history: dep ? histRows(ctx, dep.pays, depIds, 0, now) : [],
         status, statusHistory: [{ status: 'quoted', at: now, byName: ctx.user.name, source: 'till', note: '' }, ...(status === 'depositPaid' ? [{ status: 'depositPaid', at: now, byName: ctx.user.name, source: 'till', note: '' }] : [])],
         updateDue: status === 'depositPaid', updates: [], factoryRef: clean(b.factoryRef, 60), expectedAt, openedAt: prep.when,
         delivery: null, deliveryNote: null, completedAt: '', completedSaleId: '', completedDocNo: '', cancelledAt: '', cancelKind: '', cancelReason: '', feeCents: 0, feeReason: '', refunds: [], refundedCents: 0,
@@ -139,8 +190,8 @@ const actions = {
       so.signoff = { text: signoffText(ctx.entity, so), acceptedAt: now, signedBy, signature, cashierUid: ctx.user.id, cashierName: ctx.user.name };
       const { id: _id, ...data } = so;
       const writes = [num.write, { create: true, coll: 'specialOrders', id, data }];
-      if (dep) { writes.push(...payRows(ctx, so, dep.pays, 0, '', stamp, now)); if (dep.creditUsed) writes.push({ update: true, coll: 'customers', id: customer.id, data: { storeCreditCents: (customer.storeCreditCents || 0) - dep.creditUsed, updatedAt: now } }); }
-      writes.push(auditRow(ctx, 'specialOrder.open', so, { totalCents: prep.total, depositCents: paid, status, lines: prep.lines.length }, prep.approvers, stamp, now));
+      if (dep) { writes.push(...payRows(ctx, so, dep.pays, 0, depIds, stamp, now)); if (dep.creditUsed) writes.push({ update: true, coll: 'customers', id: customer.id, data: { storeCreditCents: (customer.storeCreditCents || 0) - dep.creditUsed, updatedAt: now } }); }
+      writes.push(auditRow(ctx, 'specialOrder.open', so, { totalCents: prep.total, depositCents: paid, awaitingCents: awaiting, status, lines: prep.lines.length }, prep.approvers, stamp, now));
       return { writes, result: { order: so, payments: dep ? dep.pays : [] } };
     } });
     if (b.quoteId && r && r.ok) await markQuoteUsed(ctx, b.quoteId, 'salesOrder', r.order.docNo);
@@ -203,23 +254,30 @@ const actions = {
     const r = await runSale(ctx, {}, { more: async (tx) => {
       const cur = await getDoc('specialOrders', so.id, tx);
       if (!cur || !['quoted', 'depositPaid', 'inProduction', 'ready'].includes(cur.status)) throw new Reject(409, `Order ${so.docNo} is no longer open.`);
-      if (t.paid > cur.balanceCents) throw new Reject(400, `Only ${money(cur.balanceCents)} is still owed.`);
+      const open = cur.balanceCents - (cur.awaitingCents || 0);   // what is neither paid nor awaiting the bank
+      if (t.paid > open) throw new Reject(400, `Only ${money(open)} is still owed` + ((cur.awaitingCents || 0) ? ` (${money(cur.awaitingCents)} is awaiting the bank)` : '') + '.');
       const now = nowIso();
       const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
       const n = cur.paymentCount || 0;
-      const paid = cur.paidCents + t.paid;
-      const patch = { paidCents: paid, balanceCents: cur.balanceCents - t.paid, paymentCount: n + 1, lastPaidAt: now, updatedAt: now, depositCents: Math.min(paid, cur.minDepositCents), history: [...(cur.history || []), { n, at: now, amountCents: t.paid, methods: t.pays.map(p => p.method), storeId: ctx.storeId, byName: ctx.user.name }].slice(-100) };
+      const ids = payIds(t.pays, payId);
+      const paid = cur.paidCents + t.confirmed;
+      const patch = { paidCents: paid, balanceCents: cur.balanceCents - t.confirmed, awaitingCents: (cur.awaitingCents || 0) + t.awaiting, paymentCount: n + 1, lastPaidAt: t.confirmed ? now : cur.lastPaidAt || '', updatedAt: now, depositCents: Math.min(paid, cur.minDepositCents), history: [...(cur.history || []), ...histRows(ctx, t.pays, ids, n, now)].slice(-100) };
       // the deposit reached: the order can go to the factory when someone sends it
-      if (cur.status === 'quoted' && paid >= cur.minDepositCents) { patch.status = 'depositPaid'; patch.statusHistory = hist(cur, 'depositPaid', ctx.user.name, 'till', '', now); patch.updateDue = true; }
+      if (cur.status === 'quoted' && t.confirmed && paid >= cur.minDepositCents) { patch.status = 'depositPaid'; patch.statusHistory = hist(cur, 'depositPaid', ctx.user.name, 'till', '', now); patch.updateDue = true; }
       const writes = [{ update: true, coll: 'specialOrders', id: so.id, data: patch }];
-      writes.push(...payRows(ctx, so, t.pays, n, payId, stamp, now));
+      writes.push(...payRows(ctx, so, t.pays, n, ids, stamp, now));
       if (t.creditUsed) writes.push({ update: true, coll: 'customers', id: customer.id, data: { storeCreditCents: (customer.storeCreditCents || 0) - t.creditUsed, updatedAt: now } });
-      writes.push(auditRow(ctx, 'specialOrder.pay', so, { amountCents: t.paid, instalment: n, methods: t.pays.map(p => p.method), balanceCents: patch.balanceCents, status: patch.status || cur.status }, new Map(), stamp, now));
-      return { writes, result: { order: { ...cur, ...patch, id: so.id }, payments: t.pays, instalment: n, paidAt: now, sent: !!patch.status } };
+      writes.push(auditRow(ctx, 'specialOrder.pay', so, { amountCents: t.paid, awaitingCents: t.awaiting, instalment: n, methods: t.pays.map(p => p.method), balanceCents: patch.balanceCents, status: patch.status || cur.status }, new Map(), stamp, now));
+      return { writes, result: { order: { ...cur, ...patch, id: so.id }, payments: t.pays, instalment: n, paidAt: now, awaitingCents: t.awaiting, sent: !!patch.status } };
     } });
     delete r.sent;
     return r;
   },
+
+  // the EFT or QR shows on the bank statement: a manager confirms it, and only now does it count as paid
+  async confirmPayment(event, b) { return bankPayment(event, b, true); },
+  // the money never came: a manager marks it not received; the order owes that amount again
+  async voidPayment(event, b) { return bankPayment(event, b, false); },
 
   // the till moves it along (a supervisor or higher), when the factory does not call
   async status(event, b) {
@@ -304,7 +362,7 @@ const actions = {
     }
     if (['inProduction', 'depositPaid'].includes(so.status)) throw new Reject(409, `${so.docNo} is not ready yet: once it is made, mark it Ready, then hand it over (the tax invoice is written then).`);
     if (so.status !== 'ready') throw new Reject(409, `Order ${so.docNo} is ${so.status}.`);
-    if (so.balanceCents > 0) throw new Reject(400, `${money(so.balanceCents)} is still owed on ${so.docNo}: take the balance first.`);
+    if (so.balanceCents > 0) throw new Reject(400, OWED(so) + ': take the balance first.');
     const kind = (so.delivery && so.delivery.kind) || (b.kind === 'collect' ? 'collect' : 'deliver');
     const r = await invoiceOrder(ctx, so, clean(b.saleId, 80), (cur, now) => {
       const status = kind === 'collect' ? 'collected' : 'delivered';
@@ -329,7 +387,7 @@ const actions = {
     }
     if (['inProduction', 'depositPaid', 'quoted'].includes(so.status)) throw new Reject(409, `${so.docNo} is not ready yet: mark it Ready once it is made.`);
     if (so.status !== 'ready') throw new Reject(409, `Order ${so.docNo} is ${so.status}.`);
-    if (so.balanceCents > 0) throw new Reject(400, `${money(so.balanceCents)} is still owed on ${so.docNo}: it goes out once it is paid in full.`);
+    if (so.balanceCents > 0) throw new Reject(400, OWED(so) + ': it goes out once it is paid in full.');
     if (!so.delivery || so.delivery.kind !== 'deliver') throw new Reject(400, `Book the delivery of ${so.docNo} first (the day, the slot and the address).`);
     const r = await invoiceOrder(ctx, so, clean(b.saleId, 80), (cur, now) => ({
       status: 'outForDelivery', statusHistory: hist(cur, 'outForDelivery', ctx.user.name, 'till', 'with ' + drv.name, now), updateDue: true,
@@ -387,13 +445,17 @@ const actions = {
     const customer = so.customerId ? await getDoc('customers', so.customerId) : null;
     const credit = refunds.filter(r => r.method === 'storeCredit').reduce((n, r) => n + r.amountCents, 0);
     if (credit && !customer) throw new Reject(400, 'Store credit needs the customer.');
+    // payments still awaiting the bank never counted: they are closed as not received with the order
+    const awaitingPays = await query('payments', [{ field: 'docType', value: 'specialOrder' }, { field: 'docId', value: so.id }, { field: 'status', value: 'awaiting' }], 50);
     const r = await runSale(ctx, {}, { more: async (tx) => {
       const cur = await getDoc('specialOrders', so.id, tx);
       if (!cur || cur.paidCents !== so.paidCents || ['delivered', 'collected', 'cancelled'].includes(cur.status)) throw new Reject(409, `Order ${so.docNo} changed meanwhile: look again.`);
       const now = nowIso();
       const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
-      const patch = { status: 'cancelled', statusHistory: hist(cur, 'cancelled', ctx.user.name, 'till', clean(b.reason, 200), now), updateDue: true, cancelledAt: now, cancelKind: kind, cancelReason: clean(b.reason, 200), feeCents: fee, feeReason: fee ? (started ? 'Production had started: the deposit covers the work and materials spent' : clean(b.feeReason, 200)) : '', refunds, refundedCents: refunded, cancelledByUid: ctx.user.id, cancelledByName: ctx.user.name, approvers: [...approvers].map(([uid, name]) => ({ uid, name })), updatedAt: now };
+      const voided = new Set(awaitingPays.map(p => p.id));
+      const patch = { awaitingCents: 0, history: (cur.history || []).map(h => voided.has(h.paymentId) ? { ...h, status: 'void', voidedAt: now, voidedBy: ctx.user.name, voidReason: 'order cancelled' } : h), status: 'cancelled', statusHistory: hist(cur, 'cancelled', ctx.user.name, 'till', clean(b.reason, 200), now), updateDue: true, cancelledAt: now, cancelKind: kind, cancelReason: clean(b.reason, 200), feeCents: fee, feeReason: fee ? (started ? 'Production had started: the deposit covers the work and materials spent' : clean(b.feeReason, 200)) : '', refunds, refundedCents: refunded, cancelledByUid: ctx.user.id, cancelledByName: ctx.user.name, approvers: [...approvers].map(([uid, name]) => ({ uid, name })), updatedAt: now };
       const writes = [{ update: true, coll: 'specialOrders', id: so.id, data: patch }];
+      for (const p of awaitingPays) writes.push({ update: true, coll: 'payments', id: p.id, data: { status: 'void', voidedAt: now, voidedByUid: ctx.user.id, voidedByName: ctx.user.name, voidReason: 'order cancelled' } });
       for (const rf of refunds) {
         writes.push({ create: true, coll: 'refunds', id: randomId('rf_'), data: { specialOrderId: so.id, specialOrderDocNo: so.docNo, registerId: ctx.registerId || '', shiftId: ctx.shiftId || '', ...rf, ...stamp, serverReceivedAt: now } });
         writes.push({ create: true, coll: 'payments', id: randomId('pay_'), data: { docType: 'refund', docId: so.id, docNo: so.docNo, registerId: ctx.registerId || '', shiftId: ctx.shiftId || '', method: rf.method, amountCents: -rf.amountCents, ref: rf.ref, status: 'paid', ...stamp, serverReceivedAt: now } });

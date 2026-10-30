@@ -6,7 +6,7 @@
 //   run       { report, entityId, storeId?, from, to (dates), staffUid?, channel?, days? }
 //             → { columns [ { key, label, type } ], rows, totals, title }
 //   reports: dailySales, zReports, vat, byProduct, byCategory, byBrand, byStaff, byHour, discounts, voids,
-//            refunds, stockValue, lowStock, movements, deadStock, laybys, specialOrders, customers
+//            refunds, stockValue, lowStock, movements, deadStock, laybys, specialOrders, orderPayments, customers
 //
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
 import { json, Reject, clean, getDoc, query, loginOf, loadUser, inEntity, inStore, rank, bodyOf, withGroup } from './lib/pos.mjs';
@@ -47,7 +47,7 @@ const reports = {
   async dailySales(w, b, stores, from, to) {
     const sales = filt(await perStore('sales', w.entityId, stores, 'clientCreatedAt', from, to), w, b);
     const notes = await perStore('creditNotes', w.entityId, stores, 'clientCreatedAt', from, to);
-    const pays = await perStore('payments', w.entityId, stores, 'createdAt', from, to);
+    const pays = (await perStore('payments', w.entityId, stores, 'createdAt', from, to)).filter(p => p.status !== 'void');
     const rows = [];
     for (const [k, g] of groupBy(sales, s => dayOf(s.clientCreatedAt) + '|' + s.storeId)) {
       const [day, storeId] = k.split('|');
@@ -188,6 +188,21 @@ const reports = {
   async specialOrders(w, b, stores, from, to) {
     const rows = (await perStore('specialOrders', w.entityId, stores, 'openedAt', from, to, 5000)).map(o => ({ docNo: o.docNo, store: (stores.find(x => x.id === o.storeId) || {}).name || o.storeId, customer: (o.customerSnapshot || {}).name || '', what: (o.lines || []).map(l => l.qty + ' × ' + l.name).join(', '), opened: o.openedAt, expected: o.expectedAt, status: o.status, total: o.totalCents, paid: o.paidCents, balance: o.balanceCents, factoryRef: o.factoryRef || '' })).sort((x, y) => x.opened.localeCompare(y.opened));
     return { title: 'Custom orders', columns: [col('docNo', 'No'), col('store', 'Store'), col('customer', 'Customer'), col('what', 'What'), col('opened', 'Opened', 'date'), col('expected', 'Expected', 'date'), col('status', 'Status'), col('total', 'Price', 'cents'), col('paid', 'Paid', 'cents'), col('balance', 'Balance', 'cents'), col('factoryRef', 'Factory ref')], rows, totals: { total: sum(rows, 'total'), paid: sum(rows, 'paid'), balance: sum(rows.filter(r => !/delivered|collected|cancelled/.test(r.status)), 'balance') } };
+  },
+  // every rand that moved on sales orders: who took it, how, and whether the bank has confirmed it
+  async orderPayments(w, b, stores, from, to) {
+    const pays = (await perStore('payments', w.entityId, stores, 'createdAt', from, to)).filter(p => p.docType === 'specialOrder' || (p.docType === 'refund' && p.docNo && /-SO-/.test(p.docNo)));
+    const users = new Map(), orders = new Map();
+    const userName = async (uid) => { if (!users.has(uid)) users.set(uid, ((await getDoc('users', uid)) || {}).name || uid); return users.get(uid); };
+    const orderOf = async (id) => { if (!orders.has(id)) orders.set(id, await getDoc('specialOrders', id)); return orders.get(id) || {}; };
+    const rows = [];
+    for (const p of pays.sort((x, y) => String(x.createdAt).localeCompare(String(y.createdAt)))) {
+      const o = await orderOf(p.docId);
+      const refund = p.docType === 'refund';
+      rows.push({ at: p.createdAt, docNo: p.docNo, customer: (o.customerSnapshot || {}).name || '', store: (stores.find(s => s.id === p.storeId) || {}).name || p.storeId, staff: await userName(p.createdBy), method: p.method, amount: p.amountCents, state: refund ? 'refund' : p.status === 'awaiting' ? 'awaiting the bank' : p.status === 'void' ? 'not received' : p.confirmedAt ? 'confirmed' : 'paid', ref: p.ref || p.bankRef || '', confirmedBy: p.confirmedByName || p.voidedByName || '', register: p.registerId || 'office', orderStatus: o.status || '', balance: o.balanceCents || 0 });
+    }
+    const counted = rows.filter(r => r.state === 'paid' || r.state === 'confirmed' || r.state === 'refund');
+    return { title: 'Order payments', columns: [col('at', 'When', 'time'), col('docNo', 'Order'), col('customer', 'Customer'), col('store', 'Store'), col('register', 'Register'), col('staff', 'Taken by'), col('method', 'Method'), col('amount', 'Amount', 'cents'), col('state', 'State'), col('ref', 'Reference'), col('confirmedBy', 'Confirmed by'), col('orderStatus', 'Order now'), col('balance', 'Still owed', 'cents')], rows, totals: { amount: sum(counted, 'amount') } };
   },
   async customers(w, b, stores, from, to) {
     const cs = (await query('customers', [{ field: 'entityId', value: w.entityId }], 10000)).filter(c => !c.mergedInto);
