@@ -28,6 +28,7 @@ export function buckets() {
   return urgentFirst([
     { key: 'accepted', title: 'Quotes accepted online', hint: 'Load it into the sale, then Sales order to take the deposit.', rows: quotes.filter(q => q.accepted).sort(by(q => q.accepted.at)).map(q => ({ kind: 'quote', x: q })) },
     { key: 'deposit', title: 'Waiting for the deposit', hint: 'Orders opened without the deposit: take it to start production.', rows: orders.filter(o => o.status === 'quoted').sort(by(o => o.openedAt)).map(o => ({ kind: 'order', x: o })) },
+    { key: 'bank', title: 'Bank payments to confirm', hint: 'EFTs and QR payments recorded at the till: a manager confirms each one once it shows on the bank statement. The order counts it paid from then.', rows: orders.filter(o => o.awaitingCents > 0).sort(by(o => o.updatedAt)).map(o => ({ kind: 'order', x: o })) },
     { key: 'updates', title: 'Updates to send', hint: 'Something changed: one tap sends the client a WhatsApp with their order page.', rows: orders.filter(o => o.updateDue && o.status !== 'quoted').sort(by(o => o.updatedAt)).map(o => ({ kind: 'order', x: o })) },
     { key: 'late', title: 'Late', hint: 'Past the expected date and not ready yet: check with the factory and tell the client.', rows: orders.filter(o => ['depositPaid', 'inProduction'].includes(o.status) && o.expectedAt && o.expectedAt < now).sort(by(o => o.expectedAt)).map(o => ({ kind: 'order', x: o })) },
     { key: 'owed', title: 'Ready, balance owed', hint: 'Ready: the balance is paid before delivery or collection.', rows: orders.filter(o => o.status === 'ready' && o.balanceCents > 0).sort(by(o => o.updatedAt)).map(o => ({ kind: 'order', x: o })) },
@@ -50,6 +51,7 @@ function rowHtml(b, r) {
     : b.key === 'done' ? esc(niceDate(o.completedAt)) : o.expectedAt ? 'expected ' + esc(niceDate(o.expectedAt)) : '';
   const acts = {
     deposit: btn('so-pay', o.id, icon('cash') + ' Take the deposit', true),
+    bank: `<span class="warn">${esc(money(o.awaitingCents))} awaiting</span>` + btn('so-open', o.id, icon('cash') + ' Open and confirm', true),
     updates: btn('so-update', o.id, icon('user') + ' Send update', true),
     late: btn('so-update', o.id, icon('user') + ' Tell the client') + btn('so-factory-sync', o.id, 'Check factory'),
     owed: btn('so-pay', o.id, icon('cash') + ' Take a payment', true) + btn('so-update', o.id, 'Remind'),

@@ -4231,6 +4231,115 @@ ${_PRODUCTION_PRINT_STYLES}
     window.open(url, '_blank');
   }
   
+  // ---- 📱 UPDATE CLIENT — one window from any order card: pick what to say, read it, send on WhatsApp.
+  // Every message sent is kept on the order (o.clientUpdates: at, by, kind, text) so anyone can see
+  // what the client was last told, and the card shows "Update due" once the order has moved on since.
+  const CLIENT_UPDATE_KINDS = [
+    ['received', '📥 Order received'], ['in-production', '🔨 In production'], ['new-date', '📅 New expected date'],
+    ['ready', '🎉 Ready — book a delivery'], ['delivery-proposed', '🚚 Delivery date proposed'], ['delivery-confirmed', '✅ Delivery confirmed'],
+    ['on-the-way', '🛣️ On the way'], ['delivered', '🙏 Delivered — thank you'], ['custom', '✏️ Something else']
+  ];
+  // what the client should have heard by now, from the order's status (and delivery booking)
+  function _clientUpdateExpected(o) {
+    if (!o) return '';
+    if (o.status === 'delivered') return 'delivered';
+    if (o.status === 'done' || o.builderDone) return o.deliveryScheduled ? 'delivery-confirmed' : 'ready';
+    if (o.status === 'in-production') return 'in-production';
+    return 'received';
+  }
+  function _bizOfOrder(orderId) {
+    let biz = null;
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => { if (!biz && ((data[b] && data[b].orders) || []).some(x => x && x.id === orderId)) biz = b; });
+    return biz;
+  }
+  function _niceDay(iso) {
+    if (!iso) return '';
+    const d = new Date(String(iso).slice(0, 10) + 'T00:00:00');
+    return isNaN(d.getTime()) ? String(iso) : d.toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' });
+  }
+  function _clientUpdateText(biz, o, kind) {
+    const co = (typeof POS_BIZ_NAMES !== 'undefined' && POS_BIZ_NAMES[biz]) || 'Bellville Furniture';
+    const who = 'Hi ' + (o.customer || '') + ', ' + co + ' here.';
+    const what = '#' + (o.invoice || o.id) + ' (' + (o.product || 'your order') + (o.qty > 1 ? ' × ' + o.qty : '') + ')';
+    const slot = o.deliveryTimeFrom ? (o.deliveryTimeTo ? ' between ' + o.deliveryTimeFrom + ' and ' + o.deliveryTimeTo : ' from ' + o.deliveryTimeFrom) : '';
+    switch (kind) {
+      case 'received': return who + ' We have your order ' + what + '. Expected completion: ' + _niceDay(o.dueDate) + '. We will keep you posted.';
+      case 'in-production': return who + ' Good news: your order ' + what + ' is now in production. Expected completion: ' + _niceDay(o.dueDate) + '.';
+      case 'new-date': return who + ' An update on your order ' + what + ': the new expected completion date is ' + _niceDay(o.dueDate) + '. Sorry for the wait, and thank you for your patience.';
+      case 'ready': return who + ' Your order ' + what + ' is ready! Please choose a delivery day here: ' + _bookingLinkFor(biz, o) + '\nOr reply with a day that suits you, or let us know if you would rather collect.';
+      case 'delivery-proposed': return who + ' Your order ' + what + ' is ready. We would like to deliver on ' + _niceDay(o.deliveryScheduled || o.dueDate) + slot + '. Please reply to confirm, or suggest another day.';
+      case 'delivery-confirmed': return who + ' Confirming the delivery of your order ' + what + ': ' + _niceDay(o.deliveryScheduled) + slot + '. Please make sure someone is there to receive it.';
+      case 'on-the-way': return who + ' Your order ' + what + ' is on its way now. The driver will be with you shortly.';
+      case 'delivered': return who + ' Thank you for your order ' + what + '. We hope you love it! If anything is not right, reply here and we will sort it out.';
+      default: return who + ' About your order ' + what + ': ';
+    }
+  }
+  // the chip under an order: the last message sent, and whether the client is owed one
+  function _clientUpdateLine(o) {
+    const list = Array.isArray(o && o.clientUpdates) ? o.clientUpdates : [];
+    const last = list[list.length - 1];
+    const expected = _clientUpdateExpected(o);
+    const told = list.some(u => u.kind === expected) || (expected === 'delivery-confirmed' && list.some(u => u.kind === 'on-the-way' || u.kind === 'delivered'));
+    const due = !!(o && o.phone) && !told;
+    const lastTxt = last ? '📱 Last update: ' + _escape((CLIENT_UPDATE_KINDS.find(k => k[0] === last.kind) || ['', last.kind])[1].replace(/^\S+\s/, '')) + ' · ' + _escape(String(last.at || '').slice(0, 10)) + (last.by ? ' by ' + _escape(last.by) : '') : '📱 No update sent yet';
+    return '<span style="font-size:11px; color:#57534e">' + lastTxt + '</span>' + (due ? ' <span style="background:#fef3c7; color:#92400e; padding:1px 8px; border-radius:999px; font-size:10px; font-weight:800">Update due</span>' : '');
+  }
+  function openClientUpdate(orderId, presetKind) {
+    const o = _findOrderAnyBiz(orderId); const biz = _bizOfOrder(orderId) || (typeof activeBiz !== 'undefined' ? activeBiz : 'bellville');
+    if (!o) return;
+    if (!o.phone) { alert('No cell number on this order: add it under ✏️ Edit first.'); return; }
+    closeClientUpdate();
+    const kind = presetKind || _clientUpdateExpected(o);
+    const wrap = document.createElement('div'); wrap.id = 'client-update-wrap';
+    wrap.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:10000; display:flex; align-items:center; justify-content:center; padding:12px';
+    wrap.innerHTML = '<div style="background:#fff; border-radius:14px; width:min(560px, 100%); max-height:92vh; overflow:auto; padding:16px 18px; box-shadow:0 10px 40px rgba(0,0,0,0.3)">'
+      + '<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px"><div><div style="font-size:16px; font-weight:800">📱 Update the client · #' + _escape(o.invoice || o.id) + '</div>'
+      + '<div style="font-size:12px; color:#57534e; margin-top:2px">' + _escape(o.customer || '') + ' · ' + _escape(o.phone) + ' · ' + _escape(o.product || '') + ' · ' + _escape(String(o.status || '').replace('-', ' ')) + '</div></div>'
+      + '<button onclick="closeClientUpdate()" style="border:none; background:none; font-size:20px; cursor:pointer">✕</button></div>'
+      + '<div style="display:flex; gap:6px; flex-wrap:wrap; margin:12px 0 8px">' + CLIENT_UPDATE_KINDS.map(k => '<button type="button" data-kind="' + k[0] + '" onclick="clientUpdatePick(\'' + _escape(orderId) + '\', \'' + k[0] + '\')" style="padding:6px 10px; border-radius:999px; border:1.5px solid ' + (k[0] === kind ? '#111' : '#d6d3d1') + '; background:' + (k[0] === kind ? '#111' : '#fafaf9') + '; color:' + (k[0] === kind ? '#fff' : '#111') + '; font-weight:700; font-size:12px; cursor:pointer">' + k[1] + '</button>').join('') + '</div>'
+      + '<textarea id="client-update-text" rows="7" style="width:100%; font-family:inherit; font-size:13px; padding:8px 10px; border:1px solid #d6d3d1; border-radius:8px; resize:vertical"></textarea>'
+      + '<div style="font-size:11px; color:#78716c; margin-top:4px">Read it, change anything you like, then send. The message is kept on the order so everyone can see what the client was told.</div>'
+      + '<div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; justify-content:flex-end">'
+      + '<button type="button" onclick="clientUpdateCopy()" style="padding:8px 14px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fff; font-weight:700; font-size:12.5px; cursor:pointer">📋 Copy</button>'
+      + '<button type="button" onclick="clientUpdateSend(\'' + _escape(orderId) + '\')" style="padding:8px 16px; border-radius:999px; border:1.5px solid #25d366; background:#25d366; color:#fff; font-weight:800; font-size:12.5px; cursor:pointer">📱 Send on WhatsApp</button></div>'
+      + (Array.isArray(o.clientUpdates) && o.clientUpdates.length ? '<div style="border-top:1px solid #e7e5e4; margin-top:12px; padding-top:8px; font-size:11px; color:#57534e"><strong>Sent before:</strong> ' + o.clientUpdates.slice(-5).reverse().map(u => _escape(String(u.at || '').slice(0, 10)) + ' ' + _escape((CLIENT_UPDATE_KINDS.find(k => k[0] === u.kind) || ['', u.kind])[1]) + (u.by ? ' (' + _escape(u.by) + ')' : '')).join(' · ') + '</div>' : '')
+      + '</div>';
+    wrap.addEventListener('click', e => { if (e.target === wrap) closeClientUpdate(); });
+    document.body.appendChild(wrap);
+    wrap._kind = kind; wrap._biz = biz;
+    document.getElementById('client-update-text').value = _clientUpdateText(biz, o, kind);
+  }
+  function clientUpdatePick(orderId, kind) {
+    const wrap = document.getElementById('client-update-wrap'); const o = _findOrderAnyBiz(orderId);
+    if (!wrap || !o) return;
+    wrap._kind = kind;
+    wrap.querySelectorAll('[data-kind]').forEach(b => { const on = b.dataset.kind === kind; b.style.borderColor = on ? '#111' : '#d6d3d1'; b.style.background = on ? '#111' : '#fafaf9'; b.style.color = on ? '#fff' : '#111'; });
+    document.getElementById('client-update-text').value = _clientUpdateText(wrap._biz, o, kind);
+  }
+  function clientUpdateCopy() {
+    const t = document.getElementById('client-update-text'); if (!t) return;
+    t.select(); if (navigator.clipboard) navigator.clipboard.writeText(t.value).then(() => toast && toast('📋 Message copied', 'success', 2000));
+  }
+  function clientUpdateSend(orderId) {
+    const wrap = document.getElementById('client-update-wrap'); const o = _findOrderAnyBiz(orderId);
+    const t = document.getElementById('client-update-text');
+    if (!wrap || !o || !t) return;
+    const text = t.value.trim(); if (!text) { alert('Nothing to send.'); return; }
+    const digits = _waDigits(o.phone); if (!digits) { alert('That cell number does not look right: fix it under ✏️ Edit.'); return; }
+    // open WhatsApp on the tap itself, so phones and the installed app do not block it
+    window.open('https://wa.me/' + digits + '?text=' + encodeURIComponent(text), '_blank');
+    snapshotState();
+    if (!Array.isArray(o.clientUpdates)) o.clientUpdates = [];
+    o.clientUpdates.push({ at: new Date().toISOString(), by: _staffDisplayName('staff'), kind: wrap._kind || 'custom', text: text.slice(0, 1500) });
+    if (o.clientUpdates.length > 40) o.clientUpdates = o.clientUpdates.slice(-40);
+    saveData();
+    closeClientUpdate();
+    if (typeof toast === 'function') toast('📱 Update logged on #' + (o.invoice || o.id), 'success', 2500);
+    if (typeof render === 'function') render();
+  }
+  function closeClientUpdate() { const w = document.getElementById('client-update-wrap'); if (w) w.remove(); }
+  window.openClientUpdate = openClientUpdate; window.clientUpdatePick = clientUpdatePick; window.clientUpdateSend = clientUpdateSend; window.clientUpdateCopy = clientUpdateCopy; window.closeClientUpdate = closeClientUpdate;
+
   function notifyAllStaff(orderId) {
     const order = currentData().orders.find(o => o.id === orderId);
     if (!order) return;
@@ -9702,6 +9811,7 @@ ${_PRODUCTION_PRINT_STYLES}
           <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
           <button onclick="builderPortalPrintCard('${_escape(o.id)}')" title="Print this order's job card" style="padding:7px 12px; border-radius:999px; border:1.5px solid #111; background:#fafaf9; color:#111; font-weight:700; font-size:12.5px; cursor:pointer">🖨️ Job card</button>
           ${o.customSize ? `<button onclick="sendSizeConfirmation('${_escape(o.id)}')" title="Send the client the drawing to confirm" style="padding:7px 12px; border-radius:999px; border:1.5px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:700; font-size:12.5px; cursor:pointer">📤 Size to client</button>` : ''}
+          <button onclick="openClientUpdate('${_escape(o.id)}')" title="Tell the client where their order is: pick the message, read it, send it on WhatsApp" style="padding:7px 12px; border-radius:999px; border:1.5px solid #25d366; background:${o.phone ? '#25d366' : '#f0fdf4'}; color:${o.phone ? '#fff' : '#166534'}; font-weight:800; font-size:12.5px; cursor:pointer">📱 Update client</button>
           <button onclick="openNewOrder('${_escape(o.id)}')" title="Edit this order" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fafaf9; color:#111; font-weight:700; font-size:12.5px; cursor:pointer">✏️ Edit</button>
           <button onclick="staffPortalDeleteOrder('${_escape(o.id)}')" title="Delete this order" style="padding:7px 12px; border-radius:999px; border:1.5px solid #fca5a5; background:#fef2f2; color:#991b1b; font-weight:700; font-size:12.5px; cursor:pointer">🗑</button>
           ${o.builderDone
@@ -9710,6 +9820,7 @@ ${_PRODUCTION_PRINT_STYLES}
             : ''}
           </span>
         </div>
+        ${o.phone ? `<div style="margin-top:8px">${_clientUpdateLine(o)}</div>` : ''}
         <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin-top:10px; font-size:12px">
           ${fabChip}
           <label style="display:flex; align-items:center; gap:6px; margin:0; cursor:pointer; font-weight:600; color:${fabReceived ? '#166534' : '#b45309'}">
@@ -12305,9 +12416,10 @@ ${_PRODUCTION_PRINT_STYLES}
           </div>
           ` : ''}
           ${!HIDE_FABRIC_FROM.includes(currentRole) ? _orderReservationLine(o.id) : ''}
+          ${o.phone ? `<div style="margin-bottom:0.5rem">${_clientUpdateLine(o)}</div>` : ''}
           <div style="display:flex; gap:0.5rem; flex-wrap:wrap">
             <button class="btn btn-sm btn-primary" onclick="printJobCard('${o.id}')">🖨️ PRINT JOB CARD</button>
-            ${o.phone ? `<button class="btn btn-sm" style="background:#25D366; color:#fff; border-color:#25D366" onclick="notifyClient('${o.id}')">📱 NOTIFY CLIENT</button>` : ''}
+            ${o.phone ? `<button class="btn btn-sm" style="background:#25D366; color:#fff; border-color:#25D366" onclick="openClientUpdate('${o.id}')" title="Tell the client where their order is: pick the message, read it, send it on WhatsApp">📱 UPDATE CLIENT</button>` : ''}
             <button class="btn btn-sm" onclick="notifyAllStaff('${o.id}')">👷 NOTIFY STAFF</button>
             <button class="btn btn-sm btn-danger" onclick="deleteOrder('${o.id}')">DELETE</button>
           </div>

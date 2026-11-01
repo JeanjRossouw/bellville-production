@@ -131,6 +131,14 @@ const actions = {
       if (b.noReceipt && method !== 'storeCredit') throw new Reject(400, 'Without a receipt the refund is store credit only.');
       refunds.push({ method, amountCents: amount, ref: clean(r.ref, 60) }); refunded += amount;
     }
+    // a sales order's tax invoice: the money goes back the way it came in (per method, up to what was paid
+    // that way, confirmed), or as store credit; so a hand-over cannot turn into cash through a return
+    if (sale && sale.specialOrderOf && refunds.some(r => r.method !== 'storeCredit')) {
+      const so = (await query('specialOrders', [{ field: 'entityId', value: ctx.entityId }, { field: 'docNo', value: sale.specialOrderOf }], 1))[0];
+      const paidBy = new Map();
+      if (so) for (const p of await query('payments', [{ field: 'docType', value: 'specialOrder' }, { field: 'docId', value: so.id }, { field: 'status', value: 'paid' }], 200)) paidBy.set(p.method, (paidBy.get(p.method) || 0) + p.amountCents);
+      for (const r of refunds) if (r.method !== 'storeCredit' && r.amountCents > (paidBy.get(r.method) || 0)) throw new Reject(400, `${sale.specialOrderOf} was paid by ${[...paidBy.keys()].join(', ') || 'nothing on record'}: refund by ${r.method} only up to what came in that way (${((paidBy.get(r.method) || 0) / 100).toFixed(2)}), or give store credit.`);
+    }
     let exchangePrep = null, exchangeSaleId = '';
     if (b.exchange) {
       exchangeSaleId = clean(b.exchange.saleId, 80);

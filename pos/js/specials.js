@@ -28,6 +28,20 @@ const newId = (p) => p + '-' + (auth.deviceId() || 'web') + '-' + Date.now().toS
 const OPEN = ['quoted', 'depositPaid', 'inProduction', 'ready', 'outForDelivery'];
 const CHIP = { quoted: '', depositPaid: 'prod', inProduction: 'prod', ready: 'ok', delivered: '', collected: '', cancelled: 'off' };
 const METHOD = { cash: 'Cash', card: 'Card', eft: 'EFT', qr: 'QR', storeCredit: 'Store credit', shopify: 'Paid via Shopify' };
+// the ways an order can be paid here: cash only at an open register (it is counted in that drawer's cash-up)
+const payMethods = (dd, extra = []) => (dd.store.paymentMethods || ['cash', 'card']).filter(k => METHOD[k] && (k !== 'cash' || (dd.registerId && dd.shiftOpen)) && (k === 'storeCredit' ? extra.includes('storeCredit') : k !== 'storeCredit'));
+// the proof fields for a payment: the slip's approval code and last 4 for a card, the bank reference for EFT or QR
+const proofFields = (pre, method) => row(field(method === 'card' ? 'Approval code (on the slip)' : 'Reference (as on the bank statement)', pre + '-ref', { placeholder: method === 'card' ? 'e.g. 123456' : method === 'eft' ? 'the EFT reference' : 'the QR reference' }), field('Last 4 digits', pre + '-last4', { inputmode: 'numeric', placeholder: '1234' }));
+const proofNote = (method, cashOk) => method === 'eft' || method === 'qr' ? 'Recorded as awaiting the bank: a manager confirms it once it shows on the statement, and the order counts it paid from then.' : method === 'card' ? 'The approval code and last 4 digits are on the card slip.' : cashOk ? '' : 'Cash is taken at an open register.';
+// a tender from the pay fields, checked the way the server checks it
+function tenderFrom(wrap, pre, method, amount, cashOk) {
+  const tender = { method, amountCents: amount, ref: val(wrap, pre + '-ref') };
+  if (method === 'cash') { tender.tenderedCents = centsOf(val(wrap, pre + '-given')); if (tender.tenderedCents < amount) { toast('Cash given is short.', 'warn'); return null; } }
+  if (method === 'card') { tender.approvalCode = tender.ref; tender.cardLast4 = val(wrap, pre + '-last4').replace(/\D/g, '').slice(-4); if (!tender.approvalCode || tender.cardLast4.length !== 4) { toast('The approval code and the last 4 digits from the card slip.', 'warn'); return null; } }
+  if ((method === 'eft' || method === 'qr') && !tender.ref) { toast('The reference, as it will show on the bank statement.', 'warn'); return null; }
+  return tender;
+}
+const PAY_STATE = { awaiting: 'awaiting the bank', void: 'not received' };
 const kindLabel = (k) => (CANCEL_KINDS.find(x => x[0] === k) || [k, k])[1];
 const one = (id) => (d().specials || []).find(o => o.id === id);
 const addr = (a) => a ? [a.line1, a.line2, a.city, a.code].filter(Boolean).join(', ') : '';
@@ -49,7 +63,7 @@ export function specialsHtml() {
       <span class="muted">New orders start from the cart under Sell (made-to-order items).</span>
     </div>
     ${rows.length ? `<div class="card" style="padding:0;overflow:auto"><table class="tbl lb-tbl"><thead><tr><th>No</th><th>Customer</th><th>What</th><th>Expected</th><th class="r">Price</th><th class="r">Paid</th><th class="r">Balance</th><th>Status</th><th></th></tr></thead>
-      <tbody>${rows.map(o => `<tr class="${OPEN.includes(o.status) ? '' : 'off'}"><td><strong>${esc(o.docNo)}</strong>${isUrgent(o) && OPEN.includes(o.status) ? ' <span class="chip urgent">Urgent</span>' : ''}${o.source === 'shopify' ? `<div class="muted">Shopify ${esc((o.shopify || {}).name || '')}</div>` : ''}${o.factoryRef ? `<div class="muted">${esc(o.factoryRef)}</div>` : ''}</td><td>${esc(o.customerSnapshot ? o.customerSnapshot.name : '')}<div class="muted">${esc(o.customerSnapshot ? o.customerSnapshot.phone : '')}</div></td><td>${esc(o.lines.map(l => l.qty + ' × ' + l.name).join(', '))}</td><td class="muted">${esc(niceDate(o.expectedAt))}</td><td class="r">${esc(money(o.totalCents))}</td><td class="r">${esc(money(o.paidCents))}</td><td class="r"><strong>${esc(money(o.balanceCents))}</strong></td><td><span class="chip ${CHIP[o.status] || ''}">${esc(STATUS_LABEL[o.status] || o.status)}</span>${o.updateDue && o.status !== 'quoted' ? '<span class="chip late">update to send</span>' : ''}</td><td class="r"><button class="btn ghost sm" data-act="so-open" data-id="${esc(o.id)}">Open</button></td></tr>`).join('')}</tbody></table></div>`
+      <tbody>${rows.map(o => `<tr class="${OPEN.includes(o.status) ? '' : 'off'}"><td><strong>${esc(o.docNo)}</strong>${isUrgent(o) && OPEN.includes(o.status) ? ' <span class="chip urgent">Urgent</span>' : ''}${o.source === 'shopify' ? `<div class="muted">Shopify ${esc((o.shopify || {}).name || '')}</div>` : ''}${o.factoryRef ? `<div class="muted">${esc(o.factoryRef)}</div>` : ''}</td><td>${esc(o.customerSnapshot ? o.customerSnapshot.name : '')}<div class="muted">${esc(o.customerSnapshot ? o.customerSnapshot.phone : '')}</div></td><td>${esc(o.lines.map(l => l.qty + ' × ' + l.name).join(', '))}</td><td class="muted">${esc(niceDate(o.expectedAt))}</td><td class="r">${esc(money(o.totalCents))}</td><td class="r">${esc(money(o.paidCents))}</td><td class="r"><strong>${esc(money(o.balanceCents))}</strong></td><td><span class="chip ${CHIP[o.status] || ''}">${esc(STATUS_LABEL[o.status] || o.status)}</span>${o.updateDue && o.status !== 'quoted' ? '<span class="chip late">update to send</span>' : ''}${o.awaitingCents && OPEN.includes(o.status) ? '<span class="chip late">awaiting bank</span>' : ''}</td><td class="r"><button class="btn ghost sm" data-act="so-open" data-id="${esc(o.id)}">Open</button></td></tr>`).join('')}</tbody></table></div>`
       : empty(so.filter === 'open' ? 'No open sales orders' : 'Nothing here', so.filter === 'open' ? 'Ring a made-to-order item up under Sell, add the customer, and tap Sales order.' : '')}` + salesOrdersHtml();
 }
 
@@ -145,6 +159,8 @@ export async function action(act, b) {
   const id = b.dataset.id;
   if (act === 'so-open') return openDetail(id);
   if (act === 'so-pay') return pay(id);
+  if (act === 'so-pay-confirm') return bankPayment(id, b.dataset.pid, true);
+  if (act === 'so-pay-void') return bankPayment(id, b.dataset.pid, false);
   if (act === 'so-update') return update(id, b.dataset.status || '');
   if (act === 'so-link') return sendLink('order', id, where());
   if (act === 'so-dispatch') return dispatch(id);
@@ -175,7 +191,7 @@ export function docOf(o, docKind, extra = {}) {
   const base = { ...o, id: o.id, series: 'SO', docKind, clientCreatedAt: o.openedAt, cashierName: o.cashierName, entity: dd.entity, store: dd.store, settings: dd.settings };
   const common = { entity: dd.entity, store: dd.store, settings: dd.settings };
   if (docKind === 'order') return { sale: { ...base, docKind: o.status === 'quoted' ? 'quote' : 'order', terms: o.signoff.text, signature: o.signoff.signature, signedBy: o.signoff.signedBy, sections: [{ title: 'Payment', rows: [['Deposit to start', money(o.minDepositCents)], ['Paid', money(o.paidCents)], ['Balance before delivery', money(o.balanceCents), true], ['Expected', niceDate(o.expectedAt)]] }] }, lines: o.lines, payments: [], ...common, copy: !!extra.copy };
-  if (docKind === 'payment') return { sale: { ...base, clientCreatedAt: extra.at, cashierName: auth.session.user.name, noTotals: true, changeCents: extra.changeCents || 0, refLabel: `Sales order ${o.docNo} · ${o.customerSnapshot.name}`, sections: [{ title: '', rows: [['Paid now', money(extra.amountCents), true], ['Paid so far', money(o.paidCents)], ['Balance', money(o.balanceCents), true], ['Status', STATUS_LABEL[o.status] || o.status]] }] }, lines: [], payments: extra.payments || [], ...common };
+  if (docKind === 'payment') { const aw = (extra.payments || []).some(p => p.status === 'awaiting'); return { sale: { ...base, clientCreatedAt: extra.at, cashierName: auth.session.user.name, noTotals: true, changeCents: extra.changeCents || 0, paidStatus: aw ? 'awaiting' : 'paid', refLabel: `Sales order ${o.docNo} · ${o.customerSnapshot.name}`, sections: [{ title: '', rows: [[aw ? 'Recorded, awaiting the bank' : 'Paid now', money(extra.amountCents), true], ['Paid so far', money(o.paidCents)], ...(o.awaitingCents ? [['Awaiting the bank', money(o.awaitingCents)]] : []), ['Balance', money(o.balanceCents), true], ['Status', STATUS_LABEL[o.status] || o.status]] }] }, lines: [], payments: extra.payments || [], ...common }; }
   if (docKind === 'delivery') { const dv = o.delivery || {}; const dn = o.deliveryNote; const kind = (dn && dn.kind) || dv.kind || (o.status === 'collected' ? 'collect' : 'deliver'); return { sale: { ...base, clientCreatedAt: (dn && dn.at) || new Date().toISOString(), cashierName: (dn && dn.byName) || dv.driverName || auth.session.user.name, noTotals: true, refLabel: kind === 'collect' ? 'Collected at ' + dd.store.name : 'Delivered to ' + (addr(dv.address) || addr(o.customerSnapshot.address)), sections: [{ title: '', rows: [...(dv.date ? [[kind === 'collect' ? 'Collection' : 'Delivery', niceDate(dv.date) + (dv.slot ? ' · ' + dv.slot : '')]] : []), ...(dv.driverName ? [['Driver', dv.driverName]] : []), ['Paid in full', money(o.paidCents)], ...(o.completedDocNo ? [['Tax invoice', o.completedDocNo]] : [])] }], ...(dn && dn.signature ? { signature: dn.signature, signedBy: dn.signedBy } : { signLine: 'I have received the goods above, made to my specification, in good order.' }) }, lines: o.lines, payments: [], ...common }; }
   return { sale: { ...base, clientCreatedAt: o.cancelledAt || new Date().toISOString(), cashierName: o.cancelledByName || auth.session.user.name, noTotals: true, refLabel: `Sales order ${o.docNo} · ${o.customerSnapshot.name} · ${kindLabel(o.cancelKind)}${o.cancelReason ? ' · ' + o.cancelReason : ''}`,
     sections: [{ title: 'Settlement', rows: [['Price', money(o.totalCents)], ['Paid in', money(o.paidCents)], ['Cancellation fee', money(o.feeCents || 0)], ...(o.feeReason ? [['Why', o.feeReason]] : []), ['Refunded', money(o.refundedCents || 0), true], ...(o.refunds || []).map(r => ['Refund by ' + (METHOD[r.method] || r.method), money(r.amountCents)])] }],
@@ -199,7 +215,7 @@ export function openNew(cart, t, onDone) {
   if (cart.lines.some(l => l.type === 'stock' || l.type === 'voucher' || l.type === 'bundle')) return toast('Only made-to-order and custom items go on a sales order: sell stock items on their own.', 'warn');
   if (!cart.lines.some(l => l.type === 'mto')) return toast('Nothing here is made to order.', 'warn');
   const ss = specialSettings(dd.settings);
-  const methods = (dd.store.paymentMethods || ['cash', 'card']).filter(k => METHOD[k] && (k !== 'storeCredit' || cart.customer.storeCreditCents > 0));
+  const methods = payMethods(dd, cart.customer.storeCreditCents > 0 ? ['storeCredit'] : []);
   const minDep = pctOf(t.totalCents, ss.minDepositPct);
   const photos = {};
   let busy = false, pad = null;
@@ -220,7 +236,7 @@ export function openNew(cart, t, onDone) {
         ${field('Expected by', 'so-expected', { type: 'date', value: expected })}
         <label class="chk"><input type="checkbox" id="so-depnow" checked> Take the deposit now (at least ${esc(money(minDep))}, ${ss.minDepositPct}%)</label>
         <div id="so-deprow">${row(field('Deposit (R)', 'so-dep', { value: randsOf(minDep), inputmode: 'decimal' }), field('Paid by', 'so-method', { type: 'select', value: methods[0], options: methods.map(k => ({ value: k, label: METHOD[k] })) }))}
-        ${row(field('Cash given (R)', 'so-given', { value: randsOf(minDep), inputmode: 'decimal' }), field('Card last 4 / reference', 'so-ref', {}))}</div>
+        ${row(field('Cash given (R)', 'so-given', { value: randsOf(minDep), inputmode: 'decimal' }), '')}${proofFields('so', methods[0])}<p class="muted" id="so-paynote"></p></div>
       </div>
       <div class="lb-new-right">
         <div class="lb-terms" id="so-terms"></div>
@@ -237,7 +253,11 @@ export function openNew(cart, t, onDone) {
   const preview = () => {
     const depNow = wrap.querySelector('#so-depnow').checked;
     wrap.querySelector('#so-deprow').hidden = !depNow;
-    wrap.querySelector('#so-given').closest('.fld').hidden = val(wrap, 'so-method') !== 'cash';
+    const m = val(wrap, 'so-method');
+    wrap.querySelector('#so-given').closest('.fld').hidden = m !== 'cash';
+    wrap.querySelector('#so-ref').closest('.fld').hidden = m === 'cash' || m === 'storeCredit'; wrap.querySelector('#so-last4').closest('.fld').hidden = m !== 'card';
+    wrap.querySelector('#so-ref').closest('.fld').querySelector('span').textContent = m === 'card' ? 'Approval code (on the slip)' : 'Reference (as on the bank statement)';
+    wrap.querySelector('#so-paynote').textContent = proofNote(m, methods.includes('cash'));
     wrap.querySelector('#so-terms').textContent = signoffText(dd.entity, draft());
   };
   wrap.addEventListener('input', preview); wrap.addEventListener('change', async (e) => { if (e.target.dataset.photo != null) { const f = e.target.files && e.target.files[0]; if (f) { const url = await shrink(f); if (url) { photos[e.target.dataset.photo] = url; const im = wrap.querySelector('#so-ph-' + e.target.dataset.photo); im.src = url; im.hidden = false; } } } preview(); }); preview();
@@ -250,9 +270,7 @@ export function openNew(cart, t, onDone) {
     if (wrap.querySelector('#so-depnow').checked) {
       const dep = centsOf(val(wrap, 'so-dep')); const method = val(wrap, 'so-method');
       if (dep < minDep) { toast(`The deposit must be at least ${money(minDep)} (${ss.minDepositPct}%).`, 'warn'); return false; }
-      const tender = { method, amountCents: Math.min(dep, t.totalCents), ref: val(wrap, 'so-ref') };
-      if (method === 'cash') { tender.tenderedCents = centsOf(val(wrap, 'so-given')); if (tender.tenderedCents < tender.amountCents) { toast('Cash given is short.', 'warn'); return false; } }
-      if (method === 'card') tender.cardLast4 = val(wrap, 'so-ref').replace(/\D/g, '').slice(-4);
+      const tender = tenderFrom(wrap, 'so', method, Math.min(dep, t.totalCents)); if (!tender) return false;
       deposit.push(tender);
     }
     busy = true;
@@ -289,7 +307,7 @@ function openDetail(id) {
         <div><h3>Progress</h3>${(o.statusHistory || []).map(h => `<div class="x-row"><span>${esc(STATUS_LABEL[h.status] || h.status)}${h.note ? ' · ' + esc(h.note) : ''}</span><span class="muted">${esc(niceDate(h.at))} · ${esc(h.byName)}${h.source === 'factory' ? ' (factory)' : ''}</span></div>`).join('')}
           ${dv && dv.requested && !dv.confirmed ? `<p class="warn">The client asked for this day on their order page: confirm it (or rebook).</p>` : ''}${dv && dv.issue ? `<p class="warn">Delivery problem (${esc(dv.issue.by || 'driver')}): ${esc(dv.issue.note)}</p>` : ''}${o.status === 'outForDelivery' ? `<p class="ok">Out for delivery with ${esc(dv.driverName || 'the driver')}${dv.onTheWayAt ? ' · on the way since ' + esc(niceTime(dv.onTheWayAt)) : ''} · tax invoice ${esc(o.completedDocNo || '')}</p>` : ''}${dv ? `<p class="muted">${dv.kind === 'collect' ? 'Collection' : 'Delivery'} booked for ${esc(niceDate(dv.date))}${dv.slot ? ' · ' + esc(dv.slot) : ''}${dv.kind === 'deliver' ? ' · ' + esc(addr(dv.address)) : ''}${dv.driverName ? ' · ' + esc(dv.driverName) : ''}</p>` : ''}
           ${(o.updates || []).length ? `<p class="muted">${o.updates.length} update${o.updates.length === 1 ? '' : 's'} sent, last ${esc(niceDate(o.lastUpdateAt))}</p>` : ''}</div>
-        <div><h3>Money</h3><div class="x-row"><span>Deposit to start</span><span>${esc(money(o.minDepositCents))}</span></div>${(o.history || []).map(h => `<div class="x-row"><span>${esc(niceDate(h.at))} ${h.n ? 'payment ' + h.n : 'deposit'} · ${esc(h.methods.map(m => METHOD[m] || m).join(', '))}${h.storeId !== o.storeId ? ' · ' + esc(h.storeId) : ''}</span><span>${esc(money(h.amountCents))}</span></div>`).join('')}
+        <div><h3>Money</h3><div class="x-row"><span>Deposit to start</span><span>${esc(money(o.minDepositCents))}</span></div>${(o.history || []).map(h => `<div class="x-row${h.status === 'void' ? ' off' : ''}"><span>${esc(niceDate(h.at))} ${h.n ? 'payment ' + h.n : 'deposit'} · ${esc(h.methods.map(m => METHOD[m] || m).join(', '))}${h.ref ? ' ' + esc(h.ref) : ''}${h.storeId !== o.storeId ? ' · ' + esc(h.storeId) : ''}${h.status === 'awaiting' ? ' · <span class="warn">awaiting the bank</span>' : h.status === 'void' ? ' · not received' + (h.voidReason ? ' (' + esc(h.voidReason) + ')' : '') : h.confirmedBy ? ' · confirmed by ' + esc(h.confirmedBy) : ''}</span><span>${esc(money(h.amountCents))}</span></div>${h.status === 'awaiting' && OPEN.includes(o.status) ? `<div class="btn-row so-bank"><button class="btn sm" data-act="so-pay-confirm" data-id="${esc(o.id)}" data-pid="${esc(h.paymentId)}">${icon('cash')} On the statement: confirm</button><button class="btn ghost sm" data-act="so-pay-void" data-id="${esc(o.id)}" data-pid="${esc(h.paymentId)}">Not received</button></div>` : ''}`).join('')}${o.awaitingCents ? `<div class="x-row warn"><span>Awaiting the bank (a manager confirms)</span><span>${esc(money(o.awaitingCents))}</span></div>` : ''}
           <div class="x-row tot"><span>Paid ${esc(money(o.paidCents))} · balance</span><strong>${esc(money(o.balanceCents))}</strong></div>
           ${o.status === 'cancelled' ? `<p class="warn">Cancelled ${esc(niceDate(o.cancelledAt))}: ${esc(kindLabel(o.cancelKind))}${o.cancelReason ? ' · ' + esc(o.cancelReason) : ''}. Fee ${esc(money(o.feeCents || 0))}, refunded ${esc(money(o.refundedCents || 0))}.</p>` : ''}
           ${/^(delivered|collected)$/.test(o.status) ? `<p class="ok">${esc(STATUS_LABEL[o.status])} ${esc(niceDate(o.completedAt))} · tax invoice ${esc(o.completedDocNo || '')}${o.deliveryNote && o.deliveryNote.signedBy ? ' · signed by ' + esc(o.deliveryNote.signedBy) : ''}</p>` : ''}</div>
@@ -327,33 +345,34 @@ function pay(id) {
   const o = one(id); if (!o) return;
   const dd = d();
   if (dd.registerId && !dd.shiftOpen) return toast('The register is closed: open it under Register first.', 'warn');
-  const methods = (dd.store.paymentMethods || ['cash', 'card']).filter(k => METHOD[k] && k !== 'storeCredit');
-  const suggested = o.status === 'quoted' ? Math.min(o.balanceCents, Math.max(0, o.minDepositCents - o.paidCents)) || o.balanceCents : o.balanceCents;
+  const methods = payMethods(dd);
+  if (!methods.length) return toast('No way to pay here: open the register for cash, or set the store’s payment methods.', 'warn');
+  const open = o.balanceCents - (o.awaitingCents || 0);
+  if (open <= 0) return toast(money(o.awaitingCents) + ' is awaiting the bank on ' + o.docNo + ': a manager confirms it on the order.', 'warn');
+  const suggested = o.status === 'quoted' ? Math.min(open, Math.max(0, o.minDepositCents - o.paidCents - (o.awaitingCents || 0))) || open : open;
   let busy = false;
   const { wrap, close } = openModal('Payment on ' + o.docNo, `
-    <div class="muted">${esc(o.customerSnapshot.name)} · balance <strong>${esc(money(o.balanceCents))}</strong>${o.status === 'quoted' ? ' · deposit to start ' + esc(money(o.minDepositCents)) : ''}</div>
+    <div class="muted">${esc(o.customerSnapshot.name)} · balance <strong>${esc(money(o.balanceCents))}</strong>${o.awaitingCents ? ' · ' + esc(money(o.awaitingCents)) + ' awaiting the bank' : ''}${o.status === 'quoted' ? ' · deposit to start ' + esc(money(o.minDepositCents)) : ''}</div>
     ${row(field('Amount (R)', 'sp-amount', { value: randsOf(suggested), inputmode: 'decimal' }), field('Paid by', 'sp-method', { type: 'select', value: methods[0], options: methods.map(k => ({ value: k, label: METHOD[k] })) }))}
-    ${row(field('Cash given (R)', 'sp-given', { value: randsOf(suggested), inputmode: 'decimal' }), field('Card last 4 / reference', 'sp-ref', {}))}
-    <div class="pay-quick"><button class="btn ghost sm" type="button" data-sp="${o.balanceCents}">The whole balance</button>${o.status === 'quoted' && o.minDepositCents > o.paidCents ? `<button class="btn ghost sm" type="button" data-sp="${o.minDepositCents - o.paidCents}">The deposit</button>` : ''}</div>
+    ${row(field('Cash given (R)', 'sp-given', { value: randsOf(suggested), inputmode: 'decimal' }), '')}${proofFields('sp', methods[0])}<p class="muted" id="sp-paynote"></p>
+    <div class="pay-quick"><button class="btn ghost sm" type="button" data-sp="${open}">The whole balance</button>${o.status === 'quoted' && o.minDepositCents > o.paidCents ? `<button class="btn ghost sm" type="button" data-sp="${o.minDepositCents - o.paidCents}">The deposit</button>` : ''}</div>
     <div class="pay-change-live" id="sp-change"></div>`, { okLabel: 'Take payment', cancelLabel: 'Back', onOk: () => submit() });
-  const live = () => { const m = val(wrap, 'sp-method'); wrap.querySelector('#sp-given').closest('.fld').hidden = m !== 'cash'; const a = centsOf(val(wrap, 'sp-amount')), g = centsOf(val(wrap, 'sp-given')); wrap.querySelector('#sp-change').textContent = m === 'cash' && g >= a && a > 0 ? 'Change ' + money(g - a) : m === 'cash' && a > 0 && g < a ? 'Short by ' + money(a - g) : ''; };
+  const live = () => { const m = val(wrap, 'sp-method'); wrap.querySelector('#sp-given').closest('.fld').hidden = m !== 'cash'; wrap.querySelector('#sp-ref').closest('.fld').hidden = m === 'cash'; wrap.querySelector('#sp-last4').closest('.fld').hidden = m !== 'card'; wrap.querySelector('#sp-ref').closest('.fld').querySelector('span').textContent = m === 'card' ? 'Approval code (on the slip)' : 'Reference (as on the bank statement)'; wrap.querySelector('#sp-paynote').textContent = proofNote(m, methods.includes('cash')); const a = centsOf(val(wrap, 'sp-amount')), g = centsOf(val(wrap, 'sp-given')); wrap.querySelector('#sp-change').textContent = m === 'cash' && g >= a && a > 0 ? 'Change ' + money(g - a) : m === 'cash' && a > 0 && g < a ? 'Short by ' + money(a - g) : ''; };
   wrap.addEventListener('input', live); wrap.addEventListener('change', live); live();
   wrap.addEventListener('click', (e) => { const q = e.target.closest('[data-sp]'); if (q) { wrap.querySelector('#sp-amount').value = randsOf(Number(q.dataset.sp)); wrap.querySelector('#sp-given').value = randsOf(Number(q.dataset.sp)); live(); } });
   async function submit() {
     if (busy) return false;
     const amount = centsOf(val(wrap, 'sp-amount')); const method = val(wrap, 'sp-method');
     if (!(amount > 0)) { toast('How much?', 'warn'); return false; }
-    if (amount > o.balanceCents) { toast('Only ' + money(o.balanceCents) + ' is owed.', 'warn'); return false; }
-    const tender = { method, amountCents: amount, ref: val(wrap, 'sp-ref') };
-    if (method === 'cash') { tender.tenderedCents = centsOf(val(wrap, 'sp-given')); if (tender.tenderedCents < amount) { toast('Cash given is short.', 'warn'); return false; } }
-    if (method === 'card') tender.cardLast4 = val(wrap, 'sp-ref').replace(/\D/g, '').slice(-4);
+    if (amount > open) { toast('Only ' + money(open) + ' is owed' + (o.awaitingCents ? ' (' + money(o.awaitingCents) + ' is awaiting the bank)' : '') + '.', 'warn'); return false; }
+    const tender = tenderFrom(wrap, 'sp', method, amount); if (!tender) return false;
     busy = true;
     try {
       const r = await auth.api('pay', { orderId: o.id, paymentId: newId('sp'), tenders: [tender], clientCreatedAt: new Date().toISOString(), ...where() }, API.special);
       close(true);
       const after = fresh(id, r);
       const pays = r.payments || []; const chg = pays[0] && pays[0].changeCents || 0;
-      toast('Paid ' + money(amount) + ' on ' + o.docNo + (chg ? ' · change ' + money(chg) : '') + (after.status === 'depositPaid' && o.status === 'quoted' ? ' · deposit paid' + (factoryLinked() ? ': press Send to factory when it should be built' : '') : after.balanceCents <= 0 ? ' · paid in full' : ''));
+      toast((r.awaitingCents ? 'Recorded ' + money(amount) + ' by ' + METHOD[method] + ' on ' + o.docNo + ': awaiting the bank, a manager confirms it' : 'Paid ' + money(amount) + ' on ' + o.docNo) + (chg ? ' · change ' + money(chg) : '') + (after.status === 'depositPaid' && o.status === 'quoted' ? ' · deposit paid' + (factoryLinked() ? ': press Send to factory when it should be built' : '') : after.balanceCents <= 0 ? ' · paid in full' : ''));
       openReceipt(docOf(after, 'payment', { at: r.paidAt || new Date().toISOString(), amountCents: amount, payments: pays, changeCents: chg }));
       if (ctx.onChange) ctx.onChange(r);
       return true;
@@ -519,6 +538,31 @@ function deliver(id) {
       return true;
     } catch (e) { busy = false; toast(noLine(e), 'warn'); return false; }
   }
+}
+
+// an EFT or QR on the bank statement, confirmed by a manager (or with one's PIN); or marked not received
+async function bankPayment(id, paymentId, confirm) {
+  const o = one(id); if (!o || !paymentId) return;
+  const h = (o.history || []).find(x => x.paymentId === paymentId) || {};
+  const { wrap } = openModal(confirm ? 'Confirm the bank payment' : 'Payment not received', `<p>${esc(money(h.amountCents || 0))} by ${esc(METHOD[(h.methods || [])[0]] || 'EFT')}${h.ref ? ' · ' + esc(h.ref) : ''} on ${esc(o.docNo)}, recorded ${esc(niceDate(h.at))} by ${esc(h.byName || '')}.</p>
+    ${confirm ? `<p class="muted">Confirm only once it shows on the bank statement. The order counts it paid from now.</p>${field('Bank reference (optional)', 'bk-ref', { placeholder: 'as on the statement' })}` : `<p class="muted">The order will owe this amount again.</p>${field('Why', 'bk-reason', { placeholder: 'e.g. never arrived, wrong amount' })}`}`, {
+    okLabel: confirm ? 'Confirm: it is in the bank' : 'Mark not received', onOk: async (w) => {
+      const body = { paymentId, bankRef: val(w, 'bk-ref'), reason: val(w, 'bk-reason'), ...where() };
+      const action = confirm ? 'confirmPayment' : 'voidPayment';
+      try {
+        let r;
+        try { r = await auth.api(action, body, API.special); }
+        catch (e) {
+          if (e.status === 403 && /PIN/.test(e.message)) { const a = await auth.requireOverride({ minRole: 'manager', action: 'specialOrder', details: { docNo: o.docNo, paymentId, amountCents: h.amountCents }, text: e.message }); r = await auth.api(action, { ...body, approvalToken: a.token }, API.special); }
+          else throw e;
+        }
+        const after = fresh(id, r);
+        toast(confirm ? money(h.amountCents) + ' confirmed on ' + o.docNo + (after.status === 'depositPaid' && o.status === 'quoted' ? ' · deposit paid' : '') : money(h.amountCents) + ' marked not received on ' + o.docNo);
+        if (ctx.onChange) ctx.onChange(r);
+        return true;
+      } catch (e) { toast(noLine(e), 'warn'); return false; }
+    } });
+  return wrap;
 }
 
 async function urgent(id) {

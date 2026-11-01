@@ -32,7 +32,7 @@ await put('pos/retail/users/st_mandla', { email: '', name: 'Mandla', role: 'mana
 await put('pos/retail/pinHashes/st_cathy', { ...pinRec('111111'), ...srv('BF') }); await put('pos/retail/pinHashes/st_mandla', { ...pinRec('222222'), ...srv('BF') });
 await put('pos/retail/entities/BF', { legalName: 'Bellville Furniture (Pty) Ltd', tradingName: 'Bellville Furniture', vatRegistered: true, vatNo: '4123456789', invoicePrefix: 'BF', creditNotePrefix: 'BF-CN', laybyPrefix: 'BF-LB', specialOrderPrefix: 'BF-SO', active: true, ...srv('BF') });
 await put('pos/retail/settings/BF', { vat: { rates: [{ rateBp: 1500, effectiveFrom: '2018-04-01' }] }, discounts: { maxPctByRole: { cashier: 5, supervisor: 15, manager: 50, owner: 100 } }, session: { idleLogoutMinutes: 10, pinLength: 6 }, specialOrder: { minDepositPct: 50, leadDays: 21 }, ...srv('BF') });
-await put('pos/retail/stores/BF-BELL', { entityId: 'BF', name: 'Bellville', active: true, paymentMethods: ['cash', 'card'], ...srv('BF', 'BF-BELL') });
+await put('pos/retail/stores/BF-BELL', { entityId: 'BF', name: 'Bellville', active: true, paymentMethods: ['cash', 'card', 'eft'], ...srv('BF', 'BF-BELL') });
 const secret = 'so-secret-' + Date.now();
 await put('pos/retail/devices/dev_so', { label: 'Front till', registerId: '', secretHash: createHash('sha256').update(secret).digest('hex'), enrolledBy: 'server', enrolledAt: '2026-10-21T08:00:00.000Z', active: true, ...srv('BF', 'BF-BELL', 'dev_so') });
 const prod = (id, o) => put('pos/retail/products/' + id, { sku: '', barcodes: [], category: 'Shop', brand: '', type: 'stock', vatClass: 'standard', trackStock: true, costCents: 0, priceCents: 0, images: [], options: [], hasVariants: false, storePrices: {}, bundle: [], archived: false, favourite: true, ...o, ...srv('BF') });
@@ -83,6 +83,9 @@ await p.setInputFiles('input[data-photo="0"]', { name: 'sofa.png', mimeType: 'im
 check('the photo is shown', await p.locator('#so-ph-0').isVisible() && (await p.getAttribute('#so-ph-0', 'src')).startsWith('data:image/jpeg'));
 R.terms = await p.locator('#so-terms').innerText(); check('the sign-off reads the spec back', /Size 2\.4 m, Fabric Linen look, Colour Charcoal, Legs Oak, Notes Firm seat \(photo attached\)/.test(R.terms), R.terms.slice(0, 400));
 await p.check('#so-accept'); await sign('#so-pad');
+check('cash is not offered: this till has no open register', !(await p.$$eval('#so-method option', os => os.map(o => o.value))).includes('cash') && /approval code and last 4 digits are on the card slip/i.test(R.newModal), R.newModal.slice(0, 200));
+await p.click('#modal-ok'); R.noProof = await toast(); check('the deposit by card needs the slip\'s proof', /approval code and the last 4/.test(R.noProof), R.noProof);
+await p.fill('#so-ref', '123456'); await p.fill('#so-last4', '4242');
 await p.click('#modal-ok'); R.opened = await toast(); await p.waitForTimeout(1500);
 check('order opened with the deposit', /Sales order BF-SO-000001 opened, deposit paid/.test(R.opened), R.opened);
 await p.waitForSelector('#modal .rc-paper'); R.orderDoc = await paper();
@@ -102,7 +105,9 @@ await p.click('[data-act=so-update]'); R.updToast = await toast(); await p.waitF
 R.opened1 = await p.evaluate(() => window.__opened); check('the WhatsApp update opened with the deposit words', /Update logged/.test(R.updToast) && R.opened1.length === 1 && /wa\.me\/27825550101/.test(R.opened1[0]) && /Thank%20you%20for%20your%20deposit/.test(R.opened1[0]), [R.updToast, R.opened1]);
 await p.click('[data-act=so-pay]'); await p.waitForSelector('#modal #sp-amount');
 check('the whole balance suggested', (await p.inputValue('#sp-amount')) === '7500.00');
-await p.selectOption('#sp-method', 'card'); await p.fill('#sp-ref', '1234'); await p.click('#modal-ok'); R.paid = await toast(); await p.waitForTimeout(1500);
+await p.selectOption('#sp-method', 'card'); await p.fill('#sp-ref', '123456'); await p.click('#modal-ok'); R.noLast4 = await toast();
+check('the card slip\'s last 4 digits are asked for', /approval code and the last 4/.test(R.noLast4), R.noLast4);
+await p.fill('#sp-last4', '1234'); await p.click('#modal-ok'); R.paid = await toast(); await p.waitForTimeout(1500);
 check('paid in full', /Paid R 7,500\.00 on BF-SO-000001/.test(R.paid) && /paid in full/.test(R.paid), R.paid);
 await p.waitForSelector('#modal .rc-paper'); R.payslip = await paper(); check('the payment receipt', /SALES ORDER PAYMENT/.test(R.payslip) && /Paid now R 7,500\.00/.test(R.payslip) && /Balance R 0\.00/.test(R.payslip) && /Card ••1234 R 7,500\.00/.test(R.payslip), R.payslip);
 await closeModal();
@@ -134,6 +139,16 @@ R.quoteDoc = await paper(); check('printed as a quotation', /QUOTATION/.test(R.q
 await closeModal();
 await nav('orders'); await p.selectOption('#so-filter', 'quoted'); await p.waitForTimeout(300);
 await p.click('[data-act=so-open]'); await p.waitForSelector('#modal .lb-detail');
+// ---- the deposit by EFT: recorded as awaiting the bank, a manager confirms it on the order
+await p.click('[data-act=so-pay]'); await p.waitForSelector('#modal #sp-amount');
+await p.selectOption('#sp-method', 'eft'); await p.fill('#sp-ref', 'MOKOENA'); await p.click('#modal-ok'); R.eftToast = await toast(); await p.waitForTimeout(1500);
+check('an EFT is recorded as awaiting the bank', /Recorded R 7,500\.00 by EFT on BF-SO-000002: awaiting the bank/.test(R.eftToast), R.eftToast);
+await p.waitForSelector('#modal .rc-paper'); R.eftSlip = await paper(); check('the slip says the payment is awaited', /Payment awaited: not yet paid/.test(R.eftSlip) && /Recorded, awaiting the bank R 7,500\.00/.test(R.eftSlip) && /Balance R 15,000\.00/.test(R.eftSlip), R.eftSlip);
+await closeModal();
+await nav('todo'); R.todoBank = await screenText(); check('To do: the bank payment to confirm', /Bank payments to confirm/.test(R.todoBank) && /BF-SO-000002/.test(R.todoBank) && /R 7,500\.00 awaiting/.test(R.todoBank), R.todoBank.slice(0, 300));
+await nav('orders'); await p.selectOption('#so-filter', 'quoted'); await p.waitForTimeout(300);
+await p.click('[data-act=so-open]'); await p.waitForSelector('#modal .lb-detail'); R.eftDetail = await modalText();
+check('the order: still quoted, the EFT awaiting the bank, the confirm button', /Quoted/.test(R.eftDetail) && /EFT MOKOENA · awaiting the bank/.test(R.eftDetail) && /Awaiting the bank \(a manager confirms\) R 7,500\.00/.test(R.eftDetail) && (await p.locator('[data-act=so-pay-confirm]').count()) === 1, R.eftDetail.slice(0, 500));
 await p.click('[data-act=so-cancel]'); await p.waitForSelector('#modal #sc-kind');
 R.cancelModal = await modalText(); check('no fee before production', /Production has not started: no fee/.test(R.cancelModal) && /To refund R 0\.00/.test(R.cancelModal), R.cancelModal.slice(0, 300));
 await p.click('#modal-ok'); await p.waitForSelector('#modal .pinpad'); await pinType('#modal', '222222'); R.cancelled = await toast(); await p.waitForTimeout(1500);
@@ -142,6 +157,7 @@ R.cancelDoc = await paper(); check('the cancellation statement', /SALES ORDER CA
 await closeModal();
 const o2 = (await listColl('specialOrders')).find(o => o.docNo === 'BF-SO-000002');
 check('written: cancelled, approver Mandla', o2.status === 'cancelled' && o2.approvers.some(a => a.name === 'Mandla'), o2 && [o2.status, o2.approvers]);
+check('the awaiting EFT closed as not received with the order', o2.awaitingCents === 0 && o2.history.length === 1 && o2.history[0].status === 'void' && (await listColl('payments')).find(x => x.docNo === 'BF-SO-000002').status === 'void', o2.history);
 
 console.log(JSON.stringify({ fails, errs, ...R }, null, 1).slice(0, 6000));
 await b.close();
