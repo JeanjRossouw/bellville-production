@@ -62,7 +62,7 @@ export function companiesHtml(d) {
     <div class="fld"><span>Document prefixes</span><div class="prefix-grid">${SERIES.map(s => `<label>${esc(s.label)}<input id="en-${s.key}" value="${esc(e[s.key] || '')}" placeholder="${esc((e.id || 'XX') + s.suffix)}"></label>`).join('')}</div></div>
     ${addrFields('en', e.address)}
     ${row(field('Phone', 'en-phone', { value: e.phone }), field('Email', 'en-email', { value: e.email, type: 'email' }))}
-    ${field('Website', 'en-web', { value: e.website })}
+    ${row(field('Website', 'en-web', { value: e.website }), field('Logo (link to a PNG or JPG)', 'en-logo', { value: e.logoUrl, placeholder: 'https://… (prints at the top of invoices and quotes)' }))}
     <div class="fld"><span>Bank details (on invoices)</span>${row(field('Bank', 'en-bank', { value: e.bank && e.bank.name }), field('Account name', 'en-bankname', { value: e.bank && e.bank.accountName }))}${row(field('Account number', 'en-bankno', { value: e.bank && e.bank.accountNo }), field('Branch code', 'en-branch', { value: e.bank && e.bank.branchCode }))}</div>
     ${editing ? check('Active', 'en-active', e.active !== false) : ''}
     <div class="card-actions"><button class="btn primary" data-act="entity-save">${editing ? 'Save' : 'Add company'}</button>${editing ? '<button class="btn ghost" data-act="entity-cancel">Cancel</button>' : ''}</div>
@@ -86,7 +86,7 @@ export async function entitySave(w, d) {
   const data = {
     legalName: val(w, 'en-legal'), tradingName: val(w, 'en-trading') || val(w, 'en-legal'), regNo: val(w, 'en-reg'),
     vatRegistered, vatNo: vatRegistered ? val(w, 'en-vatno') : '',
-    address: addrOf(w, 'en'), phone: val(w, 'en-phone'), email: val(w, 'en-email'), website: val(w, 'en-web'),
+    address: addrOf(w, 'en'), phone: val(w, 'en-phone'), email: val(w, 'en-email'), website: val(w, 'en-web'), logoUrl: val(w, 'en-logo'),
     bank: { name: val(w, 'en-bank'), accountName: val(w, 'en-bankname'), accountNo: val(w, 'en-bankno'), branchCode: val(w, 'en-branch') },
     active: editing ? bool(w, 'en-active') : true
   };

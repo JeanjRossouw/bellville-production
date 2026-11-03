@@ -50,12 +50,12 @@ export function receiptModel({ sale, lines, payments, entity, store, settings, c
   const cust = sale.customerSnapshot;
   return {
     kind, title: kindTitle(kind) + (copy ? ' · COPY' : ''), copy: !!copy, vat,
-    company: { name: entity.tradingName || entity.legalName, legalName: entity.legalName, regNo: entity.regNo || '', vatNo: vat ? entity.vatNo : '', address: addr(entity.address), phone: entity.phone || '', email: entity.email || '' },
+    company: { name: entity.tradingName || entity.legalName, legalName: entity.legalName, regNo: entity.regNo || '', vatNo: vat ? entity.vatNo : '', address: addr(entity.address), phone: entity.phone || '', email: entity.email || '', logoUrl: entity.logoUrl || '', bank: entity.bank && (entity.bank.accountNo || entity.bank.name) ? { name: entity.bank.name || '', accountName: entity.bank.accountName || '', accountNo: entity.bank.accountNo || '', branchCode: entity.bank.branchCode || '' } : null },
     store: store ? { name: store.name, address: addr(store.address), phone: store.phone || '' } : null,
     header, footer, policy,
     docNo: sale.docNo, date: sale.clientCreatedAt || sale.createdAt, cashier: sale.cashierName || '', register: sale.registerId || '',
-    customer: cust ? { name: cust.name, vatNo: cust.vatNo || '', address: addr(cust.address), phone: cust.phone || '' } : null,
-    lines: (lines || []).map(l => ({ name: l.name, qty: l.qty, unitPriceCents: l.unitPaidCents != null ? l.unitPaidCents : l.unitPriceCents, discountCents: l.unitPaidCents != null ? 0 : (l.discountCents || 0) + (l.saleDiscountCents || 0), lineTotalCents: l.netCents != null ? l.netCents : l.lineTotalCents, vatCents: l.vatCents || 0, vatRateBp: l.vatRateBp || 0, zero: !l.vatRateBp, note: l.note || (l.reason ? l.reason + (l.disposition ? ' · ' + l.disposition : '') : ''), spec: l.spec || null })),
+    customer: cust ? { name: cust.name, vatNo: cust.vatNo || '', address: addr(cust.address), phone: cust.phone || '', email: cust.email || '' } : null,
+    lines: (lines || []).map(l => ({ name: l.name, code: l.sku || '', qty: l.qty, unitPriceCents: l.unitPaidCents != null ? l.unitPaidCents : l.unitPriceCents, discountCents: l.unitPaidCents != null ? 0 : (l.discountCents || 0) + (l.saleDiscountCents || 0), lineTotalCents: l.netCents != null ? l.netCents : l.lineTotalCents, vatCents: l.vatCents || 0, vatRateBp: l.vatRateBp || 0, zero: !l.vatRateBp, note: l.note || (l.reason ? l.reason + (l.disposition ? ' · ' + l.disposition : '') : ''), spec: l.spec || null })),
     creditNote: sale.series === 'CN' ? { saleDocNo: sale.saleDocNo || '', noReceipt: !!sale.noReceipt, exchangeSaleId: sale.exchangeSaleId || '', exchangeUsedCents: sale.exchangeUsedCents || 0 } : null,
     subtotalCents: sale.subtotalCents, discountCents: (sale.lineDiscountCents || 0) + (sale.saleDiscountCents || 0), totalCents: sale.totalCents, vatCents: sale.vatCents, vatRateBp: sale.vatRateBp,
     exVatCents: sale.totalCents - sale.vatCents, roundingCents: sale.roundingCents || 0, changeCents: sale.changeCents || 0,
@@ -113,22 +113,45 @@ export const SLIP_CSS = `
 
 // -------------------------------------------------------------- A4 --
 export function a4Html(m) {
-  return `<div class="a4${m.copy ? ' copy' : ''}">
-    <div class="head"><div><div class="co">${esc(m.company.name)}</div><div class="s">${esc([m.company.legalName !== m.company.name ? m.company.legalName : '', m.company.address, m.company.phone, m.company.email, m.company.regNo ? 'Reg no ' + m.company.regNo : '', m.company.vatNo ? 'VAT no ' + m.company.vatNo : ''].filter(Boolean).join(' · '))}</div>${m.store ? `<div class="s">${esc(m.store.name)}${m.store.address ? ' · ' + esc(m.store.address) : ''}</div>` : ''}</div>
-      <div class="doc"><div class="t">${esc(m.title)}</div><div><b>${esc(m.docNo)}</b></div><div>${esc(niceDate(m.date))} ${esc(niceTime(m.date))}</div>${m.cashier ? `<div class="s">Served by ${esc(m.cashier)}</div>` : ''}<div class="bar">${encodable(m.docNo) ? barcodeSvg(m.docNo, 40) : ''}</div></div></div>
-    ${m.customer ? `<div class="to"><div class="s">${m.kind === 'full' ? 'Invoice to' : 'Customer'}</div><b>${esc(m.customer.name)}</b>${m.customer.address ? '<br>' + esc(m.customer.address) : ''}${m.customer.vatNo ? '<br>VAT no ' + esc(m.customer.vatNo) : ''}${m.customer.phone ? '<br>' + esc(m.customer.phone) : ''}</div>` : ''}
-    <table><thead><tr><th>Item</th><th class="n">Qty</th><th class="n">Each</th><th class="n">Discount</th>${m.vat ? '<th class="n">VAT</th>' : ''}<th class="n">Total</th></tr></thead>
-      <tbody>${m.lines.map(l => `<tr><td>${esc(l.name)}${l.note ? '<div class="s">' + esc(l.note) + '</div>' : ''}${specLines(l.spec).map(x => '<div class="s">' + esc(x) + '</div>').join('')}${l.spec && l.spec.photo ? `<img class="spec-img" src="${l.spec.photo}" alt="">` : ''}</td><td class="n">${l.qty}</td><td class="n">${esc(money(l.unitPriceCents))}</td><td class="n">${l.discountCents ? '− ' + esc(money(l.discountCents)) : ''}</td>${m.vat ? `<td class="n">${l.zero ? '0%' : esc(money(l.vatCents))}</td>` : ''}<td class="n">${esc(money(l.lineTotalCents))}</td></tr>`).join('')}</tbody>
-      <tfoot>${m.totals && m.vat ? `<tr><td colspan="${m.vat ? 5 : 4}" class="n">Excl. VAT</td><td class="n">${esc(money(m.exVatCents))}</td></tr><tr><td colspan="5" class="n">VAT ${m.vatRateBp / 100}%</td><td class="n">${esc(money(m.vatCents))}</td></tr>` : ''}
-        ${m.totals ? `<tr class="tot"><td colspan="${m.vat ? 5 : 4}" class="n">Total</td><td class="n">${esc(money(m.totalCents))}</td></tr>` : ''}</tfoot></table>
-    ${m.refLabel ? `<div class="pay">${esc(m.refLabel)}</div>` : ''}
+  const c = m.company;
+  const contact = [c.phone ? 'Tel: ' + esc(c.phone) : '', c.address ? esc(c.address) : '', c.email ? esc(c.email) : '', c.vatNo ? 'VAT Reg. No.: ' + esc(c.vatNo) : '', c.regNo ? 'Company Reg. No: ' + esc(c.regNo) : ''].filter(Boolean);
+  const kv = (rows) => rows.map(r => `<div class="kv2"><div class="k">${esc(r[0])}</div><div class="v">${r[1] || '&nbsp;'}</div></div>`).join('');
+  const cu = m.customer || {};
+  const ex = (cents, vat) => money(cents - (vat || 0));
+  // the lines as the old documents showed them: price and total excluding VAT, the VAT beside them
+  const lineRows = m.lines.map(l => {
+    const vat = m.vat ? l.vatCents || 0 : 0;
+    const exTotal = l.lineTotalCents - vat;
+    const exEach = l.qty ? Math.round(exTotal / l.qty) : exTotal;
+    return `<tr><td class="code">${esc(l.code || '')}</td><td>${esc(l.name)}${l.note ? '<div class="s">' + esc(l.note) + '</div>' : ''}${specLines(l.spec).map(x => '<div class="s">' + esc(x) + '</div>').join('')}${l.spec && l.spec.photo ? `<img class="spec-img" src="${l.spec.photo}" alt="">` : ''}${m.vat && l.zero ? '<div class="s">* zero-rated / exempt</div>' : ''}</td><td class="n">${l.qty}</td><td class="n">${esc(money(exEach))}</td><td class="n">${l.discountCents ? esc(money(l.discountCents)) : '0.00'}</td><td class="n">${esc(money(vat))}</td><td class="n">${esc(money(exTotal))}</td></tr>`;
+  }).join('');
+  const totalsBox = m.totals ? `<div class="totbox">
+      ${m.discountCents ? `<div class="r"><span>Discount</span><b>${esc(money(m.discountCents))}</b></div>` : ''}
+      ${m.roundingCents ? `<div class="r"><span>Rounding</span><b>${esc(money(m.roundingCents))}</b></div>` : ''}
+      <div class="r"><span>Total Exclusive</span><b>${esc(money(m.exVatCents))}</b></div>
+      <div class="r"><span>${m.vat ? 'VAT @ ' + (m.vatRateBp / 100) + '%' : 'VAT (not registered)'}</span><b>${esc(money(m.vat ? m.vatCents : 0))}</b></div>
+      <div class="r tot"><span>Total Inclusive</span><b>${esc(money(m.totalCents))}</b></div>
+    </div>` : '';
+  const bankBox = c.bank ? `<div class="bank"><div class="bt">BANK DETAILS:</div>${c.bank.name ? '<div>Bank: ' + esc(c.bank.name) + '</div>' : ''}${c.bank.accountNo ? '<div>Acc nr: ' + esc(c.bank.accountNo) + '</div>' : ''}${c.bank.branchCode ? '<div>Branch code: ' + esc(c.bank.branchCode) + '</div>' : ''}${c.bank.accountName ? '<div>Acc name: ' + esc(c.bank.accountName) + '</div>' : ''}</div>` : '<div></div>';
+  return `<div class="a4 a4v2${m.copy ? ' copy' : ''}">
+    <div class="hd"><div class="logo">${c.logoUrl ? `<img src="${esc(c.logoUrl)}" alt="${esc(c.name)}">` : `<div class="co">${esc(c.name)}</div>`}${m.store && m.store.name && m.store.name !== c.name ? `<div class="s">${esc(m.store.name)}</div>` : ''}</div>
+      <div class="contact">${contact.map(x => `<div>${x}</div>`).join('')}</div></div>
+    <div class="title"><span class="tt">${esc(m.title.replace(' · COPY', ''))} No.</span><span class="num">${esc(m.docNo)}</span>${encodable(m.docNo) ? `<span class="bar">${barcodeSvg(m.docNo, 34)}</span>` : ''}</div>
+    <div class="who">
+      <div class="cust"><div class="s">${m.kind === 'full' ? 'Invoice to' : 'Customer'}</div>${m.customer ? `<b>${esc(cu.name)}</b>${cu.address ? '<br>' + esc(cu.address).replace(/, /g, '<br>') : ''}` : '<b>Cash customer</b>'}</div>
+      <div class="mid">${kv([['Contact Number', esc(cu.phone || '')], ['Contact Email', esc(cu.email || '')], ['Customer VAT No.', esc(cu.vatNo || '')], ['Reference', m.creditNote ? (m.creditNote.noReceipt ? 'No receipt · store credit' : 'Against ' + esc(m.creditNote.saleDocNo)) : esc(m.refLabel || '')]])}</div>
+      <div class="right">${kv([['Date', esc(niceDate(m.date)) + (m.kind === 'slip' || m.kind === 'abridged' || m.kind === 'full' || m.kind === 'invoice' ? ' ' + esc(niceTime(m.date)) : '')], ['Salesperson', esc(m.cashier || '')], ['Status', m.awaiting ? 'Payment awaited' : m.pending ? 'Rung up offline' : m.totals ? (m.payments.length ? 'Paid' : '') : '']])}</div>
+    </div>
+    <table class="lines"><thead><tr><th>Item code</th><th>Description</th><th class="n">Qty</th><th class="n">Pr. Excl.</th><th class="n">Disc.</th><th class="n">VAT</th><th class="n">Total Excl.</th></tr></thead><tbody>${lineRows}</tbody></table>
     ${m.sections.map(sec => `<div class="sec">${sec.title ? `<div class="s st">${esc(sec.title)}</div>` : ''}<table class="kv">${sec.rows.map(r => `<tr><td>${esc(r[0])}</td><td class="n">${r[2] ? '<b>' + esc(r[1]) + '</b>' : esc(r[1])}</td></tr>`).join('')}</table></div>`).join('')}
-    <div class="pay">${m.payments.map(p => `<div>${esc(p.label)}${p.ref ? ' · ' + esc(p.ref) : ''}: ${esc(money(p.amountCents))}</div>`).join('')}${m.roundingCents ? `<div>Cash rounding ${esc(money(m.roundingCents))}</div>` : ''}${m.changeCents ? `<div>Change ${esc(money(m.changeCents))}</div>` : ''}${m.loyalty ? `<div>Points${m.loyalty.earned ? ' earned ' + m.loyalty.earned : ''}${m.loyalty.redeemed ? ', used ' + m.loyalty.redeemed : ''}; balance ${m.loyalty.balance}${m.loyalty.tier ? ' (' + esc(m.loyalty.tier) + ')' : ''}</div>` : ''}${m.awaiting ? '<div><b>Payment awaited: this invoice is not yet paid.</b></div>' : ''}</div>
+    ${m.payments.length || m.changeCents || m.loyalty ? `<div class="pay">${m.payments.map(p => `<div>${esc(p.label)}${p.ref ? ' · ' + esc(p.ref) : ''}: ${esc(money(p.amountCents))}</div>`).join('')}${m.changeCents ? `<div>Change ${esc(money(m.changeCents))}</div>` : ''}${m.loyalty ? `<div>Points${m.loyalty.earned ? ' earned ' + m.loyalty.earned : ''}${m.loyalty.redeemed ? ' used ' + m.loyalty.redeemed : ''}${m.loyalty.balance != null ? ' · balance ' + m.loyalty.balance : ''}</div>` : ''}</div>` : ''}
     ${m.vouchers.length ? `<div class="pay">${m.vouchers.map(v => `<div>Gift voucher ${esc(money(v.amountCents))}: <b>${esc(v.code)}</b></div>`).join('')}</div>` : ''}
+    <div class="foot2">${bankBox}${totalsBox}</div>
     ${m.terms ? `<div class="foot terms">${esc(m.terms).replace(/\n/g, '<br><br>')}</div>` : ''}
     ${m.signature ? `<div class="sig"><img src="${m.signature}" alt="signature"><div class="s">Signed: ${esc(m.signedBy)} · ${esc(niceDate(m.date))}</div></div>` : m.signedBy ? `<div class="sig s">Signed: ${esc(m.signedBy)}</div>` : ''}
     ${m.signLine ? `<div class="sigline"><div>${esc(m.signLine)}</div><div>Name: ____________________________ &nbsp; Signature: ____________________________ &nbsp; Date: ______________</div></div>` : ''}
     ${m.footer ? `<div class="foot">${esc(m.footer).replace(/\n/g, '<br>')}</div>` : ''}${m.policy ? `<div class="foot s">${esc(m.policy)}</div>` : ''}
+    <div class="printed s">Printed: ${esc(niceDate(new Date().toISOString()))} ${esc(niceTime(new Date().toISOString()))}</div>
     ${m.copy ? '<div class="stamp">COPY</div>' : ''}
   </div>`;
 }
@@ -145,7 +168,21 @@ export const A4_CSS = `
   .a4 .sec { margin-top: 10px; } .a4 .st { font-weight: 700; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 2px; } .a4 .kv { width: auto; min-width: 90mm; } .a4 .kv td { padding: 3px 8px 3px 0; border: 0; }
   .a4 .spec-img { display: block; max-width: 50mm; max-height: 40mm; margin: 4px 0; }
   .a4 .sig { margin-top: 14px; } .a4 .sig img { display: block; max-width: 70mm; max-height: 28mm; border-bottom: 1px solid #000; } .a4 .sigline { margin-top: 24px; line-height: 2.4; }
-  .a4 .stamp { position: absolute; top: 40mm; left: 50%; transform: translateX(-50%) rotate(-20deg); font-size: 64px; font-weight: 900; color: rgba(180, 0, 0, .25); border: 6px solid rgba(180, 0, 0, .25); padding: 4px 24px; letter-spacing: .3em; }`;
+  .a4 .stamp { position: absolute; top: 40mm; left: 50%; transform: translateX(-50%) rotate(-20deg); font-size: 64px; font-weight: 900; color: rgba(180, 0, 0, .25); border: 6px solid rgba(180, 0, 0, .25); padding: 4px 24px; letter-spacing: .3em; }
+  .a4v2 .hd { display: flex; justify-content: space-between; align-items: flex-end; gap: 2rem; border-bottom: 2px solid #000; padding-bottom: 10px; }
+  .a4v2 .logo img { max-height: 28mm; max-width: 80mm; display: block; } .a4v2 .contact { text-align: right; font-size: 11.5px; line-height: 1.5; }
+  .a4v2 .title { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 16mm 0 8mm; font-size: 17px; font-weight: 700; }
+  .a4v2 .title .num { border: 1.5px solid #000; padding: 4px 18px; font-size: 17px; } .a4v2 .title .bar svg { width: 34mm; height: 8mm; display: block; }
+  .a4v2 .who { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 10px; align-items: start; margin-bottom: 10px; }
+  .a4v2 .cust { border: 1.5px solid #000; padding: 6px 8px; min-height: 26mm; font-size: 12px; line-height: 1.45; }
+  .a4v2 .kv2 { margin-bottom: 3px; } .a4v2 .kv2 .k { font-weight: 700; border-bottom: 1px solid #000; font-size: 11px; } .a4v2 .kv2 .v { font-size: 11.5px; min-height: 14px; }
+  .a4v2 table.lines th { border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; text-transform: none; letter-spacing: 0; font-size: 11.5px; font-weight: 700; }
+  .a4v2 table.lines td { border-bottom: 0; padding: 5px 6px; } .a4v2 table.lines td.code { white-space: nowrap; max-width: 32mm; overflow-wrap: anywhere; white-space: normal; }
+  .a4v2 .foot2 { display: flex; justify-content: space-between; align-items: flex-end; gap: 10mm; margin-top: 18mm; border-top: 1.5px solid #000; padding-top: 8px; }
+  .a4v2 .bank { font-size: 11.5px; line-height: 1.5; } .a4v2 .bank .bt { font-weight: 700; }
+  .a4v2 .totbox { min-width: 70mm; } .a4v2 .totbox .r { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 4px; }
+  .a4v2 .totbox .r b { border: 1.5px solid #000; padding: 3px 8px; min-width: 32mm; text-align: right; font-weight: 400; } .a4v2 .totbox .r.tot span { font-weight: 700; } .a4v2 .totbox .r.tot b { font-weight: 700; }
+  .a4v2 .printed { margin-top: 8px; border-top: 1px solid #000; padding-top: 4px; }`;
 
 // --------------------------------------------------------- ESC/POS --
 // The slip as bytes for a 80 mm thermal printer: ESC @ init, text with
