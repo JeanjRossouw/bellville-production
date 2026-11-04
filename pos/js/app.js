@@ -436,7 +436,7 @@ function staffHtml() {
         <td>${esc(roleLabel(u.role))}</td>
         <td>${u.email ? esc(u.email) : '<span class="muted">PIN only</span>'}${u.pinSet ? ' · PIN set' : ' · <span class="warn">no PIN</span>'}</td>
         <td class="muted">${u.role === 'owner' ? 'all' : esc((u.entityIds || []).map(entityName).join(', ')) + ' · ' + esc((u.storeIds || []).map(s => storeName(s) || s).join(', '))}</td>
-        <td class="r nowrap">${u.id !== me.uid && mayManage(u) ? `<button class="btn ghost sm" data-act="staff-pin" data-id="${esc(u.id)}">Set PIN</button> <button class="btn ghost sm" data-act="${u.active ? 'staff-off' : 'staff-on'}" data-id="${esc(u.id)}">${u.active ? 'Deactivate' : 'Reactivate'}</button>` : ''}</td>
+        <td class="r nowrap">${u.id === me.uid || mayManage(u) ? `<button class="btn ghost sm" data-act="staff-edit" data-id="${esc(u.id)}">Edit</button> ` : ''}${u.id !== me.uid && mayManage(u) ? `<button class="btn ghost sm" data-act="staff-pin" data-id="${esc(u.id)}">Set PIN</button> <button class="btn ghost sm" data-act="${u.active ? 'staff-off' : 'staff-on'}" data-id="${esc(u.id)}">${u.active ? 'Deactivate' : 'Reactivate'}</button>` : ''}</td>
       </tr>`).join('') : `<tr><td colspan="5">${empty('Nobody yet')}</td></tr>`}</tbody>
     </table></div>`;
 }
@@ -460,6 +460,45 @@ function staffPin(uid) {
       catch (e) { toast(e.message, 'warn'); return false; }
     }
   });
+}
+// edit a person: name, role, companies and stores (the owner anyone; a manager cashiers and supervisors in
+// their own reach); your own record only the name and default store. The email is the login and stays.
+function staffEdit(uid) {
+  const me = auth.session.user; const u = users.find(x => x.id === uid); if (!u) return;
+  const self = uid === me.uid;
+  if (!self && !mayManage(u)) return toast('Your role cannot change this person.', 'warn');
+  const roleOpts = ROLES.filter(r => me.role === 'owner' || ['cashier', 'supervisor'].includes(r.key)).map(r => ({ value: r.key, label: r.label }));
+  const myEnts = me.role === 'owner' ? entities : entities.filter(e => auth.inEntity(e.id));
+  const mySts = me.role === 'owner' ? stores : stores.filter(s => auth.inStore(s.id));
+  const myStores = self ? stores.filter(s => u.role === 'owner' || (u.storeIds || []).includes(s.id)) : [];
+  const { wrap } = openModal('Edit ' + u.name, self
+    ? `${field('Name', 'se-name', { value: u.name })}${field('Default store (where you sell from when you sign in by email)', 'se-default', { type: 'select', value: u.defaultStoreId || '', options: [{ value: '', label: 'Ask each time' }, ...myStores.map(s => ({ value: s.id, label: s.name }))] })}<p class="muted">Your role, companies and stores are set by ${me.role === 'owner' ? 'another owner' : 'a manager or the owner'}.</p>`
+    : `${row(field('Name', 'se-name', { value: u.name }), field('Role', 'se-role', { type: 'select', value: u.role, options: roleOpts.some(r => r.value === u.role) ? roleOpts : [...roleOpts, { value: u.role, label: roleLabel(u.role) }] }))}
+      <p class="muted">${u.email ? 'Signs in with ' + esc(u.email) + '. To change the email, add the person again with the new one and deactivate this record.' : 'PIN only, no email login. A manager or owner needs an email: add them again with one.'}</p>
+      <div class="fld-row">
+        <div class="fld"><span>Companies</span><div class="checks">${myEnts.map(e => `<label><input type="checkbox" data-ent="${esc(e.id)}"${(u.entityIds || []).includes(e.id) ? ' checked' : ''}> ${esc(e.tradingName || e.legalName)}</label>`).join('') || '<span class="muted">No companies yet</span>'}</div></div>
+        <div class="fld"><span>Stores</span><div class="checks">${mySts.map(s => `<label><input type="checkbox" data-store="${esc(s.id)}"${(u.storeIds || []).includes(s.id) ? ' checked' : ''}> ${esc(s.name)} <small class="muted">${esc(entityName(s.entityId))}</small></label>`).join('') || '<span class="muted">No stores yet</span>'}</div></div>
+      </div>
+      <label class="chk"><input type="checkbox" id="se-active"${u.active ? ' checked' : ''}> Active (can sign in)</label>`, {
+    okLabel: 'Save', onOk: async (w) => {
+      const name = val(w, 'se-name'); if (!name) { toast('Give the person a name.', 'warn'); return false; }
+      let patch;
+      if (self) patch = { name, defaultStoreId: val(w, 'se-default') };
+      else {
+        const role = val(w, 'se-role'), entityIds = checks(w, 'data-ent'), storeIds = checks(w, 'data-store');
+        if (!ROLES.some(r => r.key === role)) { toast('Choose a role.', 'warn'); return false; }
+        if (me.role !== 'owner' && !['cashier', 'supervisor'].includes(role)) { toast('A manager may only make cashiers and supervisors.', 'warn'); return false; }
+        if (role !== 'owner' && !entityIds.length) { toast('Tick at least one company.', 'warn'); return false; }
+        if (['manager', 'owner'].includes(role) && !u.email) { toast('A manager or owner signs in with an email: add them again with one.', 'warn'); return false; }
+        const bad = storeIds.find(sid => !entityIds.includes((stores.find(s => s.id === sid) || {}).entityId));
+        if (bad) { toast('A ticked store is not in a ticked company.', 'warn'); return false; }
+        patch = { name, role, entityIds, storeIds, active: !!w.querySelector('#se-active').checked, defaultStoreId: storeIds.includes(u.defaultStoreId) ? u.defaultStoreId : (storeIds[0] || '') };
+      }
+      try { await patchOne('users', uid, { ...patch, ...auth.touch() }); toast('Saved ' + name); return true; }
+      catch (e) { toast('Could not save: ' + e.message, 'warn'); return false; }
+    }
+  });
+  return wrap;
 }
 async function staffActive(uid, active) {
   try { await patchOne('users', uid, { active, ...auth.touch() }); toast(active ? 'Reactivated' : 'Deactivated: they can no longer sign in'); }
@@ -566,6 +605,7 @@ async function onAction(e) {
     case 'rate-del': return admin.rateDel(w, b.dataset.i);
     case 'staff-add': return staffAdd();
     case 'staff-pin': return staffPin(id);
+    case 'staff-edit': return staffEdit(id);
     case 'staff-off': return staffActive(id, false);
     case 'staff-on': return staffActive(id, true);
     case 'device-enrol': return deviceEnrol();

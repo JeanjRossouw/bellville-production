@@ -71,8 +71,8 @@ R.intro = await txt('#modal .modal-body');
 check('the window says the cost changes (prices only when ticked), and VAT included for a company not registered', /The cost changes, and the selling price too/.test(R.intro) && /VAT included/.test(R.intro) && /not VAT registered/.test(R.intro), R.intro);
 const [dl] = await Promise.all([p.waitForEvent('download'), p.click('[data-ci=sheet]')]);
 R.sheetName = dl.suggestedFilename(); R.sheet = fs.readFileSync(await dl.path(), 'utf8').replace(/^﻿/, '').split('\r\n');
-check('the costs sheet: heading, one row per simple product and per variant (not the kit itself), price and cost now', /^costs-RC-/.test(R.sheetName) && R.sheet[0] === 'Product,Variant,SKU,Barcode,Price,Cost' && R.sheet.length === 9
-  && R.sheet.includes('Gecko Kit,Large,LGK-L,6002,1899.00,0.00') && R.sheet.includes('Gecko Kit,Small,LGK-S,,1299.00,0.00') && R.sheet.includes('Heat Mat 8W,,HM8,6001,249.00,0.00') && R.sheet.includes('Basking Lamp,,,,195.00,100.00') && !R.sheet.some(l => /furniture/.test(l)), R.sheet);
+check('the costs sheet: heading, one row per simple product and per variant (not the kit itself), price and cost now', /^costs-RC-/.test(R.sheetName) && R.sheet[0] === 'Product,Variant,SKU,Barcode,Price,Cost,Frame price,Fabric metres' && R.sheet.length === 9
+  && R.sheet.includes('Gecko Kit,Large,LGK-L,6002,1899.00,0.00,,') && R.sheet.includes('Gecko Kit,Small,LGK-S,,1299.00,0.00,,') && R.sheet.includes('Heat Mat 8W,,HM8,6001,249.00,0.00,,') && R.sheet.includes('Basking Lamp,,,,195.00,100.00,,') && !R.sheet.some(l => /furniture/.test(l)), R.sheet);
 
 // ---- a filled-in sheet the way Excel saves it where the decimal mark is a comma
 const filled = ['SKU;Barcode;Product;Variant;Cost', 'HM8;;;;120,50', 'LGK-S;;;;300', ';6002;;;R 1 450.00', ';;Basking Lamp;;100.00', 'DUP;;;;55', 'NOPE;;;;10', ';;Heat Mat 8W;;abc', ';;Basking Lamp;;', ';7002;;;12.5', 'UVL601;;Giangarden UVL601 UVB & UVA LED Fixture Plus;;500,25', 'TH32;;Giangarden TH32 Digital Thermo-hygrometer;;100,05'].join('\r\n');
@@ -120,6 +120,18 @@ const mat2 = await one('products/p_mat'), vl2 = await one('variants/v_l'), vs2 =
 check('ticked: the mat R 1 259 and the large kit R 1 999 in cents, the small kit still the product’s, the lamp and the costs as they were', /2 prices saved/.test(R.saved3) && mat2.priceCents === 125900 && vl2.priceCents === 199900 && vs2.priceCents === null && lamp2.priceCents === 19500 && mat2.costCents === 13000 && vl2.costCents === 145000 && mat2.barcodes.join() === '6001,6001-old', [R.saved3, mat2.priceCents, vl2.priceCents, vs2.priceCents, lamp2.priceCents, mat2.costCents]);
 R.audit2 = (await coll('auditLog')).filter(a => a.action === 'product.costImport').find(a => a.details.pricesChanged === 2);
 check('the audit row has the prices before and after', R.audit2 && R.audit2.details.prices.some(c => c.id === 'p_mat' && c.fromCents === 24900 && c.toCents === 125900) && R.audit2.details.prices.some(c => c.id === 'v_l' && c.fromCents === 189900), R.audit2 && R.audit2.details);
+
+// ---- frame prices and fabric metres from the shops' price lists, under their own tick
+const framed = ['Product,Variant,Price,Frame price,Fabric metres', 'Heat Mat 8W,,,"2,000.00",3.5', 'Gecko Kit,Large,,1850,"4,5"', 'Basking Lamp,,,,'].join('\r\n');
+await p.click('[data-act=pr-costs]'); await p.waitForSelector('#modal');
+await p.setInputFiles('#ci-file', { name: 'frames.csv', mimeType: 'text/csv', buffer: Buffer.from(framed) });
+await p.waitForSelector('#ci-plan .ci-sum'); R.plan4 = await txt('#ci-plan');
+check('frame prices and metres: two to set, listed under their own tick, nothing else to change', /0 costs to change/.test(R.plan4) && /Also set these 2 frame prices and fabric metres/.test(R.plan4) && /Heat Mat 8W frame R 0\.00 → R 2,000\.00 · 0 m → 3\.5 m/.test(R.plan4) && /Gecko Kit · Large frame R 0\.00 → R 1,850\.00 · 0 m → 4\.5 m/.test(R.plan4) && !/Also change these/.test(R.plan4), R.plan4);
+await p.click('#modal-ok'); R.untick4 = await toast(); check('not ticked: it says to tick', /Tick “Also set these frame prices/.test(R.untick4), R.untick4);
+await p.check('#ci-frames'); await p.click('#modal-ok'); R.saved4 = await toast(); await p.waitForTimeout(600);
+const mat4 = await one('products/p_mat'), vl4 = await one('variants/v_l');
+check('saved: the mat R 2 000 frame and 3.5 m, the large kit R 1 850 and 4.5 m, prices and costs untouched', /2 frame prices \/ fabric metres saved/.test(R.saved4) && mat4.framePriceCents === 200000 && mat4.fabricMetres === 3.5 && vl4.framePriceCents === 185000 && vl4.fabricMetres === 4.5 && mat4.priceCents === 125900 && mat4.costCents === 13000 && vl4.priceCents === 199900, [R.saved4, mat4.framePriceCents, mat4.fabricMetres, vl4.framePriceCents, vl4.fabricMetres]);
+check('the audit row has the frame prices and metres before and after', (await coll('auditLog')).some(a => a.action === 'product.costImport' && a.details.framesChanged === 2 && a.details.frames.some(c => c.id === 'p_mat' && c.toFrameCents === 200000 && c.toMetres === 3.5)), '');
 
 // ---- a file without a cost column
 await p.click('[data-act=pr-costs]'); await p.waitForSelector('#modal');
