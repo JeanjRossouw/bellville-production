@@ -19,6 +19,11 @@
 //   confirmAccountPayment { paymentId, bankRef, approvalToken? }   a manager: the EFT/QR is on the statement, it counts now
 //   voidAccountPayment    { paymentId, reason, approvalToken? }    a manager: it never came; the account owes it again
 //   statement    { customerId }                                         → the account statement (invoices on account, payments, running balance, ageing)
+//   takeOn       { batchId, rows: [ { line, name, phone, email, vatNo, address, owedCents, limitCents, creditCents, creditRef } ] }
+//                the owner, from the old system's customer list: profiles made or found by cell number; what they owe becomes the
+//                account's opening balance (the account opened, the limit at least that); store credit only with a document's
+//                reference; anything else (no cell number, a credit balance, credit without a reference, already taken on) is handed
+//                back as an exception for a person to decide — nothing is guessed
 //
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
 import { json, Reject, clean, randomId, nowIso, getDoc, query, serverStamp, bodyOf, audit, rank, withGroup } from './lib/pos.mjs';
@@ -260,6 +265,62 @@ const actions = {
     const c = await loadCustomer(ctx, b.customerId);
     const st = await statementOf(ctx.entityId, c);
     return { ok: true, customer: { id: c.id, name: c.name, phone: c.phone || '', email: c.email || '', vatNo: c.vatNo || '', address: c.address || {}, accountEnabled: !!c.accountEnabled, creditLimitCents: c.creditLimitCents || 0 }, ...st };
+  },
+
+  // the old system's customers and balances, taken on once (see the header)
+  async takeOn(event, b) {
+    const ctx = await whoAndWhere(event, b, { noShift: true });
+    if (ctx.user.role !== 'owner') throw new Reject(403, 'The take-on is the owner’s.');
+    const batchId = clean(b.batchId, 60) || 'takeon';
+    const rows = (Array.isArray(b.rows) ? b.rows : []).slice(0, 100);
+    if (!rows.length) throw new Reject(400, 'No rows.');
+    const exceptions = [];
+    const skip = (r, why) => exceptions.push({ line: r.line || 0, name: clean(r.name, 120), phone: clean(r.phone, 30), why });
+    return runSale(ctx, {}, { more: async (tx) => {
+      const now = nowIso(); const stamp = serverStamp(ctx.entityId, '', ctx.user.id, ctx.deviceId);
+      const writes = [];
+      let created = 0, updated = 0, owedCents = 0, creditCents = 0;
+      const seen = new Set();
+      for (const r of rows) {
+        const name = clean(r.name, 120), phone = clean(r.phone, 30), pk = phoneOk(phone) ? phoneKey(phone) : '';
+        const owed = int(r.owedCents) || 0, credit = int(r.creditCents) || 0, limit = Math.max(0, int(r.limitCents) || 0), ref = clean(r.creditRef, 80);
+        if (!name) { skip(r, 'no name'); continue; }
+        if (!pk) { skip(r, phone ? 'the cell number does not look right' : 'no cell number: add the customer by hand, then take the balance on'); continue; }
+        if (seen.has(pk)) { skip(r, 'the same cell number twice in the file'); continue; }
+        seen.add(pk);
+        const key = await getDoc('customerPhones', keyId(ctx.entityId, pk), tx);
+        const cur = key ? await getDoc('customers', key.customerId, tx) : null;
+        if (cur && cur.takeOn) { skip(r, `already taken on (${cur.takeOn.batchId}, ${String(cur.takeOn.at).slice(0, 10)})`); continue; }
+        if (owed < 0) skip(r, `the account is in credit by R ${(-owed / 100).toFixed(2)}: decide (store credit with a document, or a refund) and add it by hand`);
+        if (credit < 0) skip(r, `a negative store credit (R ${(credit / 100).toFixed(2)}) was not taken on`);
+        if (credit > 0 && !ref) skip(r, `store credit R ${(credit / 100).toFixed(2)} without a document reference was not taken on`);
+        const owedOn = owed > 0 ? owed : 0, creditOn = credit > 0 && ref ? credit : 0;
+        const a = r.address || {};
+        const address = { line1: clean(a.line1, 120), line2: clean(a.line2, 120), city: clean(a.city, 80), code: clean(a.code, 12) };
+        const email = clean(r.email, 120).toLowerCase();
+        const take = { batchId, at: now, owedCents: owedOn, creditCents: creditOn, creditRef: ref, byName: ctx.user.name };
+        if (cur) {
+          const data = { takeOn: take, updatedAt: now, updatedBy: ctx.user.id };
+          if (!cur.email && email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { data.email = email; data.emailKey = emailKey(email); }
+          if (!cur.vatNo && clean(r.vatNo, 20)) data.vatNo = clean(r.vatNo, 20);
+          if (!(cur.address && (cur.address.line1 || cur.address.city)) && (address.line1 || address.city)) data.address = address;
+          if (owedOn) { data.accountEnabled = true; data.creditLimitCents = Math.max(cur.creditLimitCents || 0, limit, owedOn); data.accountBalanceCents = (cur.accountBalanceCents || 0) + owedOn; }
+          else if (limit) { data.accountEnabled = true; data.creditLimitCents = Math.max(cur.creditLimitCents || 0, limit); }
+          if (creditOn) data.storeCreditCents = (cur.storeCreditCents || 0) + creditOn;
+          writes.push({ update: true, coll: 'customers', id: key.customerId, data });
+          updated++;
+        } else {
+          const id = randomId('cu_');
+          writes.push({ create: true, coll: 'customers', id, data: { name, contact: name, phone, phoneKey: pk, email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '', emailKey: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? emailKey(email) : '', vatNo: clean(r.vatNo, 20), address, dob: '', tags: ['take-on'], notes: 'Taken on from the old system', consent: blankConsent(),
+            accountEnabled: !!(owedOn || limit), creditLimitCents: Math.max(limit, owedOn), storeCreditCents: creditOn, accountBalanceCents: owedOn, accountAwaitingCents: 0, loyalty: blankLoyalty(), stats: blankStats(), mergedIds: [], altPhones: [], mergedInto: '', anonymised: false, anonymisedAt: '', archived: false, takeOn: take, ...stamp, serverReceivedAt: now } });
+          writes.push({ set: true, coll: 'customerPhones', id: keyId(ctx.entityId, pk), data: { customerId: id, entityId: ctx.entityId, storeId: '', updatedAt: now } });
+          created++;
+        }
+        owedCents += owedOn; creditCents += creditOn;
+      }
+      writes.push(auditRow(ctx, 'customer.takeOn', '', { batchId, rows: rows.length, created, updated, owedCents, creditCents, exceptions: exceptions.length }, stamp, now));
+      return { writes, result: { created, updated, owedCents, creditCents, exceptions } };
+    } });
   },
 
   async adjustPoints(event, b) {

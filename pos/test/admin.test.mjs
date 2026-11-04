@@ -46,7 +46,7 @@ await p.waitForSelector('#app:not([hidden])', { timeout: 15000 }); await p.waitF
 
 // ---- companies
 await sub('companies');
-R.subs = await p.$$eval('.subnav [data-sub]', x => x.map(y => y.dataset.sub)); check('admin sub-tabs', R.subs.join() === 'companies,stores,registers,settings,staff,devices', R.subs);
+R.subs = await p.$$eval('.subnav [data-sub]', x => x.map(y => y.dataset.sub)); check('admin sub-tabs', R.subs.join() === 'companies,stores,registers,settings,staff,devices,takeon', R.subs);
 await p.fill('#en-code', 'bf'); await p.fill('#en-trading', 'Bellville Furniture'); await p.fill('#en-legal', 'Bellville Furniture (Pty) Ltd'); await p.fill('#en-reg', '2010/123456/07');
 await p.check('#en-vatreg'); await p.fill('#en-vatno', '412');
 await p.click('[data-act=entity-save]'); R.badVat = await toast(); check('a VAT number is 10 digits', /10 digits/.test(R.badVat), R.badVat);

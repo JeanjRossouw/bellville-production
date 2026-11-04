@@ -41,6 +41,7 @@
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
 import { json, Reject, clean, randomId, nowIso, getDoc, query, patchDoc, createDoc, serverStamp, bodyOf, audit, requireMember, inEntity, withGroup, rank } from './lib/pos.mjs';
 import { factoryCfg, listCompanies, companyNamed, noteHandover } from './lib/factory-link.mjs';
+import { completeOnline } from './lib/shopify-import.mjs';
 import { ensureTrack, trackUrl } from './lib/track.mjs';
 import { completeDelivery, newDriverLink, driverUrl, signatureOk } from './lib/delivery.mjs';
 import { pushToFactory as pushBridge, syncFromFactory as syncBridge, cancelAtFactory } from './lib/factory-bridge.mjs';
@@ -75,6 +76,8 @@ async function invoiceOrder(ctx, so, saleId, patchOf, auditAction, auditMore = {
     const now = nowIso();
     const patch = { ...patchOf(cur, now), completedDocNo: 'Shopify ' + ((so.shopify || {}).name || '') };
     await patchDoc('specialOrders', so.id, patch);
+    // the online order record: its held stock sold, the order fulfilled on Shopify (the customer is told)
+    if (cur.onlineOrderId) { try { const r = await completeOnline(ctx.entityId, cur.onlineOrderId, ctx.user.name, 'handed over from ' + so.docNo); patch.online = r.fulfilled || ''; } catch (e) { console.error('online order not completed', e); } }
     await audit({ action: auditAction, docType: 'specialOrder', docId: so.id, docNo: so.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, details: { status: patch.status, invoice: 'shopify', ...auditMore }, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
     return { ok: true, order: { ...cur, ...patch, id: so.id }, sale: null };
   }

@@ -25,6 +25,7 @@ import * as overview from './overview.js';
 import { openCostImport } from './costimport.js';
 import * as fabricsTab from './fabrics.js';
 import * as quotesTab from './quotes.js';
+import * as takeon from './takeon.js';
 import * as todo from './todo.js';
 import { EMULATOR } from './db.js';
 
@@ -131,7 +132,7 @@ function startStoreData() {
   const u3 = watch('laybys', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeLaybys = rows; if (view === 'laybys') paint(); });
   const u4 = watch('specialOrders', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeSpecials = rows; if (view === 'orders' || view === 'todo') paint(); });
   const u4q = watch('quotes', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeQuotes = rows; if (view === 'quotes' || view === 'todo') paint(); });
-  const u4b = watch('salesOrders', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeSalesOrders = rows; if (view === 'orders') paint(); });
+  const u4b = watch('salesOrders', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeSalesOrders = rows; if (view === 'orders' || view === 'todo') paint(); });
   const u4c = watch('tasks', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeTasks = rows; if (view === 'home') paint(); });
   const u5 = auth.atLeast('supervisor') ? watch('stockTakes', [['entityId', '==', eid], ['storeId', '==', sid]], rows => { storeTakes = rows; if (view === 'stock') paint(); }) : () => {};
   const sup = auth.atLeast('supervisor');
@@ -341,7 +342,8 @@ function adminSubs() {
   return [
     { key: 'companies', label: 'Companies', show: true }, { key: 'stores', label: 'Stores', show: true },
     { key: 'registers', label: 'Registers', show: true }, { key: 'settings', label: 'Settings', show: true },
-    { key: 'staff', label: 'Staff', show: true }, { key: 'devices', label: 'Devices', show: true }
+    { key: 'staff', label: 'Staff', show: true }, { key: 'devices', label: 'Devices', show: true },
+    { key: 'takeon', label: 'Take-on', show: false }   // the owner: the old system's customers, balances and stock
   ].filter(x => x.show || owner);
 }
 const adminData = () => ({ entities, stores, registers, users, devices, settings, editId, settingsEntity });
@@ -381,7 +383,7 @@ function paint() {
     if (!subs.some(x => x.key === adminSub)) adminSub = subs[0].key;
     const body = adminSub === 'companies' ? admin.companiesHtml(adminData()) : adminSub === 'stores' ? admin.storesHtml(adminData())
       : adminSub === 'registers' ? admin.registersHtml(adminData()) : adminSub === 'settings' ? admin.settingsHtml(adminData())
-      : adminSub === 'staff' ? staffHtml() : devicesHtml();
+      : adminSub === 'staff' ? staffHtml() : adminSub === 'takeon' ? takeon.takeOnHtml() : devicesHtml();
     screen.innerHTML = `<div class="subnav">${subs.map(x => `<button class="subtab${x.key === adminSub ? ' on' : ''}" data-sub="${x.key}">${esc(x.label)}</button>`).join('')}</div>` + body;
     const shop = $('se-shop'); if (shop) online.shopifyCard(screen, shop.dataset.entity, stores);
     const fac = $('se-factory'); if (fac) specials.factoryCard(screen, fac.dataset.entity);
@@ -576,6 +578,7 @@ async function onAction(e) {
   if (b.dataset.act.startsWith('st-')) { e.preventDefault(); return stock.action(b.dataset.act, b); }
   if (b.dataset.act.startsWith('by-')) { e.preventDefault(); return buying.action(b.dataset.act, b); }
   if (b.dataset.act.startsWith('cu-')) return customersTab.action(b.dataset.act, b);
+  if (b.dataset.act.startsWith('tk-')) return takeon.action(b.dataset.act, b);
   if (b.dataset.act.startsWith('rp-')) { e.preventDefault(); return reports.action(b.dataset.act, b); }
   if (b.dataset.act.startsWith('on-')) { e.preventDefault(); return online.action(b.dataset.act, b); }
   if (b.dataset.act === 'sync-now') return sync.syncNow().then(reloadOffsets);
@@ -633,7 +636,7 @@ $('screen').addEventListener('change', (e) => {
 
 $('screen').addEventListener('input', (e) => { if (e.target.id === 'pr-q') { prFilter.q = e.target.value; paint(); } if (e.target.id === 'sl-q') sell.onSearchInput(e.target.value); if (e.target.id === 'sa-q') { salesTab.view.q = e.target.value; paint(); const q = $('sa-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } } });
 $('screen').addEventListener('keydown', (e) => { if (e.target.id === 'sl-q' && e.key === 'Enter') { e.preventDefault(); sell.onSearchEnter(e.target.value); } if (e.key === 'Enter' && returns.onEnter(e.target.id, e.target.value)) e.preventDefault(); if (e.key === 'Enter' && view === 'stock' && stock.onEnter(e.target.id, e.target.value)) e.preventDefault(); if (e.key === 'Enter' && view === 'buying' && buying.onEnter(e.target.id, e.target.value)) e.preventDefault(); });
-$('screen').addEventListener('change', (e) => { if (view === 'fabrics') fabricsTab.onChange(e); if (view === 'quotes') quotesTab.onChange(e); if (view === 'returns') returns.onChange(e); if (view === 'laybys') laybys.onChange(e); if (view === 'orders') specials.onChange(e); if (view === 'stock') stock.onChange(e); if (view === 'buying') buying.onChange(e); if (view === 'customers') customersTab.onChange(e); if (view === 'reports') reports.onChange(e); if (view === 'online') online.onChange(e); });
+$('screen').addEventListener('change', (e) => { if (view === 'admin') takeon.onChange(e); if (view === 'fabrics') fabricsTab.onChange(e); if (view === 'quotes') quotesTab.onChange(e); if (view === 'returns') returns.onChange(e); if (view === 'laybys') laybys.onChange(e); if (view === 'orders') specials.onChange(e); if (view === 'stock') stock.onChange(e); if (view === 'buying') buying.onChange(e); if (view === 'customers') customersTab.onChange(e); if (view === 'reports') reports.onChange(e); if (view === 'online') online.onChange(e); });
 $('screen').addEventListener('input', (e) => { if (view === 'fabrics') fabricsTab.onInput(e.target.id, e.target.value); if (view === 'quotes') quotesTab.onInput(e.target.id, e.target.value); if (view === 'returns') returns.onInput(e.target.id, e.target.value); if (view === 'laybys') laybys.onInput(e.target.id, e.target.value); if (view === 'orders') specials.onInput(e.target.id, e.target.value); if (view === 'stock') stock.onInput(e.target.id, e.target.value); if (view === 'buying') buying.onInput(e.target.id, e.target.value); if (view === 'customers') customersTab.onInput(e.target.id, e.target.value); });
 returns.setContext({ repaint: () => { if (view === 'returns') paint(); }, data: sellData, onDone: () => { register.reg.stale = true; } });
 laybys.setContext({ repaint: () => { if (view === 'laybys') paint(); }, data: () => ({ ...sellData(), laybys: storeLaybys }), onChange: () => { register.reg.stale = true; if (view === 'laybys') paint(); } });
@@ -644,7 +647,8 @@ reports.setContext({ repaint: () => { if (view === 'reports') paint(); }, data: 
 customersTab.setContext({ repaint: () => { if (view === 'customers') paint(); }, data: () => ({ ...sellData() }) });
 buying.setContext({ repaint: () => { if (view === 'buying') paint(); }, data: () => ({ ...sellData(), stores, suppliers, specials: storeSpecials, pos: storePOs, grvs: storeGrvs, transfers: [...transfersOut, ...transfersIn.filter(t => !transfersOut.some(o => o.id === t.id))] }), onChange: () => { reloadOffsets(); if (view === 'buying') paint(); } });
 stock.setContext({ repaint: () => { if (view === 'stock') paint(); }, data: () => ({ ...sellData(), takes: storeTakes }), onChange: () => { reloadOffsets(); if (view === 'stock') paint(); } });
-todo.setContext({ data: () => ({ ...sellData(), specials: storeSpecials, quotes: storeQuotes }) });
+todo.setContext({ data: () => ({ ...sellData(), specials: storeSpecials, quotes: storeQuotes, salesOrders: storeSalesOrders }) });
+takeon.setContext({ data: () => ({ ...sellData() }), repaint: () => { if (view === 'admin' && adminSub === 'takeon') paint(); }, onStock: () => reloadOffsets() });
 quotesTab.setContext({ repaint: () => { if (view === 'quotes') paint(); }, data: () => ({ ...sellData(), quotes: storeQuotes, cartLines: sell.sale.cart.lines.length }), onLoad: (q, opts) => { const ok = sell.loadQuote(q, opts); if (ok) { view = 'sell'; paint(); } return ok; } });
 fabricsTab.setContext({ repaint: () => { if (view === 'fabrics') paint(); }, data: () => ({ entities, fabrics }) });
 tasks.setContext({ repaint: () => { if (view === 'home') paint(); }, data: () => ({ ...sellData(), tasks: storeTasks, staff: users }) });

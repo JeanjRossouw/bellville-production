@@ -39,7 +39,7 @@ await put('pos/retail/stores/BF-BELL', { entityId: 'BF', name: 'Bellville', acti
 const prod = (id, o) => put('pos/retail/products/' + id, { sku: '', barcodes: [], category: 'Shop', brand: '', type: 'stock', vatClass: 'standard', trackStock: true, costCents: 0, priceCents: 0, images: [], options: [], hasVariants: false, storePrices: {}, bundle: [], archived: false, ...o, ...srv('BF') });
 await prod('p_cushion', { name: 'Scatter Cushion', sku: 'CU-1', priceCents: 19900, costCents: 5000 });
 await prod('p_lamp', { name: 'Lamp', sku: 'LA-1', priceCents: 50000, costCents: 20000 });
-await prod('p_rug', { name: 'Rug', sku: 'RU-1', priceCents: 80000, costCents: 30000 });
+await prod('p_rug', { name: 'Rug', sku: 'RU-1', priceCents: 80000, costCents: 30000, trackStock: false });   // not counted: it is sold below zero later without a manager
 await put('pos/retail/stockLevels/BF-BELL_p_cushion', { productId: 'p_cushion', variantId: '', onHandQty: 10, reservedQty: 0, avgCostCents: 5000, ...srv('BF', 'BF-BELL') });
 await put('pos/retail/stockLevels/BF-BELL_p_lamp', { productId: 'p_lamp', variantId: '', onHandQty: 5, reservedQty: 1, avgCostCents: 20000, ...srv('BF', 'BF-BELL') });
 await put('pos/retail/customers/c1', { name: 'Thandi Mokoena', phone: '0825550101', phoneKey: '27825550101', email: 'thandi@example.com', emailKey: 'thandi@example.com', vatNo: '', address: {}, accountEnabled: false, creditLimitCents: 0, storeCreditCents: 0, accountBalanceCents: 0, notes: '', tags: [], archived: false, consent: { whatsapp: { granted: false }, sms: { granted: true, at: '2026-10-21T09:00:00.000Z' }, email: { granted: true, at: '2026-10-21T09:00:00.000Z' } }, loyalty: { points: 0, lifetimeCents: 0, tier: '', lots: [] }, stats: {}, ...srv('BF') });
@@ -122,22 +122,36 @@ const order = (id, o = {}) => ({ id, name: '#' + id, order_number: id, created_a
 R.bad = await hook('orders/create', order(9001), 'nope'); check('a webhook with a bad signature is refused', R.bad.status === 401, R.bad);
 R.o1 = await hook('orders/create', order(9001));
 check('a paid courier order: 2 cushions deducted at Bellville, pushed to the shop as 5', R.o1.ok && R.o1.stock === 'deducted' && (await lvl('p_cushion')).onHandQty === 5 && mock.state.inventory['gid://shopify/InventoryItem/2001|gid://shopify/Location/11'] === 5, [R.o1, await lvl('p_cushion')]);
-R.o1again = await hook('orders/create', order(9001)); check('the same order again changes nothing', R.o1again.again === true && (await lvl('p_cushion')).onHandQty === 5, R.o1again);
+const so1 = await getDoc('pos/retail/specialOrders/shp-9001');
+check('the webhook made the sales order too: paid in full, Thandi matched by email, the cushions made-to-order lines, tied to the online record', R.o1.salesOrder && /^BF-SO-/.test(R.o1.salesOrder) && so1 && so1.source === 'shopify' && so1.status === 'depositPaid' && so1.balanceCents === 0 && so1.customerId === 'c1' && so1.lines.length === 1 && so1.lines[0].qty === 2 && so1.lines[0].type === 'mto' && so1.onlineOrderId === 'BF_9001' && so1.deliveryKind === 'deliver' && so1.cashierName === 'Shopify', [R.o1, so1]);
+check('the online record knows its sales order', (await getDoc('pos/retail/onlineOrders/BF_9001')).specialDocNo === so1.docNo);
+R.o1again = await hook('orders/create', order(9001)); check('the same order again changes nothing', R.o1again.again === true && (await lvl('p_cushion')).onHandQty === 5 && (await listColl('specialOrders')).length === 1, R.o1again);
 R.o2 = await hook('orders/create', order(9002, { financial_status: 'pending', shipping_lines: [{ title: 'Collect at Bellville', code: 'pickup' }], line_items: [{ id: 70002, variant_id: 1002, sku: 'LA-1', title: 'Lamp', quantity: 1, price: '500.00' }, { id: 70003, variant_id: 1003, sku: 'ZZ-9', title: 'Unknown thing', quantity: 1, price: '10.00' }], total_price: '510.00' }));
 check('an unpaid click & collect order reserves the lamp; the unknown line is flagged', R.o2.ok && R.o2.stock === 'reserved' && R.o2.unmapped === 1 && (await lvl('p_lamp')).reservedQty === 2 && (await lvl('p_lamp')).onHandQty === 5 && mock.state.inventory['gid://shopify/InventoryItem/2002|gid://shopify/Location/11'] === 3, [R.o2, await lvl('p_lamp')]);
 const oo = await listColl('onlineOrders'); const o2 = oo.find(o => o.orderNo === '#9002');
 check('the order record: pickup, mapped store, new, the lines', o2 && o2.pickup === true && o2.storeId === 'BF-BELL' && o2.status === 'new' && o2.lines.length === 2 && o2.lines[0].itemId === 'p_lamp' && !o2.lines[1].itemId, o2);
+const so2 = await getDoc('pos/retail/specialOrders/shp-9002');
+check('the unpaid pickup: a quoted sales order to collect, the unknown line kept by name', so2 && so2.status === 'quoted' && so2.paidCents === 0 && so2.deliveryKind === 'collect' && so2.lines.length === 2 && so2.lines[1].productId === '' && /Unknown thing/.test(so2.lines[1].name), so2);
 R.list = await call('pos-shopify', { action: 'orders', ...bell }, sup.idToken); check('the store’s online orders, pickups first', R.list.ok && R.list.orders.length === 2 && R.list.orders[0].orderNo === '#9002', R.list.orders && R.list.orders.map(o => o.orderNo));
 // click & collect: ready, then collected → fulfilled on Shopify
 R.ready = await call('pos-shopify', { action: 'collect', orderId: o2.id, status: 'ready', ...bell }, sup.idToken); check('marked ready', R.ready.ok && R.ready.status === 'ready', R.ready);
-R.coll = await call('pos-shopify', { action: 'collect', orderId: o2.id, status: 'collected', ...bell }, sup.idToken); check('collected and fulfilled on the shop', R.coll.ok && R.coll.status === 'collected' && /fulfilled on Shopify/.test(R.coll.fulfilled) && mock.state.fulfilled.length === 1, R.coll);
+R.collOwes = await call('pos-shopify', { action: 'collect', orderId: o2.id, status: 'collected', ...bell }, sup.idToken);
+check('collected on the Online tab while the sales order still owes: refused, sent to the sales order', R.collOwes.status === 409 && /still owed on sales order/.test(R.collOwes.error), R.collOwes);
+// the balance taken on the sales order (card, with proof), it is made ready and handed over: the online record completes and the shop fulfils
+R.so2pay = await call('pos-special', { action: 'pay', orderId: 'shp-9002', paymentId: 'sp-shp-9002', tenders: [{ method: 'card', amountCents: so2.balanceCents, cardLast4: '4242', approvalCode: '777' }], clientCreatedAt: new Date().toISOString(), ...bell }, own.idToken);
+await call('pos-special', { action: 'status', orderId: 'shp-9002', status: 'ready', ...bell }, own.idToken);
+await call('pos-special', { action: 'book', orderId: 'shp-9002', kind: 'collect', date: '2026-11-20', ...bell }, own.idToken);
+R.coll = await call('pos-special', { action: 'deliver', orderId: 'shp-9002', saleId: 'sos-shp-9002', signedBy: 'Thandi Mokoena', ...bell }, own.idToken);
+check('handed over from the sales order: collected, the Shopify order is the invoice, the online record collected and fulfilled on the shop, the reserved lamp sold', R.so2pay.ok && R.coll.ok && R.coll.order.status === 'collected' && R.coll.order.online === 'fulfilled on Shopify' && mock.state.fulfilled.length === 1 && (await getDoc('pos/retail/onlineOrders/BF_9002')).status === 'collected' && (await getDoc('pos/retail/onlineOrders/BF_9002')).stock === 'deducted' && (await lvl('p_lamp')).reservedQty === 1 && (await lvl('p_lamp')).onHandQty === 4, [R.so2pay.error, R.coll.error || R.coll.order, await lvl('p_lamp')]);
+R.collAgain = await call('pos-shopify', { action: 'collect', orderId: o2.id, status: 'collected', ...bell }, sup.idToken); check('collected again on the Online tab: nothing more happens', R.collAgain.ok && mock.state.fulfilled.length === 1, R.collAgain);
 // a cancellation puts a paid order's stock back; a refund restocks a line
 R.cancel = await hook('orders/cancelled', { id: 9001 }); check('cancelled: 2 cushions back (7), pushed', R.cancel.ok && (await lvl('p_cushion')).onHandQty === 7 && mock.state.inventory['gid://shopify/InventoryItem/2001|gid://shopify/Location/11'] === 7 && oo.length === 2, [R.cancel, await lvl('p_cushion')]);
+check('the cancellation cancels the sales order too', R.cancel.salesOrder === so1.docNo && (await getDoc('pos/retail/specialOrders/shp-9001')).status === 'cancelled' && /Cancelled on Shopify/.test((await getDoc('pos/retail/specialOrders/shp-9001')).cancelReason), await getDoc('pos/retail/specialOrders/shp-9001'));
 R.o3 = await hook('orders/create', order(9003)); check('another paid order: 5', R.o3.ok && (await lvl('p_cushion')).onHandQty === 5);
 R.refund = await hook('refunds/create', { id: 8001, order_id: 9003, refund_line_items: [{ id: 1, quantity: 1, restock_type: 'return', line_item_id: 70001, line_item: { id: 70001 } }] });
 check('a refund restocks 1 cushion: 6', R.refund.ok && R.refund.restocked === 1 && (await lvl('p_cushion')).onHandQty === 6, [R.refund, await lvl('p_cushion')]);
 R.refundAgain = await hook('refunds/create', { id: 8001, order_id: 9003, refund_line_items: [{ id: 1, quantity: 1, restock_type: 'return', line_item_id: 70001 }] }); check('the same refund again: nothing', R.refundAgain.again === true && (await lvl('p_cushion')).onHandQty === 6, R.refundAgain);
-const moves = await listColl('stockMovements'); check('online movements on the record', moves.filter(m => m.reason === 'online').length === 4 && moves.filter(m => m.reason === 'onlineRefund').length === 1, moves.map(m => [m.reason, m.bucket, m.qty]));
+const moves = await listColl('stockMovements'); check('online movements on the record', moves.filter(m => m.reason === 'online').length === 4 && moves.filter(m => m.reason === 'onlineRefund').length === 1 && moves.filter(m => m.reason === 'onlineCollect').length === 2, moves.map(m => [m.reason, m.bucket, m.qty]));
 
 // ---- discount codes pulled; one honoured on a sale without a PIN, not more than it gives; free shipping ignored
 R.codes = await call('pos-shopify', { action: 'pullCodes', entityId: 'BF' }); check('2 code discounts pulled (free shipping skipped)', R.codes.ok && R.codes.codes === 2, R.codes);
@@ -181,14 +195,14 @@ R.log = await call('pos-shopify', { action: 'log', entityId: 'BF' }); check('the
 // ---- open orders placed before connecting, brought in as sales orders (the Shopify order stays the invoice)
 const money = (r) => ({ shopMoney: { amount: r } });
 mock.state.openOrders = [
-  { id: 'gid://shopify/Order/9001', name: '#1001', createdAt: '2026-10-01T09:00:00Z', cancelledAt: null, displayFinancialStatus: 'PARTIALLY_PAID', displayFulfillmentStatus: 'UNFULFILLED', note: 'Deliver after the 20th', email: 'lindi@mail.co.za', phone: null,
+  { id: 'gid://shopify/Order/9101', name: '#1001', createdAt: '2026-10-01T09:00:00Z', cancelledAt: null, displayFinancialStatus: 'PARTIALLY_PAID', displayFulfillmentStatus: 'UNFULFILLED', note: 'Deliver after the 20th', email: 'lindi@mail.co.za', phone: null,
     totalPriceSet: money('15950.00'), totalReceivedSet: money('8000.00'), customer: { firstName: 'Lindi', lastName: 'Nkosi', email: 'lindi@mail.co.za', phone: '+27825559999' },
     shippingAddress: { name: 'Lindi Nkosi', address1: '7 Oak Ave', address2: 'Durbanville', city: 'Cape Town', zip: '7550', phone: '+27825559999' },
     shippingLines: { nodes: [{ title: 'Delivery Cape Town', originalPriceSet: money('450.00') }] },
     lineItems: { nodes: [
       { title: 'Custom L-shape couch', variantTitle: null, quantity: 1, sku: '', customAttributes: [{ key: 'Fabric', value: 'Linen sand' }, { key: '_hidden', value: 'x' }], discountedTotalSet: money('15000.00'), variant: null },
       { title: 'Lamp', variantTitle: null, quantity: 1, sku: 'LA-1', customAttributes: [], discountedTotalSet: money('500.00'), variant: { id: 'gid://shopify/ProductVariant/1002' } } ] } },
-  { id: 'gid://shopify/Order/9002', name: '#1002', createdAt: '2026-10-05T09:00:00Z', cancelledAt: null, displayFinancialStatus: 'PAID', displayFulfillmentStatus: 'UNFULFILLED', note: '', email: 'lindi@mail.co.za', phone: null,
+  { id: 'gid://shopify/Order/9102', name: '#1002', createdAt: '2026-10-05T09:00:00Z', cancelledAt: null, displayFinancialStatus: 'PAID', displayFulfillmentStatus: 'UNFULFILLED', note: '', email: 'lindi@mail.co.za', phone: null,
     totalPriceSet: money('3000.00'), totalReceivedSet: money('3000.00'), customer: { firstName: 'Lindi', lastName: 'Nkosi', email: 'lindi@mail.co.za', phone: '+27825559999' },
     shippingAddress: null, shippingLines: { nodes: [] },
     lineItems: { nodes: [{ title: 'Ottoman', variantTitle: 'Grey', quantity: 2, sku: '', customAttributes: [], discountedTotalSet: money('3000.00'), variant: null }] } }
@@ -197,23 +211,23 @@ R.oo = await call('pos-shopify', { action: 'openOrders', ...bell });
 check('the open orders: what bringing them in would do', R.oo.ok && R.oo.orders.length === 2 && !R.oo.orders[0].already && R.oo.orders[0].paidCents === 800000 && R.oo.orders[0].balanceCents === 795000 && R.oo.orders[0].unmatched === 1 && R.oo.orders[0].lines.length === 3 && R.oo.orders[0].client.name === 'Lindi Nkosi', R.oo.error || R.oo.orders);
 R.ooCas = await call('pos-shopify', { action: 'openOrders', ...bell }, sup.idToken); check('a supervisor cannot bring them in', R.ooCas.status === 403, R.ooCas);
 R.imp = await call('pos-shopify', { action: 'importOpenOrders', ...bell });
-const s1 = await getDoc('pos/retail/specialOrders/shp-9001'), s2 = await getDoc('pos/retail/specialOrders/shp-9002');
+const s1 = await getDoc('pos/retail/specialOrders/shp-9101'), s2 = await getDoc('pos/retail/specialOrders/shp-9102');
 check('two sales orders made', R.imp.ok && R.imp.imported.length === 2 && /^BF-SO-/.test(R.imp.imported[0].docNo), R.imp);
 check('#1001: deposit paid via Shopify, the balance, the lines, the fabric on the spec, the delivery line', s1 && s1.status === 'depositPaid' && s1.source === 'shopify' && s1.invoiceBy === 'shopify' && s1.paidCents === 800000 && s1.balanceCents === 795000 && s1.history[0].methods[0] === 'shopify' && s1.lines.length === 3 && s1.lines[0].spec.notes === 'Fabric: Linen sand' && s1.lines[1].productId === 'p_lamp' && /Delivery/.test(s1.lines[2].name) && s1.customerSnapshot.address.line1 === '7 Oak Ave' && s1.updateDue === true, s1);
 check('#1002 paid in full; the same client for both (matched by cell number)', s2 && s2.status === 'depositPaid' && s2.balanceCents === 0 && s2.customerId === s1.customerId, s2 && [s2.status, s2.customerId, s1.customerId]);
 const lindi = await getDoc('pos/retail/customers/' + s1.customerId);
 check('the client made once, tagged shopify, no marketing consent', lindi && lindi.name === 'Lindi Nkosi' && lindi.tags.includes('shopify') && !Object.values(lindi.consent || {}).some(c => c && c.granted), lindi);
 check('brought in from Shopify: urgent', s1.urgent === true && s2.urgent === true, [s1.urgent, s2.urgent]);
-R.urg = await call('pos-special', { action: 'urgent', orderId: 'shp-9002', urgent: false, ...bell }, sup.idToken);
-check('a supervisor clears the urgent mark', R.urg.ok && (await getDoc('pos/retail/specialOrders/shp-9002')).urgent === false, R.urg);
+R.urg = await call('pos-special', { action: 'urgent', orderId: 'shp-9102', urgent: false, ...bell }, sup.idToken);
+check('a supervisor clears the urgent mark', R.urg.ok && (await getDoc('pos/retail/specialOrders/shp-9102')).urgent === false, R.urg);
 R.imp2 = await call('pos-shopify', { action: 'importOpenOrders', ...bell }); check('again: nothing new, both already here', R.imp2.ok && R.imp2.imported.length === 0 && R.imp2.already === 2, R.imp2);
 const salesBeforeHO = (await listColl('sales')).length;
-check('no POS payment rows for Shopify money', !(await listColl('payments')).some(p => p.docId === 'shp-9001' || p.docId === 'shp-9002'));
-await call('pos-special', { action: 'status', orderId: 'shp-9002', status: 'ready', ...bell }, own.idToken);
-await call('pos-special', { action: 'book', orderId: 'shp-9002', kind: 'collect', date: '2026-11-02', ...bell }, own.idToken);
-R.ho = await call('pos-special', { action: 'deliver', orderId: 'shp-9002', saleId: 'sos-shp-' + Date.now().toString(36), signedBy: 'Lindi Nkosi', ...bell }, own.idToken);
+check('no POS payment rows for Shopify money', !(await listColl('payments')).some(p => p.docId === 'shp-9101' || p.docId === 'shp-9102'));
+await call('pos-special', { action: 'status', orderId: 'shp-9102', status: 'ready', ...bell }, own.idToken);
+await call('pos-special', { action: 'book', orderId: 'shp-9102', kind: 'collect', date: '2026-11-02', ...bell }, own.idToken);
+R.ho = await call('pos-special', { action: 'deliver', orderId: 'shp-9102', saleId: 'sos-shp-' + Date.now().toString(36), signedBy: 'Lindi Nkosi', ...bell }, own.idToken);
 check('handed over: collected, the Shopify order is the invoice, no POS sale written', R.ho.ok && R.ho.order.status === 'collected' && R.ho.order.completedDocNo === 'Shopify #1002' && !R.ho.sale && (await listColl('sales')).length === salesBeforeHO, R.ho.error || R.ho.order);
-R.refund = await call('pos-special', { action: 'cancel', orderId: 'shp-9001', kind: 'customer', reason: 'x', feeCents: 0, refunds: [{ method: 'cash', amountCents: 800000 }], ...bell }, own.idToken);
+R.refund = await call('pos-special', { action: 'cancel', orderId: 'shp-9101', kind: 'customer', reason: 'x', feeCents: 0, refunds: [{ method: 'cash', amountCents: 800000 }], ...bell }, own.idToken);
 check('a Shopify-paid order: refund it on Shopify, not at the till', R.refund.status === 400 && /refund it there/.test(R.refund.error), R.refund);
 
 R.disc = await call('pos-shopify', { action: 'disconnect', entityId: 'BF' }, own.idToken); check('disconnected: our webhooks removed from the app, the secret gone, a webhook refused', R.disc.ok && R.disc.webhooksRemoved === 3 && mock.state.webhooks.length === 0 && (await getDoc('pos/retail/shopifySecrets/BF')) === null && (await hook('orders/create', order(9009))).status === 401, [R.disc, mock.state.webhooks]);

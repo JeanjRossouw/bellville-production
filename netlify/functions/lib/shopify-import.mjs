@@ -1,6 +1,9 @@
-// Retail POS — open Shopify orders brought in as sales orders (Sales → Online → Bring in open orders).
-// An order placed on the shop before the POS was connected (the webhooks only bring new ones) is made
-// a sales order here, so it gets the client's page, To do, delivery slots and the driver:
+// Retail POS — Shopify orders as sales orders. A new order arrives by webhook (pos-shopify) and is made
+// a sales order at once (orderFromWebhook gives the webhook's JSON the shape the shop's GraphQL gives);
+// an order placed before the POS was connected is brought in from Sales → Online → Bring in open orders.
+// Either way it gets the client's page, To do, delivery slots and the driver, and is tied to its online
+// order record (stock reserved or deducted there): the hand-over completes that record and fulfils the
+// order on Shopify (completeOnline), and a cancellation on Shopify cancels the sales order.
 //
 //   specialOrders/shp-<shopify order number id>   status depositPaid (or quoted when nothing is paid),
 //     source 'shopify', urgent (a red tag, listed first), invoiceBy 'shopify' (Shopify's order is the tax invoice: the POS writes none, at
@@ -11,7 +14,9 @@
 // Bringing them in again skips the ones already here.
 import { gql, gidNum } from './shopify-pos.mjs';
 import { getDoc, query, nowIso, randomId, serverStamp, clean } from './pos.mjs';
-import { runSale, nextFromCounter } from './sale.mjs';
+import { runSale, nextFromCounter, moveWrites } from './sale.mjs';
+import { secretsOf, logSync } from './shopify-pos.mjs';
+import { patchDoc, audit } from './pos.mjs';
 import { pctOf, vatIn } from '../../../pos/js/money.js';
 import { specialSettings } from '../../../pos/js/special-terms.js';
 import { phoneKey, phoneOk, emailKey, blankConsent, blankLoyalty, blankStats } from '../../../pos/js/loyalty-terms.js';
@@ -63,7 +68,7 @@ export async function planShopifyImport(entityId, orders) {
     const total = cents(o.totalPriceSet), sum = lines.reduce((n, l) => n + l.totalCents, 0);
     if (total !== sum && total > 0) lines.push({ qty: 1, name: total > sum ? 'Tax and charges on the Shopify order' : 'Discount on the Shopify order', productId: '', variantId: '', matched: true, totalCents: total - sum, unitPriceCents: total - sum, vatClass: 'standard', type: 'nonstock', custom: true, spec: null });
     const paid = Math.min(total, cents(o.totalReceivedSet));
-    plan.push({ id: idOf(o), name: o.name, already: !!had, alreadyDocNo: had ? had.docNo : '', createdAt: o.createdAt, financialStatus: o.displayFinancialStatus || '', client: { name: nameOf(o), phone: phoneOf(o), email: emailOf(o), existing: cust ? cust.id : '' }, address: o.shippingAddress || null, note: clean(o.note, 300), lines, totalCents: total, paidCents: paid, balanceCents: total - paid, unmatched: lines.filter(l => !l.matched).length, _o: o });
+    plan.push({ id: idOf(o), onlineOrderId: entityId + '_' + gidNum(o.id), name: o.name, already: !!had, alreadyDocNo: had ? had.docNo : '', createdAt: o.createdAt, financialStatus: o.displayFinancialStatus || '', client: { name: nameOf(o), phone: phoneOf(o), email: emailOf(o), existing: cust ? cust.id : '' }, address: o.shippingAddress || null, note: clean(o.note, 300), lines, totalCents: total, paidCents: paid, balanceCents: total - paid, unmatched: lines.filter(l => !l.matched).length, _o: o });
   }
   return plan;
 }
@@ -91,6 +96,7 @@ export async function importShopifyOrders(ctx, plan) {
         }
       }
       const num = await nextFromCounter(tx, ctx, 'SO', ctx.entity.specialOrderPrefix || (ctx.entity.invoicePrefix + '-SO'));
+      const online = x.onlineOrderId ? await getDoc('onlineOrders', x.onlineOrderId, tx) : null;
       const lines = x.lines.map((l, i) => ({ lineNo: i + 1, productId: l.productId, variantId: l.variantId, itemId: l.variantId || l.productId, name: l.name, qty: l.qty, unitPriceCents: l.unitPriceCents, listPriceCents: l.unitPriceCents, lineTotalCents: l.totalCents, discountCents: 0, saleDiscountCents: 0, netCents: l.totalCents, vatClass: l.vatClass, vatCents: l.vatClass === 'standard' && ctx.entity.vatRegistered ? vatIn(l.totalCents, 1500) : 0, type: l.type, trackStock: false, custom: !!l.custom || !l.productId, note: '', spec: l.spec }));
       const status = x.paidCents > 0 ? 'depositPaid' : 'quoted';
       const opened = x.createdAt || now;
@@ -105,10 +111,12 @@ export async function importShopifyOrders(ctx, plan) {
         status, statusHistory: [{ status, at: now, byName: ctx.user.name, source: 'shopify', note: 'Brought in from Shopify order ' + x.name }],
         expectedAt: new Date(Date.parse(opened) + ss.leadDays * 86400000).toISOString().slice(0, 10), openedAt: opened,
         signoff: { accepted: true, signedBy: x.client.name, signature: '', text: `Ordered on the online shop: Shopify order ${x.name}.`, acceptedAt: opened },
-        note: x.note, updates: [], updateDue: true, cashierUid: ctx.user.id, cashierName: ctx.user.name + ' (from Shopify)', registerId: '', shiftId: '',
+        note: x.note, updates: [], updateDue: true, cashierUid: ctx.user.id, cashierName: ctx.user.id === 'shopify' ? 'Shopify' : ctx.user.name + ' (from Shopify)', registerId: '', shiftId: '',
+        onlineOrderId: online ? x.onlineOrderId : '', deliveryKind: online && online.pickup ? 'collect' : 'deliver',
         ...stamp, serverReceivedAt: now, updatedAt: now
       };
       writes.push({ create: true, coll: 'specialOrders', id: x.id, data: so });
+      if (online) writes.push({ update: true, coll: 'onlineOrders', id: x.onlineOrderId, data: { specialOrderId: x.id, specialDocNo: num.docNo, updatedAt: now } });
       writes.push({ create: true, coll: 'auditLog', id: randomId('au_'), data: { action: 'specialOrder.fromShopify', docType: 'specialOrder', docId: x.id, docNo: num.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, overrideUid: '', overrideName: '', details: { shopify: x.name, totalCents: x.totalCents, paidCents: x.paidCents }, ...stamp, serverReceivedAt: now } });
       writes.push(num.write);
       return { writes, result: { docNo: num.docNo } };
@@ -116,4 +124,59 @@ export async function importShopifyOrders(ctx, plan) {
     out.push({ name: x.name, id: x.id, docNo: r.docNo || '', skipped: !!r.skipped });
   }
   return out;
+}
+
+// the webhook's JSON (the REST shape) as the GraphQL node planShopifyImport reads
+export function orderFromWebhook(o) {
+  const m = (a) => ({ shopMoney: { amount: String(a == null || a === '' ? 0 : a) } });
+  const total = Number(o.total_price) || 0;
+  const outstanding = o.total_outstanding != null && o.total_outstanding !== '' ? Number(o.total_outstanding) || 0 : (String(o.financial_status || '') === 'paid' ? 0 : total);
+  const c = o.customer || {}, a = o.shipping_address || null;
+  return { id: 'gid://shopify/Order/' + o.id, name: o.name || ('#' + o.order_number), createdAt: o.created_at || nowIso(), cancelledAt: o.cancelled_at || null,
+    displayFinancialStatus: String(o.financial_status || '').toUpperCase(), displayFulfillmentStatus: String(o.fulfillment_status || 'unfulfilled').toUpperCase(), note: o.note || '', email: o.email || '', phone: o.phone || '',
+    totalPriceSet: m(total), totalReceivedSet: m(Math.max(0, total - outstanding)),
+    customer: { firstName: c.first_name || '', lastName: c.last_name || '', email: c.email || '', phone: c.phone || '' },
+    shippingAddress: a ? { name: a.name || '', address1: a.address1 || '', address2: a.address2 || '', city: a.city || '', zip: a.zip || '', phone: a.phone || '' } : null,
+    shippingLines: { nodes: (o.shipping_lines || []).map(s => ({ title: s.title || '', originalPriceSet: m(s.price) })) },
+    lineItems: { nodes: (o.line_items || []).map(li => ({ title: li.title || '', variantTitle: li.variant_title || null, quantity: Number(li.quantity) || 0, sku: li.sku || '', customAttributes: (li.properties || []).map(p => ({ key: p.name, value: p.value })),
+      discountedTotalSet: m(((Number(li.price) || 0) * (Number(li.quantity) || 0) - (Number(li.total_discount) || 0)).toFixed(2)), variant: li.variant_id ? { id: 'gid://shopify/ProductVariant/' + li.variant_id } : null })) } };
+}
+
+// the online order record completed: reserved stock becomes sold, the order fulfilled on Shopify (the customer
+// is told), the record marked collected. From the sales order's hand-over, or the Online tab's Collected.
+export async function completeOnline(entityId, onlineOrderId, byName, how = 'handed over') {
+  const rec = await getDoc('onlineOrders', onlineOrderId);
+  if (!rec || rec.entityId !== entityId) return { skipped: 'no online order' };
+  if (rec.status === 'collected') return { again: true, fulfilled: rec.fulfillmentStatus === 'fulfilled' ? 'fulfilled on Shopify' : '' };
+  if (rec.status === 'cancelled') return { skipped: 'cancelled' };
+  const now = nowIso();
+  const patch = { status: 'collected', collectedAt: now, collectedBy: byName, updatedAt: now };
+  let fulfilled = '';
+  if (rec.fulfillmentStatus !== 'fulfilled') {
+    try {
+      const cfg = await secretsOf(entityId); if (!cfg) throw new Error('Shopify is not connected');
+      const d = await gql(cfg, `query($id: ID!) { order(id: $id) { fulfillmentOrders(first: 5) { nodes { id status } } } }`, { id: 'gid://shopify/Order/' + rec.shopifyOrderId });
+      const fo = ((d.order || {}).fulfillmentOrders || { nodes: [] }).nodes.find(x => x.status === 'OPEN' || x.status === 'IN_PROGRESS');
+      if (fo) { await gql(cfg, `mutation($f: FulfillmentInput!) { fulfillmentCreateV2(fulfillment: $f) { fulfillment { id } userErrors { field message } } }`, { f: { lineItemsByFulfillmentOrder: [{ fulfillmentOrderId: fo.id }], notifyCustomer: true } }); fulfilled = 'fulfilled on Shopify'; patch.fulfillmentStatus = 'fulfilled'; }
+    } catch (e) { fulfilled = 'not fulfilled on Shopify: ' + e.message; await logSync(entityId, 'order', 'retry', `${rec.orderNo}: ${fulfilled}`, { storeId: rec.storeId, docNo: rec.orderNo }); }
+  }
+  // stock held for an unpaid order is sold now
+  const held = rec.stock === 'reserved' ? rec.lines.filter(l => l.tracked && l.qty > 0) : [];
+  if (held.length && rec.storeId) {
+    const ctxLike = { entityId, storeId: rec.storeId, user: { id: 'shopify', name: byName }, deviceId: 'shopify' };
+    const stamp = serverStamp(entityId, rec.storeId, 'server', 'shopify');
+    await runSale(ctxLike, {}, { more: async (tx, levels) => {
+      const writes = [];
+      for (const l of held) {
+        const lid = rec.storeId + '_' + l.itemId; if (!levels.has(lid)) levels.set(lid, (await getDoc('stockLevels', lid, tx)) || null);
+        const doc = { docType: 'onlineOrder', docId: onlineOrderId, docNo: rec.orderNo };
+        writes.push(...moveWrites(ctxLike, levels, { productId: l.productId, variantId: l.variantId, itemId: l.itemId, qty: -l.qty, bucket: 'reserved', reason: 'onlineCollect', name: l.title, note: 'Shopify ' + rec.orderNo + ' ' + how, byName }, doc, stamp, now));
+        writes.push(...moveWrites(ctxLike, levels, { productId: l.productId, variantId: l.variantId, itemId: l.itemId, qty: -l.qty, bucket: 'onHand', reason: 'onlineCollect', name: l.title, note: 'Shopify ' + rec.orderNo + ' ' + how, byName }, doc, stamp, now));
+      }
+      writes.push({ update: true, coll: 'onlineOrders', id: onlineOrderId, data: { ...patch, stock: 'deducted' } });
+      return { writes, result: {} };
+    } });
+  } else await patchDoc('onlineOrders', onlineOrderId, patch);
+  await audit({ action: 'online.collected', docType: 'onlineOrder', docId: onlineOrderId, docNo: rec.orderNo, actorUid: 'server', actorName: byName, details: { fulfilled, how, sold: held.length }, entityId, storeId: rec.storeId || '', deviceId: 'shopify' });
+  return { ok: true, fulfilled, orderNo: rec.orderNo };
 }

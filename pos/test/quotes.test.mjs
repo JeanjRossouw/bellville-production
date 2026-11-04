@@ -175,6 +175,10 @@ check('the cart is cleared once the revision is saved', (await cartLine()).lines
 await nav('quotes'); R.list2 = await txt('#screen');
 check('the list: one quote, marked rev 2, at the new total', /BF-QT-000007/.test(R.list2) && /rev 2/i.test(R.list2) && /R 44,082\.00/.test(R.list2) && !/BF-QT-000008/.test(R.list2), R.list2.slice(0, 500));
 const q7 = (await listColl('quotes')).find(q => q.docNo === 'BF-QT-000007');
+// ---- To do: a quote near its date is one to follow up
+await patch('pos/retail/quotes/' + q7.id, { validUntil: day(2) }); await p.waitForTimeout(900);
+await nav('todo'); R.todo = await txt('#screen');
+check('To do lists the quote to follow up, with a link to send', /Quotes to follow up/.test(R.todo) && /BF-QT-000007/.test(R.todo) && /Pieter Visser/.test(R.todo) && (await p.locator('[data-bucket=cold] [data-act=qt-link]').count()) === 1, R.todo.slice(0, 500));
 check('written as revision 2 with revision 1 kept', q7.revision === 2 && q7.totalCents === 4408200 && q7.revisions.length === 1 && q7.revisions[0].totalCents === 2204100 && q7.lines[0].priceOverride && q7.lines[0].priceOverride.reason === 'Quote BF-QT-000007', q7 && [q7.revision, q7.totalCents, q7.lines[0].priceOverride]);
 
 check('no page errors', errs.length === 0, errs);

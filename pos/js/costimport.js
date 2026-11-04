@@ -22,10 +22,10 @@ import { esc, toast, openModal, money } from './ui.js';
 import { parseCsv, sepOf, toCsv, download } from './csv.js';
 import { randsOf } from './money.js';
 
-const low = (s) => String(s == null ? '' : s).trim().toLowerCase();
-const norm = (h) => low(h).replace(/[^a-z0-9]/g, '');
+export const low = (s) => String(s == null ? '' : s).trim().toLowerCase();
+export const norm = (h) => low(h).replace(/[^a-z0-9]/g, '');
 const handleOf = (name) => String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-const skuKey = (s) => low(s).replace(/^'+/, '');           // Excel and Shopify sometimes keep a leading apostrophe
+export const skuKey = (s) => low(s).replace(/^'+/, '');           // Excel and Shopify sometimes keep a leading apostrophe
 // a supplier's model code in a name (UVL601, LF-T508T, TH32): letters and digits, starting with a letter, 3 or more long
 const codesIn = (name) => (String(name || '').match(/[A-Za-z][A-Za-z0-9-]*\d[A-Za-z0-9-]*/g) || []).map(norm).filter(c => c.length >= 3);
 const vkey = (vals) => Object.keys(vals || {}).sort().map(k => low(k) + '=' + low(vals[k])).join('|');
@@ -49,7 +49,7 @@ export function costCentsOf(text) {
 }
 
 // every product and variant of the company, as something a row can point at
-function itemsOf(d, eid) {
+export function itemsOf(d, eid) {
   const out = [];
   for (const p of d.products.filter(x => x.entityId === eid)) {
     const vs = d.variants.filter(v => v.productId === p.id);
