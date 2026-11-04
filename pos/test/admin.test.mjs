@@ -116,6 +116,19 @@ const settingsRow = audit.find(a => a.action === 'settings.save'); check('settin
 // ---- a manager: adds a register and saves settings, but cannot add companies or stores
 await sub('staff');
 await p.fill('#st-name', 'Mandla'); await p.selectOption('#st-role', 'manager'); await p.fill('#st-email', 'mgr@shop.co.za'); await p.check('[data-ent="BF"]'); await p.check('[data-store="BF-BELL"]'); await p.click('[data-act=staff-add]'); await toast();
+// ---- edit a person: name, role, companies and stores; the email stays
+await p.waitForTimeout(600);
+await p.click('tr:has-text("Mandla") [data-act=staff-edit]'); await p.waitForSelector('#modal #se-name');
+R.editModal = await p.locator('#modal').innerText(); check('the edit window: the name, the role, the email it signs in with, the ticked company and store', /Signs in with mgr@shop\.co\.za/.test(R.editModal) && (await p.inputValue('#se-name')) === 'Mandla' && (await p.inputValue('#se-role')) === 'manager' && await p.isChecked('#modal [data-ent="BF"]') && await p.isChecked('#modal [data-store="BF-BELL"]'), R.editModal.slice(0, 300));
+await p.fill('#se-name', 'Mandla Khumalo'); await p.selectOption('#se-role', 'supervisor'); await p.uncheck('#modal [data-store="BF-BELL"]'); await p.click('#modal-ok'); R.editNoStore = await toast();
+check('saved without a store: fine (an office person)', /Saved Mandla Khumalo/.test(R.editNoStore), R.editNoStore);
+await p.waitForTimeout(500); const mgrUid = (await (await fetch(`${AU}/identitytoolkit.googleapis.com/v1/projects/${PID}/accounts:lookup`, { method: 'POST', headers: H, body: JSON.stringify({ email: ['mgr@shop.co.za'] }) })).json()).users[0].localId;
+R.mgrDoc = await getDoc('pos/retail/users/' + mgrUid);
+check('written: the new name and role, no stores, the email untouched', R.mgrDoc.name === 'Mandla Khumalo' && R.mgrDoc.role === 'supervisor' && (R.mgrDoc.storeIds || []).length === 0 && R.mgrDoc.email === 'mgr@shop.co.za' && R.mgrDoc.active === true, R.mgrDoc);
+await p.click('tr:has-text("Mandla") [data-act=staff-edit]'); await p.waitForSelector('#modal #se-name');
+await p.selectOption('#se-role', 'manager'); await p.check('#modal [data-store="BF-BELL"]'); await p.click('#modal-ok'); R.editBack = await toast(); await p.waitForTimeout(500);
+R.mgrDoc2 = await getDoc('pos/retail/users/' + mgrUid);
+check('back to manager at Bellville', /Saved/.test(R.editBack) && R.mgrDoc2.role === 'manager' && R.mgrDoc2.storeIds.join() === 'BF-BELL' && R.mgrDoc2.defaultStoreId === 'BF-BELL', [R.editBack, R.mgrDoc2]);
 const mgrAuth = await (await fetch(`${AU}/identitytoolkit.googleapis.com/v1/projects/${PID}/accounts:lookup`, { method: 'POST', headers: H, body: JSON.stringify({ email: ['mgr@shop.co.za'] }) })).json();
 await fetch(`${AU}/identitytoolkit.googleapis.com/v1/projects/${PID}/accounts:update`, { method: 'POST', headers: H, body: JSON.stringify({ localId: mgrAuth.users[0].localId, password: 'mgrpass1' }) });
 await p.click('#sign-out'); await signIn('mgr@shop.co.za', 'mgrpass1');
