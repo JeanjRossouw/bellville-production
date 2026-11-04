@@ -1,7 +1,8 @@
-// Retail POS — To do (Sales → To do): every open sales order and quotation that needs someone,
-// in the order the work goes: a quote the client accepted online, the deposit, updates to send,
-// late, ready but not paid, ready to book, booked, then what went out this week. Each row has the
-// button for its next step (the Sales orders and Quotes tabs do the work).
+// Retail POS — To do (Sales → To do): everything that needs someone, in the order the work goes: a quote
+// the client accepted online, quotes going cold, the deposit, bank payments to confirm (orders and accounts),
+// accounts to chase, updates to send, late orders (custom and paid), ready but not paid, ready to book,
+// booked, then what went out this week. Each row has the button for its next step (the Sales orders,
+// Quotes and Customers tabs do the work).
 import { esc, money, niceDate, empty } from './ui.js';
 import { icon } from './icons.js';
 import { isUrgent } from './special-terms.js';
@@ -25,12 +26,24 @@ export function buckets() {
   const quotes = (dd.quotes || []).filter(q => q.status === 'open');
   const by = (f) => (a, b) => String(f(a) || '').localeCompare(String(f(b) || ''));
   const done = (dd.specials || []).filter(o => /^(delivered|collected)$/.test(o.status) && String(o.completedAt || '').slice(0, 10) >= addDays(now, -7));
+  // quotes going cold: not accepted, not used, older than 5 days or within 3 days of expiry (expired ones still show for 14 days)
+  const dayOf = (iso) => String(iso || '').slice(0, 10);
+  const cold = quotes.filter(q => !q.accepted && !q.usedAs && dayOf(q.validUntil) >= addDays(now, -14) && (dayOf(q.validUntil) <= addDays(now, 3) || dayOf(q.quotedAt || q.createdAt) <= addDays(now, -5)));
+  const customers = (dd.customers || []).filter(c => !c.mergedInto && !c.anonymised);
+  const stale = (iso) => !iso || dayOf(iso) <= addDays(now, -30);
+  const chase = customers.filter(c => (c.accountBalanceCents || 0) > 0 && ((c.accountBalanceCents || 0) > (c.creditLimitCents || 0) || stale(c.lastAccountPaymentAt || (c.stats || {}).lastSaleAt)));
+  const sales = dd.salesOrders || [];
   return urgentFirst([
     { key: 'accepted', title: 'Quotes accepted online', hint: 'Load it into the sale, then Sales order to take the deposit.', rows: quotes.filter(q => q.accepted).sort(by(q => q.accepted.at)).map(q => ({ kind: 'quote', x: q })) },
+    { key: 'cold', title: 'Quotes to follow up', hint: 'Not taken up yet: a call or a WhatsApp before it goes cold. An expired quote can be edited and sent again.', rows: cold.sort(by(q => q.validUntil)).map(q => ({ kind: 'quote', x: q })) },
     { key: 'deposit', title: 'Waiting for the deposit', hint: 'Orders opened without the deposit: take it to start production.', rows: orders.filter(o => o.status === 'quoted').sort(by(o => o.openedAt)).map(o => ({ kind: 'order', x: o })) },
     { key: 'bank', title: 'Bank payments to confirm', hint: 'EFTs and QR payments recorded at the till: a manager confirms each one once it shows on the bank statement. The order counts it paid from then.', rows: orders.filter(o => o.awaitingCents > 0).sort(by(o => o.updatedAt)).map(o => ({ kind: 'order', x: o })) },
+    { key: 'bankAccount', title: 'Account payments to confirm', hint: 'EFTs and QR payments on customer accounts: a manager confirms each once it shows on the bank statement.', rows: customers.filter(c => (c.accountAwaitingCents || 0) > 0).sort(by(c => c.name)).map(c => ({ kind: 'customer', x: c })) },
+    { key: 'debtors', title: 'Accounts to chase', hint: 'Owed on account for over 30 days, or over the limit: send the statement and take a payment. Reports → Debtors has the ageing.', rows: chase.sort((a, b) => (b.accountBalanceCents || 0) - (a.accountBalanceCents || 0)).map(c => ({ kind: 'customer', x: c })) },
     { key: 'updates', title: 'Updates to send', hint: 'Something changed: one tap sends the client a WhatsApp with their order page.', rows: orders.filter(o => o.updateDue && o.status !== 'quoted').sort(by(o => o.updatedAt)).map(o => ({ kind: 'order', x: o })) },
     { key: 'late', title: 'Late', hint: 'Past the expected date and not ready yet: check with the factory and tell the client.', rows: orders.filter(o => ['depositPaid', 'inProduction'].includes(o.status) && o.expectedAt && o.expectedAt < now).sort(by(o => o.expectedAt)).map(o => ({ kind: 'order', x: o })) },
+    { key: 'salesLate', title: 'Paid orders late', hint: 'Sold and paid at the till, made to order, past the expected date and not ready: check with the factory and tell the client.', rows: sales.filter(o => ['open', 'inProduction'].includes(o.status) && o.expectedAt && o.expectedAt < now).sort(by(o => o.expectedAt)).map(o => ({ kind: 'sales', x: o })) },
+    { key: 'salesReady', title: 'Paid orders ready to hand over', hint: 'Made and paid for: tell the client and hand it over with the delivery note.', rows: sales.filter(o => o.status === 'ready').sort(by(o => o.updatedAt)).map(o => ({ kind: 'sales', x: o })) },
     { key: 'owed', title: 'Ready, balance owed', hint: 'Ready: the balance is paid before delivery or collection.', rows: orders.filter(o => o.status === 'ready' && o.balanceCents > 0).sort(by(o => o.updatedAt)).map(o => ({ kind: 'order', x: o })) },
     { key: 'issues', title: 'Delivery problems', hint: 'The driver could not deliver: call the client and rebook.', rows: orders.filter(o => o.status === 'outForDelivery' && o.delivery && o.delivery.issue).map(o => ({ kind: 'order', x: o })) },
     { key: 'picked', title: 'Days chosen by clients: confirm', hint: 'The client picked a day and a slot on their order page.', rows: orders.filter(o => o.status === 'ready' && o.delivery && o.delivery.requested && !o.delivery.confirmed).sort(by(o => o.delivery.date)).map(o => ({ kind: 'order', x: o })) },
@@ -44,6 +57,13 @@ export function buckets() {
 
 function rowHtml(b, r) {
   const o = r.x;
+  if (r.kind === 'quote' && b.key === 'cold') { const expired = String(o.validUntil) < today(); return `<tr><td><strong>${esc(o.docNo)}</strong><div class="muted">quoted ${esc(niceDate(o.quotedAt || o.createdAt))}${o.cashierName ? ' by ' + esc(o.cashierName) : ''}</div></td><td>${who(o.customerSnapshot)}</td><td>${what(o.lines)}</td><td class="r"><strong>${esc(money(o.totalCents))}</strong></td>
+    <td><span class="${expired ? 'warn' : ''}">${expired ? 'expired ' : 'valid until '}${esc(niceDate(o.validUntil))}</span></td><td class="btn-row" style="margin:0">${expired ? btn('qt-edit', o.id, 'Edit and send again', true) : btn('qt-link', o.id, icon('user') + ' Send link to accept', true)}${btn('qt-print', o.id, 'View / send')}</td></tr>`; }
+  if (r.kind === 'customer') return `<tr><td><strong>${esc(o.name)}</strong>${(o.accountBalanceCents || 0) > (o.creditLimitCents || 0) ? ' <span class="chip late">over limit</span>' : ''}</td><td>${who(o)}</td><td class="muted">${b.key === 'bankAccount' ? 'awaiting the bank' : 'last payment ' + (o.lastAccountPaymentAt ? esc(niceDate(o.lastAccountPaymentAt)) : 'never') + ((o.stats || {}).lastSaleAt ? ' · last sale ' + esc(niceDate(o.stats.lastSaleAt)) : '')}</td>
+    <td class="r">${b.key === 'bankAccount' ? `<span class="warn">${esc(money(o.accountAwaitingCents || 0))} awaiting</span>` : `<strong>${esc(money(o.accountBalanceCents || 0))}</strong> owed`}</td><td>${o.creditLimitCents ? 'limit ' + esc(money(o.creditLimitCents)) : ''}</td>
+    <td class="btn-row" style="margin:0">${b.key === 'bankAccount' ? btn('cu-open', o.id, icon('cash') + ' Open and confirm', true) : btn('cu-statement', o.id, icon('printer') + ' Statement') + btn('cu-acct-pay', o.id, icon('cash') + ' Take a payment', true) + btn('cu-open', o.id, 'Open')}</td></tr>`;
+  if (r.kind === 'sales') return `<tr><td><strong>${esc(o.docNo)}</strong><div class="muted">tax invoice · ${esc(o.cashierName || '')}</div></td><td>${who(o.customerSnapshot)}</td><td>${what(o.lines)}</td><td class="r"><strong>${esc(money(o.totalCents))}</strong><div class="muted">${o.paidInFull === false ? 'on account' : 'paid'}</div></td>
+    <td>${b.key === 'salesLate' ? `<span class="warn">expected ${esc(niceDate(o.expectedAt))}</span>` : 'ready'}</td><td class="btn-row" style="margin:0">${b.key === 'salesLate' ? btn('so-sales-update', o.id, icon('user') + ' Tell the client', true) + btn('so-sales-sync', o.id, 'Check factory') : btn('so-sales-handover', o.id, icon('truck') + ' Hand over', true) + btn('so-sales-update', o.id, 'Tell the client')}${btn('so-sales-open', o.id, 'Open')}</td></tr>`;
   if (r.kind === 'quote') return `<tr><td><strong>${esc(o.docNo)}</strong><div class="muted">accepted ${esc(niceDate(o.accepted.at))} by ${esc(o.accepted.name)}</div></td><td>${who(o.customerSnapshot)}</td><td>${what(o.lines)}</td><td class="r"><strong>${esc(money(o.totalCents))}</strong></td>
     <td class="btn-row" style="margin:0">${btn('qt-load', o.id, 'Load into the sale', true)}${btn('qt-print', o.id, 'View')}</td></tr>`;
   const dv = o.delivery, now = today();
@@ -74,6 +94,6 @@ export function todoHtml() {
   return `<div class="page-head"><h1>To do</h1><p class="sub">${open ? open + ' thing' + (open === 1 ? '' : 's') + ' to do for clients' : 'Nothing waiting on you'} · every update carries the client’s own order page, so they need not phone</p></div>
     ${bs.some(b => b.rows.length) ? bs.filter(b => b.rows.length).map(b => `<div class="card todo-b" data-bucket="${b.key}"><h3>${esc(b.title)} <span class="chip">${b.rows.length}</span></h3>${b.hint ? `<p class="muted">${esc(b.hint)}</p>` : ''}
       <div style="overflow:auto"><table class="tbl todo-tbl"><tbody>${b.rows.map(r => rowHtml(b, r)).join('')}</tbody></table></div></div>`).join('')
-    : empty('All clear', 'Sales orders and quotes that need someone show here.')}`;
+    : empty('All clear', 'Sales orders, quotes and accounts that need someone show here.')}`;
 }
 export const count = () => buckets().filter(b => b.key !== 'done').reduce((n, b) => n + b.rows.length, 0);

@@ -114,6 +114,31 @@ R.apFinal = await call('pos-customer', apBody([{ method: 'card', amountCents: 39
 check('paid off', R.apFinal.ok && R.apFinal.payment.owedAfter === 0 && (await getDoc('pos/retail/customers/' + A.id)).accountBalanceCents === 0, R.apFinal.error);
 R.apNothing = await call('pos-customer', apBody([{ method: 'card', amountCents: 100, cardLast4: '4242', approvalCode: '123459' }])); check('nothing owed: nothing to pay', R.apNothing.status === 400 && /owes nothing/.test(R.apNothing.error), R.apNothing);
 
+// ---- the take-on from the old system: profiles by cell number, what is owed as the opening balance, credit only with a
+// document; no cell number, an account in credit, credit without a reference, a second take-on: handed back as exceptions
+const takeRows = [
+  { line: 2, name: 'Bongani Dube', phone: '0845550001', email: 'bongani@mail.co.za', vatNo: '4001112223', address: { line1: '3 Pine St', city: 'Brackenfell', code: '7560' }, owedCents: 120000, limitCents: 0, creditCents: 0, creditRef: '' },
+  { line: 3, name: 'Andile Nkosi', phone: '083 555 0000', email: 'andile@new.co.za', owedCents: 25000, limitCents: 50000, creditCents: 15000, creditRef: 'CN-0441' },
+  { line: 4, name: 'No Cell Customer', phone: '', owedCents: 9900 },
+  { line: 5, name: 'In Credit', phone: '0845550002', owedCents: -5000 },
+  { line: 6, name: 'Loose Credit', phone: '0845550003', creditCents: 7000, creditRef: '' },
+  { line: 7, name: 'Bongani Again', phone: '0845550001', owedCents: 1 }
+];
+R.takeCas = await call('pos-customer', { action: 'takeOn', batchId: 'to-test', rows: takeRows, ...bell }); check('the take-on is the owner’s', R.takeCas.status === 403, R.takeCas);
+R.take = await call('pos-customer', { action: 'takeOn', batchId: 'to-test', rows: takeRows, ...bell }, own.idToken);
+const bongani = (await listColl('customers')).find(c => c.phoneKey === '27845550001');
+const andile2 = await getDoc('pos/retail/customers/' + A.id);
+check('taken on: Bongani made with R 1 200 owed on an account whose limit is at least that; Andile found by number with R 250 added and the credit with its reference; the profiles in credit or without a reference made with nothing on them; the rest handed back', R.take.ok && R.take.created === 3 && R.take.updated === 1 && R.take.owedCents === 145000 && R.take.creditCents === 15000
+  && bongani && bongani.accountEnabled === true && bongani.creditLimitCents === 120000 && bongani.accountBalanceCents === 120000 && bongani.tags.includes('take-on') && bongani.takeOn.batchId === 'to-test' && bongani.address.city === 'Brackenfell'
+  && andile2.accountBalanceCents === 25000 && andile2.storeCreditCents === 15000 && andile2.creditLimitCents === 100000 && andile2.takeOn.creditRef === 'CN-0441' && andile2.email === 'andile@new.co.za' && R.take.exceptions.length === 4
+  && (await listColl('customers')).find(c => c.phoneKey === '27845550002').accountBalanceCents === 0 && (await listColl('customers')).find(c => c.phoneKey === '27845550003').storeCreditCents === 0
+  && R.take.exceptions.some(x => x.line === 4 && /no cell number/.test(x.why)) && R.take.exceptions.some(x => x.line === 5 && /in credit by R 50\.00/.test(x.why)) && R.take.exceptions.some(x => x.line === 6 && /without a document reference/.test(x.why)) && R.take.exceptions.some(x => x.line === 7 && /same cell number twice/.test(x.why)), R.take.error || [R.take, bongani, andile2]);
+R.takeAgain = await call('pos-customer', { action: 'takeOn', batchId: 'to-test-2', rows: takeRows.slice(0, 2), ...bell }, own.idToken);
+check('a second take-on changes nothing: both already taken on', R.takeAgain.ok && R.takeAgain.created === 0 && R.takeAgain.updated === 0 && R.takeAgain.exceptions.length === 2 && R.takeAgain.exceptions.every(x => /already taken on/.test(x.why)) && (await getDoc('pos/retail/customers/' + A.id)).accountBalanceCents === 25000, R.takeAgain);
+R.stmtTake = await call('pos-customer', { action: 'statement', customerId: bongani.id, ...bell });
+check('the opening balance shows on the statement, aged as over 90 days', R.stmtTake.ok && R.stmtTake.openingCents === 120000 && R.stmtTake.owedCents === 120000 && R.stmtTake.ageing.d90 === 120000 && R.stmtTake.rows.length === 0, R.stmtTake);
+R.apTake = await call('pos-customer', apBody([{ method: 'card', amountCents: 25000, cardLast4: '4242', approvalCode: '123460' }])); check('Andile’s taken-on balance paid off', R.apTake.ok && R.apTake.payment.owedAfter === 0, R.apTake.error);
+
 // ---- a sale earns points at Bronze: R 500 → 500 points; a second at Parow; Silver after R 1 000
 R.s1 = await call('pos-sale', sale([{ productId: 'p_lamp', variantId: '', qty: 1, unitPriceCents: 50000, discountCents: 0 }], [{ method: 'card', amountCents: 50000 }], { customerId: T.id, totals: { totalCents: 50000, vatCents: vatIn(50000, 1500) } }), own.idToken);
 check('R 500 at Bronze: 500 points, the receipt line', R.s1.ok && R.s1.sale.loyalty && R.s1.sale.loyalty.earned === 500 && R.s1.sale.loyalty.balance === 500 && R.s1.sale.loyalty.tier === 'Bronze', R.s1.error || R.s1.sale.loyalty);
@@ -166,7 +191,7 @@ R.saveAnon = await call('pos-customer', { action: 'save', customerId: T.id, name
 R.fresh = await call('pos-customer', { action: 'save', name: 'Thandi Again', phone: '0825550102', ...bell }); check('the freed number can start a new profile', R.fresh.ok && R.fresh.customer.phoneKey === '27825550102', R.fresh.error);
 R.pts = await call('pos-customer', { action: 'adjustPoints', adjustId: 'pts-welcome-1', customerId: R.fresh.customer.id, points: 50, note: 'Welcome', ...bell }, own.idToken); check('points by hand', R.pts.ok && R.pts.points === 50, R.pts.error);
 R.ptsAgain = await call('pos-customer', { action: 'adjustPoints', adjustId: 'pts-welcome-1', customerId: R.fresh.customer.id, points: 50, note: 'Welcome', ...bell }, own.idToken); check('the same points again: not added twice', R.ptsAgain.ok && R.ptsAgain.again && R.ptsAgain.points === 50, R.ptsAgain);
-const audit = await listColl('auditLog'); check('audited', ['customer.create', 'customer.update', 'customer.consent', 'customer.merge', 'customer.export', 'customer.anonymise', 'customer.points', 'customer.accountPayment', 'customer.confirmAccountPay', 'customer.voidAccountPay'].every(a => audit.some(x => x.action === a)), audit.map(a => a.action));
+const audit = await listColl('auditLog'); check('audited', ['customer.create', 'customer.update', 'customer.consent', 'customer.merge', 'customer.export', 'customer.anonymise', 'customer.points', 'customer.accountPayment', 'customer.confirmAccountPay', 'customer.voidAccountPay', 'customer.takeOn'].every(a => audit.some(x => x.action === a)), audit.map(a => a.action));
 
 console.log(JSON.stringify({ fails, ...R, exp: undefined, hist: undefined, hist2: undefined }, null, 1));
 console.log(fails.length ? fails.length + ' FAILED' : 'customer-api: all passed');

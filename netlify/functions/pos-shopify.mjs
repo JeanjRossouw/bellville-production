@@ -25,11 +25,14 @@
 //   openOrders  { + where }                                    a manager: the shop's open, unsent orders and what bringing them in would do
 //   importOpenOrders { + where }                               a manager: bring them in as sales orders (lib/shopify-import.mjs); again skips those here
 //   webhooks: POST ?hook=1&e=<entityId> with X-Shopify-Topic orders/create | orders/cancelled | refunds/create, signed with the client secret
+//     orders/create also makes the sales order (specialOrders/shp-<id>, tied to the online order record), so the order is in
+//     To do, on the client's page and in the delivery flow at once; orders/cancelled cancels that sales order too
 //
 // Env: FACTORY_SERVICE_ACCOUNT, SHOPIFY_API_BASE (tests only).
 import { json, Reject, clean, randomId, nowIso, getDoc, query, commit, createDoc, patchDoc, deleteDoc, loginOf, loadUser, inEntity, inStore, rank, serverStamp, bodyOf, audit, withGroup, groupId, DEFAULT_GROUP } from './lib/pos.mjs';
 import { whoAndWhere, runSale, moveWrites, approved } from './lib/sale.mjs';
-import { openShopifyOrders, planShopifyImport, importShopifyOrders } from './lib/shopify-import.mjs';
+import { openShopifyOrders, planShopifyImport, importShopifyOrders, orderFromWebhook, completeOnline } from './lib/shopify-import.mjs';
+import { cancelAtFactory } from './lib/factory-bridge.mjs';
 import { gql, gidNum, secretsOf, settingsOf, patchShopify, verifyWebhook, logSync, queueStock, flushStock } from './lib/shopify-pos.mjs';
 import { pullCatalogue, planCatalogue, planStock, applyCatalogue } from './lib/shopify-catalogue.mjs';
 
@@ -221,6 +224,34 @@ function mapOrder(entityId, sh, o, products, variants) {
   const cust = o.customer || {};
   return { entityId, storeId: storeId || '', shopifyOrderId: String(o.id), orderNo: o.name || ('#' + o.order_number), orderedAt: o.created_at || nowIso(), financialStatus: o.financial_status || '', fulfillmentStatus: o.fulfillment_status || '', pickup, shippingTitle: ship.title || '', customer: { name: [cust.first_name, cust.last_name].filter(Boolean).join(' ') || (o.shipping_address || {}).name || '', email: o.email || cust.email || '', phone: o.phone || cust.phone || (o.shipping_address || {}).phone || '' }, address: o.shipping_address ? [o.shipping_address.address1, o.shipping_address.city].filter(Boolean).join(', ') : '', lines, totalCents: cents(o.total_price), currency: o.currency || 'ZAR', unmapped: lines.filter(l => !l.itemId).length };
 }
+// the sales order for a new online order: the same document a till order gets (lib/shopify-import.mjs), so it is in To do,
+// on the client's page and in the delivery flow; tied to the online order record, which holds the stock
+async function salesOrderFor(entityId, sh, rec, o) {
+  if (!rec.storeId) { await logSync(entityId, 'order', 'retry', `${rec.orderNo}: no store mapped, so no sales order was made (map a store under Settings → Shopify, then Bring in open orders)`, { docNo: rec.orderNo }); return ''; }
+  try {
+    const [entity, settings] = await Promise.all([getDoc('entities', entityId), getDoc('settings', entityId)]);
+    if (!entity) return '';
+    const ctx = { entityId, storeId: rec.storeId, registerId: '', shiftId: '', entity: { ...entity, id: entityId }, settings: settings || {}, user: { id: 'shopify', name: 'Shopify' }, deviceId: 'shopify' };
+    const plan = await planShopifyImport(entityId, [orderFromWebhook(o)]);
+    const out = await importShopifyOrders(ctx, plan);
+    const made = out.find(x => x.docNo);
+    if (made) await logSync(entityId, 'order', 'ok', `${rec.orderNo}: sales order ${made.docNo}`, { storeId: rec.storeId, docNo: rec.orderNo });
+    return made ? made.docNo : (plan[0] && plan[0].alreadyDocNo) || '';
+  } catch (e) { console.error('sales order from webhook', e); await logSync(entityId, 'order', 'retry', `${rec.orderNo}: no sales order made: ${e.message}`, { storeId: rec.storeId, docNo: rec.orderNo }); return ''; }
+}
+// the order was cancelled on Shopify: its sales order (if still open) is cancelled too, and called off at the factory
+async function cancelSalesOrder(entityId, rec) {
+  const id = 'shp-' + String(rec.shopifyOrderId);
+  const so = await getDoc('specialOrders', id);
+  if (!so || so.entityId !== entityId || !['quoted', 'depositPaid', 'inProduction', 'ready'].includes(so.status)) return '';
+  const now = nowIso();
+  const ctxLike = { entityId, storeId: so.storeId, user: { id: 'shopify', name: 'Shopify' }, deviceId: 'shopify' };
+  if (so.factory && (so.factory.orders || []).length) await cancelAtFactory(ctxLike, 'specialOrders', { ...so, id }, so.factory.orders, 'Cancelled on Shopify').catch(() => {});
+  await patchDoc('specialOrders', id, { status: 'cancelled', cancelledAt: now, cancelKind: 'customer', cancelReason: 'Cancelled on Shopify (' + rec.orderNo + ')', cancelledByName: 'Shopify', feeCents: 0, feeReason: '', refunds: [], refundedCents: 0, awaitingCents: 0, updateDue: false,
+    statusHistory: [...(so.statusHistory || []), { status: 'cancelled', at: now, byName: 'Shopify', source: 'shopify', note: 'Cancelled on Shopify' }].slice(-50), updatedAt: now });
+  await audit({ action: 'specialOrder.cancel', docType: 'specialOrder', docId: id, docNo: so.docNo, actorUid: 'shopify', actorName: 'Shopify', details: { kind: 'customer', reason: 'Cancelled on Shopify', shopify: rec.orderNo }, entityId, storeId: so.storeId || '', deviceId: 'shopify' });
+  return so.docNo;
+}
 async function handleWebhook(entityId, topic, raw, o) {
   const sh = await settingsOf(entityId);
   if (sh.pullOrders === false) return { skipped: 'orders off' };
@@ -243,7 +274,8 @@ async function handleWebhook(entityId, topic, raw, o) {
       } });
     } else await createDoc('onlineOrders', id, { ...rec, status: 'new', stock: 'none', readyAt: '', collectedAt: '', cancelledAt: '', refunds: [], ...stamp, updatedAt: nowIso() });
     await logSync(entityId, 'order', rec.unmapped ? 'retry' : 'ok', `${rec.orderNo}: ${rec.lines.length} line${rec.lines.length === 1 ? '' : 's'}, ${money(rec.totalCents)}${rec.pickup ? ', click & collect' : ''}${rec.unmapped ? ', ' + rec.unmapped + ' line(s) not matched to a product' : ''}`, { storeId: rec.storeId, docNo: rec.orderNo });
-    return { ok: true, orderNo: rec.orderNo, stock: paid ? 'deducted' : 'reserved', unmapped: rec.unmapped };
+    const so = await salesOrderFor(entityId, sh, rec, o);
+    return { ok: true, orderNo: rec.orderNo, stock: paid ? 'deducted' : 'reserved', unmapped: rec.unmapped, salesOrder: so };
   }
   if (topic === 'orders/cancelled') {
     const rec = await getDoc('onlineOrders', id);
@@ -257,8 +289,9 @@ async function handleWebhook(entityId, topic, raw, o) {
         return { writes, result: {} };
       } });
     } else await patchDoc('onlineOrders', id, { status: 'cancelled', cancelledAt: nowIso(), updatedAt: nowIso() });
-    await logSync(entityId, 'cancel', 'ok', `${rec.orderNo} cancelled: stock ${restock ? 'back' : 'untouched'}`, { storeId: rec.storeId, docNo: rec.orderNo });
-    return { ok: true };
+    const so = await cancelSalesOrder(entityId, rec);
+    await logSync(entityId, 'cancel', 'ok', `${rec.orderNo} cancelled: stock ${restock ? 'back' : 'untouched'}${so ? ', sales order ' + so + ' cancelled' : ''}`, { storeId: rec.storeId, docNo: rec.orderNo });
+    return { ok: true, salesOrder: so };
   }
   if (topic === 'refunds/create') {
     const oid = entityId + '_' + String(o.order_id);
@@ -406,19 +439,26 @@ const actions = {
     const status = b.status === 'collected' ? 'collected' : 'ready';
     if (rec.status === 'cancelled') throw new Reject(409, 'That order was cancelled.');
     const now = nowIso();
-    const patch = { status, ...(status === 'ready' ? { readyAt: now } : { collectedAt: now, collectedBy: ctx.user.name }), updatedAt: now };
-    let fulfilled = '';
-    if (status === 'collected' && rec.fulfillmentStatus !== 'fulfilled') {
-      try {
-        const cfg = await cfgOf(ctx.entityId);
-        const d = await gql(cfg, `query($id: ID!) { order(id: $id) { fulfillmentOrders(first: 5) { nodes { id status } } } }`, { id: 'gid://shopify/Order/' + rec.shopifyOrderId });
-        const fo = ((d.order || {}).fulfillmentOrders || { nodes: [] }).nodes.find(x => x.status === 'OPEN' || x.status === 'IN_PROGRESS');
-        if (fo) { await gql(cfg, `mutation($f: FulfillmentInput!) { fulfillmentCreateV2(fulfillment: $f) { fulfillment { id } userErrors { field message } } }`, { f: { lineItemsByFulfillmentOrder: [{ fulfillmentOrderId: fo.id }], notifyCustomer: true } }); fulfilled = 'fulfilled on Shopify'; patch.fulfillmentStatus = 'fulfilled'; }
-      } catch (e) { fulfilled = 'not fulfilled on Shopify: ' + e.message; await logSync(ctx.entityId, 'order', 'retry', `${rec.orderNo}: ${fulfilled}`, { storeId: rec.storeId, docNo: rec.orderNo }); }
+    const oid = clean(b.orderId, 80);
+    if (status === 'ready') {
+      await patchDoc('onlineOrders', oid, { status, readyAt: now, updatedAt: now });
+      await audit({ action: 'online.ready', docType: 'onlineOrder', docId: oid, docNo: rec.orderNo, actorUid: ctx.user.id, actorName: ctx.user.name, details: {}, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
+      return { ok: true, status, fulfilled: '' };
     }
-    await patchDoc('onlineOrders', rec.id || clean(b.orderId, 80), patch);
-    await audit({ action: 'online.' + status, docType: 'onlineOrder', docId: clean(b.orderId, 80), docNo: rec.orderNo, actorUid: ctx.user.id, actorName: ctx.user.name, details: { fulfilled }, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
-    return { ok: true, status, fulfilled };
+    // collected: money first. An order with a sales order that still owes is handed over there (the balance is taken, then it completes this record)
+    const so = rec.specialOrderId ? await getDoc('specialOrders', rec.specialOrderId) : null;
+    const soOpen = so && ['quoted', 'depositPaid', 'inProduction', 'ready', 'outForDelivery'].includes(so.status);
+    if (soOpen && so.balanceCents > 0) throw new Reject(409, `${money(so.balanceCents)} is still owed on sales order ${so.docNo}: take it there (Sales orders → ${so.docNo}), then hand it over there.`);
+    if (soOpen && so.status === 'outForDelivery') throw new Reject(409, `Sales order ${so.docNo} is out for delivery: the driver marks it delivered.`);
+    const r = await completeOnline(ctx.entityId, oid, ctx.user.name, 'collected at the shop');
+    // paid in full: the sales order is collected with it, so To do and the client's page agree
+    if (soOpen) {
+      const done = { status: 'collected', completedAt: now, completedDocNo: 'Shopify ' + rec.orderNo, updateDue: false, statusHistory: [...(so.statusHistory || []), { status: 'collected', at: now, byName: ctx.user.name, source: 'till', note: 'Collected on the Online tab' }].slice(-50), updatedAt: now };
+      await patchDoc('specialOrders', rec.specialOrderId, done);
+      await audit({ action: 'specialOrder.deliver', docType: 'specialOrder', docId: rec.specialOrderId, docNo: so.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, details: { status: 'collected', invoice: 'shopify', how: 'Online tab' }, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
+    }
+    await audit({ action: 'online.collected', docType: 'onlineOrder', docId: oid, docNo: rec.orderNo, actorUid: ctx.user.id, actorName: ctx.user.name, details: { fulfilled: r.fulfilled || '' }, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
+    return { ok: true, status, fulfilled: r.fulfilled || '' };
   },
   async openOrders(event, b) {
     const ctx = await whoAndWhere(event, b, { noShift: true });
