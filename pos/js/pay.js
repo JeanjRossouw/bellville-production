@@ -134,7 +134,13 @@ export function openPay(o) {
       ...where(data)
     };
     try {
-      const r = await auth.api('commit', body, API.sale);
+      let r;
+      try { r = await auth.api('commit', body, API.sale); }
+      catch (e) {
+        // stock would go below zero: a manager's PIN lets it through (the count is put right afterwards)
+        if (e.status === 403 && /below zero/.test(e.message)) { const a = await auth.requireOverride({ minRole: 'manager', action: 'stock', docType: 'sale', docId: cart.id, details: { what: 'belowZero', totalCents: t.totalCents }, text: e.message }); r = await auth.api('commit', { ...body, approvalToken: a.token }, API.sale); }
+        else throw e;
+      }
       close(true);
       o.onDone(r);
       openReceipt({ sale: r.sale, lines: r.lines, payments: r.payments, vouchersSold: r.vouchersSold || [], entity: data.entity, store: data.store, settings: data.settings, copy: !!r.again });

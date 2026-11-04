@@ -145,6 +145,26 @@ check('every sale has its lines, payments and an audit row; stamps on all', sale
 check('numbers in the office block are contiguous 1..8', sales.filter(s => s.deviceId.startsWith('web:')).map(s => s.seq).sort((a, b) => a - b).join() === '1,2,3,4,5,6,7,8', sales.map(s => s.seq));
 check('VAT on every line adds up to the sale', sales.every(s => lines.filter(l => l.saleId === s.id).reduce((n, l) => n + l.vatCents, 0) === s.vatCents));
 
+// ---- stock may not go below zero: a cashier is stopped, a manager (the owner here) lets it through and it is audited,
+// a sale rung up offline (the till's own number) is written anyway and flagged, and a company may allow it with a warning
+const settingsDoc = (more = {}) => ({ vat: { rates: [{ rateBp: 1500, effectiveFrom: '2018-04-01' }] }, discounts: { maxPctByRole: { cashier: 5, supervisor: 15, manager: 50, owner: 100 } }, numbering: { blockSize: 20, refillBelow: 5 }, ...more, ...srv('BF') });
+await put('pos/retail/stockLevels/BF-BELL_p_ch', { productId: 'p_ch', variantId: '', onHandQty: 1, reservedQty: 0, ...srv('BF', 'BF-BELL') });
+const chLine = (qty) => ({ lines: [{ productId: 'p_ch', variantId: '', qty, unitPriceCents: 899900, discountCents: 0 }], totals: { totalCents: 899900 * qty, vatCents: vatIn(899900 * qty, 1500) }, tenders: [{ method: 'card', amountCents: 899900 * qty, cardLast4: '1234', approvalCode: 'A1' }] });
+R.short = await call('pos-sale', sale(chLine(2)), CTOKEN);
+check('a cashier cannot sell below zero: told what is short, and that a manager’s PIN is needed', R.short.status === 403 && /below zero/.test(R.short.error) && /1 in stock, 2 on this sale/.test(R.short.error) && /PIN/.test(R.short.error), R.short);
+R.lastOne = await call('pos-sale', sale(chLine(1)), CTOKEN); check('the last one sells', R.lastOne.ok && (await getDoc('pos/retail/stockLevels/BF-BELL_p_ch')).onHandQty === 0, R.lastOne.error);
+R.none = await call('pos-sale', sale(chLine(1)), CTOKEN); check('none left: stopped', R.none.status === 403 && /0 in stock, 1 on this sale/.test(R.none.error), R.none);
+R.mgrBelow = await call('pos-sale', sale(chLine(1)));
+const belowAudit = () => listColl('auditLog').then(a => a.filter(x => x.action === 'sale.belowZero'));
+check('the owner sells it anyway; the sale is written and the shortfall audited', R.mgrBelow.ok && R.mgrBelow.negativeStock === 1 && (await belowAudit()).some(a => a.docNo === R.mgrBelow.sale.docNo && a.details.items[0].itemId === 'p_ch' && a.details.items[0].have === 0 && a.details.offline === false && a.details.allowed === false), R.mgrBelow.error || await belowAudit());
+R.offBelow = await call('pos-sale', sale({ ...till, saleId: 'dev_t1-off-1', seq: 27, ...chLine(1) }), CTOKEN);
+check('a cashier’s offline sale is written (the goods have left) and flagged for the count', R.offBelow.ok && R.offBelow.sale.docNo === 'BF-000027' && (await belowAudit()).some(a => a.docNo === 'BF-000027' && a.details.offline === true && a.overrideUid === ''), R.offBelow.error || R.offBelow);
+await put('pos/retail/settings/BF', settingsDoc({ stock: { allowNegative: true } }));
+R.allowed = await call('pos-sale', sale(chLine(1)), CTOKEN);
+check('a company that allows it: the sale goes through with a warning, still audited', R.allowed.ok && R.allowed.negativeStock === 1 && (await belowAudit()).some(a => a.docNo === R.allowed.sale.docNo && a.details.allowed === true), R.allowed.error || R.allowed);
+await put('pos/retail/settings/BF', settingsDoc());
+check('the level is where the sales left it', (await getDoc('pos/retail/stockLevels/BF-BELL_p_ch')).onHandQty === -3, await getDoc('pos/retail/stockLevels/BF-BELL_p_ch'));
+
 console.log(JSON.stringify({ fails, ...R }, null, 1).slice(0, 6000));
 console.log(fails.length ? fails.length + ' FAILED' : 'sale-api: all passed');
 if (server) server.kill();

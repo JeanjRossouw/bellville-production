@@ -44,12 +44,11 @@ import { factoryCfg, listCompanies, companyNamed, noteHandover } from './lib/fac
 import { ensureTrack, trackUrl } from './lib/track.mjs';
 import { completeDelivery, newDriverLink, driverUrl, signatureOk } from './lib/delivery.mjs';
 import { pushToFactory as pushBridge, syncFromFactory as syncBridge, cancelAtFactory } from './lib/factory-bridge.mjs';
-import { whoAndWhere, prepareSale, prepareTenders, runSale, nextFromCounter, approved, int, specOf, specNote, markQuoteUsed, saDay, snapshotOf, sameSnapshot } from './lib/sale.mjs';
+import { whoAndWhere, prepareSale, prepareTenders, runSale, moneyNow, nextFromCounter, approved, int, specOf, specNote, markQuoteUsed, saDay, snapshotOf, sameSnapshot } from './lib/sale.mjs';
 import { pctOf } from '../../pos/js/money.js';
 import { specialSettings, signoffText, updateText, NEXT, STATUSES, SPEC_FIELDS, CANCEL_KINDS } from '../../pos/js/special-terms.js';
 
 const REFUND_METHODS = ['cash', 'card', 'eft', 'storeCredit'];
-const NOW_METHODS = ['cash', 'card', 'eft', 'qr', 'storeCredit'];
 const money = (c) => 'R ' + (c / 100).toFixed(2);
 const idOk = (id) => /^[\w:.-]{8,80}$/.test(id);
 
@@ -58,24 +57,6 @@ async function loadOrder(ctx, id) {
   const so = await getDoc('specialOrders', id);
   if (!so || so.entityId !== ctx.entityId) throw new Reject(404, 'No such special order here.');
   return { ...so, id };
-}
-// money on an order, so that none can go missing: cash only at an open register (it is counted in that
-// drawer's cash-up); a card payment with the approval code and the last 4 from the slip; EFT and QR
-// recorded as awaiting the bank until a manager confirms them against the statement. Only confirmed
-// money (t.confirmed) reduces the balance; t.awaiting waits.
-function moneyNow(ctx, tenders, total, customer) {
-  const t = prepareTenders(ctx, tenders, { total, customer, partial: true });
-  if (!(t.paid > 0)) throw new Reject(400, 'How much is being paid?');
-  const bad = t.pays.find(p => !NOW_METHODS.includes(p.method));
-  if (bad) throw new Reject(400, 'Pay a special order with cash, card, EFT, QR or store credit.');
-  for (const p of t.pays) {
-    if (p.method === 'cash' && !ctx.shiftId) throw new Reject(400, 'Cash on an order is taken at an open register, so it is counted in the cash-up. The office takes card or EFT.');
-    if (p.method === 'card' && !(p.approvalCode && /^\d{4}$/.test(p.cardLast4 || ''))) throw new Reject(400, 'A card payment needs the approval code and the last 4 digits from the slip.');
-    if (p.method === 'eft' || p.method === 'qr') { if (!p.ref) throw new Reject(400, `The ${p.method === 'eft' ? 'EFT' : 'QR'} reference, as it will show on the bank statement.`); p.status = 'awaiting'; }
-  }
-  t.confirmed = t.pays.filter(p => p.status !== 'awaiting').reduce((n, p) => n + p.amountCents, 0);
-  t.awaiting = t.paid - t.confirmed;
-  return t;
 }
 const payIds = (pays, firstId) => pays.map((p, i) => i === 0 && firstId ? firstId : randomId('pay_'));
 const payRows = (ctx, so, pays, instalment, ids, stamp, now) => pays.map((p, i) => ({ create: true, coll: 'payments', id: ids[i], data: { docType: 'specialOrder', docId: so.id, docNo: so.docNo, instalment, registerId: ctx.registerId || '', shiftId: ctx.shiftId || '', ...p, ...stamp, serverReceivedAt: now } }));
@@ -100,7 +81,7 @@ async function invoiceOrder(ctx, so, saleId, patchOf, auditAction, auditMore = {
   if (!idOk(saleId)) throw new Reject(400, 'The sale has no id.');
   const body = {
     clientCreatedAt: nowIso(), customerId: so.customerId, specialOrderOf: so.docNo, note: 'Special order ' + so.docNo,
-    lines: so.lines.map(l => ({ productId: l.productId, variantId: l.variantId, qty: l.qty, unitPriceCents: l.unitPriceCents, discountCents: l.discountCents, discountPct: l.discountPct, discountReason: l.discountReason, note: [l.note, ...specNote(l.spec)].filter(Boolean).join(' · ').slice(0, 200), custom: l.custom, name: l.name, vatClass: l.vatClass })),
+    lines: so.lines.map(l => ({ productId: l.productId, variantId: l.variantId, qty: l.qty, unitPriceCents: l.unitPriceCents, discountCents: l.discountCents, discountPct: l.discountPct, discountReason: l.discountReason, note: [l.note, ...specNote(l.spec)].filter(Boolean).join(' · ').slice(0, 200), custom: l.custom, name: l.name, vatClass: l.vatClass, spec: l.spec || null, mto: l.type === 'mto' || l.fulfilment === 'mto' })),
     saleDiscountCents: so.saleDiscountCents, saleDiscountPct: so.saleDiscountPct, saleDiscountReason: so.saleDiscountReason, tenders: []
   };
   const prep = await prepareSale(ctx, body, { trusted: 'Special order ' + so.docNo, prepaid: { method: 'specialOrder', docNo: so.docNo, amountCents: so.totalCents } });

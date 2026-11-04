@@ -10,6 +10,7 @@
 //
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
 import { json, Reject, clean, getDoc, query, loginOf, loadUser, inEntity, inStore, rank, bodyOf, withGroup } from './lib/pos.mjs';
+import { statementOf } from './lib/account.mjs';
 import { expectedBy } from '../../pos/js/layby-terms.js';
 
 const METHODS = ['cash', 'card', 'eft', 'qr', 'voucher', 'storeCredit', 'account', 'points', 'creditNote', 'layby', 'specialOrder'];
@@ -203,6 +204,19 @@ const reports = {
     }
     const counted = rows.filter(r => r.state === 'paid' || r.state === 'confirmed' || r.state === 'refund');
     return { title: 'Order payments', columns: [col('at', 'When', 'time'), col('docNo', 'Order'), col('customer', 'Customer'), col('store', 'Store'), col('register', 'Register'), col('staff', 'Taken by'), col('method', 'Method'), col('amount', 'Amount', 'cents'), col('state', 'State'), col('ref', 'Reference'), col('confirmedBy', 'Confirmed by'), col('orderStatus', 'Order now'), col('balance', 'Still owed', 'cents')], rows, totals: { amount: sum(counted, 'amount') } };
+  },
+  // who owes the company on account, and for how long: payments settle the oldest invoices first, so what is left
+  // sits on the newest ones; an opening balance taken on from the old system counts as over 90 days
+  async debtors(w, b, stores) {
+    const cs = (await query('customers', [{ field: 'entityId', value: w.entityId }], 10000)).filter(c => !c.mergedInto && ((c.accountBalanceCents || 0) > 0 || (c.accountAwaitingCents || 0) > 0 || c.accountEnabled));
+    const rows = [];
+    for (const c of cs) {
+      const st = await statementOf(w.entityId, c);
+      rows.push({ name: c.anonymised ? 'Anonymised' : c.name, phone: c.phone || '', limit: c.creditLimitCents || 0, owes: c.accountBalanceCents || 0, awaiting: c.accountAwaitingCents || 0, current: st.ageing.current, d30: st.ageing.d30, d60: st.ageing.d60, d90: st.ageing.d90, lastInvoice: dayOf(st.lastInvoiceAt), lastPayment: dayOf(st.lastPaymentAt), over: (c.accountBalanceCents || 0) > (c.creditLimitCents || 0) ? 'over limit' : '' });
+    }
+    rows.sort((x, y) => y.owes - x.owes);
+    return { title: 'Debtors (accounts owed)', columns: [col('name', 'Customer'), col('phone', 'Cell'), col('limit', 'Limit', 'cents'), col('owes', 'Owes', 'cents'), col('awaiting', 'Awaiting the bank', 'cents'), col('current', 'Current', 'cents'), col('d30', '31–60 days', 'cents'), col('d60', '61–90 days', 'cents'), col('d90', 'Over 90 days', 'cents'), col('lastInvoice', 'Last invoice', 'date'), col('lastPayment', 'Last payment', 'date'), col('over', '')],
+      rows, totals: { owes: sum(rows, 'owes'), awaiting: sum(rows, 'awaiting'), current: sum(rows, 'current'), d30: sum(rows, 'd30'), d60: sum(rows, 'd60'), d90: sum(rows, 'd90') } };
   },
   async customers(w, b, stores, from, to) {
     const cs = (await query('customers', [{ field: 'entityId', value: w.entityId }], 10000)).filter(c => !c.mergedInto);
