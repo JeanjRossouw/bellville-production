@@ -9,10 +9,13 @@
 //   blocks     { deviceId, secret } | (login) → the till's open number blocks, the next issued early when few remain
 //   voidNumber { seq, reason }   a number taken offline for a sale that was then refused
 //   voucher    { code, entityId } → { balanceCents, status }
+//   fixDetails { saleId, customer { name, phone, email, vatNo, address }, reason, approvalToken? }
+//              a manager (or a manager's PIN): who the invoice is made out to, put right. The lines, the money and
+//              the number never change; the earlier details stay on the sale and the correction shows on the print
 //
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
 import { json, Reject, clean, nowIso, getDoc, query, commit, beginTransaction, rollback, serverStamp, createDoc, patchDoc, bodyOf, audit, withGroup } from './lib/pos.mjs';
-import { whoAndWhere, prepareSale, runSale, int, pad6, blockId, BLOCK_SIZE_DEFAULT, specNote, markQuoteUsed } from './lib/sale.mjs';
+import { whoAndWhere, prepareSale, runSale, int, pad6, blockId, BLOCK_SIZE_DEFAULT, specNote, markQuoteUsed, approved, snapshotOf, sameSnapshot } from './lib/sale.mjs';
 import { specialSettings } from '../../pos/js/special-terms.js';
 
 const actions = {
@@ -83,6 +86,27 @@ const actions = {
     const vd = await getDoc('vouchers', code);
     if (!vd || vd.entityId !== ctx.entityId) throw new Reject(404, 'No such voucher here.');
     return { ok: true, code, balanceCents: vd.balanceCents, status: vd.status, expiresAt: vd.expiresAt || '' };
+  },
+
+  // an invoice is final: only who it is made out to can be put right (a misspelt name, the VAT number left off, the
+  // address a full tax invoice needs). A manager, or a cashier with a manager's PIN, with a reason; the earlier
+  // details are kept on the sale, the change is audited, and the print says when the details were corrected.
+  async fixDetails(event, b) {
+    const ctx = await whoAndWhere(event, b, { noShift: true });
+    const a = approved(ctx, b.approvalToken, 'sale', 'manager', 'Changing the details on an invoice');
+    const saleId = clean(b.saleId, 80);
+    const sale = await getDoc('sales', saleId);
+    if (!sale || sale.entityId !== ctx.entityId) throw new Reject(404, 'No such sale here.');
+    const reason = clean(b.reason, 200);
+    if (!reason) throw new Reject(400, 'Say why the details change.');
+    const next = snapshotOf(b.customer);
+    if (!next.name) throw new Reject(400, 'The customer needs a name.');
+    if (sale.customerSnapshot && sameSnapshot(sale.customerSnapshot, next)) throw new Reject(400, 'Nothing changed.');
+    const now = nowIso();
+    const fixes = [...(sale.detailsFixes || []), { at: now, byUid: a.uid, byName: a.name, reason, before: sale.customerSnapshot || null }].slice(-20);
+    await patchDoc('sales', saleId, { customerSnapshot: next, detailsFixedAt: now, detailsFixes: fixes });
+    await audit({ action: 'sale.fixDetails', docType: 'sale', docId: saleId, docNo: sale.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, overrideUid: a.self ? '' : a.uid, overrideName: a.self ? '' : a.name, details: { reason, before: sale.customerSnapshot || null, after: next }, entityId: ctx.entityId, storeId: ctx.storeId || '', deviceId: ctx.deviceId || 'web' });
+    return { ok: true, sale: { ...sale, id: saleId, customerSnapshot: next, detailsFixedAt: now, detailsFixes: fixes } };
   }
 };
 

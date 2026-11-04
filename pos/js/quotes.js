@@ -8,10 +8,14 @@
 // in the cart at the quoted prices: Pay makes it a sale, Sales order takes a
 // deposit. The server holds those prices only while the quote is open and in
 // date, for the same items and fabric, and marks it used once the sale or the
-// order is written. Only the server writes quotes.
+// order is written. Edit loads an open quote back into the cart to change;
+// Quote then saves it over the same number as the next revision (the earlier
+// total kept under revisions, valid again from today). Only the server
+// writes quotes.
 //
 //   quotes/<id>  { entityId, storeId, series: 'QT', docNo, customerId, customerSnapshot, lines (as a sale's,
-//                  with the spec), totals, validUntil, status: open|used|cancelled, usedAs, note, stamps }
+//                  with the spec), totals, validUntil, status: open|used|cancelled, usedAs, note,
+//                  revision (1 unless changed), revisedAt, revisedBy, revisions [ { revision, at, byName, totalCents, validUntil, lines } ], stamps }
 import { API } from './config.js';
 import * as auth from './auth.js';
 import { esc, toast, field, row, val, openModal, money, niceDate, empty } from './ui.js';
@@ -35,38 +39,45 @@ const CHIP = { open: 'ok', expired: 'late', used: '', cancelled: 'off' };
 export function docOf(q) {
   const dd = d();
   const rows = [['Valid until', niceDate(q.validUntil)]];
+  if ((q.revision || 1) > 1) rows.push(['Revision', String(q.revision) + ' · ' + niceDate(q.revisedAt) + (q.revisedBy ? ' · ' + q.revisedBy : '')]);
   if (q.usedAs) rows.push(['Used for', (q.usedAs.kind === 'salesOrder' ? 'Sales order ' : 'Sale ') + q.usedAs.docNo]);
   const specs = (q.lines || []).filter(l => l.spec && specLines(l.spec).length).map(l => [l.name, specLines(l.spec).join(' · ')]);
   return { sale: { ...q, id: q.id, series: 'QT', docKind: 'quote', clientCreatedAt: q.quotedAt || q.createdAt, cashierName: q.cashierName,
-    refLabel: 'Quotation ' + q.docNo + (q.customerSnapshot && q.customerSnapshot.name ? ' · ' + q.customerSnapshot.name : ''),
+    refLabel: 'Quotation ' + q.docNo + ((q.revision || 1) > 1 ? ' rev ' + q.revision : '') + (q.customerSnapshot && q.customerSnapshot.name ? ' · ' + q.customerSnapshot.name : ''),
     sections: [{ title: 'This quotation', rows }, ...(specs.length ? [{ title: 'Made to order', rows: specs }] : [])],
     terms: 'Prices include VAT and hold until ' + niceDate(q.validUntil) + '. Made-to-order items are built once the order is placed and the deposit paid.' + (q.note ? ' ' + q.note : '') },
     lines: q.lines || [], payments: [], entity: dd.entity, store: dd.store, settings: dd.settings };
 }
 
 // ---------------------------------------------------------- a new quote --
-export function openNew(cart, t) {
+// openNew(cart, totals, clear): a new quote from the cart (the sale stays in the cart); or, when the cart was loaded
+// with Edit, the next revision of that quote (the cart is cleared once it is saved)
+export function openNew(cart, t, clear) {
   const dd = d();
-  const days = Number((dd.settings.quotes || {}).validDays) || 14;
+  const was = cart.revising && cart.quoteId ? (dd.quotes || []).find(q => q.id === cart.quoteId) : null;
+  const revising = !!was;
+  const days = (revising && Number(was.validDays)) || Number((dd.settings.quotes || {}).validDays) || 14;
   let busy = false;
-  const { wrap, close } = openModal('Quote' + (cart.customer ? ' for ' + cart.customer.name : ''), `
-    <p>${t.pieces} item${t.pieces === 1 ? '' : 's'} · <strong>${esc(money(t.totalCents))}</strong>, priced as on the sale (fabric and discounts included).</p>
+  const { wrap, close } = openModal(revising ? 'Save quote ' + was.docNo + ' as revision ' + ((was.revision || 1) + 1) : 'Quote' + (cart.customer ? ' for ' + cart.customer.name : ''), `
+    <p>${t.pieces} item${t.pieces === 1 ? '' : 's'} · <strong>${esc(money(t.totalCents))}</strong>, priced as on the sale (fabric and discounts included).${revising ? ` It replaces revision ${was.revision || 1} (${esc(money(was.totalCents))}); the number stays and it is valid again from today.` : ''}</p>
     ${cart.customer ? `<p class="muted">For ${esc(cart.customer.name)}${cart.customer.phone ? ' · ' + esc(cart.customer.phone) : ''}.</p>`
       : row(field('Customer’s name (optional)', 'qt-name', { placeholder: 'or add the customer to the sale first' }), field('Phone (for WhatsApp)', 'qt-phone', { inputmode: 'tel' }))}
-    ${row(field('Valid for (days)', 'qt-days', { value: days, inputmode: 'numeric' }), field('Note on the quote', 'qt-note', { placeholder: 'e.g. delivery in Bellville included' }))}`, {
-    okLabel: 'Make the quote', onOk: async () => {
+    ${row(field('Valid for (days)', 'qt-days', { value: days, inputmode: 'numeric' }), field('Note on the quote', 'qt-note', { value: revising ? was.note || '' : '', placeholder: 'e.g. delivery in Bellville included' }))}`, {
+    okLabel: revising ? 'Save revision ' + ((was.revision || 1) + 1) : 'Make the quote', onOk: async () => {
       if (busy) return false; busy = true;
       const body = {
-        quoteId: newId('qt'), clientCreatedAt: new Date().toISOString(), customerId: cart.customerId || '', customerName: val(wrap, 'qt-name'), customerPhone: val(wrap, 'qt-phone'),
+        quoteId: revising ? was.id : newId('qt'), clientCreatedAt: new Date().toISOString(), customerId: cart.customerId || '', customerName: val(wrap, 'qt-name') || (revising && !cart.customerId ? (was.customerSnapshot || {}).name || '' : ''), customerPhone: val(wrap, 'qt-phone') || (revising && !cart.customerId ? (was.customerSnapshot || {}).phone || '' : ''),
         validDays: Number(val(wrap, 'qt-days')) || days, note: val(wrap, 'qt-note'),
-        lines: cart.lines.map(l => ({ productId: l.productId, variantId: l.variantId, qty: l.qty, unitPriceCents: l.unitPriceCents, priceOverride: l.priceOverride ? { reason: l.priceOverride.reason, token: l.priceOverride.token } : null, discountCents: l.discountCents, discountPct: l.discountPct, discountReason: l.discountReason, discountToken: l.discountToken || '', note: l.note, custom: !!l.custom, name: l.name, vatClass: l.vatClass, spec: l.type === 'mto' && l.spec ? l.spec : null })),
+        lines: cart.lines.map(l => ({ quoteId: l.quote ? l.quote.id : '', quoteLine: l.quote ? l.quote.lineNo : 0, productId: l.productId, variantId: l.variantId, qty: l.qty, unitPriceCents: l.unitPriceCents, priceOverride: l.priceOverride ? { reason: l.priceOverride.reason, token: l.priceOverride.token } : null, discountCents: l.discountCents, discountPct: l.discountPct, discountReason: l.discountReason, discountToken: l.discountToken || '', note: l.note, custom: !!l.custom, name: l.name, vatClass: l.vatClass, spec: l.type === 'mto' && l.spec ? l.spec : null })),
         saleDiscountCents: cart.discountCents || 0, saleDiscountPct: cart.discountPct || 0, saleDiscountReason: cart.discountReason || '', saleDiscountToken: cart.discountToken || '', saleDiscountCode: cart.discountCode || '',
         totals: { totalCents: t.totalCents, vatCents: t.vatCents }, ...where()
       };
       try {
-        const r = await auth.api('quote', body, API.special);
+        const r = await auth.api(revising ? 'quoteRevise' : 'quote', body, API.special);
         close(true);
-        toast('Quote ' + r.quote.docNo + ' made, valid until ' + niceDate(r.quote.validUntil) + ' · the sale stays in the cart');
+        if (revising) { if (clear) clear(); toast('Quote ' + r.quote.docNo + ' saved as revision ' + r.quote.revision + ', valid until ' + niceDate(r.quote.validUntil)); }
+        else toast('Quote ' + r.quote.docNo + ' made, valid until ' + niceDate(r.quote.validUntil) + ' · the sale stays in the cart');
+        const list = dd.quotes || [], i = list.findIndex(q => q.id === r.quote.id); if (i >= 0) list[i] = { ...list[i], ...r.quote };
         openReceipt(docOf(r.quote));
         if (ctx.onChange) ctx.onChange(r);
         return true;
@@ -90,12 +101,12 @@ export function quotesHtml() {
       <span class="muted">A new quote starts from the cart under Sell: tap Quote.</span>
     </div>
     ${rows.length ? `<div class="card" style="padding:0;overflow:auto"><table class="tbl qt-tbl"><thead><tr><th>No</th><th>Customer</th><th>What</th><th>Valid until</th><th class="r">Total</th><th>Status</th><th></th></tr></thead>
-      <tbody>${rows.map(q => { const st = stateOf(q); return `<tr class="${st === 'open' ? '' : 'off'}"><td><strong>${esc(q.docNo)}</strong><div class="muted">${esc(niceDate(q.quotedAt || q.createdAt))} · ${esc(q.cashierName || '')}</div></td>
+      <tbody>${rows.map(q => { const st = stateOf(q); return `<tr class="${st === 'open' ? '' : 'off'}"><td><strong>${esc(q.docNo)}</strong>${(q.revision || 1) > 1 ? ` <span class="chip" title="Changed ${esc(niceDate(q.revisedAt))} by ${esc(q.revisedBy || '')}">rev ${q.revision}</span>` : ''}<div class="muted">${esc(niceDate(q.quotedAt || q.createdAt))} · ${esc(q.cashierName || '')}</div></td>
         <td>${esc((q.customerSnapshot && q.customerSnapshot.name) || '—')}${q.customerSnapshot && q.customerSnapshot.phone ? `<div class="muted">${esc(q.customerSnapshot.phone)}</div>` : ''}</td>
         <td>${(q.lines || []).map(l => `<div>${esc(l.qty + ' × ' + l.name)}${l.spec && l.spec.fabric ? ` <span class="muted">· ${esc(l.spec.fabric)}</span>` : ''}</div>`).join('')}</td>
         <td>${esc(niceDate(q.validUntil))}</td><td class="r"><strong>${esc(money(q.totalCents))}</strong></td>
         <td><span class="chip ${CHIP[st]}">${esc(LABEL[st])}</span>${q.accepted ? `<div><span class="chip ok">Accepted online</span></div><div class="muted">${esc(q.accepted.name)} · ${esc(niceDate(q.accepted.at))}</div>` : ''}${q.usedAs ? `<div class="muted">${esc(q.usedAs.docNo)}</div>` : ''}</td>
-        <td class="btn-row" style="margin:0;flex-wrap:nowrap">${`<button class="btn ghost sm" data-act="qt-print" data-id="${esc(q.id)}">Print / send</button>`}${st === 'open' && !q.accepted ? `<button class="btn ghost sm" data-act="qt-link" data-id="${esc(q.id)}">Send link to accept</button>` : ''}${st === 'open' ? `<button class="btn primary sm" data-act="qt-load" data-id="${esc(q.id)}">Load into the sale</button><button class="btn ghost sm" data-act="qt-cancel" data-id="${esc(q.id)}">Cancel</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`
+        <td class="btn-row" style="margin:0;flex-wrap:nowrap">${`<button class="btn ghost sm" data-act="qt-print" data-id="${esc(q.id)}">Print / send</button>`}${st === 'open' && !q.accepted ? `<button class="btn ghost sm" data-act="qt-link" data-id="${esc(q.id)}">Send link to accept</button>` : ''}${st === 'open' ? `<button class="btn primary sm" data-act="qt-load" data-id="${esc(q.id)}">Load into the sale</button>` : ''}${st === 'open' || st === 'expired' ? `<button class="btn ghost sm" data-act="qt-edit" data-id="${esc(q.id)}" title="Change it in the cart and save it as the next revision, same number">Edit</button>` : ''}${st === 'open' ? `<button class="btn ghost sm" data-act="qt-cancel" data-id="${esc(q.id)}">Cancel</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`
       : empty(qt.filter === 'open' ? 'No open quotes' : 'Nothing here', qt.filter === 'open' ? 'Ring the items up under Sell (pick the fabric on a made-to-order item) and tap Quote.' : '')}`;
 }
 
@@ -106,6 +117,11 @@ export async function action(act, b) {
   if (act === 'qt-load') {
     if ((d().cartLines || 0) && !confirm('The sale in the cart is replaced by quote ' + q.docNo + '. Go ahead?')) return;
     if (ctx.onLoad(q)) toast('Quote ' + q.docNo + ' is in the sale at its quoted prices: Pay, or tap Sales order for a deposit.');
+    return;
+  }
+  if (act === 'qt-edit') {
+    if ((d().cartLines || 0) && !confirm('The sale in the cart is replaced by quote ' + q.docNo + '. Go ahead?')) return;
+    if (ctx.onLoad(q, { revise: true })) toast('Quote ' + q.docNo + ' is in the cart: change what you need, then tap Quote to save it as revision ' + ((q.revision || 1) + 1) + '.' + (stateOf(q) === 'expired' ? ' It had expired, so today’s prices apply.' : ''));
     return;
   }
   if (act === 'qt-cancel') {

@@ -26,6 +26,7 @@ const H = { Authorization: 'Bearer owner', 'content-type': 'application/json' };
 const put = (p, data) => fetch(`${docs}/${p}`, { method: 'PATCH', headers: H, body: JSON.stringify({ fields: toFs(data).mapValue.fields }) });
 const patch = (p, data) => fetch(`${docs}/${p}?` + Object.keys(data).map(k => 'updateMask.fieldPaths=' + k).join('&'), { method: 'PATCH', headers: H, body: JSON.stringify({ fields: toFs(data).mapValue.fields }) });
 const one = async (p) => { const r = await (await fetch(`${docs}/pos/retail/${p}`, { headers: H })).json(); return r.fields ? fromFs({ mapValue: { fields: r.fields } }) : null; };
+const listColl = async (coll) => { const r = await (await fetch(`${docs}/pos/retail/${coll}?pageSize=300`, { headers: H })).json(); return (r.documents || []).map(d => ({ id: d.name.split('/').pop(), ...Object.fromEntries(Object.entries(d.fields || {}).map(([k, x]) => [k, fromFs(x)])) })); };
 const srv = (e, s = '') => ({ entityId: e, storeId: s, createdBy: 'server', createdAt: '2026-10-01T08:00:00.000Z', deviceId: 'server' });
 await fetch(`${FS}/emulator/v1/projects/${PID}/databases/(default)/documents`, { method: 'DELETE' });
 await fetch(`${AU}/emulator/v1/projects/${PID}/accounts`, { method: 'DELETE' });
@@ -102,6 +103,22 @@ R.c4 = await call('pos-special', { action: 'quoteCancel', quoteId: R.q4.quote.id
 R.c4b = await call('pos-special', { action: 'quoteCancel', quoteId: R.q4.quote.id, reason: 'again', ...bell });
 check('a quote cancelled, once', R.c4.ok && R.c4.quote.status === 'cancelled' && (await one('quotes/' + R.q4.quote.id)).cancelReason === 'Customer bought elsewhere' && R.c4b.status === 409, [R.c4, R.c4b]);
 
+// ---- changed: the next revision over the same number, valid again from today; the earlier total kept
+R.q5 = await call('pos-special', quoteBody([sofaLine(2304100), cushLine(25000)], 2354100, { customerId: 'c1', note: 'First go' }));
+const Q5 = R.q5.quote;
+const revBody = (o = {}) => ({ ...quoteBody([sofaLine(2304100, { quoteId: Q5.id, quoteLine: 1 }), cushLine(25000, { quoteId: Q5.id, quoteLine: 2, qty: 4 })], 2404100, { customerId: 'c1', note: 'Four cushions', validDays: 10 }), action: 'quoteRevise', quoteId: Q5.id, ...o });
+R.rev = await call('pos-special', revBody());
+const Q5r = R.rev.quote;
+check('revised: the same number, revision 2, four cushions, valid 10 days from today, revision 1 kept under it', R.rev.ok && Q5r.docNo === Q5.docNo && Q5r.revision === 2 && Q5r.totalCents === 2404100 && Q5r.lines[1].qty === 4 && Q5r.validUntil === day(10) && Q5r.note === 'Four cushions' && Q5r.status === 'open' && Q5r.revisions.length === 1 && Q5r.revisions[0].revision === 1 && Q5r.revisions[0].totalCents === 2354100 && Q5r.revisions[0].lines.length === 2 && Q5r.revisedBy === 'Cathy', R.rev.error || Q5r);
+const q5db = await one('quotes/' + Q5.id);
+check('written so, and no new number was taken', q5db.revision === 2 && q5db.totalCents === 2404100 && (await one('counters/BF_QT')).next === 7, [q5db.revision, q5db.totalCents]);
+await patch('pos/retail/products/p_sofa', { priceCents: 1010000 });
+R.revSale = await call('pos-sale', saleBody([sofaLine(2304100, { quoteId: Q5.id, quoteLine: 1 }), cushLine(25000, { quoteId: Q5.id, quoteLine: 2, qty: 4 })], 2404100, { quoteId: Q5.id }));
+check('the revised quote prices the sale after the price went up', R.revSale.ok && R.revSale.sale.totalCents === 2404100, R.revSale.error || R.revSale.sale);
+R.revUsed = await call('pos-special', revBody()); check('a used quote cannot change', R.revUsed.status === 409 && /used/.test(R.revUsed.error), R.revUsed);
+R.revCancelled = await call('pos-special', revBody({ quoteId: R.q4.quote.id })); check('nor a cancelled one', R.revCancelled.status === 409, R.revCancelled);
+check('the revision audited', (await listColl('auditLog')).some(a => a.action === 'quote.revise' && a.docNo === Q5.docNo && a.details.revision === 2 && a.details.wasCents === 2354100), 'no quote.revise row');
+
 // ---- on the till
 await patch('pos/retail/products/p_sofa', { priceCents: 900000 });
 const b = await chromium.launch({ ...(process.env.CHROME ? { executablePath: process.env.CHROME } : {}), args: ['--no-sandbox'] });
@@ -130,17 +147,35 @@ check('a sales order needs the customer, said so', /A sales order needs the cust
 await p.click('[data-act=sl-quote]'); await p.waitForSelector('#qt-days');
 await p.fill('#qt-name', 'Pieter Visser'); await p.fill('#qt-phone', '0834445555'); await p.click('#modal-ok');
 await p.waitForSelector('.rc-paper', { timeout: 15000 }); R.rc = await txt('#modal');
-check('the Quotation shows: number, the fabric, valid until', /Quotation BF-QT-000006/i.test(R.rc) && /R 22,041\.00/.test(R.rc) && /Acapella/.test(R.rc) && /Valid until/i.test(R.rc), R.rc.slice(0, 600));
+check('the Quotation shows: number, the fabric, valid until', /Quotation BF-QT-000007/i.test(R.rc) && /R 22,041\.00/.test(R.rc) && /Acapella/.test(R.rc) && /Valid until/i.test(R.rc), R.rc.slice(0, 600));
 await p.click('[data-close]'); await p.waitForTimeout(300);
 check('the sale stays in the cart', (await cartLine()).lines.length === 1);
 await nav('quotes');
 R.list = await txt('#screen');
-check('Quotes: the new one open, the used one under Used', /BF-QT-000006/.test(R.list) && /Pieter Visser/.test(R.list) && /1 × Chesterfield 3 Seater · Acapella/.test(R.list) && !/BF-QT-000001/.test(R.list), R.list.slice(0, 600));
+check('Quotes: the new one open, the used one under Used', /BF-QT-000007/.test(R.list) && /Pieter Visser/.test(R.list) && /1 × Chesterfield 3 Seater · Acapella/.test(R.list) && !/BF-QT-000001/.test(R.list), R.list.slice(0, 600));
 await patch('pos/retail/products/p_sofa', { priceCents: 960000 }); await p.waitForTimeout(800);
 await p.click('[data-act=qt-load]'); await p.waitForTimeout(800); R.loaded = await toast();
 const c = await cartLine();
-check('loaded into the sale at the quoted price, with the fabric and the quote', /is in the sale at its quoted prices/.test(R.loaded) && c.quoteId && c.lines[0].unitPriceCents === 2204100 && c.lines[0].listPriceCents === 2264100 && c.lines[0].spec.fabricId === 'f_acap' && c.lines[0].quote.docNo === 'BF-QT-000006', [R.loaded, c.lines[0]]);
-check('the line says quoted', /quoted BF-QT-000006/i.test(await txt('.pos-cart')));
+check('loaded into the sale at the quoted price, with the fabric and the quote', /is in the sale at its quoted prices/.test(R.loaded) && c.quoteId && c.lines[0].unitPriceCents === 2204100 && c.lines[0].listPriceCents === 2264100 && c.lines[0].spec.fabricId === 'f_acap' && c.lines[0].quote.docNo === 'BF-QT-000007', [R.loaded, c.lines[0]]);
+check('the line says quoted', /quoted BF-QT-000007/i.test(await txt('.pos-cart')));
+check('the cart says where it came from', /From quote BF-QT-000007 at its prices/.test(await txt('.pos-cart')));
+
+// ---- Edit: the quote back in the cart to change, Quote saves it as revision 2 over the same number
+await nav('quotes');
+await p.click('[data-act=qt-edit]'); await p.waitForTimeout(800); R.editToast = await toast();
+check('Edit loads it to change, and says how to save', /BF-QT-000007 is in the cart: change what you need, then tap Quote to save it as revision 2/.test(R.editToast), R.editToast);
+check('the cart says it is editing the quote', /Editing quote BF-QT-000007/.test(await txt('.pos-cart')) && (await cartLine()).revising === true);
+await p.click('[data-act=sl-qty][data-i="0"][data-d="1"]'); await p.waitForTimeout(300);
+await p.click('[data-act=sl-quote]'); await p.waitForSelector('#qt-days'); R.revModal = await txt('#modal');
+check('the window: save as revision 2, replacing revision 1', /Save quote BF-QT-000007 as revision 2/i.test(R.revModal) && /replaces revision 1 \(R 22,041\.00\)/.test(R.revModal) && /R 44,082\.00/.test(R.revModal), R.revModal.slice(0, 400));
+await p.click('#modal-ok'); await p.waitForSelector('.rc-paper', { timeout: 15000 }); R.revToast = await toast(); R.revRc = await txt('#modal');
+check('saved: the Quotation says rev 2, two sofas at the quoted price', /saved as revision 2/.test(R.revToast) && /Quotation BF-QT-000007 rev 2/i.test(R.revRc) && /R 44,082\.00/.test(R.revRc) && /Revision 2/.test(R.revRc), [R.revToast, R.revRc.slice(0, 500)]);
+await p.click('[data-close]'); await p.waitForTimeout(300);
+check('the cart is cleared once the revision is saved', (await cartLine()).lines.length === 0);
+await nav('quotes'); R.list2 = await txt('#screen');
+check('the list: one quote, marked rev 2, at the new total', /BF-QT-000007/.test(R.list2) && /rev 2/i.test(R.list2) && /R 44,082\.00/.test(R.list2) && !/BF-QT-000008/.test(R.list2), R.list2.slice(0, 500));
+const q7 = (await listColl('quotes')).find(q => q.docNo === 'BF-QT-000007');
+check('written as revision 2 with revision 1 kept', q7.revision === 2 && q7.totalCents === 4408200 && q7.revisions.length === 1 && q7.revisions[0].totalCents === 2204100 && q7.lines[0].priceOverride && q7.lines[0].priceOverride.reason === 'Quote BF-QT-000007', q7 && [q7.revision, q7.totalCents, q7.lines[0].priceOverride]);
 
 check('no page errors', errs.length === 0, errs);
 await b.close(); if (server) server.kill();

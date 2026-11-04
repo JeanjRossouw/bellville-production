@@ -21,6 +21,12 @@
 //   cancel    { orderId, kind, reason, feeCents, refunds: [ { method, amountCents, ref } ], approvalToken? }   a manager
 //   quote     { quoteId, customerId?, lines [ sale lines + spec ], saleDiscount…, totals, validDays?, note, + where } → a numbered quotation
 //   quoteCancel { quoteId, reason }                                         an open quote withdrawn
+//   quoteRevise { quoteId, lines…, validDays?, note, + where }           an open quote changed: the cart priced afresh and saved over it as
+//                                                                       the next revision (same number; the earlier total kept; valid again from today)
+//   edit      { orderId, customer?, expectedAt?, note?, lines? [ { lineNo, colour, legs, notes } ], reason, approvalToken? }
+//             an open order's details put right: the customer's contact details and address, the expected date and the note by anyone;
+//             a line's colour, legs and notes by a supervisor while nothing has gone to the factory. The items, the model, size and
+//             fabric (they set the price) and the money never change: that is a cancellation and a new order
 //   (a sale or an order may carry quoteId and each line quoteId + quoteLine: the quoted price stands while the quote is open and valid)
 //
 // The factory (Factory Manager, the same Firebase project): once the deposit
@@ -38,7 +44,7 @@ import { factoryCfg, listCompanies, companyNamed, noteHandover } from './lib/fac
 import { ensureTrack, trackUrl } from './lib/track.mjs';
 import { completeDelivery, newDriverLink, driverUrl, signatureOk } from './lib/delivery.mjs';
 import { pushToFactory as pushBridge, syncFromFactory as syncBridge, cancelAtFactory } from './lib/factory-bridge.mjs';
-import { whoAndWhere, prepareSale, prepareTenders, runSale, nextFromCounter, approved, int, specOf, specNote, markQuoteUsed, saDay } from './lib/sale.mjs';
+import { whoAndWhere, prepareSale, prepareTenders, runSale, nextFromCounter, approved, int, specOf, specNote, markQuoteUsed, saDay, snapshotOf, sameSnapshot } from './lib/sale.mjs';
 import { pctOf } from '../../pos/js/money.js';
 import { specialSettings, signoffText, updateText, NEXT, STATUSES, SPEC_FIELDS, CANCEL_KINDS } from '../../pos/js/special-terms.js';
 
@@ -238,6 +244,89 @@ const actions = {
     await patchDoc('quotes', id, { status: 'cancelled', cancelledAt: now, cancelledBy: ctx.user.name, cancelReason: clean(b.reason, 200), updatedAt: now });
     await audit({ action: 'quote.cancel', docType: 'quote', docId: id, docNo: q.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, details: { reason: clean(b.reason, 200) }, entityId: ctx.entityId, storeId: ctx.storeId || '', deviceId: ctx.deviceId || 'web' });
     return { ok: true, quote: { ...q, id, status: 'cancelled', cancelledAt: now, cancelledBy: ctx.user.name } };
+  },
+
+  // an open quote changed: the cart (loaded from the quote and altered) priced afresh by the server and saved over the
+  // quote as its next revision. The number stays; the earlier revision's total and lines are kept; it is valid again
+  // from today; an online acceptance of the earlier revision no longer stands. A used or cancelled quote cannot change.
+  async quoteRevise(event, b) {
+    const ctx = await whoAndWhere(event, b, { noShift: true });
+    const id = clean(b.quoteId, 80), had = await getDoc('quotes', id);
+    if (!had || had.entityId !== ctx.entityId) throw new Reject(404, 'No such quote here.');
+    if (had.status !== 'open') throw new Reject(409, `Quote ${had.docNo} is ${had.status}: it cannot change. Make a new quote.`);
+    const prep = await prepareSale(ctx, { ...b, quoteId: id }, { noTenders: true, spec: true, quote: true });
+    if (!(prep.total > 0)) throw new Reject(400, 'The quote comes to nothing.');
+    const days = Math.min(90, Math.max(1, int(b.validDays) || int(had.validDays) || int((ctx.settings.quotes || {}).validDays) || 14));
+    const customer = prep.customer;
+    const now = nowIso();
+    const revision = (had.revision || 1) + 1;
+    const kept = { revision: had.revision || 1, at: had.revisedAt || had.quotedAt || had.createdAt || '', byName: had.revisedBy || had.cashierName || '', totalCents: had.totalCents, validUntil: had.validUntil || '',
+      lines: (had.lines || []).map(l => ({ lineNo: l.lineNo, name: l.name, qty: l.qty, unitPriceCents: l.unitPriceCents, netCents: l.netCents != null ? l.netCents : l.lineTotalCents || 0, fabric: (l.spec && l.spec.fabric) || '' })) };
+    const patch = {
+      customerId: customer ? customer.id : had.customerId || '',
+      customerSnapshot: customer ? { name: customer.name, phone: customer.phone || '', email: customer.email || '', vatNo: customer.vatNo || '', address: customer.address || {} } : (clean(b.customerName, 120) ? { name: clean(b.customerName, 120), phone: clean(b.customerPhone, 30), email: '', vatNo: '', address: {} } : had.customerSnapshot || { name: '', phone: '', email: '', vatNo: '', address: {} }),
+      lines: prep.lines, lineCount: prep.lines.length, subtotalCents: prep.gross, lineDiscountCents: prep.lineDisc, saleDiscountCents: prep.saleDisc, saleDiscountPct: Number(b.saleDiscountPct) || 0, saleDiscountReason: clean(b.saleDiscountReason, 120),
+      totalCents: prep.total, vatCents: prep.vat, vatRateBp: prep.rateBp, vatRegistered: !!ctx.entity.vatRegistered,
+      validDays: days, validUntil: saDay(Date.now() + days * 86400000), note: clean(b.note, 300),
+      revision, revisedAt: now, revisedBy: ctx.user.name, revisions: [...(had.revisions || []), kept].slice(-20), accepted: null,
+      approvers: [...prep.approvers].map(([uid, name]) => ({ uid, name })), updatedAt: now
+    };
+    await patchDoc('quotes', id, patch);
+    await audit({ action: 'quote.revise', docType: 'quote', docId: id, docNo: had.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, overrideUid: [...prep.approvers.keys()][0] || '', overrideName: [...prep.approvers.values()][0] || '',
+      details: { revision, totalCents: prep.total, wasCents: had.totalCents, lines: prep.lines.length, validUntil: patch.validUntil }, entityId: ctx.entityId, storeId: ctx.storeId || '', deviceId: ctx.deviceId || 'web' });
+    return { ok: true, quote: { ...had, ...patch, id } };
+  },
+
+  // an open order's details put right. The customer's contact details and address, the expected date and the note:
+  // anyone at the till. A line's colour, legs and notes: a supervisor (or a PIN), only while nothing has gone to the
+  // factory, and the signed-off text stays as signed with the amendment under it. The items, the model, size and
+  // fabric, the price and the money never change here: that is a cancellation and a new order.
+  async edit(event, b) {
+    const ctx = await whoAndWhere(event, b, { noShift: true });
+    const so = await loadOrder(ctx, b.orderId);
+    if (!['quoted', 'depositPaid', 'inProduction', 'ready'].includes(so.status)) throw new Reject(409, `Order ${so.docNo} is ${so.status}: it cannot change.`);
+    const changes = [], patch = {};
+    if (b.customer) {
+      const next = snapshotOf(b.customer);
+      if (!next.name) throw new Reject(400, 'The customer needs a name.');
+      if (!sameSnapshot(so.customerSnapshot, next)) { patch.customerSnapshot = next; changes.push({ field: 'customer', before: [(so.customerSnapshot || {}).name, (so.customerSnapshot || {}).phone, (so.customerSnapshot || {}).email].filter(Boolean).join(' · '), after: [next.name, next.phone, next.email].filter(Boolean).join(' · ') }); }
+    }
+    if (b.expectedAt != null && b.expectedAt !== '') {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(b.expectedAt)) throw new Reject(400, 'The expected date is not a date.');
+      if (b.expectedAt !== so.expectedAt) { patch.expectedAt = b.expectedAt; changes.push({ field: 'expected', before: so.expectedAt || '', after: b.expectedAt }); }
+    }
+    if (b.note != null) { const n = clean(b.note, 300); if (n !== (so.note || '')) { patch.note = n; changes.push({ field: 'note', before: so.note || '', after: n }); } }
+    const specs = Array.isArray(b.lines) ? b.lines : [];
+    const lineChanges = [];
+    let by = null;
+    if (specs.length) {
+      const lines = so.lines.map(l => ({ ...l, spec: { ...(l.spec || {}) } }));
+      for (const s of specs) {
+        const l = lines.find(x => x.lineNo === int(s.lineNo));
+        if (!l) throw new Reject(400, `No line ${s.lineNo} on the order.`);
+        for (const k of ['colour', 'legs', 'notes']) {
+          if (s[k] == null) continue;
+          const v = clean(s[k], k === 'notes' ? 500 : 80);
+          if (v !== (l.spec[k] || '')) { lineChanges.push({ field: l.name + ': ' + k, before: l.spec[k] || '', after: v }); l.spec[k] = v; }
+        }
+      }
+      if (lineChanges.length) {
+        const atFactory = !!(so.factory && (so.factory.orders || []).length);
+        if (atFactory || !['quoted', 'depositPaid'].includes(so.status)) throw new Reject(409, `Order ${so.docNo} is ${atFactory ? 'at the factory' : 'being made'}: the specification cannot change now. Cancel it and open a new order.`);
+        by = approved(ctx, b.approvalToken, 'specialOrder', 'supervisor', 'Changing a signed-off specification');
+        patch.lines = lines;
+        changes.push(...lineChanges);
+      }
+    }
+    if (!changes.length) throw new Reject(400, 'Nothing changed.');
+    const now = nowIso();
+    const reason = clean(b.reason, 200);
+    patch.edits = [...(so.edits || []), { at: now, byUid: ctx.user.id, byName: ctx.user.name, reason, changes }].slice(-30);
+    if (lineChanges.length) patch.signoff = { ...(so.signoff || {}), amendments: [...((so.signoff || {}).amendments || []), { at: now, byName: by.name, reason, changes: lineChanges }].slice(-20) };
+    patch.updatedAt = now;
+    await patchDoc('specialOrders', so.id, patch);
+    await audit({ action: 'specialOrder.edit', docType: 'specialOrder', docId: so.id, docNo: so.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, overrideUid: by && !by.self ? by.uid : '', overrideName: by && !by.self ? by.name : '', details: { reason, changes }, entityId: ctx.entityId, storeId: ctx.storeId || '', deviceId: ctx.deviceId || 'web' });
+    return { ok: true, order: { ...so, ...patch } };
   },
 
   async pay(event, b) {

@@ -140,6 +140,7 @@ export function sellHtml() {
     <div class="pos-right"><div class="card pos-cart">
       <div class="pos-cart-title"><span>Current sale</span><span class="muted" style="letter-spacing:0;text-transform:none;font-weight:500">${esc(s.name)}</span></div>
       ${d().registerId && d().shiftKnown && !d().shiftOpen ? '<div class="notice-inline reg-closed">The register is closed. Open it under <strong>Register</strong> before selling.</div>' : ''}
+      ${c.quoteDocNo && c.lines.length ? `<div class="notice-inline quote-note">${c.revising ? 'Editing quote <strong>' + esc(c.quoteDocNo) + '</strong>: change what you need, then tap <strong>Quote</strong> to save the new revision.' : 'From quote <strong>' + esc(c.quoteDocNo) + '</strong> at its prices.'}</div>` : ''}
       <button class="pos-cust${c.customer ? ' set' : ''}" data-act="sl-customer"><span class="pos-cust-ico">${icon('user')}</span><span class="pos-cust-txt">${c.customer ? `<strong>${esc(c.customer.name)}</strong><span>${esc([c.customer.phone, c.customer.vatNo ? 'VAT ' + c.customer.vatNo : ''].filter(Boolean).join(' · ') || 'tap to change')}</span>` : '<strong>Add a customer</strong><span>Needed over R 5 000, for lay-bys and accounts</span>'}</span></button>
       <div class="pos-lines">${c.lines.length ? t.lines.map((l, i) => `<div class="pos-line" data-i="${i}">
         <div class="pos-line-top"><strong>${esc(l.name)}</strong><button class="pos-icon-btn light" data-act="sl-void-line" data-i="${i}" title="Remove this line">${icon('x')}</button></div>
@@ -203,7 +204,7 @@ export async function action(act, b) {
     }
     case 'sl-quote': {
       if (!c.lines.length || !ctx.onQuote) return;
-      return ctx.onQuote(c, totals());
+      return ctx.onQuote(c, totals(), () => { sale.cart = freshCart(); persist(); ctx.repaint(); });
     }
     case 'sl-layby': {
       if (!c.lines.length || !ctx.onLayby) return;
@@ -514,7 +515,7 @@ function voidSale() {
 export function clearCart() { sale.cart = freshCart(); persist(); }
 // a quote into the sale: its lines at the quoted prices, its discounts and its customer; the server holds the
 // till to those prices only while the quote is open and valid, and marks it used when the sale or the order is written
-export function loadQuote(q) {
+export function loadQuote(q, opts = {}) {
   const lines = [];
   for (const ql of q.lines || []) {
     const p = d().products.find(x => x.id === ql.productId) || null, v = p && ql.variantId ? d().variants.find(x => x.id === ql.variantId) || null : null;
@@ -528,7 +529,7 @@ export function loadQuote(q) {
     lines.push(l);
   }
   const cust = q.customerId ? (d().customers || []).find(x => x.id === q.customerId) || null : null;
-  sale.cart = { ...freshCart(), lines, customerId: cust ? cust.id : '', customer: cust, discountCents: q.saleDiscountCents || 0, discountPct: q.saleDiscountPct || 0, discountReason: q.saleDiscountReason || (q.saleDiscountCents ? 'Quote ' + q.docNo : ''), quoteId: q.id, quoteDocNo: q.docNo };
+  sale.cart = { ...freshCart(), lines, customerId: cust ? cust.id : '', customer: cust, discountCents: q.saleDiscountCents || 0, discountPct: q.saleDiscountPct || 0, discountReason: q.saleDiscountReason || (q.saleDiscountCents ? 'Quote ' + q.docNo : ''), quoteId: q.id, quoteDocNo: q.docNo, revising: !!opts.revise };
   persist(); ctx.repaint();
   return true;
 }

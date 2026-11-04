@@ -178,6 +178,7 @@ export async function action(act, b) {
   if (act === 'so-book') return book(id);
   if (act === 'so-deliver') return deliver(id);
   if (act === 'so-cancel') return cancel(id);
+  if (act === 'so-edit') return editDetails(id);
   if (act === 'so-print-order') { const o = one(id); if (o) openReceipt(docOf(o, 'order')); return; }
   if (act === 'so-print-delivery') { const o = one(id); if (o) openReceipt(docOf(o, 'delivery')); return; }
   if (act === 'so-print-cancel') { const o = one(id); if (o) openReceipt(docOf(o, 'cancel')); return; }
@@ -190,13 +191,15 @@ export function docOf(o, docKind, extra = {}) {
   const dd = d();
   const base = { ...o, id: o.id, series: 'SO', docKind, clientCreatedAt: o.openedAt, cashierName: o.cashierName, entity: dd.entity, store: dd.store, settings: dd.settings };
   const common = { entity: dd.entity, store: dd.store, settings: dd.settings };
-  if (docKind === 'order') return { sale: { ...base, docKind: o.status === 'quoted' ? 'quote' : 'order', terms: o.signoff.text, signature: o.signoff.signature, signedBy: o.signoff.signedBy, sections: [{ title: 'Payment', rows: [['Deposit to start', money(o.minDepositCents)], ['Paid', money(o.paidCents)], ['Balance before delivery', money(o.balanceCents), true], ['Expected', niceDate(o.expectedAt)]] }] }, lines: o.lines, payments: [], ...common, copy: !!extra.copy };
+  if (docKind === 'order') { const am = (o.signoff && o.signoff.amendments) || []; return { sale: { ...base, docKind: o.status === 'quoted' ? 'quote' : 'order', terms: o.signoff.text, signature: o.signoff.signature, signedBy: o.signoff.signedBy, sections: [{ title: 'Payment', rows: [['Deposit to start', money(o.minDepositCents)], ['Paid', money(o.paidCents)], ['Balance before delivery', money(o.balanceCents), true], ['Expected', niceDate(o.expectedAt)]] }, ...(am.length ? [{ title: 'Changed after sign-off', rows: am.map(x => [niceDate(x.at) + ' · ' + x.byName, changesText(x.changes)]) }] : [])] }, lines: o.lines, payments: [], ...common, copy: !!extra.copy }; }
   if (docKind === 'payment') { const aw = (extra.payments || []).some(p => p.status === 'awaiting'); return { sale: { ...base, clientCreatedAt: extra.at, cashierName: auth.session.user.name, noTotals: true, changeCents: extra.changeCents || 0, paidStatus: aw ? 'awaiting' : 'paid', refLabel: `Sales order ${o.docNo} · ${o.customerSnapshot.name}`, sections: [{ title: '', rows: [[aw ? 'Recorded, awaiting the bank' : 'Paid now', money(extra.amountCents), true], ['Paid so far', money(o.paidCents)], ...(o.awaitingCents ? [['Awaiting the bank', money(o.awaitingCents)]] : []), ['Balance', money(o.balanceCents), true], ['Status', STATUS_LABEL[o.status] || o.status]] }] }, lines: [], payments: extra.payments || [], ...common }; }
   if (docKind === 'delivery') { const dv = o.delivery || {}; const dn = o.deliveryNote; const kind = (dn && dn.kind) || dv.kind || (o.status === 'collected' ? 'collect' : 'deliver'); return { sale: { ...base, clientCreatedAt: (dn && dn.at) || new Date().toISOString(), cashierName: (dn && dn.byName) || dv.driverName || auth.session.user.name, noTotals: true, refLabel: kind === 'collect' ? 'Collected at ' + dd.store.name : 'Delivered to ' + (addr(dv.address) || addr(o.customerSnapshot.address)), sections: [{ title: '', rows: [...(dv.date ? [[kind === 'collect' ? 'Collection' : 'Delivery', niceDate(dv.date) + (dv.slot ? ' · ' + dv.slot : '')]] : []), ...(dv.driverName ? [['Driver', dv.driverName]] : []), ['Paid in full', money(o.paidCents)], ...(o.completedDocNo ? [['Tax invoice', o.completedDocNo]] : [])] }], ...(dn && dn.signature ? { signature: dn.signature, signedBy: dn.signedBy } : { signLine: 'I have received the goods above, made to my specification, in good order.' }) }, lines: o.lines, payments: [], ...common }; }
   return { sale: { ...base, clientCreatedAt: o.cancelledAt || new Date().toISOString(), cashierName: o.cancelledByName || auth.session.user.name, noTotals: true, refLabel: `Sales order ${o.docNo} · ${o.customerSnapshot.name} · ${kindLabel(o.cancelKind)}${o.cancelReason ? ' · ' + o.cancelReason : ''}`,
     sections: [{ title: 'Settlement', rows: [['Price', money(o.totalCents)], ['Paid in', money(o.paidCents)], ['Cancellation fee', money(o.feeCents || 0)], ...(o.feeReason ? [['Why', o.feeReason]] : []), ['Refunded', money(o.refundedCents || 0), true], ...(o.refunds || []).map(r => ['Refund by ' + (METHOD[r.method] || r.method), money(r.amountCents)])] }],
     terms: 'Goods made to the customer’s specification (Consumer Protection Act, section 20(2)(b)): once production has started the deposit covers the work and materials spent; before that nothing is charged.' }, lines: [], payments: [], ...common };
 }
+
+const changesText = (ch) => (ch || []).map(c => c.field + ': ' + (c.before || '—') + ' → ' + (c.after || '—')).join('; ');
 
 // --------------------------------------------------------------- new --
 // a photo from the phone, shrunk to fit in the order
@@ -313,6 +316,7 @@ function openDetail(id) {
           ${/^(delivered|collected)$/.test(o.status) ? `<p class="ok">${esc(STATUS_LABEL[o.status])} ${esc(niceDate(o.completedAt))} · tax invoice ${esc(o.completedDocNo || '')}${o.deliveryNote && o.deliveryNote.signedBy ? ' · signed by ' + esc(o.deliveryNote.signedBy) : ''}</p>` : ''}</div>
       </div>
       ${o.source === 'shopify' ? `<p class="muted">From Shopify order <strong>${esc((o.shopify || {}).name || '')}</strong>: the Shopify order is the tax invoice (the POS writes none); a refund is made on Shopify.</p>` : `<p class="muted">Specification signed off by ${esc(sg.signedBy || '')} on ${esc(niceDate(sg.acceptedAt))}: no change of mind once in production.</p>`}
+      ${(o.edits || []).length ? `<p class="muted so-edits">Details changed ${o.edits.length} time${o.edits.length === 1 ? '' : 's'}, last ${esc(niceDate(o.edits[o.edits.length - 1].at))} by ${esc(o.edits[o.edits.length - 1].byName)}: ${esc(changesText(o.edits[o.edits.length - 1].changes))}</p>` : ''}
       ${factoryLine(o)}
       ${OPEN.includes(o.status) && o.status !== 'quoted' && o.balanceCents > 0 ? `<p class="warn so-owed">${esc(money(o.balanceCents))} still owed: no delivery or collection until it is paid in full.</p>` : ''}
       ${['depositPaid', 'inProduction'].includes(o.status) ? `<p class="muted so-wait">Open until it is made: once it is <strong>Ready</strong> (and the balance is paid) it is handed over with the delivery note and the tax invoice.</p>` : ''}
@@ -330,12 +334,51 @@ function openDetail(id) {
         ${sup && canStatus('inProduction') ? `<button class="btn" data-act="so-status" data-to="inProduction" data-id="${esc(o.id)}">In production</button>` : ''}
         ${sup && canStatus('ready') ? `<button class="btn" data-act="so-status" data-to="ready" data-id="${esc(o.id)}">Ready</button>` : ''}
         ${OPEN.includes(o.status) && !['quoted', 'outForDelivery'].includes(o.status) ? `<button class="btn" data-act="so-book" data-id="${esc(o.id)}">${icon('truck')} ${dv ? 'Rebook' : 'Book delivery / collection'}</button>` : ''}
+        ${OPEN.includes(o.status) && o.status !== 'outForDelivery' ? `<button class="btn ghost" data-act="so-edit" data-id="${esc(o.id)}" title="The customer’s details, the expected date and the note; colour, legs and notes until it goes to the factory">Edit details</button>` : ''}
         ${OPEN.includes(o.status) && o.status !== 'outForDelivery' ? `<button class="btn ghost" data-act="so-cancel" data-id="${esc(o.id)}">Cancel order</button>` : ''}
         <button class="btn ghost" data-act="so-print-order" data-id="${esc(o.id)}">${icon('printer')} Order</button>
         ${dv || /^(delivered|collected)$/.test(o.status) ? `<button class="btn ghost" data-act="so-print-delivery" data-id="${esc(o.id)}">${icon('printer')} Delivery note</button>` : ''}
         ${o.status === 'cancelled' ? `<button class="btn ghost" data-act="so-print-cancel" data-id="${esc(o.id)}">${icon('printer')} Cancellation</button>` : ''}
       </div>
     </div>`, { okLabel: 'Close', cancelLabel: '', onOk: () => true });
+}
+// the details of an open order put right: the items, the price and the money stay as signed off
+function editDetails(id) {
+  const o = one(id); if (!o) return;
+  const c = o.customerSnapshot || {}, a = c.address || {};
+  const atFactory = !!(o.factory && (o.factory.orders || []).length);
+  const specOk = ['quoted', 'depositPaid'].includes(o.status) && !atFactory;
+  let busy = false;
+  openModal('Edit ' + o.docNo, `
+    <p class="muted">The items, the price and the money stay as signed off. ${specOk ? 'The colour, legs and notes of a line can still change until the order goes to the factory (a supervisor approves); the model, size and fabric set the price and cannot: that is a new order.' : 'The specification cannot change now: the order is ' + (atFactory ? 'at the factory.' : 'being made.')}</p>
+    ${row(field('Name', 'ed-name', { value: c.name || '' }), field('Phone', 'ed-phone', { value: c.phone || '', inputmode: 'tel' }))}
+    ${row(field('Email', 'ed-email', { value: c.email || '', type: 'email' }), field('VAT number', 'ed-vat', { value: c.vatNo || '' }))}
+    ${row(field('Address line 1', 'ed-line1', { value: a.line1 || '' }), field('Address line 2', 'ed-line2', { value: a.line2 || '' }))}
+    ${row(field('City', 'ed-city', { value: a.city || '' }), field('Postal code', 'ed-code', { value: a.code || '' }))}
+    ${row(field('Expected by', 'ed-expected', { type: 'date', value: o.expectedAt || '' }), field('Note on the order', 'ed-note', { value: o.note || '' }))}
+    ${specOk ? o.lines.map((l, i) => `<h3>${esc(l.qty + ' × ' + l.name)}</h3><p class="muted">${esc([l.spec && l.spec.size, l.spec && l.spec.fabric].filter(Boolean).join(' · ') || 'as the standard product')}</p>${row(field('Colour', 'ed-colour-' + i, { value: (l.spec && l.spec.colour) || '' }), field('Legs', 'ed-legs-' + i, { value: (l.spec && l.spec.legs) || '' }))}${field('Notes', 'ed-notes-' + i, { type: 'textarea', rows: 2, value: (l.spec && l.spec.notes) || '' })}`).join('') : ''}
+    ${field('Why', 'ed-reason', { placeholder: 'e.g. The client moved: new delivery address' })}`, {
+    okLabel: 'Save', onOk: async (w) => {
+      if (busy) return false;
+      if (!val(w, 'ed-name')) { toast('The customer needs a name.', 'warn'); return false; }
+      const body = { orderId: o.id, reason: val(w, 'ed-reason'), expectedAt: val(w, 'ed-expected'), note: val(w, 'ed-note'),
+        customer: { name: val(w, 'ed-name'), phone: val(w, 'ed-phone'), email: val(w, 'ed-email'), vatNo: val(w, 'ed-vat'), address: { line1: val(w, 'ed-line1'), line2: val(w, 'ed-line2'), city: val(w, 'ed-city'), code: val(w, 'ed-code') } },
+        lines: specOk ? o.lines.map((l, i) => ({ lineNo: l.lineNo, colour: val(w, 'ed-colour-' + i), legs: val(w, 'ed-legs-' + i), notes: val(w, 'ed-notes-' + i) })) : [], ...where() };
+      busy = true;
+      try {
+        let r;
+        try { r = await auth.api('edit', body, API.special); }
+        catch (e) {
+          if (e.status === 403 && /PIN/.test(e.message)) { const ap = await auth.requireOverride({ minRole: 'supervisor', action: 'specialOrder', docType: 'specialOrder', docId: o.id, details: { docNo: o.docNo, what: 'spec' }, text: e.message }); r = await auth.api('edit', { ...body, approvalToken: ap.token }, API.special); }
+          else throw e;
+        }
+        fresh(id, r); ctx.repaint();
+        toast(o.docNo + ' updated');
+        openDetail(id);
+        return true;
+      } catch (e) { busy = false; toast(noLine(e), 'warn'); return false; }
+    }
+  });
 }
 function fresh(id, r) { if (r && r.order) { const list = d().specials || []; const i = list.findIndex(x => x.id === id); if (i >= 0) list[i] = { ...list[i], ...r.order }; } return one(id) || (r && r.order); }
 const noLine = (e) => e.offline ? 'This needs the line: try again when connected.' : e.message;

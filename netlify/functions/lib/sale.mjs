@@ -129,6 +129,10 @@ async function quotedLine(ctx, l, p, v, cache) {
   return { q, ql };
 }
 
+// the customer's details as they go on a document (and as a correction gives them)
+export const snapshotOf = (c) => { c = c || {}; const a = c.address || {}; return { name: clean(c.name, 120), phone: clean(c.phone, 30), email: clean(c.email, 120), vatNo: clean(c.vatNo, 20), address: { line1: clean(a.line1, 120), line2: clean(a.line2, 120), city: clean(a.city, 60), code: clean(a.code, 12) } }; };
+export const sameSnapshot = (x, y) => JSON.stringify(snapshotOf(x)) === JSON.stringify(snapshotOf(y));
+
 // once a sale or a sales order is written from a quote, the quote is used (it does not price a second one)
 export async function markQuoteUsed(ctx, quoteId, kind, docNo) {
   const id = clean(quoteId, 80); if (!id) return;
