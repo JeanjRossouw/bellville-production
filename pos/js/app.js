@@ -26,6 +26,7 @@ import { openCostImport } from './costimport.js';
 import * as fabricsTab from './fabrics.js';
 import * as quotesTab from './quotes.js';
 import * as takeon from './takeon.js';
+import * as demo from './demo.js';
 import * as todo from './todo.js';
 import { EMULATOR } from './db.js';
 
@@ -346,7 +347,7 @@ function adminSubs() {
     { key: 'takeon', label: 'Take-on', show: false }   // the owner: the old system's customers, balances and stock
   ].filter(x => x.show || owner);
 }
-const adminData = () => ({ entities, stores, registers, users, devices, settings, editId, settingsEntity });
+const adminData = () => ({ entities, stores, registers, users, devices, settings, editId, settingsEntity, demoOk: !entities.length });
 const prData = () => ({ entities, stores, settings, products: catalogue, variants, suppliers, prEntity, prFilter });
 // the company whose products are on screen
 const prEntityId = () => { const t = document.querySelector('.pr-tbl'); if (t) return t.dataset.entity; const sel = document.getElementById('pr-entity'); if (sel) return sel.value; const mine = entities.filter(e => auth.inEntity(e.id)); return prEntity && mine.some(e => e.id === prEntity) ? prEntity : (mine[0] || {}).id || ''; };
@@ -586,6 +587,7 @@ async function onAction(e) {
   if (b.dataset.act === 'sync-drop') { if (confirm('Drop this refused sale from the till? It was never written; ring it up again if it should be.')) sync.dropFailed(id).then(showFailed); return; }
   if (b.dataset.act === 'sa-all') { salesTab.view.day = ''; return paint(); }
   switch (b.dataset.act) {
+    case 'demo-build': return demo.build();
     case 'entity-edit': editId = id; paint(); return;
     case 'entity-cancel': editId = ''; paint(); return;
     case 'entity-save': if (await admin.entitySave(w, adminData())) { editId = ''; paint(); } return;

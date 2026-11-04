@@ -18,7 +18,7 @@ import { json, Reject, clean, nowIso, getDoc, query, commit, beginTransaction, r
 import { whoAndWhere, prepareSale, runSale, int, pad6, blockId, BLOCK_SIZE_DEFAULT, specNote, markQuoteUsed, approved, snapshotOf, sameSnapshot } from './lib/sale.mjs';
 import { specialSettings } from '../../pos/js/special-terms.js';
 
-const actions = {
+export const actions = {
   async commit(event, b) {
     const ctx = await whoAndWhere(event, b);
     const saleId = clean(b.saleId, 80);
@@ -117,7 +117,7 @@ function salesOrderWrites(ctx, b, prep, s, saleId) {
   const now = nowIso();
   const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
   const ss = specialSettings(ctx.settings);
-  const expectedAt = /^\d{4}-\d{2}-\d{2}$/.test(b.expectedAt || '') ? b.expectedAt : new Date(Date.now() + ss.leadDays * 86400000).toISOString().slice(0, 10);
+  const expectedAt = /^\d{4}-\d{2}-\d{2}$/.test(b.expectedAt || '') ? b.expectedAt : new Date(Date.parse(nowIso()) + ss.leadDays * 86400000).toISOString().slice(0, 10);
   const lines = prep.lines.filter(l => l.fulfilment === 'mto').map(l => ({ lineNo: l.lineNo, productId: l.productId, variantId: l.variantId, itemId: l.itemId, name: l.name, qty: l.qty, unitPriceCents: l.unitPriceCents, netCents: l.netCents, note: noteGiven(l), spec: l.spec || null, cancelledQty: 0 }));
   const c = prep.customer;
   const doc = {

@@ -22,6 +22,8 @@ export const blockId = (entityId, series, deviceId, from) => `${entityId}_${seri
 // opts.noShift: the till's register need not have an open shift (customers, stock, buying: no money changes hands)
 // opts.shiftOptional: use the open shift if there is one (a refund at a till lands on its shift), otherwise none
 export async function whoAndWhere(event, b, opts = {}) {
+  // the server's own caller (pos-demo replaying a business): the context is made, not read from a login; a request can never carry this
+  if (event && event.__ctx) return { ...event.__ctx, lineNonces: new Set() };
   const login = await loginOf(event);
   if (!login) throw new Reject(401, 'Sign in first.');
   const user = await loadUser(login.sub);
@@ -114,7 +116,7 @@ export function approved(ctx, token, action, minRole, what) {
 }
 
 // a quote, while it is open and valid: its prices stand for the same items (the till names the quote and the line)
-export const saDay = (ms = Date.now()) => new Date(ms + 2 * 3600000).toISOString().slice(0, 10);
+export const saDay = (ms = Date.parse(nowIso())) => new Date(ms + 2 * 3600000).toISOString().slice(0, 10);
 async function quoteOf(ctx, id, cache) {
   id = clean(id, 80); if (!id) return null;
   if (!cache.has(id)) cache.set(id, await getDoc('quotes', id));
@@ -196,7 +198,8 @@ export async function markQuoteUsed(ctx, quoteId, kind, docNo) {
 export async function prepareSale(ctx, b, opts = {}) {
   const when = clean(b.clientCreatedAt, 40);
   const at = Date.parse(when);
-  if (!at || at > Date.now() + 5 * 60000 || at < Date.now() - 7 * 86400000) throw new Reject(400, 'The sale’s time is off: check the till’s clock.');
+  const serverNow = Date.parse(nowIso());   // the clock as the server sees it (turned back when the demo replays a day)
+  if (!at || at > serverNow + 5 * 60000 || at < serverNow - 7 * 86400000) throw new Reject(400, 'The sale’s time is off: check the till’s clock.');
   const rateBp = ctx.entity.vatRegistered ? rateOn((ctx.settings.vat || {}).rates, when) : 0;
   if (ctx.entity.vatRegistered && !rateBp) throw new Reject(400, 'No VAT rate is in force for that date: Admin → Settings → VAT.');
   const inLines = Array.isArray(b.lines) ? b.lines : [];

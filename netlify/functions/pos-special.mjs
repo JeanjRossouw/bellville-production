@@ -132,7 +132,7 @@ async function bankPayment(event, b, confirm) {
   } });
 }
 
-const actions = {
+export const actions = {
   async open(event, b) {
     const ctx = await whoAndWhere(event, b);
     const ss = specialSettings(ctx.settings);
@@ -155,7 +155,7 @@ const actions = {
     if (!sg.accepted || !signedBy) throw new Reject(400, 'The customer must check the specification and sign it off.');
     const signature = String(sg.signature || '').slice(0, 200000);
     if (signature && !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(signature)) throw new Reject(400, 'The signature is not a PNG.');
-    const expectedAt = /^\d{4}-\d{2}-\d{2}$/.test(b.expectedAt || '') ? b.expectedAt : new Date(Date.now() + ss.leadDays * 86400000).toISOString().slice(0, 10);
+    const expectedAt = /^\d{4}-\d{2}-\d{2}$/.test(b.expectedAt || '') ? b.expectedAt : new Date(Date.parse(nowIso()) + ss.leadDays * 86400000).toISOString().slice(0, 10);
     const paid = dep ? dep.confirmed : 0, awaiting = dep ? dep.awaiting : 0;
     const status = paid >= minDeposit && paid > 0 ? 'depositPaid' : 'quoted';
     const depIds = dep ? payIds(dep.pays, '') : [];
@@ -209,7 +209,7 @@ const actions = {
         customerSnapshot: customer ? { name: customer.name, phone: customer.phone || '', email: customer.email || '', vatNo: customer.vatNo || '', address: customer.address || {} } : { name: clean(b.customerName, 120), phone: clean(b.customerPhone, 30), email: '', vatNo: '', address: {} },
         lines: prep.lines, lineCount: prep.lines.length, subtotalCents: prep.gross, lineDiscountCents: prep.lineDisc, saleDiscountCents: prep.saleDisc, saleDiscountPct: Number(b.saleDiscountPct) || 0, saleDiscountReason: clean(b.saleDiscountReason, 120),
         totalCents: prep.total, vatCents: prep.vat, vatRateBp: prep.rateBp, vatRegistered: !!ctx.entity.vatRegistered,
-        validDays: days, validUntil: saDay(Date.now() + days * 86400000), status: 'open', note: clean(b.note, 300), quotedAt: prep.when,
+        validDays: days, validUntil: saDay(Date.parse(nowIso()) + days * 86400000), status: 'open', note: clean(b.note, 300), quotedAt: prep.when,
         cashierUid: ctx.user.id, cashierName: ctx.user.name, approvers: [...prep.approvers].map(([uid, name]) => ({ uid, name })), ...stamp, serverReceivedAt: now, updatedAt: now
       };
       const { id: _id, ...data } = q;
@@ -251,7 +251,7 @@ const actions = {
       customerSnapshot: customer ? { name: customer.name, phone: customer.phone || '', email: customer.email || '', vatNo: customer.vatNo || '', address: customer.address || {} } : (clean(b.customerName, 120) ? { name: clean(b.customerName, 120), phone: clean(b.customerPhone, 30), email: '', vatNo: '', address: {} } : had.customerSnapshot || { name: '', phone: '', email: '', vatNo: '', address: {} }),
       lines: prep.lines, lineCount: prep.lines.length, subtotalCents: prep.gross, lineDiscountCents: prep.lineDisc, saleDiscountCents: prep.saleDisc, saleDiscountPct: Number(b.saleDiscountPct) || 0, saleDiscountReason: clean(b.saleDiscountReason, 120),
       totalCents: prep.total, vatCents: prep.vat, vatRateBp: prep.rateBp, vatRegistered: !!ctx.entity.vatRegistered,
-      validDays: days, validUntil: saDay(Date.now() + days * 86400000), note: clean(b.note, 300),
+      validDays: days, validUntil: saDay(Date.parse(nowIso()) + days * 86400000), note: clean(b.note, 300),
       revision, revisedAt: now, revisedBy: ctx.user.name, revisions: [...(had.revisions || []), kept].slice(-20), accepted: null,
       approvers: [...prep.approvers].map(([uid, name]) => ({ uid, name })), updatedAt: now
     };

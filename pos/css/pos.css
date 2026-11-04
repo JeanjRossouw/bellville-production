@@ -456,3 +456,8 @@ button.link { background: none; border: 0; padding: 0; color: var(--ink-2); text
 .fb-pick-note { font-size: 12.5px; margin-top: .25rem; min-height: 1em; }
 .fb-how { display: grid; gap: .45rem; margin-bottom: .8rem; } .fb-how .chk { align-items: flex-start; } .fb-total { margin-top: .6rem; font-size: 15px; }
 .pos-line-disc .btn svg { width: 14px; height: 14px; vertical-align: -2px; }
+
+/* the demo business being built (Admin → Companies) */
+.dm-bar { height: 10px; background: #eee; border-radius: 5px; overflow: hidden; margin: 12px 0; }
+.dm-bar div { height: 100%; background: #111; transition: width .3s; }
+.demo-card { margin-top: 16px; }
