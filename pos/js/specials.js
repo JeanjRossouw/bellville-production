@@ -17,6 +17,7 @@ import { padHtml, wirePad } from './signpad.js';
 import { saveAddress } from './customers.js';
 import { sendLink } from './clientlink.js';
 import { icon } from './icons.js';
+import { METHOD, payMethods, proofFields, proofNote, tenderFrom, PAY_STATE } from './tender.js';
 
 export const so = { filter: 'open', q: '' };
 let ctx = { repaint() {}, data: () => ({}) };
@@ -27,21 +28,6 @@ const today = () => new Date().toISOString().slice(0, 10);
 const newId = (p) => p + '-' + (auth.deviceId() || 'web') + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
 const OPEN = ['quoted', 'depositPaid', 'inProduction', 'ready', 'outForDelivery'];
 const CHIP = { quoted: '', depositPaid: 'prod', inProduction: 'prod', ready: 'ok', delivered: '', collected: '', cancelled: 'off' };
-const METHOD = { cash: 'Cash', card: 'Card', eft: 'EFT', qr: 'QR', storeCredit: 'Store credit', shopify: 'Paid via Shopify' };
-// the ways an order can be paid here: cash only at an open register (it is counted in that drawer's cash-up)
-const payMethods = (dd, extra = []) => (dd.store.paymentMethods || ['cash', 'card']).filter(k => METHOD[k] && (k !== 'cash' || (dd.registerId && dd.shiftOpen)) && (k === 'storeCredit' ? extra.includes('storeCredit') : k !== 'storeCredit'));
-// the proof fields for a payment: the slip's approval code and last 4 for a card, the bank reference for EFT or QR
-const proofFields = (pre, method) => row(field(method === 'card' ? 'Approval code (on the slip)' : 'Reference (as on the bank statement)', pre + '-ref', { placeholder: method === 'card' ? 'e.g. 123456' : method === 'eft' ? 'the EFT reference' : 'the QR reference' }), field('Last 4 digits', pre + '-last4', { inputmode: 'numeric', placeholder: '1234' }));
-const proofNote = (method, cashOk) => method === 'eft' || method === 'qr' ? 'Recorded as awaiting the bank: a manager confirms it once it shows on the statement, and the order counts it paid from then.' : method === 'card' ? 'The approval code and last 4 digits are on the card slip.' : cashOk ? '' : 'Cash is taken at an open register.';
-// a tender from the pay fields, checked the way the server checks it
-function tenderFrom(wrap, pre, method, amount, cashOk) {
-  const tender = { method, amountCents: amount, ref: val(wrap, pre + '-ref') };
-  if (method === 'cash') { tender.tenderedCents = centsOf(val(wrap, pre + '-given')); if (tender.tenderedCents < amount) { toast('Cash given is short.', 'warn'); return null; } }
-  if (method === 'card') { tender.approvalCode = tender.ref; tender.cardLast4 = val(wrap, pre + '-last4').replace(/\D/g, '').slice(-4); if (!tender.approvalCode || tender.cardLast4.length !== 4) { toast('The approval code and the last 4 digits from the card slip.', 'warn'); return null; } }
-  if ((method === 'eft' || method === 'qr') && !tender.ref) { toast('The reference, as it will show on the bank statement.', 'warn'); return null; }
-  return tender;
-}
-const PAY_STATE = { awaiting: 'awaiting the bank', void: 'not received' };
 const kindLabel = (k) => (CANCEL_KINDS.find(x => x[0] === k) || [k, k])[1];
 const one = (id) => (d().specials || []).find(o => o.id === id);
 const addr = (a) => a ? [a.line1, a.line2, a.city, a.code].filter(Boolean).join(', ') : '';

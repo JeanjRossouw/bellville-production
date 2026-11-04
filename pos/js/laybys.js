@@ -145,7 +145,12 @@ export function openNew(cart, t, onDone) {
       agreement: { accepted: true, signedBy, signature: pad.dataUrl() }, ...where()
     };
     try {
-      const r = await auth.api('open', body, API.layby);
+      let r;
+      try { r = await auth.api('open', body, API.layby); }
+      catch (e) {
+        if (e.status === 403 && /below zero/.test(e.message)) { const a = await auth.requireOverride({ minRole: 'manager', action: 'stock', docType: 'layby', docId: body.laybyId || '', details: { what: 'belowZero' }, text: e.message }); r = await auth.api('open', { ...body, approvalToken: a.token }, API.layby); }
+        else throw e;
+      }
       close(true); onDone && onDone(r);
       toast('Lay-by ' + r.layby.docNo + ' opened' + (r.payments && r.payments[0] && r.payments[0].changeCents ? ' · change ' + money(r.payments[0].changeCents) : ''));
       openReceipt(docOf(r.layby, 'agreement'));

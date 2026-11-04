@@ -256,6 +256,11 @@ R / W: as products.
 An **item** is what stock is held for: the variant when the product has
 variants, else the product. `itemId` = `variantId || productId`.
 
+Stock may not go below zero on a sale or a lay-by's reservation (on hand less reserved): a manager, or a manager's PIN
+(`override.stock`), lets it through and is recorded as the approver; a sale rung up offline or a hand-over (the goods have
+left) is written and flagged. Every such sale gets an audit row `sale.belowZero` { items [ { itemId, name, have, qty } ],
+offline, handover, allowed }. `settings.stock.allowNegative` (the owner) turns the block into a warning.
+
 **`stockLevels/{storeId}_{itemId}`**
 ```
 entityId, storeId, productId, variantId ('' when none), onHandQty (int),
@@ -347,6 +352,18 @@ exchangeOf (the credit note an exchange spent), laybyOf (the lay-by a collection
 + stamps
 ```
 R: members of the store. W: server only.
+
+**`accountPayments/{id}`** — money against a customer's account, series `AP` from the entity's counter (the `pos-customer` function, `accountPayment`)
+```
+entityId, storeId, registerId, shiftId, seq, docNo, customerId, customerSnapshot,
+amountCents, confirmedCents (counts now), awaitingCents (EFT/QR until a manager confirms it), voidCents, methods [string],
+tenders [ { paymentId, method, amountCents, ref, cardLast4, status 'paid'|'awaiting'|'void', confirmedAt/By, bankRef | voidedAt/By, voidReason } ],
+status ('paid'|'awaiting'|'part'|'void'), owedBefore, owedAfter, tenderedCents, changeCents, note, cashierUid, cashierName, clientCreatedAt, + stamps
+```
+R: members of the store. W: server only. Each tender is also a `payments` row (`docType 'accountPayment'`), so cash sits in that
+shift's cash-up. The customer's `accountBalanceCents` moves by confirmed money only; `accountAwaitingCents` holds what waits for
+the bank. `statement` lists the invoices put on account (the 'account' tender on a sale) and these payments with the running
+balance; the ageing settles the oldest invoices first (`lib/account.mjs`); the Debtors report is the same per customer.
 
 **`saleLines/{saleId}_{lineNo}`** — immutable
 ```

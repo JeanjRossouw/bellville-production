@@ -14,7 +14,7 @@
 //
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
 import { json, Reject, clean, randomId, nowIso, getDoc, query, patchDoc, serverStamp, bodyOf, audit, withGroup } from './lib/pos.mjs';
-import { whoAndWhere, prepareSale, prepareTenders, runSale, nextFromCounter, moveWrites, approved, int } from './lib/sale.mjs';
+import { whoAndWhere, prepareSale, prepareTenders, runSale, nextFromCounter, moveWrites, approved, int, belowZeroOk } from './lib/sale.mjs';
 import { pctOf } from '../../pos/js/money.js';
 import { laybySettings, schedule, dueDate, expectedBy, penaltyFor, agreementText, reminderText, CANCEL_KINDS, NO_PENALTY, PENALTY_CAP_PCT, FREQ } from '../../pos/js/layby-terms.js';
 
@@ -76,6 +76,7 @@ const actions = {
     const r = await runSale(ctx, {}, { more: async (tx, levels) => {
       const num = await nextFromCounter(tx, ctx, 'LB', ctx.entity.laybyPrefix || (ctx.entity.invoicePrefix + '-LB'));
       await levelsFor(tx, ctx, levels, reserve);
+      belowZeroOk(ctx, b, levels, reserve, prep.approvers);   // a lay-by may not reserve what is not there (a manager may say so)
       const now = nowIso();
       const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
       const lb = {

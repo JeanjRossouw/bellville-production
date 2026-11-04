@@ -62,6 +62,58 @@ R.upd = await call('pos-customer', { action: 'save', customerId: T.id, name: 'Th
 check('number changed: the old key freed, the new taken; WhatsApp consent withdrawn with the date', R.upd.ok && R.upd.customer.phoneKey === '27825550102' && (await getDoc('pos/retail/customerPhones/BF_27825550101')) === null && (await getDoc('pos/retail/customerPhones/BF_27825550102')).customerId === T.id && R.upd.customer.consent.whatsapp.granted === false, R.upd.error || R.upd.customer);
 R.cons = await call('pos-customer', { action: 'consent', customerId: T.id, channel: 'sms', granted: true, source: 'customer', ...bell }); check('consent recorded per channel', R.cons.ok && R.cons.consent.sms.granted && R.cons.consent.sms.source === 'customer', R.cons);
 
+// ---- the account: sales on account up to the limit; paid off with money checked like any other (cash at a register,
+// card with its proof, EFT awaiting the bank until a manager confirms it); never more than is owed; the statement; the debtors report
+await put('pos/retail/stores/BF-BELL', { entityId: 'BF', name: 'Bellville', active: true, paymentMethods: ['cash', 'card', 'eft', 'account'], ...srv('BF', 'BF-BELL') });
+const apBody = (tenders, o = {}) => ({ action: 'accountPayment', customerId: (R.andile.customer || {}).id, paymentId: 'ap-test-' + (++n), tenders, clientCreatedAt: new Date().toISOString(), ...bell, ...o });
+R.andile = await call('pos-customer', { action: 'save', name: 'Andile Nkosi', phone: '0835550000', accountEnabled: true, creditLimitCents: 100000, ...bell }, own.idToken);
+const A = R.andile.customer || {};
+check('the owner opens an account with a limit', R.andile.ok && A.accountEnabled === true && A.creditLimitCents === 100000, R.andile.error || A);
+R.onAcct = await call('pos-sale', sale([{ productId: 'p_lamp', variantId: '', qty: 1, unitPriceCents: 50000, discountCents: 0 }], [{ method: 'account', amountCents: 50000 }], { customerId: A.id, totals: { totalCents: 50000, vatCents: vatIn(50000, 1500) } }), own.idToken);
+R.onAcct2 = await call('pos-sale', sale([{ productId: 'p_cushion', variantId: '', qty: 2, unitPriceCents: 19900, discountCents: 0 }], [{ method: 'account', amountCents: 39800 }], { customerId: A.id, totals: { totalCents: 39800, vatCents: vatIn(39800, 1500) } }), own.idToken);
+check('two sales on account: owes R 898', R.onAcct.ok && R.onAcct2.ok && (await getDoc('pos/retail/customers/' + A.id)).accountBalanceCents === 89800, [R.onAcct.error, R.onAcct2.error]);
+R.apCash = await call('pos-customer', apBody([{ method: 'cash', amountCents: 10000, tenderedCents: 10000 }]));
+check('cash against an account is taken at an open register only', R.apCash.status === 400 && /open register/.test(R.apCash.error), R.apCash);
+R.apNoProof = await call('pos-customer', apBody([{ method: 'card', amountCents: 30000 }]));
+check('a card payment needs the slip’s proof', R.apNoProof.status === 400 && /approval code/.test(R.apNoProof.error), R.apNoProof);
+R.apOver = await call('pos-customer', apBody([{ method: 'card', amountCents: 90000, cardLast4: '4242', approvalCode: '123456' }]));
+check('never more than is owed', R.apOver.status === 400 && /more than what is owed \(89800\)|owes R 898\.00/.test(R.apOver.error), R.apOver);
+R.ap1 = await call('pos-customer', apBody([{ method: 'card', amountCents: 30000, cardLast4: '4242', approvalCode: '123456' }], { paymentId: 'ap-test-card' }));
+const P1 = R.ap1.payment || {};
+check('R 300 by card: numbered AP, counted now, the account down to R 598', R.ap1.ok && P1.docNo === 'BF-AP-000001' && P1.status === 'paid' && P1.confirmedCents === 30000 && P1.owedBefore === 89800 && P1.owedAfter === 59800 && R.ap1.customer.accountBalanceCents === 59800 && (await getDoc('pos/retail/customers/' + A.id)).accountBalanceCents === 59800, R.ap1.error || P1);
+R.ap1Again = await call('pos-customer', apBody([{ method: 'card', amountCents: 30000, cardLast4: '4242', approvalCode: '123456' }], { paymentId: 'ap-test-card' }));
+check('the same payment again is not taken twice', R.ap1Again.ok && R.ap1Again.again === true && (await getDoc('pos/retail/customers/' + A.id)).accountBalanceCents === 59800, R.ap1Again);
+const cardRow = (await listColl('payments')).find(p => p.docType === 'accountPayment' && p.method === 'card');
+check('the payment row carries the receipt number, for the cash-up and the reports', cardRow && cardRow.docNo === 'BF-AP-000001' && cardRow.amountCents === 30000 && cardRow.cardLast4 === '4242', cardRow);
+R.ap2 = await call('pos-customer', apBody([{ method: 'eft', amountCents: 20000, ref: 'NKOSI' }]));
+const a2 = await getDoc('pos/retail/customers/' + A.id);
+check('an EFT waits for the bank: recorded, nothing owed less yet', R.ap2.ok && R.ap2.payment.status === 'awaiting' && R.ap2.payment.awaitingCents === 20000 && R.ap2.payment.confirmedCents === 0 && a2.accountBalanceCents === 59800 && a2.accountAwaitingCents === 20000, R.ap2.error || R.ap2.payment);
+R.apOver2 = await call('pos-customer', apBody([{ method: 'card', amountCents: 50000, cardLast4: '4242', approvalCode: '123457' }]));
+check('what is awaiting the bank cannot be paid twice', R.apOver2.status === 400 && /R 398\.00/.test(R.apOver2.error) && /awaiting the bank/.test(R.apOver2.error), R.apOver2);
+const eftRow = (await listColl('payments')).find(p => p.docType === 'accountPayment' && p.method === 'eft' && p.ref === 'NKOSI') || { id: 'none' };
+R.confCas = await call('pos-customer', { action: 'confirmAccountPayment', paymentId: eftRow.id, bankRef: 'FNB1', ...bell });
+check('a cashier cannot confirm a bank payment', R.confCas.status === 403 && /PIN/.test(R.confCas.error), R.confCas);
+R.conf = await call('pos-customer', { action: 'confirmAccountPayment', paymentId: eftRow.id, bankRef: 'FNB1', ...bell }, own.idToken);
+const a3 = await getDoc('pos/retail/customers/' + A.id);
+check('the owner confirms it against the statement: it counts now, owes R 398', R.conf.ok && R.conf.payment.status === 'paid' && R.conf.payment.confirmedCents === 20000 && a3.accountBalanceCents === 39800 && a3.accountAwaitingCents === 0 && (await getDoc('pos/retail/payments/' + eftRow.id)).status === 'paid', R.conf.error || a3);
+R.confAgain = await call('pos-customer', { action: 'confirmAccountPayment', paymentId: eftRow.id, ...bell }, own.idToken); check('confirmed once only', R.confAgain.status === 409, R.confAgain);
+R.ap3 = await call('pos-customer', apBody([{ method: 'eft', amountCents: 10000, ref: 'NKOSI2' }]));
+const eftRow2 = (await listColl('payments')).find(p => p.docType === 'accountPayment' && p.ref === 'NKOSI2') || { id: 'none' };
+R.voidNoWhy = await call('pos-customer', { action: 'voidAccountPayment', paymentId: eftRow2.id, ...bell }, own.idToken); check('not received needs a reason', R.voidNoWhy.status === 400, R.voidNoWhy);
+R.void = await call('pos-customer', { action: 'voidAccountPayment', paymentId: eftRow2.id, reason: 'never came', ...bell }, own.idToken);
+const a4 = await getDoc('pos/retail/customers/' + A.id);
+check('the money never came: the account owes it again, the receipt void', R.ap3.ok && R.void.ok && R.void.payment.status === 'void' && a4.accountBalanceCents === 39800 && a4.accountAwaitingCents === 0 && (await getDoc('pos/retail/accountPayments/' + R.ap3.payment.id)).status === 'void', R.void.error || a4);
+R.stmt = await call('pos-customer', { action: 'statement', customerId: A.id, ...bell });
+const kinds = (R.stmt.rows || []).map(r => r.kind).join(',');
+check('the statement: two invoices, two payments, in order, the running balance ending where the account is; all of it current', R.stmt.ok && kinds === 'invoice,invoice,payment,payment' && R.stmt.rows[3].balanceCents === 39800 && R.stmt.owedCents === 39800 && R.stmt.openingCents === 0 && R.stmt.ageing.current === 39800 && R.stmt.ageing.d90 === 0 && /on account/.test(R.stmt.rows[0].what) === false, R.stmt.error || R.stmt.rows);
+const today = new Date().toISOString().slice(0, 10);
+R.debtors = await call('pos-report', { action: 'run', report: 'debtors', entityId: 'BF', from: today, to: today }, own.idToken);
+const drow = (R.debtors.rows || []).find(r => r.name === 'Andile Nkosi');
+check('the debtors report: who owes, how much, how old', R.debtors.ok && drow && drow.owes === 39800 && drow.current === 39800 && drow.limit === 100000 && drow.lastPayment === today && R.debtors.totals.owes === 39800, R.debtors.error || R.debtors.rows);
+R.apFinal = await call('pos-customer', apBody([{ method: 'card', amountCents: 39800, cardLast4: '4242', approvalCode: '123458' }]));
+check('paid off', R.apFinal.ok && R.apFinal.payment.owedAfter === 0 && (await getDoc('pos/retail/customers/' + A.id)).accountBalanceCents === 0, R.apFinal.error);
+R.apNothing = await call('pos-customer', apBody([{ method: 'card', amountCents: 100, cardLast4: '4242', approvalCode: '123459' }])); check('nothing owed: nothing to pay', R.apNothing.status === 400 && /owes nothing/.test(R.apNothing.error), R.apNothing);
+
 // ---- a sale earns points at Bronze: R 500 → 500 points; a second at Parow; Silver after R 1 000
 R.s1 = await call('pos-sale', sale([{ productId: 'p_lamp', variantId: '', qty: 1, unitPriceCents: 50000, discountCents: 0 }], [{ method: 'card', amountCents: 50000 }], { customerId: T.id, totals: { totalCents: 50000, vatCents: vatIn(50000, 1500) } }), own.idToken);
 check('R 500 at Bronze: 500 points, the receipt line', R.s1.ok && R.s1.sale.loyalty && R.s1.sale.loyalty.earned === 500 && R.s1.sale.loyalty.balance === 500 && R.s1.sale.loyalty.tier === 'Bronze', R.s1.error || R.s1.sale.loyalty);
@@ -78,7 +130,7 @@ R.noCust = await call('pos-sale', sale([{ productId: 'p_cushion', variantId: '',
 R.s4 = await call('pos-sale', sale([{ productId: 'p_cushion', variantId: '', qty: 1, unitPriceCents: 19900, discountCents: 0 }], [{ method: 'points', amountCents: 5000 }, { method: 'card', amountCents: 14900 }], { customerId: T.id, totals: { totalCents: 19900, vatCents: vatIn(19900, 1500) } }), own.idToken);
 check('R 50 in points (1000 points) + card: 1000 redeemed, points earned on the R 149 at Silver (223)', R.s4.ok && R.s4.sale.loyalty.redeemed === 1000 && R.s4.sale.loyalty.earned === 223 && R.s4.sale.loyalty.balance === 1497 - 1000 + 223 && R.s4.sale.paymentMethods.includes('points'), R.s4.error || R.s4.sale.loyalty);
 R.cu2 = await getDoc('pos/retail/customers/' + T.id); check('oldest lots used first: the first lot (500) gone, the second 699 → 199 left', R.cu2.loyalty.points === 720 && R.cu2.loyalty.lots[0].left === 199 && R.cu2.loyalty.lots[0].points === 699, R.cu2.loyalty.lots);
-let ledger = await listColl('loyaltyLedger'); check('the ledger: 4 earns and a redeem with balances', ledger.filter(l => l.kind === 'earn').length === 4 && ledger.filter(l => l.kind === 'redeem').length === 1 && ledger.find(l => l.kind === 'redeem').points === -1000, ledger.map(l => [l.kind, l.points, l.balanceAfter]));
+let ledger = (await listColl('loyaltyLedger')).filter(l => l.customerId === T.id); check('the ledger: 4 earns and a redeem with balances', ledger.filter(l => l.kind === 'earn').length === 4 && ledger.filter(l => l.kind === 'redeem').length === 1 && ledger.find(l => l.kind === 'redeem').points === -1000, ledger.map(l => [l.kind, l.points, l.balanceAfter]));
 const pays = await listColl('payments'); check('the points tender is a payment row with the points', pays.some(p => p.method === 'points' && p.amountCents === 5000 && p.points === 1000), pays.filter(p => p.method === 'points'));
 
 // ---- expiry: a lot dated long ago is swept on the next sale
@@ -114,7 +166,7 @@ R.saveAnon = await call('pos-customer', { action: 'save', customerId: T.id, name
 R.fresh = await call('pos-customer', { action: 'save', name: 'Thandi Again', phone: '0825550102', ...bell }); check('the freed number can start a new profile', R.fresh.ok && R.fresh.customer.phoneKey === '27825550102', R.fresh.error);
 R.pts = await call('pos-customer', { action: 'adjustPoints', adjustId: 'pts-welcome-1', customerId: R.fresh.customer.id, points: 50, note: 'Welcome', ...bell }, own.idToken); check('points by hand', R.pts.ok && R.pts.points === 50, R.pts.error);
 R.ptsAgain = await call('pos-customer', { action: 'adjustPoints', adjustId: 'pts-welcome-1', customerId: R.fresh.customer.id, points: 50, note: 'Welcome', ...bell }, own.idToken); check('the same points again: not added twice', R.ptsAgain.ok && R.ptsAgain.again && R.ptsAgain.points === 50, R.ptsAgain);
-const audit = await listColl('auditLog'); check('audited', ['customer.create', 'customer.update', 'customer.consent', 'customer.merge', 'customer.export', 'customer.anonymise', 'customer.points'].every(a => audit.some(x => x.action === a)), audit.map(a => a.action));
+const audit = await listColl('auditLog'); check('audited', ['customer.create', 'customer.update', 'customer.consent', 'customer.merge', 'customer.export', 'customer.anonymise', 'customer.points', 'customer.accountPayment', 'customer.confirmAccountPay', 'customer.voidAccountPay'].every(a => audit.some(x => x.action === a)), audit.map(a => a.action));
 
 console.log(JSON.stringify({ fails, ...R, exp: undefined, hist: undefined, hist2: undefined }, null, 1));
 console.log(fails.length ? fails.length + ' FAILED' : 'customer-api: all passed');

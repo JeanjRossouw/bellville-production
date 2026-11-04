@@ -22,6 +22,7 @@ export const defaultSettings = () => ({
   cash: { varianceLimitCents: 5000 },
   layby: { minDepositPct: 20, termDays: 90, penaltyPct: 1, frequency: 'monthly', reminderDays: 3 },
   specialOrder: { minDepositPct: 50, leadDays: 21 },
+  stock: { allowNegative: false },
   buying: { updateCostsOnReceive: true },
   xero: { autoDaily: false, accounts: {} },
   loyalty: { enabled: false, pointsPerRand: 1, pointValueCents: 5, minRedeemPoints: 100, expiryMonths: 12, tiers: [{ name: 'Bronze', fromCents: 0, multiplier: 1 }, { name: 'Silver', fromCents: 1000000, multiplier: 1.25 }, { name: 'Gold', fromCents: 5000000, multiplier: 1.5 }] },
@@ -220,6 +221,10 @@ export function settingsHtml(d) {
         <div class="grid two">${field('Instalments', 'se-lb-freq', { type: 'select', value: s.layby.frequency || 'monthly', options: [{ value: 'weekly', label: 'Weekly' }, { value: 'fortnightly', label: 'Every two weeks' }, { value: 'monthly', label: 'Monthly' }] })}${field('Remind days before an instalment', 'se-lb-rem', { value: s.layby.reminderDays == null ? 3 : s.layby.reminderDays, type: 'number', min: 0 })}</div>
         <p class="muted">Section 62 of the Consumer Protection Act: the penalty is at most 1% of the full price, is disclosed on the agreement before the customer signs, and is never charged on death or hospitalisation.</p>
       </div>
+      <div class="card"><h2>Stock</h2>
+        ${field('Selling below zero', 'se-stock-neg', { type: 'select', value: (s.stock || {}).allowNegative ? 'allow' : 'block', options: [{ value: 'block', label: 'Blocked: a manager’s PIN lets a sale through, and it is audited' }, { value: 'allow', label: 'Allowed, with a warning on the till (the count is then wrong)' }] })}
+        <p class="muted">A sale rung up offline is always written (the goods have left) and flagged for the stock count. Made-to-order items are never counted.</p>
+      </div>
       <div class="card"><h2>Special orders (made to order)</h2>
         <div class="grid two">${field('Minimum deposit %', 'se-so-dep', { value: (s.specialOrder || {}).minDepositPct == null ? 50 : s.specialOrder.minDepositPct, type: 'number', min: 0, max: 100 })}${field('Usual lead time (days)', 'se-so-lead', { value: (s.specialOrder || {}).leadDays == null ? 21 : s.specialOrder.leadDays, type: 'number', min: 1 })}</div>
         <p class="muted">The customer signs the specification off; no change of mind once it is in production.</p>
@@ -284,6 +289,7 @@ export function settingsRead(w) {
     layby: { minDepositPct: num('se-lb-dep', 0, 100, 20), termDays: num('se-lb-term', 7, 3650, 90), penaltyPct: num('se-lb-pen', 0, 1, 1), frequency: val(w, 'se-lb-freq') || 'monthly', reminderDays: num('se-lb-rem', 0, 60, 3) },
     specialOrder: { minDepositPct: num('se-so-dep', 0, 100, 50), leadDays: num('se-so-lead', 1, 365, 21) },
     delivery: { defaultFeeCents: centsOf(val(w, 'se-dl-fee')), perSlot: num('se-dl-per', 1, 100, 4), leadDays: num('se-dl-lead', 0, 30, 1), days: [...w.querySelectorAll('[data-dlday]')].filter(x => x.checked).map(x => Number(x.dataset.dlday)), slots: val(w, 'se-dl-slots').split(',').map(x => x.trim()).filter(Boolean).slice(0, 8) },
+    stock: { allowNegative: val(w, 'se-stock-neg') === 'allow' },
     buying: { updateCostsOnReceive: !!w.querySelector('#se-buy-cost').checked },
     xero: { autoDaily: !!w.querySelector('#se-xero-auto').checked, accounts: Object.fromEntries(['sales', 'vat', 'cash', 'card', 'eft', 'qr', 'account', 'storeCredit', 'voucher', 'layby', 'specialOrder', 'points', 'exchange', 'rounding', 'penalty'].map(k => [k, val(w, 'se-xa-' + k)])) },
     loyalty: { enabled: !!w.querySelector('#se-loy-on').checked, pointsPerRand: Number(val(w, 'se-loy-rate')) || 0, pointValueCents: num('se-loy-value', 1, 100000, 5), minRedeemPoints: num('se-loy-min', 0, 1000000, 100), expiryMonths: num('se-loy-exp', 0, 120, 12), tiers: [0, 1, 2].map(i => ({ name: val(w, 'se-tier-name-' + i) || 'Tier ' + (i + 1), fromCents: Math.round((Number(val(w, 'se-tier-from-' + i)) || 0) * 100), multiplier: Number(val(w, 'se-tier-mult-' + i)) || 1 })) },

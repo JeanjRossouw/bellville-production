@@ -1,5 +1,6 @@
 // Retail POS — the Customers tab: find a customer by cell number or name,
-// the profile with POPIA consent per channel (dated), purchase history,
+// the profile with POPIA consent per channel (dated), purchase history, the
+// account (what is owed, a payment against it, the statement),
 // lay-bys and custom orders across the company's stores, store credit and
 // loyalty points; a manager merges duplicates, exports a profile on
 // request, anonymises it, or adjusts points. The server (pos-customer)
@@ -10,6 +11,10 @@ import { esc, toast, field, row, val, openModal, money, niceDate, niceTime, empt
 import { toCsv, download } from './csv.js';
 import { CHANNELS, loyaltySettings, phoneKey } from './loyalty-terms.js';
 import { icon } from './icons.js';
+import { centsOf, randsOf } from './money.js';
+import { newId } from './db.js';
+import { openReceipt } from './receiptui.js';
+import { METHOD, payMethods, proofFields, proofNote, tenderFrom } from './tender.js';
 
 export const cu = { q: '', filter: 'active' };
 let ctx = { repaint() {}, data: () => ({}) };
@@ -49,6 +54,10 @@ export async function action(act, b) {
   if (act === 'cu-anon') return anonymise(id);
   if (act === 'cu-points') return adjustPoints(id);
   if (act === 'cu-export-all') return exportAll();
+  if (act === 'cu-acct-pay') return accountPay(id);
+  if (act === 'cu-statement') return statement(id);
+  if (act === 'cu-pay-confirm') return bankPayment(id, b.dataset.pid, true, b.dataset);
+  if (act === 'cu-pay-void') return bankPayment(id, b.dataset.pid, false, b.dataset);
 }
 
 // ------------------------------------------------------------- forms --
@@ -72,6 +81,100 @@ function editForm(id) {
   });
 }
 
+// ----------------------------------------------------------- account --
+// the receipt for a payment against the account
+function apDoc(p, pays) {
+  const dd = d();
+  return { sale: { ...p, id: p.id, series: 'AP', clientCreatedAt: p.clientCreatedAt, cashierName: p.cashierName, noTotals: true, changeCents: p.changeCents || 0, paidStatus: p.awaitingCents ? 'awaiting' : 'paid', refLabel: 'Account of ' + ((p.customerSnapshot || {}).name || ''),
+    sections: [{ title: '', rows: [[p.awaitingCents ? 'Recorded, awaiting the bank' : 'Paid now', money(p.amountCents), true], ['Owed before', money(p.owedBefore || 0)], ...(p.awaitingCents ? [['Awaiting the bank', money(p.awaitingCents)]] : []), ['Owed now', money(p.owedAfter || 0), true]] }] },
+    lines: [], payments: pays || [], entity: dd.entity, store: dd.store, settings: dd.settings };
+}
+// money against the account: cash at an open register, card with its proof, EFT or QR awaiting a manager's confirmation, store credit
+function accountPay(id) {
+  const c = one(id); if (!c) return;
+  const dd = d();
+  const owed = (c.accountBalanceCents || 0) - (c.accountAwaitingCents || 0);
+  if (!(owed > 0)) return toast(c.name + ' owes nothing on account' + (c.accountAwaitingCents ? ' beyond what is awaiting the bank' : '') + '.', 'warn');
+  const methods = payMethods(dd, (c.storeCreditCents || 0) > 0 ? ['storeCredit'] : []);
+  if (!methods.length) return toast('No way to take a payment here: cash needs an open register; card, EFT or QR must be on the store’s payment methods.', 'warn');
+  const cashOk = methods.includes('cash');
+  let busy = false;
+  const { wrap, close } = openModal('Account payment · ' + c.name, `
+    <div class="muted">Owes <strong>${esc(money(owed))}</strong>${c.accountAwaitingCents ? ' · ' + esc(money(c.accountAwaitingCents)) + ' awaiting the bank' : ''}${c.storeCreditCents ? ' · store credit ' + esc(money(c.storeCreditCents)) : ''}</div>
+    ${row(field('Amount (R)', 'ap-amount', { value: randsOf(owed), inputmode: 'decimal' }), field('Paid by', 'ap-method', { type: 'select', value: methods[0], options: methods.map(k => ({ value: k, label: METHOD[k] })) }))}
+    ${row(field('Cash given (R)', 'ap-given', { value: randsOf(owed), inputmode: 'decimal' }), '')}${proofFields('ap', methods[0])}<p class="muted" id="ap-paynote"></p>
+    ${field('Note', 'ap-note', { placeholder: 'optional, e.g. invoice BF-000120' })}
+    <div class="pay-quick"><button class="btn ghost sm" type="button" data-ap="${owed}">Everything owed</button></div>
+    <div class="pay-change-live" id="ap-change"></div>`, { okLabel: 'Take the payment', cancelLabel: 'Back', onOk: () => submit() });
+  const live = () => {
+    const m = val(wrap, 'ap-method');
+    wrap.querySelector('#ap-given').closest('.fld').hidden = m !== 'cash'; wrap.querySelector('#ap-ref').closest('.fld').hidden = m === 'cash' || m === 'storeCredit'; wrap.querySelector('#ap-last4').closest('.fld').hidden = m !== 'card';
+    wrap.querySelector('#ap-ref').closest('.fld').querySelector('span').textContent = m === 'card' ? 'Approval code (on the slip)' : 'Reference (as on the bank statement)';
+    wrap.querySelector('#ap-ref').placeholder = m === 'card' ? 'e.g. 123456' : m === 'eft' ? 'the EFT reference' : 'the QR reference';
+    wrap.querySelector('#ap-paynote').textContent = proofNote(m, cashOk).replace('the order counts it paid', 'the account counts it paid');
+    const amt = centsOf(val(wrap, 'ap-amount')), given = centsOf(val(wrap, 'ap-given'));
+    wrap.querySelector('#ap-change').textContent = m === 'cash' && given > amt ? 'Change ' + money(given - amt) : '';
+  };
+  wrap.addEventListener('input', live); wrap.addEventListener('change', live); live();
+  wrap.addEventListener('click', (e) => { const q = e.target.closest('[data-ap]'); if (q) { wrap.querySelector('#ap-amount').value = randsOf(Number(q.dataset.ap)); wrap.querySelector('#ap-given').value = randsOf(Number(q.dataset.ap)); live(); } });
+  async function submit() {
+    if (busy) return false;
+    const amount = centsOf(val(wrap, 'ap-amount')); const method = val(wrap, 'ap-method');
+    if (!(amount > 0)) { toast('How much?', 'warn'); return false; }
+    if (amount > owed) { toast('Only ' + money(owed) + ' is owed' + (c.accountAwaitingCents ? ' (' + money(c.accountAwaitingCents) + ' is awaiting the bank)' : '') + '.', 'warn'); return false; }
+    if (method === 'storeCredit' && amount > (c.storeCreditCents || 0)) { toast('Only ' + money(c.storeCreditCents || 0) + ' store credit.', 'warn'); return false; }
+    const tender = method === 'storeCredit' ? { method, amountCents: amount } : tenderFrom(wrap, 'ap', method, amount, cashOk); if (!tender) return false;
+    busy = true;
+    try {
+      const r = await auth.api('accountPayment', { customerId: c.id, paymentId: newId('ap'), tenders: [tender], note: val(wrap, 'ap-note'), clientCreatedAt: new Date().toISOString(), ...where() }, API.customer);
+      close(true);
+      Object.assign(c, r.customer || {});
+      const chg = r.payment.changeCents || 0;
+      toast((r.payment.awaitingCents ? 'Recorded ' + money(amount) + ' by ' + METHOD[method] + ' on ' + c.name + '’s account: awaiting the bank, a manager confirms it' : 'Paid ' + money(amount) + ' on ' + c.name + '’s account · owes ' + money(r.payment.owedAfter)) + (chg ? ' · change ' + money(chg) : ''));
+      openReceipt(apDoc(r.payment, r.payments));
+      ctx.repaint();
+      return true;
+    } catch (e) { busy = false; toast(e.offline ? 'This needs the line: try again when connected.' : e.message, 'warn'); return false; }
+  }
+}
+// an EFT or QR on the account, confirmed against the statement or marked not received (a manager, or a manager's PIN)
+function bankPayment(id, paymentId, confirm, ds = {}) {
+  const c = one(id); if (!c || !paymentId) return;
+  const amt = Number(ds.amt) || 0, docNo = ds.doc || '';
+  openModal(confirm ? 'Confirm the bank payment' : 'Payment not received', `<p>${esc(money(amt))} on ${esc(docNo)}, ${esc(c.name)}’s account.</p>
+    ${confirm ? `<p class="muted">Confirm only once it shows on the bank statement. The account counts it paid from now.</p>${field('Bank reference (optional)', 'bk-ref', { placeholder: 'as on the statement' })}` : `<p class="muted">The account will owe this amount again.</p>${field('Why', 'bk-reason', { placeholder: 'e.g. never arrived, wrong amount' })}`}`, {
+    okLabel: confirm ? 'Confirm: it is in the bank' : 'Mark not received', onOk: async (w) => {
+      const body = { paymentId, bankRef: val(w, 'bk-ref'), reason: val(w, 'bk-reason'), ...where() };
+      const action = confirm ? 'confirmAccountPayment' : 'voidAccountPayment';
+      try {
+        let r;
+        try { r = await auth.api(action, body, API.customer); }
+        catch (e) {
+          if (e.status === 403 && /PIN/.test(e.message)) { const a = await auth.requireOverride({ minRole: 'manager', action: 'customer', docType: 'customer', docId: c.id, details: { docNo, paymentId, amountCents: amt }, text: e.message }); r = await auth.api(action, { ...body, approvalToken: a.token }, API.customer); }
+          else throw e;
+        }
+        Object.assign(c, r.customer || {});
+        toast(confirm ? money(amt) + ' confirmed on ' + c.name + '’s account · owes ' + money(c.accountBalanceCents || 0) : money(amt) + ' marked not received');
+        ctx.repaint(); profile(id);
+        return true;
+      } catch (e) { toast(e.message, 'warn'); return false; }
+    } });
+}
+// the statement: invoices on account and payments in date order with the running balance, and the ageing
+async function statement(id) {
+  const c = one(id); if (!c) return;
+  const dd = d();
+  try {
+    const st = await auth.api('statement', { customerId: c.id, ...where() }, API.customer);
+    const ag = st.ageing || {};
+    const rows = st.rows.map(r => [niceDate(r.at) + ' · ' + r.what, (r.kind === 'awaiting' ? '(' + money(r.awaitingCents) + ' awaiting) ' : (r.amountCents < 0 ? '− ' : '') + money(Math.abs(r.amountCents)) + ' → ') + (r.kind === 'awaiting' ? '' : money(r.balanceCents))]);
+    if (st.openingCents > 0) rows.unshift(['Opening balance (from the old system)', money(st.openingCents)]);
+    openReceipt({ sale: { id: 'st-' + c.id, series: 'AP', docKind: 'statement', docNo: 'ST-' + new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 10).replace(/-/g, ''), clientCreatedAt: new Date().toISOString(), cashierName: auth.session.user.name, customerSnapshot: { name: c.name, phone: c.phone || '', email: c.email || '', vatNo: c.vatNo || '', address: c.address || {} }, noTotals: true, refLabel: 'Account statement · ' + c.name,
+      sections: [{ title: 'Account', rows: rows.length ? rows : [['Nothing on account yet', '']] }, { title: 'Owed', rows: [['Owed now', money(st.owedCents), true], ...(st.awaitingCents ? [['Awaiting the bank', money(st.awaitingCents)]] : []), ...(st.limitCents ? [['Limit', money(st.limitCents)]] : []), ['Current (to 30 days)', money(ag.current || 0)], ['31 to 60 days', money(ag.d30 || 0)], ['61 to 90 days', money(ag.d60 || 0)], ['Over 90 days', money(ag.d90 || 0), true]] }],
+      terms: 'Please pay what is over 30 days. Use the account name as the bank reference.' }, lines: [], payments: [], entity: dd.entity, store: dd.store, settings: dd.settings });
+  } catch (e) { toast('Could not load the statement: ' + e.message, 'warn'); }
+}
+
 // ----------------------------------------------------------- profile --
 async function profile(id) {
   const c = one(id); if (!c) return;
@@ -80,9 +183,9 @@ async function profile(id) {
   const { wrap } = openModal(c.name, `<div class="lb-detail">
     <div class="lb-head">${c.anonymised ? '<span class="chip off">anonymised</span>' : c.mergedInto ? '<span class="chip off">merged</span>' : ''}<span class="muted">${esc(c.phone || 'no cell number')}${c.email ? ' · ' + esc(c.email) : ''}${c.vatNo ? ' · VAT ' + esc(c.vatNo) : ''}${c.address && (c.address.line1 || c.address.city) ? ' · ' + esc([c.address.line1, c.address.line2, c.address.city, c.address.code].filter(Boolean).join(', ')) : ''}${(c.altPhones || []).length ? ' · also ' + esc(c.altPhones.join(', ')) : ''}</span></div>
     <div class="lb-cols"><div><h3>Consent (POPIA)</h3>${consentHtml(c)}${c.notes ? `<p class="muted">${esc(c.notes)}</p>` : ''}</div>
-      <div><h3>Money and points</h3><div class="x-row"><span>Store credit</span><strong>${esc(money(c.storeCreditCents || 0))}</strong></div>${c.accountEnabled ? `<div class="x-row"><span>Account: owes</span><strong>${esc(money(c.accountBalanceCents || 0))} of ${esc(money(c.creditLimitCents || 0))}</strong></div>` : ''}${ls.enabled ? `<div class="x-row"><span>Points · ${esc((c.loyalty || {}).tier || ls.tiers[0].name)}</span><strong id="cu-pts">${(c.loyalty || {}).points || 0} (${esc(money(((c.loyalty || {}).points || 0) * ls.pointValueCents))})</strong></div>` : ''}<div class="x-row"><span>Spent</span><span>${esc(money((c.stats || {}).spentCents || 0))} over ${(c.stats || {}).salesCount || 0} sale${(c.stats || {}).salesCount === 1 ? '' : 's'}${(c.stats || {}).lastSaleAt ? ', last ' + esc(niceDate(c.stats.lastSaleAt)) : ''}</span></div></div></div>
+      <div><h3>Money and points</h3><div class="x-row"><span>Store credit</span><strong>${esc(money(c.storeCreditCents || 0))}</strong></div>${c.accountEnabled || c.accountBalanceCents || c.accountAwaitingCents ? `<div class="x-row cu-owes"><span>Account: owes</span><strong>${esc(money(c.accountBalanceCents || 0))}${c.accountEnabled ? ' of ' + esc(money(c.creditLimitCents || 0)) : ''}</strong></div>${c.accountAwaitingCents ? `<div class="x-row warn"><span>Awaiting the bank (a manager confirms)</span><span>${esc(money(c.accountAwaitingCents))}</span></div>` : ''}${(c.accountBalanceCents || 0) > (c.creditLimitCents || 0) ? '<p class="warn">Over the limit: no more on account until it is paid down.</p>' : ''}` : ''}${ls.enabled ? `<div class="x-row"><span>Points · ${esc((c.loyalty || {}).tier || ls.tiers[0].name)}</span><strong id="cu-pts">${(c.loyalty || {}).points || 0} (${esc(money(((c.loyalty || {}).points || 0) * ls.pointValueCents))})</strong></div>` : ''}<div class="x-row"><span>Spent</span><span>${esc(money((c.stats || {}).spentCents || 0))} over ${(c.stats || {}).salesCount || 0} sale${(c.stats || {}).salesCount === 1 ? '' : 's'}${(c.stats || {}).lastSaleAt ? ', last ' + esc(niceDate(c.stats.lastSaleAt)) : ''}</span></div></div></div>
     <h3 class="st-h3">History</h3><div id="cu-hist" class="muted">Loading…</div>
-    <div class="card-actions lb-acts">${c.anonymised ? '' : `<button class="btn" data-act="cu-edit" data-id="${esc(c.id)}">Edit</button>`}${mgr && !c.anonymised && !c.mergedInto ? `<button class="btn ghost" data-act="cu-merge" data-id="${esc(c.id)}">Merge a duplicate into this</button>${ls.enabled ? `<button class="btn ghost" data-act="cu-points" data-id="${esc(c.id)}">Adjust points</button>` : ''}<button class="btn ghost" data-act="cu-export" data-id="${esc(c.id)}">${icon('file')} Export (POPIA request)</button><button class="btn ghost" data-act="cu-anon" data-id="${esc(c.id)}">Anonymise</button>` : ''}</div></div>`, { okLabel: 'Close', cancelLabel: '', onOk: () => true });
+    <div class="card-actions lb-acts">${c.anonymised ? '' : `<button class="btn" data-act="cu-edit" data-id="${esc(c.id)}">Edit</button>`}${!c.anonymised && !c.mergedInto && (c.accountBalanceCents || 0) - (c.accountAwaitingCents || 0) > 0 ? `<button class="btn primary" data-act="cu-acct-pay" data-id="${esc(c.id)}">${icon('cash')} Account payment</button>` : ''}${c.accountEnabled || c.accountBalanceCents || c.accountAwaitingCents ? `<button class="btn ghost" data-act="cu-statement" data-id="${esc(c.id)}">${icon('printer')} Statement</button>` : ''}${mgr && !c.anonymised && !c.mergedInto ? `<button class="btn ghost" data-act="cu-merge" data-id="${esc(c.id)}">Merge a duplicate into this</button>${ls.enabled ? `<button class="btn ghost" data-act="cu-points" data-id="${esc(c.id)}">Adjust points</button>` : ''}<button class="btn ghost" data-act="cu-export" data-id="${esc(c.id)}">${icon('file')} Export (POPIA request)</button><button class="btn ghost" data-act="cu-anon" data-id="${esc(c.id)}">Anonymise</button>` : ''}</div></div>`, { okLabel: 'Close', cancelLabel: '', onOk: () => true });
   wrap.querySelector('.modal-card').classList.add('wide');
   try {
     const h = await auth.api('history', { customerId: c.id, ...where() }, API.customer);
@@ -94,6 +197,7 @@ async function profile(id) {
       tbl('Credit notes', h.creditNotes, [r => esc(niceDate(r.at)), r => '<strong>' + esc(r.docNo) + '</strong> against ' + esc(r.saleDocNo || 'no receipt'), r => esc(money(r.totalCents))]) +
       tbl('Lay-bys', h.laybys, [r => esc(niceDate(r.at)), r => '<strong>' + esc(r.docNo) + '</strong> · ' + esc(r.status), r => 'paid ' + esc(money(r.paidCents)) + ' of ' + esc(money(r.totalCents))]) +
       tbl('Custom orders', h.specialOrders, [r => esc(niceDate(r.at)), r => '<strong>' + esc(r.docNo) + '</strong> · ' + esc(r.status), r => 'paid ' + esc(money(r.paidCents)) + ' of ' + esc(money(r.totalCents))]) +
+      tbl('Account payments', h.accountPayments || [], [r => esc(niceDate(r.at)) + ' <span class="muted">' + esc(r.storeId) + '</span>', r => '<strong>' + esc(r.docNo) + '</strong> · ' + esc(r.status === 'awaiting' ? 'awaiting the bank' : r.status === 'part' ? 'part awaiting the bank' : r.status === 'void' ? 'not received' : 'paid') + (r.cashierName ? ' <span class="muted">· ' + esc(r.cashierName) + '</span>' : ''), r => '<span class="r">' + esc(money(r.amountCents)) + '</span>' + (r.tenders || []).filter(t => t.status === 'awaiting').map(t => `<div class="btn-row so-bank"><span class="muted">${esc(METHOD[t.method] || t.method)} ${esc(t.ref || '')} ${esc(money(t.amountCents))}</span><button class="btn sm" data-act="cu-pay-confirm" data-id="${esc(c.id)}" data-pid="${esc(t.paymentId)}" data-amt="${t.amountCents}" data-doc="${esc(r.docNo)}">On the statement: confirm</button><button class="btn ghost sm" data-act="cu-pay-void" data-id="${esc(c.id)}" data-pid="${esc(t.paymentId)}" data-amt="${t.amountCents}" data-doc="${esc(r.docNo)}">Not received</button></div>`).join('')]) +
       tbl('Points', h.ledger.slice(0, 30), [r => esc(niceDate(r.at)), r => esc(r.kind) + (r.docNo ? ' · ' + esc(r.docNo) : '') + (r.note ? ' · ' + esc(r.note) : ''), r => (r.points > 0 ? '+' : '') + r.points + ' <span class="muted">→ ' + r.balanceAfter + '</span>']) ||
       '<p class="muted">Nothing yet.</p>';
   } catch (e) { const host = wrap.querySelector('#cu-hist'); if (host) host.textContent = 'Could not load the history: ' + e.message; }

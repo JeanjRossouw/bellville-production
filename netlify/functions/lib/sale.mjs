@@ -129,6 +129,56 @@ async function quotedLine(ctx, l, p, v, cache) {
   return { q, ql };
 }
 
+// money taken now, on an order or an account, so that none can go missing: cash only at an open register (it is
+// counted in that drawer's cash-up); a card payment with the approval code and the last 4 from the slip; EFT and
+// QR recorded as awaiting the bank until a manager confirms them against the statement. Only confirmed money
+// (t.confirmed) counts; t.awaiting waits.
+export const NOW_METHODS = ['cash', 'card', 'eft', 'qr', 'storeCredit'];
+export function moneyNow(ctx, tenders, total, customer, what = 'an order') {
+  const t = prepareTenders(ctx, tenders, { total, customer, partial: true });
+  if (!(t.paid > 0)) throw new Reject(400, 'How much is being paid?');
+  const bad = t.pays.find(p => !NOW_METHODS.includes(p.method));
+  if (bad) throw new Reject(400, `Pay ${what === 'an order' ? 'a special order' : what} with cash, card, EFT, QR or store credit.`);
+  for (const p of t.pays) {
+    if (p.method === 'cash' && !ctx.shiftId) throw new Reject(400, `Cash on ${what} is taken at an open register, so it is counted in the cash-up. The office takes card or EFT.`);
+    if (p.method === 'card' && !(p.approvalCode && /^\d{4}$/.test(p.cardLast4 || ''))) throw new Reject(400, 'A card payment needs the approval code and the last 4 digits from the slip.');
+    if (p.method === 'eft' || p.method === 'qr') { if (!p.ref) throw new Reject(400, `The ${p.method === 'eft' ? 'EFT' : 'QR'} reference, as it will show on the bank statement.`); p.status = 'awaiting'; }
+  }
+  t.confirmed = t.pays.filter(p => p.status !== 'awaiting').reduce((n, p) => n + p.amountCents, 0);
+  t.awaiting = t.paid - t.confirmed;
+  return t;
+}
+
+// stock may not go below zero. The moves that take from what may be sold (a sale's, or a lay-by's reservation) are
+// checked against the levels loaded in the transaction (on hand less reserved); what is short is listed. Unless the
+// company allows selling below zero (settings.stock.allowNegative), a short sale needs a manager, or a manager's PIN,
+// and the approver is recorded. A sale rung up offline (it carries the till's own number) is written anyway: the
+// goods have left; it is flagged for the stock count instead.
+export function shortStock(ctx, levels, moves) {
+  const want = new Map();
+  for (const m of moves || []) {
+    const take = (m.bucket || 'onHand') === 'onHand' ? -m.qty : m.bucket === 'reserved' ? m.qty : 0;
+    if (!(take > 0)) continue;
+    const k = m.itemId; const w = want.get(k) || { itemId: k, name: m.name || k, qty: 0 }; w.qty += take; want.set(k, w);
+  }
+  const out = [];
+  for (const w of want.values()) {
+    const lv = levels.get(ctx.storeId + '_' + w.itemId);
+    const have = lv ? (lv.onHandQty || 0) - (lv.reservedQty || 0) : 0;
+    if (have - w.qty < 0) out.push({ itemId: w.itemId, name: w.name, have, qty: w.qty });
+  }
+  return out;
+}
+export function belowZeroOk(ctx, b, levels, moves, approvers, offline = false) {
+  const short = shortStock(ctx, levels, moves);
+  if (!short.length || (ctx.settings.stock || {}).allowNegative) return short;
+  if (offline) return short;
+  const what = short.map(x => `${x.name}: ${x.have} in stock, ${x.qty} on this sale`).join('; ');
+  const a = approved(ctx, b.approvalToken, 'stock', 'manager', `Selling below zero (${what})`);
+  if (!a.self && approvers) approvers.set(a.uid, a.name);
+  return short;
+}
+
 // the customer's details as they go on a document (and as a correction gives them)
 export const snapshotOf = (c) => { c = c || {}; const a = c.address || {}; return { name: clean(c.name, 120), phone: clean(c.phone, 30), email: clean(c.email, 120), vatNo: clean(c.vatNo, 20), address: { line1: clean(a.line1, 120), line2: clean(a.line2, 120), city: clean(a.city, 60), code: clean(a.code, 12) } }; };
 export const sameSnapshot = (x, y) => JSON.stringify(snapshotOf(x)) === JSON.stringify(snapshotOf(y));
@@ -173,6 +223,8 @@ export async function prepareSale(ctx, b, opts = {}) {
       else if (p.hasVariants) throw new Reject(400, `Line ${n}: ${p.name} needs a variant.`);
       listPrice = await priceOf(ctx, p, v); name = p.name + (v ? ' · ' + v.name : ''); vatClass = p.vatClass || 'standard'; type = p.type || 'stock';
       trackStock = p.trackStock !== false && type === 'stock'; costCents = (v && v.costCents != null ? v.costCents : p.costCents) || 0; itemId = v ? v.id : p.id;
+      // a hand-over (the server's own, trusted body) says which lines the order had made to order: no stock is taken for those
+      if (opts.trusted && l.mto && type === 'stock') { type = 'mto'; trackStock = false; }
     }
     // a couch in a fabric of the customer's choice, priced here, never by the till: the frame price when it has one (else
     // its price) + the metres it takes × the catalogue fabric's price per metre (nothing for the customer's own fabric).
@@ -255,7 +307,7 @@ export async function prepareSale(ctx, b, opts = {}) {
   const base = { when, at, rateBp, customer, lines, moves, vouchersSold, approvers, saleBy, saleCode, gross, lineDisc, saleDisc, sub, total, vat };
   if (opts.noTenders) return { ...base, voucherUse: [], pays: [], paid: 0, rounding: 0, cashTendered: 0, cashPay: null, creditUsed: 0, accountUsed: 0, pointsUsed: 0, pointsCents: 0 };
   const prepaid = opts.prepaid || (opts.creditNote ? { method: 'creditNote', ...opts.creditNote } : null);
-  return { ...base, ...prepareTenders(ctx, b.tenders, { total, customer, prepaid }) };
+  return { ...base, handover: !!prepaid, ...prepareTenders(ctx, b.tenders, { total, customer, prepaid }) };   // handover: a sale paid by a lay-by or an order; the goods are leaving
 }
 
 // The tenders of a document: each method against the store's, one cash tender rounded to 10c with the
@@ -325,6 +377,10 @@ export async function saleWrites(tx, ctx, s, saleId, b, levels = new Map()) {
   const vouchers = [];
   for (const u of s.voucherUse) { const vd = await getDoc('vouchers', u.code, tx); if (!vd || vd.entityId !== ctx.entityId || vd.status !== 'open' || (vd.expiresAt && vd.expiresAt < s.when.slice(0, 10))) throw new Reject(400, `Voucher ${u.code} is not valid here.`); if (vd.balanceCents < u.amount) throw new Reject(400, `Voucher ${u.code} has ${vd.balanceCents} cents left.`); vouchers.push({ vd, u }); }
   for (const m of s.moves) { const id = ctx.storeId + '_' + m.itemId; if (!levels.has(id)) levels.set(id, (await getDoc('stockLevels', id, tx)) || null); }
+  // the goods have left already when the till rung it up offline (its own number) or when a lay-by or an order is handed
+  // over: such a sale is written and flagged, not stopped
+  const left = int(b.seq) ? 'offline' : s.handover ? 'handover' : '';
+  const short = belowZeroOk(ctx, b, levels, s.moves, s.approvers, !!left);
   const now = nowIso();
   const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
   const writes = [];
@@ -370,6 +426,7 @@ export async function saleWrites(tx, ctx, s, saleId, b, levels = new Map()) {
   for (const vs of s.vouchersSold) { const code = 'GV' + randomId().replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 10); codesSold.push({ lineNo: vs.lineNo, code, amountCents: vs.amountCents }); writes.push({ create: true, coll: 'vouchers', id: code, data: { code, amountCents: vs.amountCents, balanceCents: vs.amountCents, status: 'open', soldSaleId: saleId, soldDocNo: docNo, soldAt: now, expiresAt: new Date(s.at + 3 * 365 * 86400000).toISOString().slice(0, 10), customerId: customer ? customer.id : '', uses: [], ...serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId) } }); }
   if (fresh) { writes.push({ create: true, coll: 'numberBlocks', id: block.id, data: { ...block, usedUpTo: seq } }); writes.push({ set: true, coll: 'counters', id: ctx.entityId + '_INV', data: { entityId: ctx.entityId, series: 'INV', next: counterNext, ...(counterExisted ? {} : serverStamp(ctx.entityId, '', 'server')) } }); }
   else writes.push({ update: true, coll: 'numberBlocks', id: block.id, data: { usedUpTo: Math.max(block.usedUpTo, seq) } });
+  if (short.length) writes.push({ create: true, coll: 'auditLog', id: randomId('au_'), data: { action: 'sale.belowZero', docType: 'sale', docId: saleId, docNo, actorUid: ctx.user.id, actorName: ctx.user.name, overrideUid: [...s.approvers.keys()][0] || '', overrideName: [...s.approvers.values()][0] || '', details: { items: short, offline: left === 'offline', handover: left === 'handover', allowed: !!(ctx.settings.stock || {}).allowNegative }, ...stamp, serverReceivedAt: now } });
   writes.push({ create: true, coll: 'auditLog', id: randomId('au_'), data: { action: 'sale.commit', docType: 'sale', docId: saleId, docNo, actorUid: ctx.user.id, actorName: ctx.user.name, overrideUid: [...s.approvers.keys()][0] || '', overrideName: [...s.approvers.values()][0] || '', details: { totalCents: s.total, lines: s.lines.length, methods: sale.paymentMethods, negativeStock: [...levels.values()].some(l => l && l.onHandQty < 0) }, ...stamp, serverReceivedAt: now } });
   sale.id = saleId;
   return { writes, result: { ok: true, sale, lines: s.lines.map(l => ({ ...l, saleId, docNo })), payments: s.pays, vouchersSold: codesSold, negativeStock: [...levels.values()].filter(l => l && l.onHandQty < 0).length } };

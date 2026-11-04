@@ -81,7 +81,7 @@ await p.keyboard.type('6001234567890'); await p.keyboard.press('Enter'); await p
 check('scanned line at the store price', (await lineCount()) === 1 && /3 Seater Chesterfield/.test(await cartText()) && (await totalShown()) === money(899900), await cartText());
 R.stockWarn = await toast();
 await p.keyboard.type('6001234567890'); await p.keyboard.press('Enter'); await p.waitForTimeout(400);
-R.stockWarn = await toast(); check('selling past stock warns and still sells', /Only 1 on hand/.test(R.stockWarn) && /stock goes negative/i.test(await cartText()), R.stockWarn);
+R.stockWarn = await toast(); check('selling past stock warns, and the line says a manager is needed', /Only 1 on hand/.test(R.stockWarn) && /below zero: manager/i.test(await cartText()), R.stockWarn);
 // ---- a scanned variant code adds that variant straight in
 await p.keyboard.type('20000001'); await p.keyboard.press('Enter'); await p.waitForTimeout(400);
 check('variant barcode → that variant, at the product price', /Wingback Chair · Grey/.test(await cartText()) && (await lineCount()) === 2);

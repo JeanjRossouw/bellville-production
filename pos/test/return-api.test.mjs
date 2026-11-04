@@ -38,6 +38,7 @@ await prod('p_lamp', { name: 'Lamp', priceCents: 50000, costCents: 20000 });
 await prod('p_book', { name: 'Care Book', vatClass: 'zero', priceCents: 12000, costCents: 5000 });
 await prod('p_sofa', { name: 'Custom Sofa', type: 'mto', trackStock: false, priceCents: 1500000 });
 await put('pos/retail/stockLevels/BF-BELL_p_cushion', { productId: 'p_cushion', variantId: '', onHandQty: 10, reservedQty: 0, ...srv('BF', 'BF-BELL') });
+await put('pos/retail/stockLevels/BF-BELL_p_lamp', { productId: 'p_lamp', variantId: '', onHandQty: 5, reservedQty: 0, ...srv('BF', 'BF-BELL') });   // stock may not go below zero without a manager
 await put('pos/retail/customers/c1', { name: 'Thandi Mokoena', phone: '0825550101', email: '', vatNo: '', address: { line1: '5 Lane', city: 'Parow' }, accountEnabled: false, creditLimitCents: 0, storeCreditCents: 0, accountBalanceCents: 0, notes: '', archived: false, ...srv('BF') });
 
 let server = null;
@@ -85,7 +86,7 @@ R.oneLeft = await call('pos-return', { action: 'credit', creditId: nid('cn'), sa
 R.cn2 = await call('pos-return', { action: 'credit', creditId: nid('cn'), saleId, customerId: 'c1', lines: [{ saleLineNo: 2, qty: 1, reason: 'Faulty', disposition: 'quarantine' }, { saleLineNo: 3, qty: 1, reason: 'Damaged', disposition: 'writeoff' }], refunds: [{ method: 'storeCredit', amountCents: nets[1] + nets[2] }], ...office });
 check('lamp and book credited; book zero-rated so no VAT back on it', R.cn2.ok && R.cn2.creditNote.totalCents === nets[1] + nets[2] && R.cn2.creditNote.vatCents === vatIn(nets[1], 1500), R.cn2.creditNote && { t: R.cn2.creditNote.totalCents, v: R.cn2.creditNote.vatCents, err: R.cn2.error });
 const c1 = await getDoc('pos/retail/customers/c1'); check('store credit up by the refund', c1.storeCreditCents === nets[1] + nets[2], c1.storeCreditCents);
-const lampLv = await getDoc('pos/retail/stockLevels/BF-BELL_p_lamp'); check('the lamp sits in quarantine, not on hand', lampLv && lampLv.quarantineQty === 1 && lampLv.onHandQty === -1, lampLv);
+const lampLv = await getDoc('pos/retail/stockLevels/BF-BELL_p_lamp'); check('the lamp sits in quarantine, not on hand', lampLv && lampLv.quarantineQty === 1 && lampLv.onHandQty === 4, lampLv);
 const mv = await listColl('stockMovements'); check('movements: quarantine bucket for the lamp, none for the written-off book', mv.some(m => m.productId === 'p_lamp' && m.bucket === 'quarantine' && m.qty === 1 && m.reason === 'creditNote') && !mv.some(m => m.productId === 'p_book' && m.reason === 'creditNote'), mv.map(m => [m.productId, m.bucket, m.qty, m.reason]));
 
 // ---- outside the window: the cashier needs a manager; the owner may

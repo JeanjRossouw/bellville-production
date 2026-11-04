@@ -529,6 +529,7 @@ service cloud.firestore {
       match /creditNotes/{id}    { allow read: if pReadsStore(gid); allow write: if false; }
       match /refunds/{id}        { allow read: if pReadsStore(gid); allow write: if false; }
       match /laybys/{id}         { allow read: if pReadsStore(gid); allow write: if false; }
+      match /accountPayments/{id} { allow read: if pReadsStore(gid); allow write: if false; }   // money against a customer's account: the server numbers and writes it
       match /stockTakes/{id}     { allow read: if pReadsStore(gid); allow write: if false; }
       match /specialOrders/{id}  { allow read: if pReadsStore(gid); allow write: if false; }
       match /salesOrders/{id}    { allow read: if pReadsStore(gid); allow write: if false; }

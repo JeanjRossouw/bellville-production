@@ -20,13 +20,14 @@ export function receiptKind(sale, entity) {
   if (sale.series === 'SO') return 'so-' + (sale.docKind || 'order');
   if (sale.series === 'QT') return 'quote';
   if (sale.series === 'CN') return 'creditnote';
+  if (sale.series === 'AP') return sale.docKind === 'statement' ? 'account-statement' : 'account-payment';
   if (!entity.vatRegistered) return 'invoice';
   if (sale.totalCents <= SLIP_MAX) return 'slip';
   if (sale.totalCents <= ABRIDGED_MAX) return 'abridged';
   return 'full';
 }
 const LB_TITLES = { 'layby-agreement': 'Lay-by agreement', 'layby-payment': 'Lay-by payment', 'layby-collection': 'Collection slip', 'layby-cancel': 'Lay-by cancellation',
-  'so-order': 'Sales order', 'so-quote': 'Quotation', 'so-payment': 'Sales order payment', 'so-delivery': 'Delivery note', 'so-cancel': 'Sales order cancellation', quote: 'Quotation' };
+  'so-order': 'Sales order', 'so-quote': 'Quotation', 'so-payment': 'Sales order payment', 'so-delivery': 'Delivery note', 'so-cancel': 'Sales order cancellation', quote: 'Quotation', 'account-payment': 'Account payment', 'account-statement': 'Account statement' };
 export const kindTitle = (kind) => LB_TITLES[kind] || (kind === 'slip' ? 'Till slip' : kind === 'abridged' ? 'Tax invoice' : kind === 'full' ? 'Tax invoice' : kind === 'creditnote' ? 'Credit note' : 'Invoice');
 // what a full tax invoice needs from the customer; '' when all is there
 export function fullInvoiceGap(customer) {
