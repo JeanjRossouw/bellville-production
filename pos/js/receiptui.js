@@ -3,7 +3,7 @@
 import { API } from './config.js';
 import { setOne, newId } from './db.js';
 import * as auth from './auth.js';
-import { esc, toast, field, val, openModal, openPrint, money } from './ui.js';
+import { esc, toast, field, val, openModal, openPrint, money, niceDate } from './ui.js';
 import { receiptModel, slipHtml, SLIP_CSS, a4Html, A4_CSS, escposBytes, shareText, whatsappUrl, kindTitle } from './receipt.js';
 import { emailModal } from './email.js';
 import { icon } from './icons.js';
@@ -21,7 +21,8 @@ export function openReceipt(o) {
       <button class="btn" data-rc="wa">${icon('user')} WhatsApp</button>
       <button class="btn" data-rc="mail">${icon('file')} Email</button>
       <button class="btn ghost" data-rc="copy">Copy link</button>
-      ${m.copy ? '<p class="muted">A reprint: it is marked COPY.</p>' : ''}
+      ${o.fix ? `<button class="btn ghost" data-rc="fix" title="Who the invoice is made out to can be put right (a manager); the items, prices and payments never change">Fix details</button>` : ''}
+      ${m.copy ? '<p class="muted">A reprint: it is marked COPY.</p>' : ''}${m.fixed ? `<p class="muted">Details corrected ${esc(niceDate(m.fixed))}.</p>` : ''}
     </div></div>`, { okLabel: 'Done', cancelLabel: '', onOk: () => true });
   wrap.querySelector('.modal-card').classList.add('wide');
   const audit = (how) => setOne('auditLog', newId('auditLog'), { action: 'receipt.print', docType: o.sale.series === 'LB' ? 'layby' : o.sale.series === 'SO' ? 'specialOrder' : o.sale.series === 'CN' ? 'creditNote' : 'sale', docId: o.sale.id, docNo: m.docNo, actorUid: auth.session.uid, actorName: auth.session.user.name, overrideUid: '', overrideName: '', details: { kind: m.kind, copy: m.copy, how }, ...auth.stamp(o.entity.id, store.id || '') }).catch(() => {});
@@ -42,6 +43,7 @@ export function openReceipt(o) {
       }
       else if (how === 'wa') { const r = await getLink(); const phone = prompt('WhatsApp number', (m.customer && m.customer.phone) || ''); if (phone) { window.open(whatsappUrl(phone, r.text), '_blank'); audit('whatsapp'); } }
       else if (how === 'mail') { const r = await getLink(); emailModal({ title: 'Email ' + m.docNo, to: (o.sale.customerSnapshot && o.sale.customerSnapshot.email) || '', subject: m.title.replace(' · COPY', '') + ' ' + m.docNo + ' from ' + m.company.name, text: r.text, onSent: () => audit('email') }); }
+      else if (how === 'fix') { close(true); o.fix(); }
       else if (how === 'copy') { const r = await getLink(); if (!r.url) { toast('No link for this document: share the text by WhatsApp or email.', 'warn'); return; } await navigator.clipboard.writeText(r.url).catch(() => {}); toast('Link copied'); wrap.querySelector('.rc-acts').insertAdjacentHTML('beforeend', `<p class="muted" style="word-break:break-all;font-size:11px" id="rc-link">${esc(r.url)}</p>`); }
     } catch (err) { toast(err.message, 'warn'); }
   });

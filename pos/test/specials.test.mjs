@@ -149,6 +149,21 @@ await nav('todo'); R.todoBank = await screenText(); check('To do: the bank payme
 await nav('orders'); await p.selectOption('#so-filter', 'quoted'); await p.waitForTimeout(300);
 await p.click('[data-act=so-open]'); await p.waitForSelector('#modal .lb-detail'); R.eftDetail = await modalText();
 check('the order: still quoted, the EFT awaiting the bank, the confirm button', /Quoted/.test(R.eftDetail) && /EFT MOKOENA · awaiting the bank/.test(R.eftDetail) && /Awaiting the bank \(a manager confirms\) R 7,500\.00/.test(R.eftDetail) && (await p.locator('[data-act=so-pay-confirm]').count()) === 1, R.eftDetail.slice(0, 500));
+// ---- the details put right: the phone and the expected date (anyone); the colour, a signed-off spec, with a supervisor's PIN (the manager's here)
+await p.click('[data-act=so-edit]'); await p.waitForSelector('#modal #ed-phone');
+R.editModal = await modalText(); check('the edit window: what can and cannot change', /The items, the price and the money stay as signed off/.test(R.editModal) && /model, size and fabric set the price and cannot/.test(R.editModal) && (await p.locator('#ed-colour-0').count()) === 1, R.editModal.slice(0, 300));
+await p.fill('#ed-phone', '0829990000'); await p.fill('#ed-expected', '2026-12-15'); await p.fill('#ed-colour-0', 'Navy'); await p.fill('#ed-reason', 'Client changed the colour and gave a new number'); await p.click('#modal-ok');
+await p.waitForSelector('#modal .pinpad'); await pinType('#modal', '222222'); R.edited = await toast(); await p.waitForTimeout(1200);
+check('saved with the PIN', /BF-SO-000002 updated/.test(R.edited), R.edited);
+await p.waitForSelector('#modal .lb-detail'); R.editDetail = await modalText();
+check('the order shows the new phone, date and colour, and says what changed', /0829990000/.test(R.editDetail) && /15 Dec 2026/.test(R.editDetail) && /Colour: Navy/.test(R.editDetail) && /Details changed 1 time/.test(R.editDetail) && /Custom Sofa: colour: .* → Navy/.test(R.editDetail) && /R 15,000\.00/.test(R.editDetail), R.editDetail.slice(0, 700));
+await p.click('[data-act=so-print-order]'); await p.waitForSelector('#modal .rc-paper'); R.editDoc = await paper();
+check('the printed order: the amendment under the signed terms, the price as before', /Changed after sign-off/.test(R.editDoc) && /Mandla/.test(R.editDoc) && /Navy/.test(R.editDoc) && /Deposit to start R 7,500\.00/.test(R.editDoc), R.editDoc.slice(0, 400));
+await closeModal();
+const o2e = (await listColl('specialOrders')).find(o => o.docNo === 'BF-SO-000002');
+check('written: the spec changed, the sign-off text as signed with the amendment, the money untouched', o2e.lines[0].spec.colour === 'Navy' && o2e.customerSnapshot.phone === '0829990000' && o2e.expectedAt === '2026-12-15' && o2e.signoff.amendments.length === 1 && o2e.signoff.amendments[0].byName === 'Mandla' && /I have checked the specification/.test(o2e.signoff.text) && o2e.totalCents === 1500000 && o2e.awaitingCents === 750000 && o2e.edits.length === 1 && o2e.edits[0].changes.length === 3, o2e && [o2e.lines[0].spec, o2e.edits]);
+await nav('orders'); await p.selectOption('#so-filter', 'quoted'); await p.waitForTimeout(300);
+await p.click('[data-act=so-open]'); await p.waitForSelector('#modal .lb-detail');
 await p.click('[data-act=so-cancel]'); await p.waitForSelector('#modal #sc-kind');
 R.cancelModal = await modalText(); check('no fee before production', /Production has not started: no fee/.test(R.cancelModal) && /To refund R 0\.00/.test(R.cancelModal), R.cancelModal.slice(0, 300));
 await p.click('#modal-ok'); await p.waitForSelector('#modal .pinpad'); await pinType('#modal', '222222'); R.cancelled = await toast(); await p.waitForTimeout(1500);
@@ -158,6 +173,19 @@ await closeModal();
 const o2 = (await listColl('specialOrders')).find(o => o.docNo === 'BF-SO-000002');
 check('written: cancelled, approver Mandla', o2.status === 'cancelled' && o2.approvers.some(a => a.name === 'Mandla'), o2 && [o2.status, o2.approvers]);
 check('the awaiting EFT closed as not received with the order', o2.awaitingCents === 0 && o2.history.length === 1 && o2.history[0].status === 'void' && (await listColl('payments')).find(x => x.docNo === 'BF-SO-000002').status === 'void', o2.history);
+
+// ---- an invoice is final: only who it is made out to can be put right, by a manager (the PIN), and the invoice says so
+await nav('sales'); await p.waitForTimeout(600);
+await p.click('[data-act=sa-open][data-id]'); await p.waitForSelector('#modal .rc-paper'); await p.waitForTimeout(300);
+R.invBefore = await paper();
+await p.click('#modal [data-rc=fix]'); await p.waitForSelector('#modal #fx-name');
+await p.fill('#fx-name', 'Thandi Mokoena-Smith'); await p.fill('#fx-vat', '4111222333'); await p.fill('#fx-reason', 'Married name and the VAT number'); await p.click('#modal-ok');
+await p.waitForSelector('#modal .pinpad'); await pinType('#modal', '222222'); R.fixed = await toast(); await p.waitForTimeout(1200);
+await p.waitForSelector('#modal .rc-paper'); R.invAfter = await paper();
+check('the invoice: the name and VAT number corrected, marked as corrected, the same number and total', /details corrected/.test(R.fixed) && /Thandi Mokoena-Smith/.test(R.invAfter) && /VAT no 4111222333/.test(R.invAfter) && /Details corrected/.test(R.invAfter) && /TAX INVOICE · COPY/.test(R.invAfter) && /Thandi Mokoena/.test(R.invBefore) && !/Details corrected/.test(R.invBefore) && R.invAfter.match(/TOTAL R [\d,.]+/)[0] === R.invBefore.match(/TOTAL R [\d,.]+/)[0], [R.fixed, R.invAfter.slice(0, 400)]);
+await closeModal();
+const inv = (await listColl('sales'))[0];
+check('written: the details on the sale, the earlier ones kept, audited with the manager as approver', inv.customerSnapshot.name === 'Thandi Mokoena-Smith' && inv.detailsFixes.length === 1 && inv.detailsFixes[0].before.name === 'Thandi Mokoena' && inv.detailsFixes[0].byName === 'Mandla' && (await listColl('auditLog')).some(a => a.action === 'sale.fixDetails' && a.overrideName === 'Mandla'), inv && [inv.customerSnapshot, inv.detailsFixes]);
 
 console.log(JSON.stringify({ fails, errs, ...R }, null, 1).slice(0, 6000));
 await b.close();

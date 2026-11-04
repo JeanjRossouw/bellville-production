@@ -336,7 +336,8 @@ connection is written once.
 ```
 entityId, storeId, registerId, shiftId, deviceId,
 series 'INV', seq (int), docNo, blockId,
-customerId ('' for walk-in), customerSnapshot { name, vatNo, address },
+customerId ('' for walk-in), customerSnapshot { name, phone, email, vatNo, address },
+detailsFixedAt, detailsFixes [ { at, byUid, byName, reason, before (the earlier snapshot) } ] (the only change ever made to a sale: who it is made out to, by a manager — `fixDetails`),
 lineCount, subtotalCents, lineDiscountCents, saleDiscountCents, saleDiscountPct,
 totalCents, vatCents, vatRateBp, vatRegistered (bool),
 tenderedCents, changeCents, roundingCents (cash rounded to 10c: the difference, recorded, never hidden), paymentMethods [string],
@@ -442,6 +443,8 @@ lineCount, subtotalCents, lineDiscountCents, saleDiscountCents, totalCents, vatC
 minDepositPct, minDepositCents, leadDays, depositCents, paidCents, balanceCents, paymentCount, lastPaidAt,
 history [ { n (0 = the deposit), at, amountCents, methods, storeId, byName } ],
 signoff { text (the specification read back and the no-change-of-mind clause), acceptedAt, signedBy, signature (PNG data URL), cashierUid, cashierName },
+  + amendments [ { at, byName, reason, changes [ { field, before, after } ] } ] (colour, legs or notes changed by a supervisor before the order went to the factory; the signed text stays as signed),
+edits [ { at, byUid, byName, reason, changes [ { field, before, after } ] } ] (the customer's details, the expected date, the note: `edit`; the items, prices and money never change),
 status ('quoted'|'depositPaid'|'inProduction'|'ready'|'delivered'|'collected'|'cancelled'),
 statusHistory [ { status, at, byName, source ('till'|'factory'), note } ], updateDue (bool: a status changed and no message went yet),
 updates [ { at, status, how, byName } ], lastUpdateAt, factoryRef (the factory's order numbers, filled in by the server), expectedAt (date), openedAt,

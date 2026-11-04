@@ -55,6 +55,7 @@ export function receiptModel({ sale, lines, payments, entity, store, settings, c
     header, footer, policy,
     docNo: sale.docNo, date: sale.clientCreatedAt || sale.createdAt, cashier: sale.cashierName || '', register: sale.registerId || '',
     customer: cust ? { name: cust.name, vatNo: cust.vatNo || '', address: addr(cust.address), phone: cust.phone || '', email: cust.email || '' } : null,
+    fixed: sale.detailsFixedAt || '',   // the customer's details were corrected after the document was written
     lines: (lines || []).map(l => ({ name: l.name, code: l.sku || '', qty: l.qty, unitPriceCents: l.unitPaidCents != null ? l.unitPaidCents : l.unitPriceCents, discountCents: l.unitPaidCents != null ? 0 : (l.discountCents || 0) + (l.saleDiscountCents || 0), lineTotalCents: l.netCents != null ? l.netCents : l.lineTotalCents, vatCents: l.vatCents || 0, vatRateBp: l.vatRateBp || 0, zero: !l.vatRateBp, note: l.note || (l.reason ? l.reason + (l.disposition ? ' · ' + l.disposition : '') : ''), spec: l.spec || null })),
     creditNote: sale.series === 'CN' ? { saleDocNo: sale.saleDocNo || '', noReceipt: !!sale.noReceipt, exchangeSaleId: sale.exchangeSaleId || '', exchangeUsedCents: sale.exchangeUsedCents || 0 } : null,
     subtotalCents: sale.subtotalCents, discountCents: (sale.lineDiscountCents || 0) + (sale.saleDiscountCents || 0), totalCents: sale.totalCents, vatCents: sale.vatCents, vatRateBp: sale.vatRateBp,
@@ -75,7 +76,7 @@ export function slipHtml(m) {
     <div class="c t">${esc(m.title)}</div>
     ${row('No', '<b>' + esc(m.docNo) + '</b>')}${row('Date', esc(niceDate(m.date) + ' ' + niceTime(m.date)))}${m.cashier ? row('Served by', esc(m.cashier)) : ''}
     ${m.creditNote ? `<div class="s c">${m.creditNote.noReceipt ? 'Returned without a receipt · store credit' : 'Against ' + esc(m.creditNote.saleDocNo)}${m.creditNote.exchangeSaleId ? ' · exchanged' : ''}</div>` : ''}
-    ${m.customer ? `<div class="box"><div>${esc(m.customer.name)}</div>${m.kind === 'full' && m.customer.address ? `<div class="s">${esc(m.customer.address)}</div>` : ''}${m.customer.vatNo ? `<div class="s">VAT no ${esc(m.customer.vatNo)}</div>` : ''}</div>` : ''}
+    ${m.customer ? `<div class="box"><div>${esc(m.customer.name)}</div>${m.kind === 'full' && m.customer.address ? `<div class="s">${esc(m.customer.address)}</div>` : ''}${m.customer.vatNo ? `<div class="s">VAT no ${esc(m.customer.vatNo)}</div>` : ''}${m.fixed ? `<div class="s">Details corrected ${esc(niceDate(m.fixed))}</div>` : ''}</div>` : ''}
     <div class="hr"></div>
     ${m.lines.map(l => `<div class="ln"><div>${esc(l.name)}${m.vat && l.zero ? ' <i>*</i>' : ''}</div><div class="r"><span>${l.qty} × ${esc(money(l.unitPriceCents))}${l.discountCents ? ' − ' + esc(money(l.discountCents)) : ''}</span><span>${esc(money(l.lineTotalCents))}</span></div>${l.note ? `<div class="s">${esc(l.note)}</div>` : ''}${specLines(l.spec).map(x => `<div class="s">${esc(x)}</div>`).join('')}${l.spec && l.spec.photo ? `<img class="spec-img" src="${l.spec.photo}" alt="">` : ''}</div>`).join('')}
     <div class="hr"></div>
@@ -138,7 +139,7 @@ export function a4Html(m) {
       <div class="contact">${contact.map(x => `<div>${x}</div>`).join('')}</div></div>
     <div class="title"><span class="tt">${esc(m.title.replace(' · COPY', ''))} No.</span><span class="num">${esc(m.docNo)}</span>${encodable(m.docNo) ? `<span class="bar">${barcodeSvg(m.docNo, 34)}</span>` : ''}</div>
     <div class="who">
-      <div class="cust"><div class="s">${m.kind === 'full' ? 'Invoice to' : 'Customer'}</div>${m.customer ? `<b>${esc(cu.name)}</b>${cu.address ? '<br>' + esc(cu.address).replace(/, /g, '<br>') : ''}` : '<b>Cash customer</b>'}</div>
+      <div class="cust"><div class="s">${m.kind === 'full' ? 'Invoice to' : 'Customer'}</div>${m.customer ? `<b>${esc(cu.name)}</b>${cu.address ? '<br>' + esc(cu.address).replace(/, /g, '<br>') : ''}` : '<b>Cash customer</b>'}${m.fixed ? `<div class="s fixed">Details corrected ${esc(niceDate(m.fixed))}</div>` : ''}</div>
       <div class="mid">${kv([['Contact Number', esc(cu.phone || '')], ['Contact Email', esc(cu.email || '')], ['Customer VAT No.', esc(cu.vatNo || '')], ['Reference', m.creditNote ? (m.creditNote.noReceipt ? 'No receipt · store credit' : 'Against ' + esc(m.creditNote.saleDocNo)) : esc(m.refLabel || '')]])}</div>
       <div class="right">${kv([['Date', esc(niceDate(m.date)) + (m.kind === 'slip' || m.kind === 'abridged' || m.kind === 'full' || m.kind === 'invoice' ? ' ' + esc(niceTime(m.date)) : '')], ['Salesperson', esc(m.cashier || '')], ['Status', m.awaiting ? 'Payment awaited' : m.pending ? 'Rung up offline' : m.totals ? (m.payments.length ? 'Paid' : '') : '']])}</div>
     </div>
@@ -200,7 +201,7 @@ export function escposBytes(m) {
   if (m.store) line(m.store.name); if (m.header) m.header.split('\n').forEach(l => line(l)); if (m.company.vatNo) line('VAT no ' + m.company.vatNo);
   line(); bold(true); line(m.title.toUpperCase()); bold(false); line();
   align(0); line(lr('No', m.docNo)); line(lr('Date', niceDate(m.date) + ' ' + niceTime(m.date))); if (m.cashier) line(lr('Served by', m.cashier));
-  if (m.customer) { line(m.customer.name); if (m.kind === 'full' && m.customer.address) line(m.customer.address); if (m.customer.vatNo) line('VAT no ' + m.customer.vatNo); }
+  if (m.customer) { line(m.customer.name); if (m.kind === 'full' && m.customer.address) line(m.customer.address); if (m.customer.vatNo) line('VAT no ' + m.customer.vatNo); if (m.fixed) line('Details corrected ' + niceDate(m.fixed)); }
   line('-'.repeat(W));
   for (const l of m.lines) { line(l.name.slice(0, W) + (m.vat && l.zero ? '*' : '')); line(lr(`  ${l.qty} x ${rand(l.unitPriceCents)}${l.discountCents ? ' -' + rand(l.discountCents) : ''}`, rand(l.lineTotalCents))); if (l.note) line('  ' + l.note.slice(0, W - 2)); for (const x of specLines(l.spec)) line('  ' + x.slice(0, W - 2)); }
   line('-'.repeat(W));

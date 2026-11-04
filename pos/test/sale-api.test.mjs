@@ -127,8 +127,20 @@ R.tillOut = await call('pos-sale', sale({ ...till, saleId: 'dev_t1-abc-3', seq: 
 R.tillNext = await call('pos-sale', sale({ ...till, saleId: 'dev_t1-abc-4' })); check('next from the till with no number given: 26', R.tillNext.ok && R.tillNext.sale.docNo === 'BF-000026', R.tillNext);
 const blocks = await listColl('numberBlocks'); check('two blocks: office 1–20 and till 21–40, usedUpTo moved', blocks.length === 2 && blocks.some(b => b.deviceId === 'web:' + OWNER && b.from === 1 && b.usedUpTo === 8) && blocks.some(b => b.deviceId === 'dev_t1' && b.usedUpTo === 26), blocks.map(b => [b.deviceId, b.from, b.to, b.usedUpTo]));
 const counter = await getDoc('pos/retail/counters/BF_INV'); check('the counter sits past both blocks', counter.next === 41, counter);
+// ---- an invoice is final: only who it is made out to can be put right, by a manager, with a reason, audited
+const fixBody = (o = {}) => ({ action: 'fixDetails', saleId: 'dev_t1-abc-1', customer: { name: 'Walk In Addressed', phone: '0829990000', vatNo: '4111222333', address: { line1: '2 Road', city: 'Bellville' } }, reason: 'VAT number left off', entityId: 'BF', storeId: 'BF-BELL', ...o });
+R.fixCashier = await call('pos-sale', fixBody(), CTOKEN); check('a cashier cannot change an invoice’s details without a manager’s PIN', R.fixCashier.status === 403 && /PIN/.test(R.fixCashier.error), R.fixCashier);
+R.fixNoReason = await call('pos-sale', fixBody({ reason: '' })); check('a reason is needed', R.fixNoReason.status === 400, R.fixNoReason);
+R.fix = await call('pos-sale', fixBody());
+const fixed = await getDoc('pos/retail/sales/dev_t1-abc-1');
+check('the owner puts the VAT number and phone on: those change, the earlier details are kept, nothing else moves', R.fix.ok && fixed.customerSnapshot.vatNo === '4111222333' && fixed.customerSnapshot.phone === '0829990000' && fixed.customerSnapshot.name === 'Walk In Addressed' && fixed.totalCents === R.tillSale.sale.totalCents && fixed.docNo === 'BF-000025' && fixed.lineCount === 1 && !!fixed.detailsFixedAt && fixed.detailsFixes.length === 1 && fixed.detailsFixes[0].reason === 'VAT number left off' && fixed.detailsFixes[0].before.vatNo === '' && fixed.detailsFixes[0].byName === 'Jean', R.fix.error || fixed);
+R.fixSame = await call('pos-sale', fixBody()); check('the same details again: nothing changed', R.fixSame.status === 400, R.fixSame);
+R.fixNoName = await call('pos-sale', fixBody({ customer: { name: '' } })); check('the name cannot be blanked', R.fixNoName.status === 400, R.fixNoName);
+R.fixGone = await call('pos-sale', fixBody({ saleId: 'nope-nope-nope' })); check('no such sale: 404', R.fixGone.status === 404, R.fixGone);
+
 // ---- every written sale is complete and consistent
 const sales = await listColl('sales'), lines = await listColl('saleLines'), pays = await listColl('payments'), audit = await listColl('auditLog');
+check('the correction audited with before and after', audit.some(a => a.action === 'sale.fixDetails' && a.docNo === 'BF-000025' && a.details.before.vatNo === '' && a.details.after.vatNo === '4111222333' && a.details.reason === 'VAT number left off'), audit.filter(a => a.action === 'sale.fixDetails'));
 check('every sale has its lines, payments and an audit row; stamps on all', sales.length === 10 && sales.every(s => lines.filter(l => l.saleId === s.id).length === s.lineCount && pays.some(p => p.docId === s.id) && audit.some(a => a.action === 'sale.commit' && a.docId === s.id) && s.verified && s.createdBy && s.deviceId && s.entityId === 'BF' && s.storeId === 'BF-BELL'), { sales: sales.length, lines: lines.length, pays: pays.length });
 check('numbers in the office block are contiguous 1..8', sales.filter(s => s.deviceId.startsWith('web:')).map(s => s.seq).sort((a, b) => a - b).join() === '1,2,3,4,5,6,7,8', sales.map(s => s.seq));
 check('VAT on every line adds up to the sale', sales.every(s => lines.filter(l => l.saleId === s.id).reduce((n, l) => n + l.vatCents, 0) === s.vatCents));
