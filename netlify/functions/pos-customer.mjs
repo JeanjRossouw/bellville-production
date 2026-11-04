@@ -76,7 +76,7 @@ async function bankAccountPayment(event, b, confirm) {
   } });
 }
 
-const actions = {
+export const actions = {
   async save(event, b) {
     const ctx = await whoAndWhere(event, b, { noShift: true });
     const id = clean(b.customerId, 80);
@@ -339,7 +339,7 @@ const actions = {
       const lo = { ...blankLoyalty(), ...(cur.loyalty || {}) };
       const sw = sweep(lo, now);
       let lots = sw.lots;
-      if (pts > 0) lots = [...lots, { points: pts, left: pts, earnedAt: now, expiresAt: ls.expiryMonths ? new Date(Date.now() + ls.expiryMonths * 30 * 86400000).toISOString() : '', saleId: '' }];
+      if (pts > 0) lots = [...lots, { points: pts, left: pts, earnedAt: now, expiresAt: ls.expiryMonths ? new Date(Date.parse(nowIso()) + ls.expiryMonths * 30 * 86400000).toISOString() : '', saleId: '' }];
       else { if (-pts > sw.points) throw new Reject(400, `Only ${sw.points} points to take.`); let need = -pts; lots = lots.map(l => { const take = Math.min(l.left, need); need -= take; return { ...l, left: l.left - take }; }).filter(l => l.left > 0); }
       const after = lots.reduce((n, l) => n + l.left, 0);
       const loyalty = { ...lo, points: after, lots, tier: tierFor(ls, lo.lifetimeCents).name };

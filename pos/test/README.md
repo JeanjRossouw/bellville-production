@@ -7,6 +7,8 @@ npm i -D @firebase/rules-unit-testing firebase firebase-tools playwright   # onc
 npx firebase emulators:start --only firestore,auth --project factory-manager-ece82
 ```
 
+- `demo-api.test.mjs` — the demo business: a fresh login's own space, seeded and replayed for two weeks through the real
+  actions with the clock turned back; the first shops' owner refused. `node pos/test/demo-api.test.mjs`
 - `rules.test.mjs` — the `/pos/{gid}` block of `couchpotato/firestore.rules`:
   roles, entity and store reach, the server-only collections, the five
   stamps and whole cents. `node pos/test/rules.test.mjs`

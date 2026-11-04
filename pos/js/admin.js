@@ -76,7 +76,9 @@ export function companiesHtml(d) {
       <p class="muted">${esc(addrText(x.address))}${x.phone ? '<br>' + esc(x.phone) : ''}${x.email ? ' · ' + esc(x.email) : ''}</p>
       <p class="muted">Invoices ${esc(x.invoicePrefix)}-000001 · credit notes ${esc(x.creditNotePrefix)}-000001</p>
       ${isOwner ? `<div class="card-actions"><button class="btn ghost sm" data-act="entity-edit" data-id="${esc(x.id)}">Edit</button></div>` : ''}
-    </div>`).join('')}</div>` : empty('No companies yet', isOwner ? 'Add the first one above.' : 'The owner adds companies.')}`;
+    </div>`).join('')}</div>` : empty('No companies yet', isOwner ? 'Add the first one above.' : 'The owner adds companies.') + (isOwner && d.demoOk ? `<div class="card demo-card"><h2>Or look around a demo business</h2>
+      <p class="muted">Demo Furniture Co: two stores with tills, staff with PINs, couches made to order in fabrics, stock, customers with accounts, and six months of trading replayed day by day through the real system (sales, orders, quotes, lay-bys, returns, cash-ups). Only in an empty space like this one; it takes a few minutes.</p>
+      <div class="btn-row"><button class="btn primary" data-act="demo-build">Build the demo business (6 months of trading)</button></div></div>` : '')}`;
 }
 export async function entitySave(w, d) {
   const editing = d.editId ? d.entities.find(e => e.id === d.editId) : null;

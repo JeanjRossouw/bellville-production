@@ -44,7 +44,7 @@ const reserveMoves = (moves, sign) => moves.map(m => ({ ...m, qty: sign * Math.a
 async function levelsFor(tx, ctx, levels, moves) { for (const m of moves) { const lid = ctx.storeId + '_' + m.itemId; if (!levels.has(lid)) levels.set(lid, (await getDoc('stockLevels', lid, tx)) || null); } }
 const auditRow = (ctx, action, lb, details, approvers, stamp, now) => ({ create: true, coll: 'auditLog', id: randomId('au_'), data: { action, docType: 'layby', docId: lb.id, docNo: lb.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, overrideUid: [...approvers.keys()][0] || '', overrideName: [...approvers.values()][0] || '', details, ...stamp, serverReceivedAt: now } });
 
-const actions = {
+export const actions = {
   async open(event, b) {
     const ctx = await whoAndWhere(event, b);
     const ls = laybySettings(ctx.settings);

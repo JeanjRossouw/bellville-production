@@ -37,7 +37,7 @@ async function loadTake(ctx, id) {
 }
 const tally = (items) => { let counted = 0, vq = 0, vv = 0; for (const it of items) { if (it.countedQty == null) continue; counted++; const d = it.countedQty - it.frozenQty; vq += d; vv += d * (it.costCents || 0); } return { countedItems: counted, varianceQty: vq, varianceValueCents: vv }; };
 
-const actions = {
+export const actions = {
   async adjust(event, b) {
     const ctx = await whoAndWhere(event, b, { noShift: true });
     const approvers = new Map();

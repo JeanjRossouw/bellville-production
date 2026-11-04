@@ -20,6 +20,7 @@ const METHODS = ['cash', 'card', 'eft', 'qr', 'voucher', 'storeCredit', 'account
 const int = (v) => Number.isInteger(v) ? v : (Number.isInteger(Number(v)) ? Number(v) : NaN);
 
 async function whoAndWhere(event, b) {
+  if (event && event.__ctx) return { ...event.__ctx };   // the server's own caller (pos-demo); a request can never carry this
   const login = await loginOf(event);
   if (!login) throw new Reject(401, 'Sign in first.');
   const user = await loadUser(login.sub);
@@ -68,7 +69,7 @@ async function openShiftOf(registerId) {
   return { reg, shift: shift && shift.status === 'open' ? shift : null };
 }
 
-const actions = {
+export const actions = {
   async open(event, b) {
     const ctx = await whoAndWhere(event, b);
     const registerId = clean(b.registerId, 40) || (ctx.device && ctx.device.registerId);

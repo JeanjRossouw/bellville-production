@@ -43,7 +43,9 @@ const CUSTOM_TOKEN_AUD = 'https://identitytoolkit.googleapis.com/google.identity
 export const RANK = { cashier: 1, supervisor: 2, manager: 3, owner: 4 };
 export const rank = (r) => RANK[r] || 0;
 export const ROLES = Object.keys(RANK);
-export const nowIso = () => new Date().toISOString();
+// the time every stamp carries; turned back inside withClock (the demo business replays months of trading)
+export const nowIso = () => { const st = groupStore.getStore(); return st && st.now ? st.now : new Date().toISOString(); };
+export const withClock = (iso, fn) => groupStore.run({ ...(groupStore.getStore() || {}), now: iso }, fn);
 export const json = (status, obj) => ({ statusCode: status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, body: JSON.stringify(obj) });
 // an answer to the person at the till: a status and a sentence they can act on
 export class Reject extends Error { constructor(status, message) { super(message); this.status = status; } }

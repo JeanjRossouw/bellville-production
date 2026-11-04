@@ -585,6 +585,12 @@ actorUid, actorName, approvedBy { uid, name } (a supervisor or higher when the a
 ```
 R: members of the store. W: server only.
 
+### The demo business
+**`demo/state`** (server only) — the plan of a demo business being replayed (`pos-demo`): `from, to, days [done], sales [recent], quotes, orders, laybys, bank`
+with each one's planned steps. The business itself is ordinary data (entity `DM`, stores `DM-BELL`, `DM-PAROW`, staff `dm_*`), written by the
+real actions with the clock turned back (`withClock` in `lib/pos.mjs`: `nowIso()` gives that day); the space's `posGroups` record carries
+`demo: true`. Only an owner in a space of their own (never the first shops') can build it, and only while the space has no company.
+
 ### Buying
 
 **`suppliers/{id}`** (`storeId` = '')

@@ -39,7 +39,7 @@ async function saleWithLines(ctx, saleId) {
   return { sale: { ...sale, id: saleId }, lines, returned: await returnedSoFar(saleId) };
 }
 
-const actions = {
+export const actions = {
   async find(event, b) {
     const ctx = await whoAndWhere(event, b, { noShift: true });
     let sales = [];
@@ -77,7 +77,7 @@ const actions = {
       const got = await saleWithLines(ctx, saleId);
       sale = got.sale;
       if (sale.storeId !== ctx.storeId && !approvers.size) need('return', 'manager', 'A return of a sale from another store');
-      const ageDays = (Date.now() - Date.parse(sale.clientCreatedAt)) / 86400000;
+      const ageDays = (Date.parse(nowIso()) - Date.parse(sale.clientCreatedAt)) / 86400000;
       if (ageDays > rs.windowDays) need('return', 'manager', `A return after ${rs.windowDays} days`);
       for (const l of inLines) {
         const sl = got.lines.find(x => x.lineNo === int(l.saleLineNo));
