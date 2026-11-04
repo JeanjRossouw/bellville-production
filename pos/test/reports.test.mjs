@@ -60,6 +60,12 @@ await p.waitForSelector('#nav [data-view=reports]', { state: 'attached' }); awai
 await nav('home'); await p.waitForSelector('.dash-card', { timeout: 15000 }); await p.waitForTimeout(300);
 R.dash = await screenText(); check('today: R 1 000 over 2 sales, last week nothing', /Today,/i.test(R.dash) && /Bellville/.test(R.dash) && /R 1,000\.00/.test(R.dash) && /2 sales · basket R 500\.00/.test(R.dash) && /Same day last week: R 0\.00/.test(R.dash), R.dash.slice(0, 400));
 
+// ---- Money in: the day screen (managers), today's two card sales
+await nav('money'); await p.waitForSelector('.mi-big', { timeout: 15000 }); await p.waitForTimeout(300);
+R.money = await screenText(); check('Money in today: R 1 000 by card, on sales, who took it', /Money in today R 1,000\.00/.test(R.money) && /Card R 1,000\.00/.test(R.money) && /Sales R 1,000\.00/.test(R.money) && /Who took it/i.test(R.money) && /Bellville/.test(R.money), R.money.slice(0, 500));
+await p.click('[data-act=mi-mode][data-to=month]'); await p.waitForSelector('.mi-tbl', { timeout: 15000 }); await p.waitForTimeout(300);
+R.moneyMonth = await screenText(); check('the month: one day row with the same money', /Money in this month R 1,000\.00/.test(R.moneyMonth) && /By day/i.test(R.moneyMonth), R.moneyMonth.slice(0, 400));
+
 // ---- Reports: daily sales, CSV, print
 await nav('reports'); await p.waitForSelector('[data-act=rp-run]');
 R.list = await screenText(); check('the report list', /Daily sales/.test(R.list) && /VAT report/.test(R.list) && /Dead stock/.test(R.list) && /Customers/.test(R.list), R.list.slice(0, 300));
