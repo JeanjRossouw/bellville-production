@@ -218,6 +218,37 @@ const reports = {
     return { title: 'Debtors (accounts owed)', columns: [col('name', 'Customer'), col('phone', 'Cell'), col('limit', 'Limit', 'cents'), col('owes', 'Owes', 'cents'), col('awaiting', 'Awaiting the bank', 'cents'), col('current', 'Current', 'cents'), col('d30', '31–60 days', 'cents'), col('d60', '61–90 days', 'cents'), col('d90', 'Over 90 days', 'cents'), col('lastInvoice', 'Last invoice', 'date'), col('lastPayment', 'Last payment', 'date'), col('over', '')],
       rows, totals: { owes: sum(rows, 'owes'), awaiting: sum(rows, 'awaiting'), current: sum(rows, 'current'), d30: sum(rows, 'd30'), d60: sum(rows, 'd60'), d90: sum(rows, 'd90') } };
   },
+  // every rand that came into the business in the range: by day and store, by how it was paid and what it was paid on
+  // (sales, sales orders, lay-bys, accounts), refunds taken off, EFTs and QR payments awaiting the bank listed apart. Money is
+  // cash, card, EFT and QR; a voucher, store credit, points or the account are ways of paying that bring no money in
+  async moneyIn(w, b, stores, from, to) {
+    const MONEY = ['cash', 'card', 'eft', 'qr'];
+    const KIND = { sale: 'sales', specialOrder: 'orders', layby: 'laybys', accountPayment: 'accounts', refund: 'refunds' };
+    const pays = (await perStore('payments', w.entityId, stores, 'createdAt', from, to)).filter(p => p.status !== 'void' && KIND[p.docType]);
+    const name = (id) => (stores.find(s => s.id === id) || {}).name || id;
+    const blank = () => ({ cash: 0, card: 0, eft: 0, qr: 0, sales: 0, orders: 0, laybys: 0, accounts: 0, refunds: 0, other: 0, awaiting: 0, total: 0, count: 0 });
+    const add = (row, p) => {
+      const amt = p.amountCents || 0;
+      if (!MONEY.includes(p.method)) { if (p.docType !== 'refund') row.other += amt; return; }
+      if (p.status === 'awaiting') { row.awaiting += amt; return; }
+      row[p.method] += amt; row[KIND[p.docType]] += amt; row.total += amt; row.count++;
+    };
+    const days = new Map();
+    for (const p of pays) { const k = dayOf(p.createdAt) + '|' + p.storeId; if (!days.has(k)) days.set(k, { day: dayOf(p.createdAt), storeId: p.storeId, store: name(p.storeId), ...blank() }); add(days.get(k), p); }
+    const rows = [...days.values()].sort((x, y) => x.day.localeCompare(y.day) || x.store.localeCompare(y.store));
+    const totals = blank(); for (const p of pays) add(totals, p);
+    delete totals.count; totals.count = rows.reduce((n, r) => n + r.count, 0);
+    // what is still awaiting the bank, and who took what: for the day screen
+    const users = new Map();
+    const userName = async (uid) => { if (!users.has(uid)) users.set(uid, ((await getDoc('users', uid)) || {}).name || uid); return users.get(uid); };
+    const awaiting = [];
+    for (const p of pays.filter(x => x.status === 'awaiting' && MONEY.includes(x.method)).sort((x, y) => String(x.createdAt).localeCompare(String(y.createdAt)))) awaiting.push({ at: p.createdAt, store: name(p.storeId), docNo: p.docNo, kind: KIND[p.docType], method: p.method, amount: p.amountCents, ref: p.ref || '', by: await userName(p.createdBy) });
+    const byStaff = [];
+    for (const [uid, g] of groupBy(pays.filter(x => MONEY.includes(x.method) && x.status !== 'awaiting'), p => p.createdBy || '')) byStaff.push({ staff: await userName(uid), count: g.length, cash: sum(g.filter(p => p.method === 'cash'), 'amountCents'), card: sum(g.filter(p => p.method === 'card'), 'amountCents'), eft: sum(g.filter(p => p.method === 'eft'), 'amountCents'), qr: sum(g.filter(p => p.method === 'qr'), 'amountCents'), total: sum(g, 'amountCents') });
+    byStaff.sort((x, y) => y.total - x.total);
+    return { title: 'Money in', columns: [col('day', 'Day', 'date'), col('store', 'Store'), col('cash', 'Cash', 'cents'), col('card', 'Card', 'cents'), col('eft', 'EFT', 'cents'), col('qr', 'QR', 'cents'), col('sales', 'On sales', 'cents'), col('orders', 'On sales orders', 'cents'), col('laybys', 'On lay-bys', 'cents'), col('accounts', 'On accounts', 'cents'), col('refunds', 'Refunds', 'cents'), col('total', 'Money in', 'cents'), col('awaiting', 'Awaiting the bank', 'cents'), col('other', 'Paid another way', 'cents')],
+      rows, totals, awaiting, byStaff };
+  },
   async customers(w, b, stores, from, to) {
     const cs = (await query('customers', [{ field: 'entityId', value: w.entityId }], 10000)).filter(c => !c.mergedInto);
     const rows = cs.map(c => ({ name: c.anonymised ? 'Anonymised' : c.name, phone: c.phone || '', since: dayOf(c.createdAt), isNew: dayOf(c.createdAt) >= from && dayOf(c.createdAt) <= to ? 'yes' : '', sales: (c.stats || {}).salesCount || 0, spent: (c.stats || {}).spentCents || 0, last: (c.stats || {}).lastSaleAt || '', credit: c.storeCreditCents || 0, owes: c.accountBalanceCents || 0, points: (c.loyalty || {}).points || 0, tier: (c.loyalty || {}).tier || '', consent: ['whatsapp', 'sms', 'email'].filter(k => c.consent && c.consent[k] && c.consent[k].granted).join(' ') })).sort((x, y) => y.spent - x.spent);

@@ -461,3 +461,12 @@ button.link { background: none; border: 0; padding: 0; color: var(--ink-2); text
 .dm-bar { height: 10px; background: #eee; border-radius: 5px; overflow: hidden; margin: 12px 0; }
 .dm-bar div { height: 100%; background: #111; transition: width .3s; }
 .demo-card { margin-top: 16px; }
+
+/* Money in */
+.mi-top { display: grid; grid-template-columns: 2fr repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+.mi-big .mi-num { font-size: 2.4rem; font-weight: 800; letter-spacing: -.02em; margin: 4px 0; }
+.mi-tile .mi-mid { font-size: 1.4rem; font-weight: 700; margin-top: 4px; }
+.mi-tile.warn { border-color: #c96; }
+.seg { display: inline-flex; gap: 4px; }
+.mi-tbl .tot td, .tbl tr.tot td { font-weight: 700; border-top: 2px solid #111; }
+@media (max-width: 900px) { .mi-top { grid-template-columns: 1fr 1fr; } .mi-big { grid-column: 1 / -1; } }

@@ -27,6 +27,7 @@ import * as fabricsTab from './fabrics.js';
 import * as quotesTab from './quotes.js';
 import * as takeon from './takeon.js';
 import * as demo from './demo.js';
+import * as moneyin from './moneyin.js';
 import * as todo from './todo.js';
 import { EMULATOR } from './db.js';
 
@@ -307,6 +308,7 @@ function navItems() {
   if (auth.atLeast('supervisor')) out.push({ key: 'fabrics', label: 'Fabrics', group: 'stock' });
   if (store && auth.atLeast('supervisor')) out.push({ key: 'online', label: 'Online', group: 'stock' });
   if (auth.session.user.role === 'owner') out.push({ key: 'overview', label: 'All businesses', group: 'office' });
+  if (store && auth.atLeast('manager')) out.push({ key: 'money', label: 'Money in', group: 'sales' });
   if (auth.atLeast('manager')) out.push({ key: 'reports', label: 'Reports', group: 'office' }, { key: 'admin', label: 'Admin', group: 'office' });
   out.push({ key: 'me', label: 'My PIN' });
   return out;
@@ -372,6 +374,7 @@ function paint() {
   if (view === 'buying') { startStoreData(); screen.innerHTML = buying.buyingHtml(); return; }
   if (view === 'customers') { screen.innerHTML = customersTab.customersHtml(); return; }
   if (view === 'reports') { screen.innerHTML = reports.reportsHtml(); return; }
+  if (view === 'money') { screen.innerHTML = moneyin.moneyHtml(); return; }
   if (view === 'fabrics') { screen.innerHTML = fabricsTab.fabricsHtml(); return; }
   if (view === 'quotes') { startStoreData(); screen.innerHTML = quotesTab.quotesHtml(); return; }
   if (view === 'todo') { startStoreData(); screen.innerHTML = todo.todoHtml(); return; }
@@ -580,6 +583,7 @@ async function onAction(e) {
   if (b.dataset.act.startsWith('by-')) { e.preventDefault(); return buying.action(b.dataset.act, b); }
   if (b.dataset.act.startsWith('cu-')) return customersTab.action(b.dataset.act, b);
   if (b.dataset.act.startsWith('tk-')) return takeon.action(b.dataset.act, b);
+  if (b.dataset.act.startsWith('mi-')) return moneyin.action(b.dataset.act, b);
   if (b.dataset.act.startsWith('rp-')) { e.preventDefault(); return reports.action(b.dataset.act, b); }
   if (b.dataset.act.startsWith('on-')) { e.preventDefault(); return online.action(b.dataset.act, b); }
   if (b.dataset.act === 'sync-now') return sync.syncNow().then(reloadOffsets);
@@ -638,7 +642,7 @@ $('screen').addEventListener('change', (e) => {
 
 $('screen').addEventListener('input', (e) => { if (e.target.id === 'pr-q') { prFilter.q = e.target.value; paint(); } if (e.target.id === 'sl-q') sell.onSearchInput(e.target.value); if (e.target.id === 'sa-q') { salesTab.view.q = e.target.value; paint(); const q = $('sa-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } } });
 $('screen').addEventListener('keydown', (e) => { if (e.target.id === 'sl-q' && e.key === 'Enter') { e.preventDefault(); sell.onSearchEnter(e.target.value); } if (e.key === 'Enter' && returns.onEnter(e.target.id, e.target.value)) e.preventDefault(); if (e.key === 'Enter' && view === 'stock' && stock.onEnter(e.target.id, e.target.value)) e.preventDefault(); if (e.key === 'Enter' && view === 'buying' && buying.onEnter(e.target.id, e.target.value)) e.preventDefault(); });
-$('screen').addEventListener('change', (e) => { if (view === 'admin') takeon.onChange(e); if (view === 'fabrics') fabricsTab.onChange(e); if (view === 'quotes') quotesTab.onChange(e); if (view === 'returns') returns.onChange(e); if (view === 'laybys') laybys.onChange(e); if (view === 'orders') specials.onChange(e); if (view === 'stock') stock.onChange(e); if (view === 'buying') buying.onChange(e); if (view === 'customers') customersTab.onChange(e); if (view === 'reports') reports.onChange(e); if (view === 'online') online.onChange(e); });
+$('screen').addEventListener('change', (e) => { if (view === 'money') moneyin.onChange(e); if (view === 'admin') takeon.onChange(e); if (view === 'fabrics') fabricsTab.onChange(e); if (view === 'quotes') quotesTab.onChange(e); if (view === 'returns') returns.onChange(e); if (view === 'laybys') laybys.onChange(e); if (view === 'orders') specials.onChange(e); if (view === 'stock') stock.onChange(e); if (view === 'buying') buying.onChange(e); if (view === 'customers') customersTab.onChange(e); if (view === 'reports') reports.onChange(e); if (view === 'online') online.onChange(e); });
 $('screen').addEventListener('input', (e) => { if (view === 'fabrics') fabricsTab.onInput(e.target.id, e.target.value); if (view === 'quotes') quotesTab.onInput(e.target.id, e.target.value); if (view === 'returns') returns.onInput(e.target.id, e.target.value); if (view === 'laybys') laybys.onInput(e.target.id, e.target.value); if (view === 'orders') specials.onInput(e.target.id, e.target.value); if (view === 'stock') stock.onInput(e.target.id, e.target.value); if (view === 'buying') buying.onInput(e.target.id, e.target.value); if (view === 'customers') customersTab.onInput(e.target.id, e.target.value); });
 returns.setContext({ repaint: () => { if (view === 'returns') paint(); }, data: sellData, onDone: () => { register.reg.stale = true; } });
 laybys.setContext({ repaint: () => { if (view === 'laybys') paint(); }, data: () => ({ ...sellData(), laybys: storeLaybys }), onChange: () => { register.reg.stale = true; if (view === 'laybys') paint(); } });
@@ -646,6 +650,7 @@ laybys.setContext({ repaint: () => { if (view === 'laybys') paint(); }, data: ()
 document.addEventListener('click', (e) => { const b = e.target.closest('#modal [data-act^="lb-"], #modal [data-act^="so-"], #modal [data-act^="by-"], #modal [data-act^="cu-"], #modal [data-act^="on-"]'); if (!b) return; if (b.dataset.act.startsWith('on-')) return online.action(b.dataset.act, b); if (b.dataset.act.startsWith('lb-')) laybys.action(b.dataset.act, b); else if (b.dataset.act.startsWith('so-')) specials.action(b.dataset.act, b); else if (b.dataset.act.startsWith('cu-')) customersTab.action(b.dataset.act, b); else buying.action(b.dataset.act, b); });
 online.setContext({ repaint: () => { if (view === 'online') paint(); }, data: () => ({ ...sellData(), stores }) });
 reports.setContext({ repaint: () => { if (view === 'reports') paint(); }, data: () => ({ ...sellData(), entities, stores, users }) });
+moneyin.setContext({ repaint: () => { if (view === 'money') paint(); }, data: () => ({ ...sellData(), stores }) });
 customersTab.setContext({ repaint: () => { if (view === 'customers') paint(); }, data: () => ({ ...sellData() }) });
 buying.setContext({ repaint: () => { if (view === 'buying') paint(); }, data: () => ({ ...sellData(), stores, suppliers, specials: storeSpecials, pos: storePOs, grvs: storeGrvs, transfers: [...transfersOut, ...transfersIn.filter(t => !transfersOut.some(o => o.id === t.id))] }), onChange: () => { reloadOffsets(); if (view === 'buying') paint(); } });
 stock.setContext({ repaint: () => { if (view === 'stock') paint(); }, data: () => ({ ...sellData(), takes: storeTakes }), onChange: () => { reloadOffsets(); if (view === 'stock') paint(); } });
