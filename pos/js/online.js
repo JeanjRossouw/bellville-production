@@ -121,7 +121,27 @@ export async function shopifyCard(host, entityId, stores) {
       if (act === 'on-connect') { b.disabled = true; b.textContent = 'Connecting and setting up…'; try { const r = await auth.api('connect', { entityId, domain: val(w, 'sh-domain'), clientId: val(w, 'sh-id'), clientSecret: val(w, 'sh-secret'), siteUrl: location.origin }, API.shopify); toast('Connected to ' + r.shopName + (r.setup && r.setup.errors.length ? ' · ' + r.setup.errors.length + ' step(s) need you' : ' · set up')); } finally { b.disabled = false; b.textContent = 'Connect Shopify'; } }
       else if (act === 'on-settings') { const locationByStore = Object.fromEntries(mine.map(s => [s.id, val(w, 'sh-loc-' + s.id)])); const pickupByTitle = Object.fromEntries(val(w, 'sh-pickup').split('\n').map(l => l.split('=').map(x => x.trim())).filter(x => x[0] && x[1])); await auth.api('settings', { entityId, locationByStore, pickupByTitle, defaultStoreId: val(w, 'sh-default'), pushStock: !!w.querySelector('#sh-push').checked, pullOrders: !!w.querySelector('#sh-pull').checked, syncCodes: !!w.querySelector('#sh-codes').checked, syncCustomers: !!w.querySelector('#sh-cust').checked }, API.shopify); toast('Shopify settings saved'); }
       else if (act === 'on-copy-scopes') { const t = (w.querySelector('#sh-scopes') || {}).textContent || ''; try { await navigator.clipboard.writeText(t); toast('Scopes copied: paste them into the app'); } catch { const r = document.createRange(); r.selectNodeContents(w.querySelector('#sh-scopes')); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); toast('Select and copy the scopes', 'warn'); } return; }
-      else if (act === 'on-catalogue') { b.disabled = true; b.textContent = 'Reading the shop…'; try { const r = await auth.api('catalogue', { entityId }, API.shopify); catalogueModal(entityId, r, () => shopifyCard(host, entityId, stores)); } finally { b.disabled = false; b.textContent = "Bring in the shop's catalogue"; } return; }
+      else if (act === 'on-catalogue') {
+        // a few pages a call, added up here, with the count on the button as it goes
+        b.disabled = true; b.textContent = 'Reading the shop…';
+        try {
+          const r = { products: 0, created: 0, updated: 0, variants: 0, archived: 0, stock: { items: 0, qty: 0, skipped: 0, stores: [], perStore: [] }, sample: [] };
+          let after = null;
+          for (let i = 0; i < 500; i++) {
+            const x = await auth.api('catalogue', { entityId, ...(after ? { after } : {}) }, API.shopify);
+            for (const k of ['products', 'created', 'updated', 'variants', 'archived']) r[k] += x[k] || 0;
+            for (const k of ['items', 'qty', 'skipped']) r.stock[k] += x.stock[k] || 0;
+            for (const st of x.stock.stores || []) if (!r.stock.stores.includes(st)) r.stock.stores.push(st);
+            for (const ps of x.stock.perStore || []) { const had = r.stock.perStore.find(y => y.store === ps.store); if (had) { had.items += ps.items; had.qty += ps.qty; } else r.stock.perStore.push({ ...ps }); }
+            r.sample.push(...(x.sample || []).slice(0, Math.max(0, 40 - r.sample.length)));
+            b.textContent = `Reading the shop… ${r.products}${x.total ? ' of ' + x.total : ''}`;
+            if (x.done) break; after = x.after;
+          }
+          catalogueModal(entityId, r, () => shopifyCard(host, entityId, stores));
+        } catch (e) { toast(e.message, 'warn'); }
+        finally { b.disabled = false; b.textContent = "Bring in the shop's catalogue"; }
+        return;
+      }
       else if (act === 'on-setup') { const r = await auth.api('setup', { entityId, siteUrl: location.origin }, API.shopify); toast(r.setup.errors.length ? 'Setup ran: ' + r.setup.errors.length + ' step(s) need you, see the card' : 'Setup done: webhooks, locations, products and stock'); }
       else if (act === 'on-locations') { await auth.api('locations', { entityId }, API.shopify); toast('Locations refreshed'); }
       else if (act === 'on-disconnect') { if (!confirm('Disconnect Shopify for this company? Stock will no longer be pushed and orders will be refused until it is connected again.')) return; await auth.api('disconnect', { entityId }, API.shopify); toast('Disconnected'); }
@@ -154,10 +174,24 @@ function catalogueModal(entityId, r, done) {
     <label class="chk"><input type="checkbox" id="cat-stock"${r.stock.items ? ' checked' : ' disabled'}> Take the shop's stock as the opening stock here</label>
     <p class="muted">${stockLine}</p>
     <p class="muted">Prices come in as they are on the shop (VAT included). Every item is linked, so from now on stock here is pushed to the shop after every movement, and the shop's content comes across on Link by SKU.</p>
-    <div class="pk-list">${r.sample.map(x => `<div class="pk-row"><strong>${esc(x.name)}</strong><span>${x.action} · ${esc(money(x.priceCents))}${x.variants ? ' · ' + x.variants + ' variants' : ''}${x.archived ? ' · archived' : ''}</span></div>`).join('')}${r.products > r.sample.length ? `<div class="pk-row muted">… and ${r.products - r.sample.length} more</div>` : ''}</div>`, {
+    <div class="pk-list">${r.sample.map(x => `<div class="pk-row"><strong>${esc(x.name)}</strong><span>${x.action} · ${esc(money(x.priceCents))}${x.variants ? ' · ' + x.variants + ' variants' : ''}${x.archived ? ' · archived' : ''}</span></div>`).join('')}${r.products > r.sample.length ? `<div class="pk-row muted">… and ${r.products - r.sample.length} more</div>` : ''}</div>
+    <p id="cat-progress" class="muted"></p>`, {
     okLabel: 'Bring them in', onOk: async (w) => {
-      try { const x = await auth.api('catalogueImport', { entityId, openingStock: !!(w.querySelector('#cat-stock') || {}).checked }, API.shopify); toast(`${x.created} new, ${x.updated} updated, ${x.variants} variants${x.stock.items ? ` · opening stock for ${x.stock.items} items` : ''}`); done(); return true; }
-      catch (e) { toast('Import stopped: ' + e.message, 'warn'); return false; }
+      // a few pages a call; a stop part-way is told, and the button carries on from where it was
+      const ok = w.querySelector('#modal-ok'), prog = w.querySelector('#cat-progress');
+      if (ok.disabled) return false;
+      ok.disabled = true;
+      const openingStock = !!(w.querySelector('#cat-stock') || {}).checked;
+      const t = w._catTotals || (w._catTotals = { created: 0, updated: 0, variants: 0, stockItems: 0, stockQty: 0, after: null });
+      try {
+        for (let i = 0; i < 500; i++) {
+          prog.textContent = `Bringing in… ${t.created + t.updated} of ${r.products} products`;
+          const x = await auth.api('catalogueImport', { entityId, openingStock, ...(t.after ? { after: t.after } : {}), sofar: { created: t.created, updated: t.updated, variants: t.variants, stockItems: t.stockItems, stockQty: t.stockQty } }, API.shopify);
+          t.created += x.created; t.updated += x.updated; t.variants += x.variants; t.stockItems += x.stock.items; t.stockQty += x.stock.qty;
+          if (x.done) break; t.after = x.after;
+        }
+        toast(`${t.created} new, ${t.updated} updated, ${t.variants} variants${t.stockItems ? ` · opening stock for ${t.stockItems} items` : ''}`); done(); return true;
+      } catch (e) { ok.disabled = false; prog.textContent = `Stopped after ${t.created + t.updated} products: ${e.message}. Press Bring them in to carry on with the rest.`; toast('Import stopped: ' + e.message, 'warn'); return false; }
     }
   });
 }

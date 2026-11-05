@@ -314,6 +314,33 @@ async function handleWebhook(entityId, topic, raw, o) {
   return { skipped: 'topic ' + topic };
 }
 
+// one chunk of the shop's catalogue: previewed, or brought in; `sofar` is what the app has added up over the
+// earlier chunks, so the log and the audit row say the whole once the last chunk is done
+async function catalogueChunk(w, b, apply) {
+  const cfg = await cfgOf(w.entityId);
+  const sh = await settingsOf(w.entityId);
+  let pulled; try { pulled = await pullCatalogue(cfg, { after: clean(b.after, 400) || null }); } catch (e) { throw new Reject(502, e.message); }
+  const plan = await planCatalogue(w.entityId, pulled.products);
+  const stores = await query('stores', [{ field: 'entityId', value: w.entityId }], 100);
+  const name = (id) => (stores.find(s => s.id === id) || { name: id }).name;
+  const page = { after: pulled.after, done: pulled.done, total: pulled.total };
+  if (!apply) {
+    const st = await planStock(w.entityId, plan, sh.locationByStore || {});
+    return { ok: true, ...page, products: plan.length, created: plan.filter(x => !x.existing).length, updated: plan.filter(x => x.existing).length, variants: plan.reduce((n, x) => n + x.variants.length, 0), archived: plan.filter(x => x.product.archived).length,
+      stock: { items: st.rows.length, qty: st.rows.reduce((n, r) => n + r.qty, 0), skipped: st.skipped, stores: st.stores.map(name), perStore: st.stores.map(s => ({ store: name(s), items: st.rows.filter(r => r.storeId === s).length, qty: st.rows.filter(r => r.storeId === s).reduce((n, r) => n + r.qty, 0) })) },
+      sample: plan.slice(0, 40).map(x => ({ name: x.product.name, action: x.existing ? 'update' : 'new', priceCents: x.product.priceCents, variants: x.variants.length, archived: x.product.archived })) };
+  }
+  const r = await applyCatalogue(w.entityId, w.user, plan, { openingStock: !!b.openingStock, locationByStore: sh.locationByStore || {} });
+  if (pulled.done) {
+    const so = b.sofar && typeof b.sofar === 'object' ? b.sofar : {};
+    const all = { created: (Number(so.created) || 0) + r.created, updated: (Number(so.updated) || 0) + r.updated, variants: (Number(so.variants) || 0) + r.variants, stockItems: (Number(so.stockItems) || 0) + r.stock.items, stockQty: (Number(so.stockQty) || 0) + r.stock.qty };
+    await patchShopify(w.entityId, { linkedAt: nowIso(), catalogueImportedAt: nowIso() });
+    await logSync(w.entityId, 'link', 'ok', `catalogue brought in: ${all.created} new, ${all.updated} updated, ${all.variants} variants${b.openingStock ? `, opening stock for ${all.stockItems} item(s) (${all.stockQty} units)` : ''}`);
+    await audit({ action: 'shopify.catalogue', docType: 'settings', docId: w.entityId, docNo: '', actorUid: w.user.id, actorName: w.user.name, details: { ...all, openingStock: !!b.openingStock }, entityId: w.entityId, storeId: '', deviceId: 'office' });
+  }
+  return { ok: true, ...page, ...r };
+}
+
 const actions = {
   async connect(event, b) {
     const w = await who(event, b, 'owner');
@@ -336,32 +363,11 @@ const actions = {
     const sh = await settingsOf(w.entityId);
     return { ok: true, setup: await runSetup(w.entityId, cfg, siteOf(event, b, sh), w) };
   },
-  // ---- the shop's catalogue into the till (a cut-over from ReptiCube or any shop that ran on Shopify)
-  async catalogue(event, b) {
-    const w = await who(event, b, 'owner');
-    const cfg = await cfgOf(w.entityId);
-    const sh = await settingsOf(w.entityId);
-    let shop; try { shop = await pullCatalogue(cfg); } catch (e) { throw new Reject(502, e.message); }
-    const plan = await planCatalogue(w.entityId, shop);
-    const st = await planStock(w.entityId, plan, sh.locationByStore || {});
-    const stores = await query('stores', [{ field: 'entityId', value: w.entityId }], 100);
-    const name = (id) => (stores.find(s => s.id === id) || { name: id }).name;
-    return { ok: true, products: plan.length, created: plan.filter(x => !x.existing).length, updated: plan.filter(x => x.existing).length, variants: plan.reduce((n, x) => n + x.variants.length, 0), archived: plan.filter(x => x.product.archived).length,
-      stock: { items: st.rows.length, qty: st.rows.reduce((n, r) => n + r.qty, 0), skipped: st.skipped, stores: st.stores.map(name), perStore: st.stores.map(s => ({ store: name(s), items: st.rows.filter(r => r.storeId === s).length, qty: st.rows.filter(r => r.storeId === s).reduce((n, r) => n + r.qty, 0) })) },
-      sample: plan.slice(0, 40).map(x => ({ name: x.product.name, action: x.existing ? 'update' : 'new', priceCents: x.product.priceCents, variants: x.variants.length, archived: x.product.archived })) };
-  },
-  async catalogueImport(event, b) {
-    const w = await who(event, b, 'owner');
-    const cfg = await cfgOf(w.entityId);
-    const sh = await settingsOf(w.entityId);
-    let shop; try { shop = await pullCatalogue(cfg); } catch (e) { throw new Reject(502, e.message); }
-    const plan = await planCatalogue(w.entityId, shop);
-    const r = await applyCatalogue(w.entityId, w.user, plan, { openingStock: !!b.openingStock, locationByStore: sh.locationByStore || {} });
-    await patchShopify(w.entityId, { linkedAt: nowIso(), catalogueImportedAt: nowIso() });
-    await logSync(w.entityId, 'link', 'ok', `catalogue brought in: ${r.created} new, ${r.updated} updated, ${r.variants} variants${b.openingStock ? `, opening stock for ${r.stock.items} item(s) (${r.stock.qty} units)` : ''}`);
-    await audit({ action: 'shopify.catalogue', docType: 'settings', docId: w.entityId, docNo: '', actorUid: w.user.id, actorName: w.user.name, details: { ...r, openingStock: !!b.openingStock }, entityId: w.entityId, storeId: '', deviceId: 'office' });
-    return { ok: true, ...r };
-  },
+  // ---- the shop's catalogue into the till (a cut-over from ReptiCube or any shop that ran on Shopify).
+  // A few pages a call: the answer carries `after` and `done`, and the app comes back until done, adding up
+  // what each call reports (so a shop of a thousand products never runs past the function's time limit).
+  async catalogue(event, b) { return catalogueChunk(await who(event, b, 'owner'), b, false); },
+  async catalogueImport(event, b) { return catalogueChunk(await who(event, b, 'owner'), b, true); },
   async disconnect(event, b) {
     const w = await who(event, b, 'owner');
     let removed = 0;
