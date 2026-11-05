@@ -307,7 +307,7 @@ export function planImport(text, d, eid) {
   const noName = skipped.filter(x => !x.kept).length;
   if (!plan.length) throw new Error('No product in this file has a name: its columns are not where Shopify puts them (Handle, Title, Variant Price…). Export it again from Shopify, or open it in a spreadsheet and check the headings. Nothing was brought in.');
   if (noName > plan.length) throw new Error(`${noName} of ${noName + plan.length} products in this file have no name: its columns are not where Shopify puts them. Nothing was brought in.`);
-  if (plan.length >= 3 && plan.every(x => !x.product.priceCents)) throw new Error('No product in this file has a price: the Variant Price column was not read (the file may be separated or quoted differently from Shopify’s export). Nothing was brought in.');
+  if (plan.every(x => !x.product.priceCents) && (plan.length + noName >= 2 || skipped.some(x => x.kept))) throw new Error('No product in this file has a price: the Variant Price column was not read (its columns are not where Shopify puts them, or the file is quoted differently from Shopify’s export). Nothing was brought in.');
   plan.skipped = skipped; plan.noPrice = plan.filter(x => !x.product.priceCents).length;
   return plan;
 }

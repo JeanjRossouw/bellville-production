@@ -139,7 +139,8 @@ cot-2,"<p>Soft and</p>",566,,,,,,,,,,,,,,,,,,
 cot-3,"",7068,,,,,,,,,,,,,,,,,,
 `;
 await p.setInputFiles('#pr-file', { name: 'broken.csv', mimeType: 'text/csv', buffer: Buffer.from(shifted) });
-R.importBad = await toast(); check('a shifted file is refused with the reason, and nothing is written', /no price|no name|columns are not where Shopify puts them/.test(R.importBad) && (await listColl('products')).filter(x => x.entityId === 'RC').length === 3, [R.importBad, (await listColl('products')).filter(x => x.entityId === 'RC').map(x => x.name)]);
+R.importBad = await toast(); if (await p.locator('#modal').count()) { R.importBadModal = await p.locator('#modal .modal-body').innerText(); await p.click('[data-close]'); await p.waitForTimeout(300); }
+check('a shifted file is refused with the reason, and nothing is written', /no price|no name|columns are not where Shopify puts them/.test(R.importBad) && (await listColl('products')).filter(x => x.entityId === 'RC').length === 3, [R.importBad, R.importBadModal, (await listColl('products')).filter(x => x.entityId === 'RC').map(x => x.name)]);
 
 // ---- labels
 await p.selectOption('#pr-entity', 'BF'); await p.waitForTimeout(300);
