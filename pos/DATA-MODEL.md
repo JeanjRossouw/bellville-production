@@ -297,6 +297,9 @@ against the frozen figure — sales during the count have already moved the
 level — and stamps `lastCountedAt`; items not counted are left alone, unless the manager posts with
 `uncountedAsZero`: then each becomes a count of 0 (`assumedZero`, `countedBy` the approver) with its own
 `count` movement where the frozen figure was not nought, and the take records `uncountedZeroed`.
+Posting goes a batch of variances a call (one transaction each): the take keeps `postedUpTo` and
+`posting` while in review, the app calls `takePost` again until `done`, and the option is fixed
+by the first batch.
 An item the freeze left out (a product made mid-count, a barcode just
 attached, a category the take was not opened on) joins an open take through
 `takeItem`: `frozenQty` is the level as it stands then, with `addedBy`,

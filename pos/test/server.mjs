@@ -11,6 +11,7 @@ process.env.FACTORY_SERVICE_ACCOUNT = process.env.FACTORY_SERVICE_ACCOUNT || JSO
 process.env.SHOPIFY_API_BASE = process.env.SHOPIFY_API_BASE || 'http://127.0.0.1:8799';
 process.env.ANTHROPIC_API_KEY = 'test-key';                      // the tests' mock Anthropic (pos/test/mock-anthropic.mjs), never the real API
 process.env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:8798';
+process.env.POS_TAKE_BATCH = '1';   // a stock take posts one variance a call, so the tests see the batches
 process.env.SHOPIFY_CATALOGUE_PAGE = '1'; process.env.SHOPIFY_CATALOGUE_PAGES = '2';   // the catalogue comes two products a call, so the tests see the chunking
 process.env.NOTIFY_SINK = 'http://127.0.0.1:8788/__notify';   // the SMS, email and WhatsApp providers land here (lib/notify.mjs); never the real ones
 const notifySink = [];   // every message "sent": { provider, path, headers, body }
