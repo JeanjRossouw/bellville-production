@@ -484,17 +484,28 @@ function deleteMany(entityId, items) {
   const n = (k) => k + ' product' + (k === 1 ? '' : 's');
   openModal('Delete ' + n(items.length) + ' for good', `<p class="warn">This cannot be undone.</p>
     <p class="muted">Each product is checked first: one with stock, or on any sale, movement, purchase order, receipt, transfer, lay-by, sales order, quote or stock take, or in a bundle, is refused and the reason shown. Archive those instead.</p>
-    <ul class="muted">${items.slice(0, 12).map(p => `<li>${esc(p.name)}</li>`).join('')}${items.length > 12 ? `<li>and ${items.length - 12} more</li>` : ''}</ul>`, {
-    okLabel: 'Delete for good', onOk: async () => {
+    <ul class="muted">${items.slice(0, 12).map(p => `<li>${esc(p.name) || '<em>(no name)</em>'}</li>`).join('')}${items.length > 12 ? `<li>and ${items.length - 12} more</li>` : ''}</ul><p id="bd-progress" class="muted"></p>`, {
+    okLabel: 'Delete for good', onOk: async (wrap) => {
+      // fifty a call, so a catalogue of thousands goes through without the server timing out; progress on the modal
+      const ok = wrap.querySelector('#modal-ok'); const prog = wrap.querySelector('#bd-progress');
+      if (ok.disabled) return false;
+      ok.disabled = true;
+      const out = { deleted: [], refused: [] };
       try {
-        const out = { deleted: [], refused: [] };
-        for (let i = 0; i < items.length; i += 100) { const r = await auth.api('productDelete', { entityId, productIds: items.slice(i, i + 100).map(p => p.id) }, API.stock); out.deleted.push(...r.deleted); out.refused.push(...r.refused); }
+        for (let i = 0; i < items.length; i += 50) {
+          if (prog) prog.textContent = `Deleting ${Math.min(i + 50, items.length)} of ${items.length}…`;
+          const r = await auth.api('productDelete', { entityId, productIds: items.slice(i, i + 50).map(p => p.id) }, API.stock); out.deleted.push(...r.deleted); out.refused.push(...r.refused);
+        }
         untick();
         const shopify = out.deleted.filter(x => x.shopify).length;
         toast(out.deleted.length ? `Deleted ${n(out.deleted.length)}` + (out.refused.length ? `, ${out.refused.length} refused` : '') : 'Nothing deleted: ' + (out.refused.length ? 'all refused' : 'no products'), out.refused.length ? 'warn' : '');
         if (out.refused.length || shopify) setTimeout(() => openModal(out.deleted.length ? `Deleted ${n(out.deleted.length)}` : 'Nothing deleted', `${shopify ? `<p class="muted">${shopify} of them came from Shopify: delete them in Shopify too, or the next import brings them back.</p>` : ''}
           ${out.refused.length ? `<p>${n(out.refused.length)} kept (archive these instead):</p><ul id="bd-refused">${out.refused.map(x => `<li><strong>${esc(x.name)}</strong> — ${esc(x.why)}</li>`).join('')}</ul>` : ''}`, { okLabel: 'OK', cancelLabel: '', onOk: () => true }), 50);
         return true;
-      } catch (e) { toast(e.message, 'warn'); return false; }
+      } catch (e) {
+        ok.disabled = false;
+        if (prog) prog.textContent = `Stopped after ${n(out.deleted.length)}: ${e.message}. Press Delete for good to carry on with the rest.`;
+        toast(e.message, 'warn'); items = items.filter(p => !out.deleted.some(x => x.id === p.id) && !out.refused.some(x => x.id === p.id)); return false;
+      }
     } });
 }
