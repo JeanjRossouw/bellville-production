@@ -127,6 +127,19 @@ await p.waitForSelector('#modal'); R.import2 = await p.locator('#modal .modal-bo
 await p.click('#modal-ok'); await toast(); await p.waitForTimeout(800);
 prods = await listColl('products'); vars = await listColl('variants');
 check('re-import updated in place', prods.filter(x => x.entityId === 'RC').length === 3 && prods.find(x => x.id === lgk.id).priceCents === 139900 && vars.filter(v => v.productId === lgk.id).length === 2);
+// a file Excel saved with semicolons (the decimal comma locale) reads the same
+const semi = shopify.split('\n').map(l => { const out = []; let q = false, cell = ''; for (const c of l) { if (c === '"') q = !q; if (c === ',' && !q) { out.push(cell); cell = ''; } else cell += c; } out.push(cell); return out.join(';'); }).join('\n');
+await p.setInputFiles('#pr-file', { name: 'products_excel.csv', mimeType: 'text/csv', buffer: Buffer.from(semi) });
+await p.waitForSelector('#modal'); R.importSemi = await p.locator('#modal .modal-body').innerText(); check('a semicolon-separated file reads the same: 3 already here', /0 new, 3 already here/.test(R.importSemi) && !/no price/.test(R.importSemi), R.importSemi);
+await p.click('[data-close]'); await p.waitForTimeout(300);
+// a file whose columns shifted (names that are pieces of HTML, no prices) is refused whole, nothing written
+const shifted = `Handle,Title,Body (HTML),Vendor,Type,Tags,Published,Option1 Name,Option1 Value,Option2 Name,Option2 Value,Option3 Name,Option3 Value,Variant SKU,Variant Inventory Tracker,Variant Price,Variant Taxable,Variant Barcode,Image Src,Status,Cost per item
+cot-1,"clean aesthetic to any nursery.</span></p>;;;;;;;;",540,,,,,,,,,,,,,,,,,,
+cot-2,"<p>Soft and</p>",566,,,,,,,,,,,,,,,,,,
+cot-3,"",7068,,,,,,,,,,,,,,,,,,
+`;
+await p.setInputFiles('#pr-file', { name: 'broken.csv', mimeType: 'text/csv', buffer: Buffer.from(shifted) });
+R.importBad = await toast(); check('a shifted file is refused with the reason, and nothing is written', /no price|no name|columns are not where Shopify puts them/.test(R.importBad) && (await listColl('products')).filter(x => x.entityId === 'RC').length === 3, [R.importBad, (await listColl('products')).filter(x => x.entityId === 'RC').map(x => x.name)]);
 
 // ---- labels
 await p.selectOption('#pr-entity', 'BF'); await p.waitForTimeout(300);

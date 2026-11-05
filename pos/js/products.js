@@ -10,7 +10,7 @@ import { setOne, patchOne, newId, batch } from './db.js';
 import * as auth from './auth.js';
 import { esc, toast, field, row, val, openModal, empty, money, openPrint } from './ui.js';
 import { marginPct, rateOn, rateFor, centsOf, randsOf } from './money.js';
-import { parseCsv, toCsv, csvObjects, download } from './csv.js';
+import { parseCsv, sepOf, toCsv, csvObjects, download } from './csv.js';
 import { barcodeSvg, encodable, nextShopCode } from './barcode.js';
 
 export const TYPES = [
@@ -262,9 +262,13 @@ export function exportCsv(d, eid) {
   return rows.length - 1;
 }
 // Shopify's CSV → a plan: products with their variants, matched to what is here by handle, then SKU, then name
+// the file read the way it was saved (a comma, or the semicolon Excel uses here), and checked before anything is written:
+// a product needs a name that is a name (not a piece of its description), and a file whose prices all read as nothing or
+// whose names are mostly missing has its columns in the wrong places and is refused whole
 export function planImport(text, d, eid) {
-  const objs = csvObjects(parseCsv(text));
+  const objs = csvObjects(parseCsv(text, sepOf(text)));
   if (!objs.length || !('Handle' in objs[0]) || !('Title' in objs[0])) throw new Error('This is not a Shopify product CSV (it needs Handle and Title columns).');
+  const skipped = [];
   const groups = new Map();
   let last = null;
   for (const r of objs) {
@@ -276,6 +280,9 @@ export function planImport(text, d, eid) {
   const plan = [];
   for (const g of groups.values()) {
     const first = g.rows.find(r => r.Title.trim()) || g.rows[0];
+    const name = stripHtml(first.Title).slice(0, 160);
+    if (!name) { skipped.push({ handle: g.handle, why: 'no name' }); continue; }
+    if (/<\/?\w+[^>]*>|;{3,}|^\s*<|\n/.test(first.Title)) skipped.push({ handle: g.handle, why: 'the name was a piece of HTML or a shifted column: ' + name.slice(0, 40), kept: true });
     const options = [1, 2, 3].map(i => ({ name: (first[`Option${i} Name`] || '').trim(), values: [] })).filter(o => o.name && o.name !== 'Title');
     const variants = g.rows.filter(r => (r['Variant SKU'] || r['Variant Price'] || r['Option1 Value'])).map(r => {
       const vals = {}; options.forEach((o, i) => { const v = (r[`Option${i + 1} Value`] || '').trim(); if (v) { vals[o.name] = v; if (!o.values.includes(v)) o.values.push(v); } });
@@ -286,7 +293,7 @@ export function planImport(text, d, eid) {
     const type = tags.includes('mto') ? 'mto' : tags.includes('nonstock') ? 'nonstock' : /^true$/i.test(first['Gift Card'] || '') ? 'voucher' : 'stock';
     const vatClass = tags.includes('vat:zero') ? 'zero' : tags.includes('vat:exempt') ? 'exempt' : /^false$/i.test(first['Variant Taxable'] || 'TRUE') ? 'zero' : 'standard';
     const status = (first.Status || '').toLowerCase();
-    const product = { name: first.Title.trim(), description: stripHtml(first['Body (HTML)']), brand: (first.Vendor || '').trim(), category: (first.Type || first['Product Category'] || '').trim().split('>').pop().trim(),
+    const product = { name, description: stripHtml(first['Body (HTML)']), brand: (first.Vendor || '').trim(), category: (first.Type || first['Product Category'] || '').trim().split('>').pop().trim(),
       type, vatClass, trackStock: !!(first['Variant Inventory Tracker'] || '').trim(), images, archived: status === 'archived' || status === 'draft' || /^false$/i.test(first.Published || ''),
       options: options.filter(o => o.values.length), shopifyHandle: g.handle };
     product.hasVariants = product.options.length > 0;
@@ -297,6 +304,11 @@ export function planImport(text, d, eid) {
     const match = mine.find(p => p.shopifyHandle === g.handle) || (product.sku && mine.find(p => p.sku === product.sku)) || mine.find(p => p.name.toLowerCase() === product.name.toLowerCase());
     plan.push({ handle: g.handle, product, variants: product.hasVariants ? variants : [], existing: match || null });
   }
+  const noName = skipped.filter(x => !x.kept).length;
+  if (!plan.length) throw new Error('No product in this file has a name: its columns are not where Shopify puts them (Handle, Title, Variant Price…). Export it again from Shopify, or open it in a spreadsheet and check the headings. Nothing was brought in.');
+  if (noName > plan.length) throw new Error(`${noName} of ${noName + plan.length} products in this file have no name: its columns are not where Shopify puts them. Nothing was brought in.`);
+  if (plan.length >= 3 && plan.every(x => !x.product.priceCents)) throw new Error('No product in this file has a price: the Variant Price column was not read (the file may be separated or quoted differently from Shopify’s export). Nothing was brought in.');
+  plan.skipped = skipped; plan.noPrice = plan.filter(x => !x.product.priceCents).length;
   return plan;
 }
 export function openImport(file, d, eid) {
@@ -307,6 +319,9 @@ export function openImport(file, d, eid) {
     const adds = plan.filter(x => !x.existing).length, updates = plan.length - adds, vars = plan.reduce((n, x) => n + x.variants.length, 0);
     openModal('Bring in ' + plan.length + ' products from Shopify', `
       <p>${adds} new, ${updates} already here (matched by Shopify handle, SKU or name) and will be updated. ${vars} variant${vars === 1 ? '' : 's'}.</p>
+      ${plan.skipped.filter(x => !x.kept).length ? `<p class="warn">${plan.skipped.filter(x => !x.kept).length} row${plan.skipped.filter(x => !x.kept).length === 1 ? '' : 's'} with no product name left out.</p>` : ''}
+      ${plan.skipped.filter(x => x.kept).length ? `<p class="warn">${plan.skipped.filter(x => x.kept).length} name${plan.skipped.filter(x => x.kept).length === 1 ? '' : 's'} looked like a piece of a description and ${plan.skipped.filter(x => x.kept).length === 1 ? 'was' : 'were'} cleaned up: check ${esc(plan.skipped.filter(x => x.kept).map(x => x.why.replace(/^.*: /, '')).slice(0, 3).join(', '))}.</p>` : ''}
+      ${plan.noPrice ? `<p class="warn">${plan.noPrice} product${plan.noPrice === 1 ? ' has' : 's have'} no price (R 0.00).</p>` : ''}
       <p class="muted">Prices and costs come in as rands and are kept in cents. VAT class is Standard unless the row is marked not taxable or tagged vat:zero / vat:exempt. Stock counts are not read from the file: stock here is the sum of movements.</p>
       <div class="pk-list">${plan.slice(0, 40).map(x => `<div class="pk-row"><strong>${esc(x.product.name)}</strong><span>${x.existing ? 'update' : 'new'} · ${esc(money(x.product.priceCents))}${x.variants.length ? ' · ' + x.variants.length + ' variants' : ''}</span></div>`).join('')}${plan.length > 40 ? `<div class="pk-row muted">… and ${plan.length - 40} more</div>` : ''}</div>`, {
       okLabel: 'Bring them in', onOk: async () => { try { const n = await applyImport(plan, d, eid); toast(n + ' products brought in'); return true; } catch (e) { toast('Import stopped: ' + e.message, 'warn'); return false; } }
