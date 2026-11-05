@@ -653,7 +653,9 @@ reports.setContext({ repaint: () => { if (view === 'reports') paint(); }, data: 
 moneyin.setContext({ repaint: () => { if (view === 'money') paint(); }, data: () => ({ ...sellData(), stores }) });
 customersTab.setContext({ repaint: () => { if (view === 'customers') paint(); }, data: () => ({ ...sellData() }) });
 buying.setContext({ repaint: () => { if (view === 'buying') paint(); }, data: () => ({ ...sellData(), stores, suppliers, specials: storeSpecials, pos: storePOs, grvs: storeGrvs, transfers: [...transfersOut, ...transfersIn.filter(t => !transfersOut.some(o => o.id === t.id))] }), onChange: () => { reloadOffsets(); if (view === 'buying') paint(); } });
-stock.setContext({ repaint: () => { if (view === 'stock') paint(); }, data: () => ({ ...sellData(), takes: storeTakes }), onChange: () => { reloadOffsets(); if (view === 'stock') paint(); } });
+stock.setContext({ repaint: () => { if (view === 'stock') paint(); }, data: () => ({ ...sellData(), takes: storeTakes }), onChange: () => { reloadOffsets(); if (view === 'stock') paint(); },
+  // the product form from the count screen: an edit, or a new product with the barcode just scanned
+  openProduct: (productId, prefill, onSaved) => products.openProductForm(prData(), productId, (sellData().entity || {}).id, { prefill, onSaved }) });
 todo.setContext({ data: () => ({ ...sellData(), specials: storeSpecials, quotes: storeQuotes, salesOrders: storeSalesOrders }) });
 takeon.setContext({ data: () => ({ ...sellData() }), repaint: () => { if (view === 'admin' && adminSub === 'takeon') paint(); }, onStock: () => reloadOffsets() });
 quotesTab.setContext({ repaint: () => { if (view === 'quotes') paint(); }, data: () => ({ ...sellData(), quotes: storeQuotes, cartLines: sell.sale.cart.lines.length }), onLoad: (q, opts) => { const ok = sell.loadQuote(q, opts); if (ok) { view = 'sell'; paint(); } return ok; } });

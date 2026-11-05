@@ -92,7 +92,8 @@ const OPT_MAX = 3;
 // metres as typed (11.5, 11,5); null when blank or not a positive number
 const metresOf = (t) => { const n = Number(String(t == null ? '' : t).trim().replace(',', '.')); return String(t == null ? '' : t).trim() !== '' && Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null; };
 const variantKey = (vals) => Object.keys(vals).sort().map(k => k + '=' + vals[k]).join('|');
-export function openProductForm(d, productId, entityId) {
+// o.prefill fills a new product's form (e.g. the barcode just scanned); o.onSaved(id) runs after a save
+export function openProductForm(d, productId, entityId, o = {}) {
   const p = productId ? d.products.find(x => x.id === productId) : null;
   const eid = p ? p.entityId : entityId;
   const ent = d.entities.find(e => e.id === eid) || {};
@@ -100,7 +101,7 @@ export function openProductForm(d, productId, entityId) {
   const cats = uniq(d.products.filter(x => x.entityId === eid).map(x => x.category)).sort(), brands = uniq(d.products.filter(x => x.entityId === eid).map(x => x.brand)).sort();
   const existing = p ? itemVariants(d, p.id) : [];
   const opts = (p && p.options) || [];
-  const x = p || { type: 'stock', vatClass: 'standard', trackStock: true, costCents: 0, priceCents: 0, images: [], barcodes: [], storePrices: {}, bundle: [] };
+  const x = p || { type: 'stock', vatClass: 'standard', trackStock: true, costCents: 0, priceCents: 0, images: [], barcodes: [], storePrices: {}, bundle: [], ...(o.prefill || {}) };
   const html = `<div class="pf" data-entity="${esc(eid)}" data-id="${esc(p ? p.id : '')}">
     ${row(field('Name', 'pf-name', { value: x.name, placeholder: 'e.g. 3 Seater Chesterfield' }), field('SKU', 'pf-sku', { value: x.sku, placeholder: 'your own code' }))}
     ${row(field('Barcodes (scan or type; several, separated by spaces)', 'pf-barcodes', { value: (x.barcodes || []).join(' '), placeholder: 'scan here' }), field('Category', 'pf-cat', { value: x.category, list: 'pf-cats' }))}
@@ -128,7 +129,7 @@ export function openProductForm(d, productId, entityId) {
   </div>`;
   const m = openModal(p ? 'Edit ' + p.name : 'New product · ' + (ent.tradingName || ent.legalName || ''), html, {
     okLabel: p ? 'Save' : 'Add product',
-    onOk: (wrap) => saveProduct(wrap, d, p, existing)
+    onOk: (wrap) => saveProduct(wrap, d, p, existing, o.onSaved)
   });
   m.wrap.querySelector('.modal-card').classList.add('wide');
   const w = m.wrap;
@@ -190,7 +191,7 @@ function buildVariants(w) {
   const list = combos.map(vals => { const key = variantKey(vals); const g = had[key]; return { optionValues: vals, name: options.map(o => vals[o.name]).join(' / '), sku: g ? g.sku : '', barcodes: g ? g.barcodes : [], costCents: g ? g.costCents : null, priceCents: g ? g.priceCents : null, fabricMetres: g ? g.fabricMetres : null, framePriceCents: g ? g.framePriceCents : null, archived: g ? g.archived : false, _id: g ? g._id : '' }; });
   w.querySelector('#pf-variants').innerHTML = variantGridHtml(list);
 }
-async function saveProduct(w, d, p, existing) {
+async function saveProduct(w, d, p, existing, onSaved) {
   const eid = w.querySelector('.pf').dataset.entity;
   const data = {
     name: val(w, 'pf-name'), sku: val(w, 'pf-sku'), barcodes: codes(val(w, 'pf-barcodes')), category: val(w, 'pf-cat'), brand: val(w, 'pf-brand'),
@@ -236,6 +237,7 @@ async function saveProduct(w, d, p, existing) {
       if (data.archived && !p.archived) await logChange(eid, 'product.archive', id, { name: data.name });
     } else await logChange(eid, 'product.create', id, { name: data.name, priceCents: data.priceCents, costCents: data.costCents, variants: grid.length });
     toast(data.name + (p ? ' saved' : ' added'));
+    if (onSaved) { try { await onSaved(id, { ...data, id }); } catch (e) { toast(e.message, 'warn'); } }
     return true;
   } catch (e) { toast('Could not save: ' + e.message, 'warn'); return false; }
 }

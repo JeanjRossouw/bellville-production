@@ -294,6 +294,14 @@ phone (scans add one, or a typed count sets it), merged live; review closes
 the count; posting (a manager) writes one `count` movement per variance
 against the frozen figure — sales during the count have already moved the
 level — and stamps `lastCountedAt`; items not counted are left alone.
+An item the freeze left out (a product made mid-count, a barcode just
+attached, a category the take was not opened on) joins an open take through
+`takeItem`: `frozenQty` is the level as it stands then, with `addedBy`,
+`addedAt` and a `log` row of mode `'item'`; the same call on an item already
+in the take refreshes its name, SKU and barcodes after an edit. On the count
+screen a manager edits a product from its row, and an unknown code is
+attached to a product (`product.barcode` in the audit log) or becomes a new
+product, then counted.
 Adjustments (`adjust`, a manager) and quarantine moves (`move`, a
 supervisor) are movements too; stock on hand is never typed over.
 

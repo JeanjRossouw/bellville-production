@@ -6,7 +6,7 @@
 // and post. The server (pos-stock) writes every movement.
 import { API } from './config.js';
 import * as auth from './auth.js';
-import { list } from './db.js';
+import { list, patchOne, setOne, newId } from './db.js';
 import { esc, toast, field, row, val, openModal, openPrint, money, niceDate, niceTime, empty } from './ui.js';
 import { centsOf, randsOf } from './money.js';
 import { cameraScanner } from './scanner.js';
@@ -85,7 +85,7 @@ function takesHtml(dd) {
 function countHtml(t) {
   const q = st.q.trim().toLowerCase();
   const rows = t.items.filter(x => !q || [x.name, x.sku, ...(x.barcodes || [])].some(s => String(s).toLowerCase().includes(q)));
-  const sup = auth.atLeast('supervisor');
+  const sup = auth.atLeast('supervisor'), mgr = auth.atLeast('manager');
   return `<div class="card tk-head"><div><h2>${esc(t.name)} <span class="chip">counting</span></h2><p class="muted">Frozen ${esc(niceDate(t.frozenAt))} ${esc(niceTime(t.frozenAt))} · ${t.countedItems} of ${t.itemCount} counted${st.showFrozen ? '' : ' · a blind count: the system’s figures are hidden'}</p></div>
       <div class="tk-acts">${sup ? `<button class="btn ghost sm" data-act="st-frozen">${st.showFrozen ? 'Hide' : 'Show'} system figures</button><button class="btn primary sm" data-act="st-take-review">Done counting: review</button><button class="btn ghost sm" data-act="st-take-cancel">Cancel take</button>` : ''}</div></div>
     <div class="card tk-scan">
@@ -94,10 +94,11 @@ function countHtml(t) {
         <button class="btn ghost sm" data-act="st-camera">${icon('camera')} ${st.camera ? 'Stop camera' : 'Camera'}</button></div>
       <video id="tk-video" class="tk-video" playsinline muted hidden></video>
       <div class="tk-last" id="tk-last">${st.last ? esc(st.last) : 'Nothing scanned yet'}</div>
+      ${mgr ? '<p class="muted">An unknown code can be attached to a product, or a new product made, without leaving the count. Edit on a row changes the product; the count stays.</p>' : ''}
     </div>
     <div class="toolbar"><input id="st-q" class="search" type="search" placeholder="Find an item in the count" value="${esc(st.q)}"></div>
     <div class="card" style="padding:0;overflow:auto"><table class="tbl tk-tbl"><thead><tr><th>Item</th><th>SKU</th>${st.showFrozen ? '<th class="r">System</th>' : ''}<th class="r">Counted</th><th></th></tr></thead>
-      <tbody>${rows.map(x => `<tr class="${x.countedQty == null ? '' : 'done'}"><td><strong>${esc(x.name)}</strong>${x.countedQty != null ? `<div class="muted">${esc(x.countedBy)} · ${esc(niceTime(x.countedAt))}</div>` : ''}</td><td class="muted">${esc(x.sku)}</td>${st.showFrozen ? `<td class="r">${x.frozenQty}</td>` : ''}<td class="r"><strong>${x.countedQty == null ? '—' : x.countedQty}</strong></td><td class="r nowrap"><button class="btn ghost sm" data-act="st-count" data-id="${esc(x.itemId)}" data-d="1">+1</button><button class="btn ghost sm" data-act="st-set" data-id="${esc(x.itemId)}">Set</button></td></tr>`).join('')}</tbody></table></div>`;
+      <tbody>${rows.map(x => `<tr class="${x.countedQty == null ? '' : 'done'}"><td><strong>${esc(x.name)}</strong>${x.countedQty != null ? `<div class="muted">${esc(x.countedBy)} · ${esc(niceTime(x.countedAt))}</div>` : ''}</td><td class="muted">${esc(x.sku)}</td>${st.showFrozen ? `<td class="r">${x.frozenQty}</td>` : ''}<td class="r"><strong>${x.countedQty == null ? '—' : x.countedQty}</strong></td><td class="r nowrap"><button class="btn ghost sm" data-act="st-count" data-id="${esc(x.itemId)}" data-d="1">+1</button><button class="btn ghost sm" data-act="st-set" data-id="${esc(x.itemId)}">Set</button>${mgr ? `<button class="btn ghost sm" data-act="st-edit" data-id="${esc(x.itemId)}" title="Edit the product without leaving the count">Edit</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
 }
 function reviewHtml(t, done = false) {
   const rows = t.items.filter(x => !st.varOnly || (x.countedQty != null && x.countedQty !== x.frozenQty)).map(x => ({ ...x, diff: x.countedQty == null ? null : x.countedQty - x.frozenQty }));
@@ -126,6 +127,7 @@ export async function action(act, b) {
   if (act === 'st-varonly') { st.varOnly = !st.varOnly; return ctx.repaint(); }
   if (act === 'st-count') return count(id, Number(b.dataset.d) || 1, 'add');
   if (act === 'st-set') return setCount(id);
+  if (act === 'st-edit') return editItem(id);
   if (act === 'st-camera') return toggleCamera();
   if (act === 'st-take-review') return takeStep('takeReview', 'Counting closed: look at the variances');
   if (act === 'st-take-reopen') return takeStep('takeReopen', 'Back to counting');
@@ -142,8 +144,8 @@ const liveTake = () => (d().takes || []).find(t => t.status === 'open');
 function scanned(code) {
   const t = liveTake(); if (!t) return;
   const it = findCode(code) || t.items.find(x => (x.barcodes || []).some(b => String(b).toLowerCase() === String(code).trim().toLowerCase()) || x.sku.toLowerCase() === String(code).trim().toLowerCase());
-  if (!it) { st.last = 'Unknown code ' + code; toast('Unknown code ' + code, 'warn'); return ctx.repaint(); }
-  if (!t.items.some(x => x.itemId === it.itemId)) { st.last = it.name + ' is not in this stock take'; toast(st.last, 'warn'); return ctx.repaint(); }
+  if (!it) { st.last = 'Unknown code ' + code; ctx.repaint(); return unknownCode(String(code).trim()); }
+  if (!t.items.some(x => x.itemId === it.itemId)) { st.last = it.name + ' is not in this stock take'; ctx.repaint(); return addToTake(it.itemId, it.name, true); }
   if (st.mode === 'qty') return setCount(it.itemId, it.name);
   return count(it.itemId, 1, 'add', it.name);
 }
@@ -162,6 +164,53 @@ function setCount(itemId, name) {
   const t = liveTake(); if (!t) return;
   const it = t.items.find(x => x.itemId === itemId); if (!it) return;
   openModal('Count ' + (name || it.name), field('How many are there', 'tk-qty', { type: 'number', value: it.countedQty == null ? '' : it.countedQty, min: 0 }), { okLabel: 'Set', onOk: async (w) => { const q = Number(val(w, 'tk-qty')); if (!Number.isInteger(q) || q < 0) { toast('A whole number.', 'warn'); return false; } await count(itemId, q, 'set', name); return true; } });
+}
+// ---- editing while counting: the product form from a row, an unknown code attached or made, an item added
+const afterCount = (itemId, name) => st.mode === 'qty' ? setCount(itemId, name) : count(itemId, 1, 'add', name);
+async function addToTake(itemId, name, thenCount) {
+  const t = liveTake(); if (!t) return;
+  try {
+    const r = await auth.api('takeItem', { takeId: t.id, itemId, ...where() }, API.stock);
+    mergeTake(r.take); st.last = r.added ? `${name}: added to the stock take` : st.last; ctx.repaint();
+    if (thenCount) await afterCount(itemId, name);
+  } catch (e) { st.last = e.message; toast(e.message, 'warn'); ctx.repaint(); }
+}
+function editItem(itemId) {
+  const t = liveTake(); if (!t || !ctx.openProduct) return;
+  const it = t.items.find(x => x.itemId === itemId); if (!it) return;
+  stopCamera();
+  ctx.openProduct(it.productId, null, () => addToTake(itemId, it.name, false));
+}
+// a code nobody has: attach it to a product (a manager, since products are theirs to change) or make the product
+function unknownCode(code) {
+  if (!auth.atLeast('manager')) return toast(`Unknown code ${code}: a manager can attach it to a product.`, 'warn');
+  const t = liveTake(); if (!t) return;
+  const all = items(d());
+  const inTake = new Set(t.items.map(x => x.itemId));
+  const rowsOf = (q) => { const k = q.trim().toLowerCase(); return (k ? all.filter(x => [x.name, x.sku, ...x.barcodes].some(s => String(s).toLowerCase().includes(k))) : all).slice(0, 30); };
+  const rows = (q) => { const r = rowsOf(q); return r.length ? r.map(x => `<tr><td><strong>${esc(x.name)}</strong><div class="muted">${esc(x.sku)}${x.barcodes.length ? ' · ' + esc(x.barcodes.join(', ')) : ''}${inTake.has(x.itemId) ? '' : ' · not in this take: it will be added'}</div></td><td class="r"><button class="btn sm" data-pick="${esc(x.itemId)}">Attach</button></td></tr>`).join('') : '<tr><td class="muted" colspan="2">No stock item matches.</td></tr>'; };
+  const { wrap, close } = openModal('Unknown code ' + code, `<p class="muted">Nothing carries the barcode <strong>${esc(code)}</strong>. Attach it to the product it belongs to, and the scan counts; or make the product.</p>
+    <input id="uc-q" class="search" type="search" placeholder="Find the product by name, SKU or barcode" autocomplete="off">
+    <div style="max-height:40vh;overflow:auto;margin-top:.5rem"><table class="tbl"><tbody id="uc-rows">${rows('')}</tbody></table></div>`, { okLabel: 'New product with this barcode', cancelLabel: 'Cancel', onOk: () => {
+      close(false); stopCamera();
+      ctx.openProduct('', { barcodes: [code], type: 'stock', trackStock: true }, (id, p) => p.hasVariants ? toast(p.name + ' comes in variants: scan the variant’s barcode.', 'warn') : addToTake(id, p.name, true));
+      return false;
+    } });
+  wrap.querySelector('#uc-q').addEventListener('input', (e) => { wrap.querySelector('#uc-rows').innerHTML = rows(e.target.value); });
+  wrap.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-pick]'); if (!b) return;
+    const it = all.find(x => x.itemId === b.dataset.pick); if (!it) return;
+    b.disabled = true;
+    try {
+      const coll = it.variantId ? 'variants' : 'products';
+      await patchOne(coll, it.itemId, { barcodes: [...it.barcodes, code].slice(0, 20), ...auth.touch() });
+      await setOne('auditLog', newId('auditLog'), { action: 'product.barcode', docType: 'product', docId: it.productId, docNo: '', actorUid: auth.session.uid, actorName: auth.session.user.name, overrideUid: '', overrideName: '', details: { name: it.name, variantId: it.variantId, barcode: code }, ...auth.stamp(d().entity.id, '') }).catch(() => {});
+      toast(`${code} now belongs to ${it.name}`);
+      close(false);
+      await addToTake(it.itemId, it.name, true);
+    } catch (err) { b.disabled = false; toast('Could not attach it: ' + err.message, 'warn'); }
+  });
+  setTimeout(() => { const q = wrap.querySelector('#uc-q'); if (q) q.focus(); }, 50);
 }
 function mergeTake(take) { const list = d().takes || []; const i = list.findIndex(x => x.id === take.id); if (i >= 0) list[i] = { ...list[i], ...take }; else list.push(take); }
 async function takeOpen() {
