@@ -16,11 +16,16 @@ const vkey = (ov) => Object.entries(ov || {}).map(([k, v]) => low(k) + '=' + low
 // ---- every product on the shop, in the till's terms
 // Only what the shop sells now (status:active): drafts and archived products stay out of the till. Small pages,
 // because Shopify prices a query by what it may return and refuses one over 1000 (50 products × 100 variants
-// × 20 locations went to 1388): 15 products × 50 variants × 10 locations stays well under.
-export async function pullCatalogue(cfg) {
-  const out = []; let after = null;
-  for (let page = 0; page < 2000; page++) {
-    const d = await gql(cfg, `query($after: String) { products(first: 15, after: $after, query: "status:active") { pageInfo { hasNextPage endCursor } nodes { id title handle descriptionHtml status vendor productType tags isGiftCard options { name values } images(first: 3) { nodes { url } } variants(first: 50) { nodes { id title sku barcode price taxable selectedOptions { name value } image { url } inventoryItem { id tracked unitCost { amount } inventoryLevels(first: 10) { nodes { location { id } quantities(names: ["available"]) { name quantity } } } } } } } } }`, { after });
+// × 20 locations went to 1388): 15 products × 50 variants × 10 locations stays well under. And a few pages a
+// call, because a shop of a thousand products takes longer than a function may run: the caller comes back
+// with `after` until `done`. (The tests shrink both through the two env knobs.)
+const PAGE = Math.max(1, Number(process.env.SHOPIFY_CATALOGUE_PAGE) || 15), PAGES = Math.max(1, Number(process.env.SHOPIFY_CATALOGUE_PAGES) || 4);
+export async function pullCatalogue(cfg, { after = null, pages = PAGES } = {}) {
+  const out = [];
+  let total = null;
+  if (!after) { try { const c = await gql(cfg, `query { productsCount(query: "status:active") { count } }`); total = Number(c.productsCount && c.productsCount.count); if (!Number.isFinite(total)) total = null; } catch (e) { total = null; } }
+  for (let page = 0; page < pages; page++) {
+    const d = await gql(cfg, `query($after: String, $first: Int!) { products(first: $first, after: $after, query: "status:active") { pageInfo { hasNextPage endCursor } nodes { id title handle descriptionHtml status vendor productType tags isGiftCard options { name values } images(first: 3) { nodes { url } } variants(first: 50) { nodes { id title sku barcode price taxable selectedOptions { name value } image { url } inventoryItem { id tracked unitCost { amount } inventoryLevels(first: 10) { nodes { location { id } quantities(names: ["available"]) { name quantity } } } } } } } } }`, { after, first: PAGE });
     const pr = d.products;
     for (const n of pr.nodes) {
       const options = (n.options || []).filter(o => o.name && o.name !== 'Title').map(o => ({ name: o.name, values: (o.values || []).filter(v => v && v !== 'Default Title') }));
@@ -32,10 +37,10 @@ export async function pullCatalogue(cfg) {
       });
       out.push({ id: n.id, handle: n.handle || '', title: n.title || '', description: strip(n.descriptionHtml), vendor: n.vendor || '', productType: n.productType || '', tags: (n.tags || []).map(low), giftCard: !!n.isGiftCard, status: n.status || 'ACTIVE', images: (n.images && n.images.nodes || []).map(i => i.url).filter(Boolean).slice(0, 5), options: options.filter(o => o.values.length), variants });
     }
-    if (!pr.pageInfo.hasNextPage) break;
+    if (!pr.pageInfo.hasNextPage) return { products: out, after: null, done: true, total };
     after = pr.pageInfo.endCursor;
   }
-  return out;
+  return { products: out, after, done: false, total };
 }
 
 // ---- the plan: each shop product against the till's, matched by Shopify id, then handle, then SKU, then name
