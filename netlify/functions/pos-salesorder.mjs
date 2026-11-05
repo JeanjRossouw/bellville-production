@@ -64,7 +64,7 @@ const actions = {
     const text = salesOrderText(ctx.entity, ctx.store, so, status);
     const now = nowIso();
     const entry = { at: now, status, how, byName: ctx.user.name };
-    await patchDoc('salesOrders', so.id, { updates: [...(so.updates || []), entry].slice(-50), updateDue: false, lastUpdateAt: now, updatedAt: now });
+    await patchDoc('salesOrders', so.id, { updates: [...(so.updates || []), entry].slice(-50), updateDue: false, updateReason: '', notifyError: '', notifyTries: 0, lastUpdateAt: now, updatedAt: now });
     await auditRow(ctx, 'salesOrder.update', so, { status, how });
     return { ok: true, text, status, how, phone: (so.customerSnapshot || {}).phone || '', email: (so.customerSnapshot || {}).email || '', update: entry };
   },

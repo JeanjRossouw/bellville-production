@@ -47,14 +47,28 @@ export async function syncFromFactory(coll, doc, forward) {
   const now = nowIso();
   const factory = { ...doc.factory, orders, lastCheckedAt: now, error: '' };
   const patch = { factory, factoryRef: orders.map(o => o.orderNo).filter(Boolean).join(', ') || doc.factoryRef || '', updatedAt: now };
+  const docType = coll === 'salesOrders' ? 'salesOrder' : 'specialOrder';
   const to = posStatusOf(orders);
   if (to && (forward[doc.status] || []).includes(to)) {
     const note = orders.filter(o => o.orderNo).map(o => `${o.orderNo} ${o.status}`).join(', ');
-    patch.status = to; patch.statusHistory = histOf(doc, to, 'Factory Manager', 'factory', note, now); patch.updateDue = true;
-    await audit({ action: (coll === 'salesOrders' ? 'salesOrder' : 'specialOrder') + '.status', docType: coll === 'salesOrders' ? 'salesOrder' : 'specialOrder', docId: doc.id, docNo: doc.docNo, actorUid: 'factory', actorName: 'Factory Manager', details: { from: doc.status, to, source: 'factory', note }, entityId: doc.entityId, storeId: doc.storeId, deviceId: 'factory' });
+    patch.status = to; patch.statusHistory = histOf(doc, to, 'Factory Manager', 'factory', note, now); patch.updateDue = true; patch.updateReason = '';
+    await audit({ action: docType + '.status', docType, docId: doc.id, docNo: doc.docNo, actorUid: 'factory', actorName: 'Factory Manager', details: { from: doc.status, to, source: 'factory', note }, entityId: doc.entityId, storeId: doc.storeId, deviceId: 'factory' });
+  }
+  // the factory's date is the live expected date: the latest due date over the orders still being made
+  const eta = factoryEta(orders);
+  if (eta && eta !== doc.expectedAt && !['ready', 'outForDelivery', 'delivered', 'collected', 'cancelled'].includes(patch.status || doc.status)) {
+    patch.expectedAt = eta;
+    patch.edits = [...(doc.edits || []), { at: now, byUid: 'factory', byName: 'Factory Manager', reason: 'the factory moved the date', changes: [{ field: 'expected', before: doc.expectedAt || '', after: eta }] }].slice(-50);
+    if (!patch.status) { patch.updateDue = true; patch.updateReason = 'eta'; }
+    await audit({ action: docType + '.expected', docType, docId: doc.id, docNo: doc.docNo, actorUid: 'factory', actorName: 'Factory Manager', details: { before: doc.expectedAt || '', after: eta, source: 'factory' }, entityId: doc.entityId, storeId: doc.storeId, deviceId: 'factory' });
   }
   await patchDoc(coll, doc.id, patch);
   return { ...doc, ...patch };
+}
+// the factory's expected date for the whole order: the latest due date among the orders still on the floor (none → nothing to say)
+export function factoryEta(orders) {
+  const live = (orders || []).filter(o => !['cancelled', 'missing', 'ready', 'dispatched', 'invoiced'].includes(o.status) && /^\d{4}-\d{2}-\d{2}$/.test(o.dueDate || ''));
+  return live.length ? live.map(o => o.dueDate).sort().at(-1) : '';
 }
 // the till called it off (all of it, or some lines): the factory orders cancelled, the document's factory block refreshed
 export async function cancelAtFactory(ctx, coll, doc, orders, reason) {

@@ -497,6 +497,7 @@ service cloud.firestore {
       match /xeroJournals/{id}   { allow read: if pReadsEntity(gid) && pAtLeast(gid, 'manager'); allow write: if false; }
       // Shopify: the keys never leave the server; orders, codes, the queue and the log are read-only here
       match /shopifySecrets/{id} { allow read, write: if false; }
+      match /notifySecrets/{id}  { allow read, write: if false; }   // SMS, email and WhatsApp keys: server only
       match /shopifyQueue/{id}   { allow read: if pReadsEntity(gid) && pAtLeast(gid, 'supervisor'); allow write: if false; }
       match /shopifySync/{id}    { allow read: if pReadsEntity(gid) && pAtLeast(gid, 'supervisor'); allow write: if false; }
       match /onlineOrders/{id}   { allow read: if pReadsStore(gid) && pAtLeast(gid, 'supervisor'); allow write: if false; }

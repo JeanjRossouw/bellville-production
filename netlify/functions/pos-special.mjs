@@ -370,7 +370,7 @@ export const actions = {
     const text = updateText(ctx.entity, ctx.store, so, status) + '\n\nYour order, any time: ' + link;
     const now = nowIso();
     const entry = { at: now, status, how, byName: ctx.user.name };
-    await patchDoc('specialOrders', so.id, { updates: [...(so.updates || []), entry].slice(-50), updateDue: false, lastUpdateAt: now, updatedAt: now });
+    await patchDoc('specialOrders', so.id, { updates: [...(so.updates || []), entry].slice(-50), updateDue: false, updateReason: '', notifyError: '', notifyTries: 0, lastUpdateAt: now, updatedAt: now });
     await audit({ action: 'specialOrder.update', docType: 'specialOrder', docId: so.id, docNo: so.docNo, actorUid: ctx.user.id, actorName: ctx.user.name, details: { status, how }, entityId: ctx.entityId, storeId: ctx.storeId, deviceId: ctx.deviceId });
     return { ok: true, text, link, status, how, phone: so.customerSnapshot.phone || '', email: so.customerSnapshot.email || '', update: entry };
   },

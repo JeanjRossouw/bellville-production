@@ -6,6 +6,7 @@
 import { esc, money, niceDate, empty } from './ui.js';
 import { icon } from './icons.js';
 import { isUrgent } from './special-terms.js';
+import { autoPending, autoOn } from './notify.js';
 
 let ctx = { data: () => ({}) };
 export const setContext = (c) => { ctx = { ...ctx, ...c }; };
@@ -40,7 +41,7 @@ export function buckets() {
     { key: 'bank', title: 'Bank payments to confirm', hint: 'EFTs and QR payments recorded at the till: a manager confirms each one once it shows on the bank statement. The order counts it paid from then.', rows: orders.filter(o => o.awaitingCents > 0).sort(by(o => o.updatedAt)).map(o => ({ kind: 'order', x: o })) },
     { key: 'bankAccount', title: 'Account payments to confirm', hint: 'EFTs and QR payments on customer accounts: a manager confirms each once it shows on the bank statement.', rows: customers.filter(c => (c.accountAwaitingCents || 0) > 0).sort(by(c => c.name)).map(c => ({ kind: 'customer', x: c })) },
     { key: 'debtors', title: 'Accounts to chase', hint: 'Owed on account for over 30 days, or over the limit: send the statement and take a payment. Reports → Debtors has the ageing.', rows: chase.sort((a, b) => (b.accountBalanceCents || 0) - (a.accountBalanceCents || 0)).map(c => ({ kind: 'customer', x: c })) },
-    { key: 'updates', title: 'Updates to send', hint: 'Something changed: one tap sends the client a WhatsApp with their order page.', rows: orders.filter(o => o.updateDue && o.status !== 'quoted').sort(by(o => o.updatedAt)).map(o => ({ kind: 'order', x: o })) },
+    { key: 'updates', title: 'Updates to send', hint: autoOn(dd.settings) ? 'Updates go by themselves (SMS, email or WhatsApp) within five minutes. These could not be sent: one tap sends the WhatsApp, or fix the number on the profile.' : 'Something changed: one tap sends the client a WhatsApp with their order page.', rows: orders.filter(o => o.updateDue && o.status !== 'quoted' && !autoPending(dd.settings, o)).sort(by(o => o.updatedAt)).map(o => ({ kind: 'order', x: o })) },
     { key: 'late', title: 'Late', hint: 'Past the expected date and not ready yet: check with the factory and tell the client.', rows: orders.filter(o => ['depositPaid', 'inProduction'].includes(o.status) && o.expectedAt && o.expectedAt < now).sort(by(o => o.expectedAt)).map(o => ({ kind: 'order', x: o })) },
     { key: 'salesLate', title: 'Paid orders late', hint: 'Sold and paid at the till, made to order, past the expected date and not ready: check with the factory and tell the client.', rows: sales.filter(o => ['open', 'inProduction'].includes(o.status) && o.expectedAt && o.expectedAt < now).sort(by(o => o.expectedAt)).map(o => ({ kind: 'sales', x: o })) },
     { key: 'salesReady', title: 'Paid orders ready to hand over', hint: 'Made and paid for: tell the client and hand it over with the delivery note.', rows: sales.filter(o => o.status === 'ready').sort(by(o => o.updatedAt)).map(o => ({ kind: 'sales', x: o })) },
@@ -72,7 +73,7 @@ function rowHtml(b, r) {
   const acts = {
     deposit: btn('so-pay', o.id, icon('cash') + ' Take the deposit', true),
     bank: `<span class="warn">${esc(money(o.awaitingCents))} awaiting</span>` + btn('so-open', o.id, icon('cash') + ' Open and confirm', true),
-    updates: btn('so-update', o.id, icon('user') + ' Send update', true),
+    updates: (o.notifyError ? `<div class="muted">${esc(o.notifyError)}</div>` : '') + btn('so-update', o.id, icon('user') + ' Send update', true),
     late: btn('so-update', o.id, icon('user') + ' Tell the client') + btn('so-factory-sync', o.id, 'Check factory'),
     owed: btn('so-pay', o.id, icon('cash') + ' Take a payment', true) + btn('so-update', o.id, 'Remind'),
     book: btn('so-link', o.id, icon('user') + ' Send their page', true) + btn('so-book', o.id, icon('truck') + ' Book'),

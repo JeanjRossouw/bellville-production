@@ -70,6 +70,7 @@ npx firebase emulators:start --only firestore,auth --project factory-manager-ece
   signature drawn on the screen, the Lay-bys tab, an instalment and its
   receipt, collection, a cancellation with a manager's PIN.
   `node pos/test/laybys.test.mjs`
+- `notify-api.test.mjs` — automatic client messages (`pos-notify`, `pos-notify-sweep`, `lib/notify.mjs`) and the live expected date from the factory: the owner's keys kept on the server, a test SMS and email, the deposit message by the schedule with the order link, the factory moving the date (recorded, messaged) and starting (one message with the new date), the customer's own channel, a customer nobody can reach left for a person with the reason and given up after five tries, "send now", off, the keys removed. The test server stands in for BulkSMS, Resend and Meta at `/__notify`. `node pos/test/notify-api.test.mjs`
 - `special-api.test.mjs` — step 12: the `pos-special` function over HTTP:
   opening needs the customer and a signed-off spec and takes made-to-order
   items only; a deposit under the minimum leaves it quoted, reaching it

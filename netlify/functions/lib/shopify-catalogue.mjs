@@ -14,10 +14,13 @@ const low = (s) => String(s || '').trim().toLowerCase();
 const vkey = (ov) => Object.entries(ov || {}).map(([k, v]) => low(k) + '=' + low(v)).sort().join('|');
 
 // ---- every product on the shop, in the till's terms
+// Only what the shop sells now (status:active): drafts and archived products stay out of the till. Small pages,
+// because Shopify prices a query by what it may return and refuses one over 1000 (50 products × 100 variants
+// × 20 locations went to 1388): 15 products × 50 variants × 10 locations stays well under.
 export async function pullCatalogue(cfg) {
   const out = []; let after = null;
-  for (let page = 0; page < 200; page++) {
-    const d = await gql(cfg, `query($after: String) { products(first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { id title handle descriptionHtml status vendor productType tags isGiftCard options { name values } images(first: 5) { nodes { url } } variants(first: 100) { nodes { id title sku barcode price taxable selectedOptions { name value } image { url } inventoryItem { id tracked unitCost { amount } inventoryLevels(first: 20) { nodes { location { id } quantities(names: ["available"]) { name quantity } } } } } } } } }`, { after });
+  for (let page = 0; page < 2000; page++) {
+    const d = await gql(cfg, `query($after: String) { products(first: 15, after: $after, query: "status:active") { pageInfo { hasNextPage endCursor } nodes { id title handle descriptionHtml status vendor productType tags isGiftCard options { name values } images(first: 3) { nodes { url } } variants(first: 50) { nodes { id title sku barcode price taxable selectedOptions { name value } image { url } inventoryItem { id tracked unitCost { amount } inventoryLevels(first: 10) { nodes { location { id } quantities(names: ["available"]) { name quantity } } } } } } } } }`, { after });
     const pr = d.products;
     for (const n of pr.nodes) {
       const options = (n.options || []).filter(o => o.name && o.name !== 'Title').map(o => ({ name: o.name, values: (o.values || []).filter(v => v && v !== 'Default Title') }));

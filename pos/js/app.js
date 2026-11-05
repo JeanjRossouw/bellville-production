@@ -19,6 +19,7 @@ import * as buying from './buying.js';
 import * as customersTab from './customers.js';
 import * as reports from './reports.js';
 import * as online from './online.js';
+import * as notify from './notify.js';
 import * as assist from './assist.js';
 import * as tasks from './tasks.js';
 import * as overview from './overview.js';
@@ -391,6 +392,7 @@ function paint() {
     screen.innerHTML = `<div class="subnav">${subs.map(x => `<button class="subtab${x.key === adminSub ? ' on' : ''}" data-sub="${x.key}">${esc(x.label)}</button>`).join('')}</div>` + body;
     const shop = $('se-shop'); if (shop) online.shopifyCard(screen, shop.dataset.entity, stores);
     const fac = $('se-factory'); if (fac) specials.factoryCard(screen, fac.dataset.entity);
+    const nt = $('se-notify'); if (nt) notify.notifyCard(screen, nt.dataset.entity);
     const drv = $('se-drivers'); if (drv) specials.driversCard(screen, drv.dataset.entity, ((stores || []).find(x => x.entityId === drv.dataset.entity && x.active !== false) || {}).id || '');
   }
   else if (view === 'products') { screen.innerHTML = products.productsHtml(prData()); const q = $('pr-q'); if (q && prFilter.q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
