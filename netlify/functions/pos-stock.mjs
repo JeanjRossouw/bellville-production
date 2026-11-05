@@ -7,7 +7,8 @@
 //   takeOpen   { name, scope: 'all'|'category', category }   freezes a snapshot of every stock item in the store; a supervisor
 //   takeCount  { takeId, counts: [ { itemId, qty, mode: 'add'|'set' } ] }   any member of the store, from any phone
 //   takeReview { takeId }      counting closed, the variances to look at; a supervisor
-//   takePost   { takeId, uncountedAsZero?, approvalToken? }   a manager: one 'count' movement per variance against the frozen figure; with uncountedAsZero, what nobody found is taken as 0
+//   takePost   { takeId, uncountedAsZero?, approvalToken? }   a manager: one 'count' movement per variance against the frozen figure, a batch a call
+//              (the answer says done/left; call again until done); with uncountedAsZero, what nobody found is taken as 0
 //   takeCancel { takeId }
 //   takeItem { takeId, itemId }   a member of the store: add an item the freeze left out, or refresh one after an edit
 //   productDelete { entityId, productIds: [...] }   a manager: gone for good, only products never used anywhere
@@ -17,7 +18,9 @@ import { json, Reject, clean, randomId, nowIso, getDoc, query, createDoc, patchD
 import { whoAndWhere, runSale, moveWrites, approved, int } from './lib/sale.mjs';
 
 export const ADJUST_CODES = ['damaged', 'stolen', 'found', 'correction', 'sample', 'writeoff', 'other'];
-const MAX_VARIANCES = 200;   // one transaction: a movement and a level per variance
+// posting goes in batches of this many variances (a movement and a level each, one transaction): the take keeps
+// its place (postedUpTo) and the app calls again until it is posted, so a whole shop set to nought still fits
+const TAKE_BATCH = Math.max(1, Number(process.env.POS_TAKE_BATCH) || 150);
 
 async function itemOf(ctx, b) {
   const p = await getDoc('products', clean(b.productId, 60));
@@ -210,31 +213,40 @@ export const actions = {
     const a = approved(ctx, b.approvalToken, 'stock', 'manager', 'Posting a stock take'); if (!a.self) approvers.set(a.uid, a.name);
     const t = await loadTake(ctx, b.takeId);
     if (t.status !== 'review') throw new Reject(409, `Stock take “${t.name}” is ${t.status}: review it first.`);
-    // with uncountedAsZero, what nobody found is taken as nought: a count of 0 against the frozen figure, so the
-    // variance report still says what the system thought was there; items already at nought just get the date
-    const zero = b.uncountedAsZero === true;
-    const items = t.items.map(x => x.countedQty == null && zero ? { ...x, countedQty: 0, countedBy: a.name, countedAt: '', assumedZero: true } : x);
-    const counted = items.filter(x => x.countedQty != null);
-    const diffs = counted.filter(x => x.countedQty !== x.frozenQty);
-    if (diffs.length > MAX_VARIANCES) throw new Reject(400, `${diffs.length} variances is too many for one posting: count by category.`);
     return runSale(ctx, {}, { more: async (tx, levels) => {
       const cur = await getDoc('stockTakes', t.id, tx);
       if (!cur || cur.status !== 'review') throw new Reject(409, `Stock take “${t.name}” is no longer in review.`);
+      // the option is fixed by the first batch; later batches carry on the same way
+      const zero = cur.posting ? !!cur.uncountedAsZero : b.uncountedAsZero === true;
       const now = nowIso();
       const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
       const writes = [];
-      for (const x of diffs) {
-        await levelFor(tx, ctx, levels, x.itemId);
-        writes.push(...moveWrites(ctx, levels, { productId: x.productId, variantId: x.variantId, itemId: x.itemId, qty: x.countedQty - x.frozenQty, bucket: 'onHand', reason: 'count', unitCostCents: x.costCents, name: x.name, note: x.assumedZero ? `Not found in the count: taken as 0, expected ${x.frozenQty}` : `Counted ${x.countedQty}, expected ${x.frozenQty}`, byName: a.name, countedAt: now }, { docType: 'stockTake', docId: t.id, docNo: t.name }, stamp, now));
+      const items = cur.items.map(x => ({ ...x }));
+      let i = cur.postedUpTo || 0, variances = 0, zeroed = 0, budget = TAKE_BATCH * 2;
+      for (; i < items.length && budget > 0; i++) {
+        const x = items[i];
+        if (x.countedQty == null) {
+          if (!zero) continue;                        // not counted, left as it is
+          // nobody found it: a count of 0 against the frozen figure, so the variance report says what was expected
+          Object.assign(x, { countedQty: 0, countedBy: a.name, countedAt: now, assumedZero: true }); zeroed++;
+        }
+        if (x.countedQty !== x.frozenQty) {
+          await levelFor(tx, ctx, levels, x.itemId);
+          writes.push(...moveWrites(ctx, levels, { productId: x.productId, variantId: x.variantId, itemId: x.itemId, qty: x.countedQty - x.frozenQty, bucket: 'onHand', reason: 'count', unitCostCents: x.costCents, name: x.name, note: x.assumedZero ? `Not found in the count: taken as 0, expected ${x.frozenQty}` : `Counted ${x.countedQty}, expected ${x.frozenQty}`, byName: a.name, countedAt: now }, { docType: 'stockTake', docId: t.id, docNo: t.name }, stamp, now));
+          variances++; budget -= 2;
+        } else {
+          // counted and found right (or nought and nought): only the date moves
+          const lid = await levelFor(tx, ctx, levels, x.itemId);
+          if (levels.get(lid)) { writes.push({ update: true, coll: 'stockLevels', id: lid, data: { lastCountedAt: now } }); budget -= 1; }
+        }
       }
-      // counted and found right: only the date moves
-      for (const x of counted.filter(y => y.countedQty === y.frozenQty)) { const lid = await levelFor(tx, ctx, levels, x.itemId); if (levels.get(lid)) writes.push({ update: true, coll: 'stockLevels', id: lid, data: { lastCountedAt: now } }); }
-      const zeroed = items.filter(x => x.assumedZero).length;
-      const finalItems = zero ? cur.items.map(x => x.countedQty == null ? { ...x, countedQty: 0, countedBy: a.name, countedAt: now, assumedZero: true } : x) : cur.items;
-      const patch = { status: 'posted', postedAt: now, approvedBy: a.name, movementCount: diffs.length, uncountedAsZero: zero, uncountedZeroed: zeroed, ...(zero ? { items: finalItems } : {}), ...tally(finalItems), updatedAt: now };
+      const done = i >= items.length;
+      const movementCount = (cur.posting ? cur.movementCount || 0 : 0) + variances;
+      const uncountedZeroed = (cur.posting ? cur.uncountedZeroed || 0 : 0) + zeroed;
+      const patch = { items, postedUpTo: i, posting: !done, uncountedAsZero: zero, uncountedZeroed, movementCount, ...tally(items), updatedAt: now, ...(done ? { status: 'posted', postedAt: now, approvedBy: a.name } : {}) };
       writes.push({ update: true, coll: 'stockTakes', id: t.id, data: patch });
-      writes.push(auditRow(ctx, 'stock.takePost', { docType: 'stockTake', docId: t.id, docNo: t.name }, { movements: diffs.length, uncountedAsZero: zero, uncountedZeroed: zeroed, ...tally(finalItems) }, approvers, stamp, now));
-      return { writes, result: { take: { ...cur, ...patch, id: t.id }, movements: diffs.length, zeroed } };
+      if (done) writes.push(auditRow(ctx, 'stock.takePost', { docType: 'stockTake', docId: t.id, docNo: t.name }, { movements: movementCount, uncountedAsZero: zero, uncountedZeroed, ...tally(items) }, approvers, stamp, now));
+      return { writes, result: { take: { ...cur, ...patch, id: t.id }, movements: variances, zeroed, done, left: items.length - i, total: items.length } };
     } });
   },
 

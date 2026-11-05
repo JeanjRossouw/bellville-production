@@ -107,7 +107,7 @@ function reviewHtml(t, done = false) {
   const counted = t.items.filter(x => x.countedQty != null), diffs = counted.filter(x => x.countedQty !== x.frozenQty), uncounted = t.itemCount - counted.length;
   const mgr = auth.atLeast('manager'), sup = auth.atLeast('supervisor');
   return `<div class="card tk-head"><div><h2>${esc(t.name)} <span class="chip${t.status === 'posted' ? ' ok' : ''}">${esc(t.status)}</span></h2>
-      <p class="muted">Frozen ${esc(niceDate(t.frozenAt))} ${esc(niceTime(t.frozenAt))} · ${counted.length} of ${t.itemCount} counted · ${diffs.length} variance${diffs.length === 1 ? '' : 's'} · ${t.varianceQty > 0 ? '+' : ''}${t.varianceQty} units · ${esc(money(t.varianceValueCents))} at cost${uncounted && !done ? ` · <span class="warn">${uncounted} not counted: they stay as they are</span>` : ''}${t.status === 'posted' ? ` · posted ${esc(niceDate(t.postedAt))} by ${esc(t.approvedBy)}, ${t.movementCount} movement${t.movementCount === 1 ? '' : 's'}${t.uncountedZeroed ? ` · ${t.uncountedZeroed} not found, taken as 0` : ''}` : ''}</p></div>
+      <p class="muted">Frozen ${esc(niceDate(t.frozenAt))} ${esc(niceTime(t.frozenAt))} · ${counted.length} of ${t.itemCount} counted · ${diffs.length} variance${diffs.length === 1 ? '' : 's'} · ${t.varianceQty > 0 ? '+' : ''}${t.varianceQty} units · ${esc(money(t.varianceValueCents))} at cost${uncounted && !done ? ` · <span class="warn">${uncounted} not counted: they stay as they are</span>` : ''}${t.status === 'posted' ? ` · posted ${esc(niceDate(t.postedAt))} by ${esc(t.approvedBy)}, ${t.movementCount} movement${t.movementCount === 1 ? '' : 's'}${t.uncountedZeroed ? ` · ${t.uncountedZeroed} not found, taken as 0` : ''}` : t.posting ? ` · <span class="warn">posting partly done: ${t.postedUpTo || 0} of ${t.itemCount} items, press Approve and post to carry on</span>` : ''}</p></div>
       <div class="tk-acts"><button class="btn ghost sm" data-act="st-varonly">${st.varOnly ? 'Show all items' : 'Variances only'}</button><button class="btn ghost sm" data-act="st-take-print">${icon('printer')} Print</button>
         ${!done && sup ? `<button class="btn ghost sm" data-act="st-take-reopen">Back to counting</button><button class="btn ghost sm" data-act="st-take-cancel">Cancel take</button>` : ''}
         ${!done ? `<button class="btn primary sm" data-act="st-take-post"${diffs.length || counted.length ? '' : ' disabled'}>${icon('lock')} Approve and post${mgr ? '' : ' (manager PIN)'}</button>` : ''}
@@ -291,12 +291,29 @@ function takePost() {
   const n = (k, w) => k + ' ' + w + (k === 1 ? '' : 's');
   openModal('Approve and post', `<p>Post <strong>${n(diffs, 'variance')}</strong> as stock movements against the frozen figures.</p>
     ${missed.length ? `<p><strong>${n(missed.length, 'item')} not counted.</strong> Left as they are, the system keeps saying ${units} unit${units === 1 ? '' : 's'} (${esc(money(value))} at cost) are on the shelf.</p>
-      <label class="chk"><input type="checkbox" id="tk-zero"> Items not counted: set them to zero${held.length ? ` (${n(held.length, 'item')}, −${units} unit${units === 1 ? '' : 's'}, −${esc(money(value))} at cost)` : ''}</label>
-      <p class="muted">Each becomes a count of 0 against what the system said, as its own movement on this stock take, so the variance report shows what was expected and not found. Items the system already had at nought only get the date.</p>` : '<p class="muted">Every item was counted.</p>'}`, {
-    okLabel: 'Approve and post', onOk: async (w) => {
-      const uncountedAsZero = !!(w.querySelector('#tk-zero') || {}).checked;
-      try { const r = await withPin('takePost', { takeId: t.id, uncountedAsZero, ...where() }, 'manager'); mergeTake(r.take); st.takeId = r.take.id; toast('Posted: ' + n(r.movements, 'movement') + (r.zeroed ? ', ' + n(r.zeroed, 'item') + ' not found taken as 0' : '')); if (ctx.onChange) ctx.onChange(); ctx.repaint(); return true; }
-      catch (e) { toast(e.message, 'warn'); return false; }
+      <label class="chk"${t.posting ? ' hidden' : ''}><input type="checkbox" id="tk-zero"${t.posting && t.uncountedAsZero ? ' checked' : ''}> Items not counted: set them to zero${held.length ? ` (${n(held.length, 'item')}, −${units} unit${units === 1 ? '' : 's'}, −${esc(money(value))} at cost)` : ''}</label>
+      <p class="muted">Each becomes a count of 0 against what the system said, as its own movement on this stock take, so the variance report shows what was expected and not found. Items the system already had at nought only get the date.</p>` : '<p class="muted">Every item was counted.</p>'}
+    ${t.posting ? `<p class="warn">Posting was started and got to ${t.postedUpTo || 0} of ${t.itemCount} items${t.uncountedAsZero ? ', with items not counted set to zero' : ''}: it carries on from there.</p>` : ''}
+    <p id="tk-post-progress" class="muted"></p>`, {
+    okLabel: t.posting ? 'Carry on posting' : 'Approve and post', onOk: async (w) => {
+      // a batch a call until the server says done; a manager's PIN, once asked for, carries the batches
+      const ok = w.querySelector('#modal-ok'), prog = w.querySelector('#tk-post-progress');
+      if (ok.disabled) return false; ok.disabled = true;
+      const body = { takeId: t.id, uncountedAsZero: !!(w.querySelector('#tk-zero') || {}).checked, ...where() };
+      let token = '', moves = 0, zeroed = 0;
+      const call = async () => {
+        try { return await auth.api('takePost', { ...body, ...(token ? { approvalToken: token } : {}) }, API.stock); }
+        catch (e) { if (e.status === 403 && /PIN/.test(e.message)) { const ap = await auth.requireOverride({ minRole: 'manager', action: 'stock', details: { what: 'takePost' }, text: e.message }); token = ap.token; return auth.api('takePost', { ...body, approvalToken: token }, API.stock); } throw e; }
+      };
+      try {
+        for (let k = 0; k < 500; k++) {
+          const r = await call();
+          mergeTake(r.take); st.takeId = r.take.id; moves += r.movements; zeroed += r.zeroed;
+          if (prog) prog.textContent = `Posting… ${r.total - r.left} of ${r.total} items`;
+          if (r.done) break;
+        }
+        toast('Posted: ' + n(moves, 'movement') + (zeroed ? ', ' + n(zeroed, 'item') + ' not found taken as 0' : '')); if (ctx.onChange) ctx.onChange(); ctx.repaint(); return true;
+      } catch (e) { ok.disabled = false; if (prog) prog.textContent = 'Stopped: ' + e.message + '. Press the button to carry on where it got to.'; toast(e.message, 'warn'); ctx.repaint(); return false; }
     } });
 }
 // the call, and again with a PIN of the role the server asks for
