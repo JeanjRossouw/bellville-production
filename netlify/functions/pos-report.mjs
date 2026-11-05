@@ -194,7 +194,7 @@ const reports = {
   async orderPayments(w, b, stores, from, to) {
     const pays = (await perStore('payments', w.entityId, stores, 'createdAt', from, to)).filter(p => p.docType === 'specialOrder' || (p.docType === 'refund' && p.docNo && /-SO-/.test(p.docNo)));
     const users = new Map(), orders = new Map();
-    const userName = async (uid) => { if (!users.has(uid)) users.set(uid, ((await getDoc('users', uid)) || {}).name || uid); return users.get(uid); };
+    const userName = async (uid) => { if (!uid) return 'Not recorded'; if (uid === 'server') return 'Server'; if (!users.has(uid)) { let u = null; try { u = await getDoc('users', uid); } catch (e) { u = null; } users.set(uid, (u && u.name) || uid); } return users.get(uid); };
     const orderOf = async (id) => { if (!orders.has(id)) orders.set(id, await getDoc('specialOrders', id)); return orders.get(id) || {}; };
     const rows = [];
     for (const p of pays.sort((x, y) => String(x.createdAt).localeCompare(String(y.createdAt)))) {
@@ -240,7 +240,7 @@ const reports = {
     delete totals.count; totals.count = rows.reduce((n, r) => n + r.count, 0);
     // what is still awaiting the bank, and who took what: for the day screen
     const users = new Map();
-    const userName = async (uid) => { if (!users.has(uid)) users.set(uid, ((await getDoc('users', uid)) || {}).name || uid); return users.get(uid); };
+    const userName = async (uid) => { if (!uid) return 'Not recorded'; if (uid === 'server') return 'Server'; if (!users.has(uid)) { let u = null; try { u = await getDoc('users', uid); } catch (e) { u = null; } users.set(uid, (u && u.name) || uid); } return users.get(uid); };
     const awaiting = [];
     for (const p of pays.filter(x => x.status === 'awaiting' && MONEY.includes(x.method)).sort((x, y) => String(x.createdAt).localeCompare(String(y.createdAt)))) awaiting.push({ at: p.createdAt, store: name(p.storeId), docNo: p.docNo, kind: KIND[p.docType], method: p.method, amount: p.amountCents, ref: p.ref || '', by: await userName(p.createdBy) });
     const byStaff = [];
@@ -301,7 +301,8 @@ const handleRequest = async (event) => {
   } catch (e) {
     if (e instanceof Reject) return json(e.status, { error: e.message });
     console.error('pos-report failed:', e);
-    return json(500, { error: 'Something went wrong on the server.' });
+    // the cause goes back (a missing Firestore index says so, with the link to make it), never a stack
+    return json(500, { error: 'Something went wrong on the server: ' + String(e && e.message || e).slice(0, 300) });
   }
 };
 
