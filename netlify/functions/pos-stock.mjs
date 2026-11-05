@@ -7,7 +7,7 @@
 //   takeOpen   { name, scope: 'all'|'category', category }   freezes a snapshot of every stock item in the store; a supervisor
 //   takeCount  { takeId, counts: [ { itemId, qty, mode: 'add'|'set' } ] }   any member of the store, from any phone
 //   takeReview { takeId }      counting closed, the variances to look at; a supervisor
-//   takePost   { takeId, approvalToken? }   a manager: one 'count' movement per variance against the frozen figure
+//   takePost   { takeId, uncountedAsZero?, approvalToken? }   a manager: one 'count' movement per variance against the frozen figure; with uncountedAsZero, what nobody found is taken as 0
 //   takeCancel { takeId }
 //   takeItem { takeId, itemId }   a member of the store: add an item the freeze left out, or refresh one after an edit
 //   productDelete { entityId, productIds: [...] }   a manager: gone for good, only products never used anywhere
@@ -210,7 +210,11 @@ export const actions = {
     const a = approved(ctx, b.approvalToken, 'stock', 'manager', 'Posting a stock take'); if (!a.self) approvers.set(a.uid, a.name);
     const t = await loadTake(ctx, b.takeId);
     if (t.status !== 'review') throw new Reject(409, `Stock take “${t.name}” is ${t.status}: review it first.`);
-    const counted = t.items.filter(x => x.countedQty != null);
+    // with uncountedAsZero, what nobody found is taken as nought: a count of 0 against the frozen figure, so the
+    // variance report still says what the system thought was there; items already at nought just get the date
+    const zero = b.uncountedAsZero === true;
+    const items = t.items.map(x => x.countedQty == null && zero ? { ...x, countedQty: 0, countedBy: a.name, countedAt: '', assumedZero: true } : x);
+    const counted = items.filter(x => x.countedQty != null);
     const diffs = counted.filter(x => x.countedQty !== x.frozenQty);
     if (diffs.length > MAX_VARIANCES) throw new Reject(400, `${diffs.length} variances is too many for one posting: count by category.`);
     return runSale(ctx, {}, { more: async (tx, levels) => {
@@ -221,14 +225,16 @@ export const actions = {
       const writes = [];
       for (const x of diffs) {
         await levelFor(tx, ctx, levels, x.itemId);
-        writes.push(...moveWrites(ctx, levels, { productId: x.productId, variantId: x.variantId, itemId: x.itemId, qty: x.countedQty - x.frozenQty, bucket: 'onHand', reason: 'count', unitCostCents: x.costCents, name: x.name, note: `Counted ${x.countedQty}, expected ${x.frozenQty}`, byName: a.name, countedAt: now }, { docType: 'stockTake', docId: t.id, docNo: t.name }, stamp, now));
+        writes.push(...moveWrites(ctx, levels, { productId: x.productId, variantId: x.variantId, itemId: x.itemId, qty: x.countedQty - x.frozenQty, bucket: 'onHand', reason: 'count', unitCostCents: x.costCents, name: x.name, note: x.assumedZero ? `Not found in the count: taken as 0, expected ${x.frozenQty}` : `Counted ${x.countedQty}, expected ${x.frozenQty}`, byName: a.name, countedAt: now }, { docType: 'stockTake', docId: t.id, docNo: t.name }, stamp, now));
       }
       // counted and found right: only the date moves
       for (const x of counted.filter(y => y.countedQty === y.frozenQty)) { const lid = await levelFor(tx, ctx, levels, x.itemId); if (levels.get(lid)) writes.push({ update: true, coll: 'stockLevels', id: lid, data: { lastCountedAt: now } }); }
-      const patch = { status: 'posted', postedAt: now, approvedBy: a.name, movementCount: diffs.length, ...tally(cur.items), updatedAt: now };
+      const zeroed = items.filter(x => x.assumedZero).length;
+      const finalItems = zero ? cur.items.map(x => x.countedQty == null ? { ...x, countedQty: 0, countedBy: a.name, countedAt: now, assumedZero: true } : x) : cur.items;
+      const patch = { status: 'posted', postedAt: now, approvedBy: a.name, movementCount: diffs.length, uncountedAsZero: zero, uncountedZeroed: zeroed, ...(zero ? { items: finalItems } : {}), ...tally(finalItems), updatedAt: now };
       writes.push({ update: true, coll: 'stockTakes', id: t.id, data: patch });
-      writes.push(auditRow(ctx, 'stock.takePost', { docType: 'stockTake', docId: t.id, docNo: t.name }, { movements: diffs.length, ...tally(cur.items) }, approvers, stamp, now));
-      return { writes, result: { take: { ...cur, ...patch, id: t.id }, movements: diffs.length } };
+      writes.push(auditRow(ctx, 'stock.takePost', { docType: 'stockTake', docId: t.id, docNo: t.name }, { movements: diffs.length, uncountedAsZero: zero, uncountedZeroed: zeroed, ...tally(finalItems) }, approvers, stamp, now));
+      return { writes, result: { take: { ...cur, ...patch, id: t.id }, movements: diffs.length, zeroed } };
     } });
   },
 

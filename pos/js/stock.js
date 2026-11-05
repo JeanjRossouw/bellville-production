@@ -9,6 +9,7 @@ import * as auth from './auth.js';
 import { list, patchOne, setOne, newId } from './db.js';
 import { esc, toast, field, row, val, openModal, openPrint, money, niceDate, niceTime, empty } from './ui.js';
 import { centsOf, randsOf } from './money.js';
+import { parseCsv, sepOf } from './csv.js';
 import { cameraScanner } from './scanner.js';
 import { A4_CSS } from './receipt.js';
 import { icon } from './icons.js';
@@ -91,7 +92,8 @@ function countHtml(t) {
     <div class="card tk-scan">
       <div class="tk-scanrow"><label class="pos-search-wrap" style="flex:1 1 260px">${icon('barcode')}<input id="tk-scan" class="pos-in" placeholder="Scan a barcode, or type a code and press Enter" autocomplete="off"></label>
         <select id="tk-mode"><option value="add"${st.mode === 'add' ? ' selected' : ''}>Each scan adds 1</option><option value="qty"${st.mode === 'qty' ? ' selected' : ''}>Ask how many per scan</option></select>
-        <button class="btn ghost sm" data-act="st-camera">${icon('camera')} ${st.camera ? 'Stop camera' : 'Camera'}</button></div>
+        <button class="btn ghost sm" data-act="st-camera">${icon('camera')} ${st.camera ? 'Stop camera' : 'Camera'}</button>
+        <label class="btn ghost sm" title="A CSV from a scanner or a count sheet: a Barcode or SKU column and a Qty column; the same code on several rows adds up">Import a count file<input type="file" id="tk-file" accept=".csv,text/csv,.txt" hidden></label></div>
       <video id="tk-video" class="tk-video" playsinline muted hidden></video>
       <div class="tk-last" id="tk-last">${st.last ? esc(st.last) : 'Nothing scanned yet'}</div>
       ${mgr ? '<p class="muted">An unknown code can be attached to a product, or a new product made, without leaving the count. Edit on a row changes the product; the count stays.</p>' : ''}
@@ -105,13 +107,13 @@ function reviewHtml(t, done = false) {
   const counted = t.items.filter(x => x.countedQty != null), diffs = counted.filter(x => x.countedQty !== x.frozenQty), uncounted = t.itemCount - counted.length;
   const mgr = auth.atLeast('manager'), sup = auth.atLeast('supervisor');
   return `<div class="card tk-head"><div><h2>${esc(t.name)} <span class="chip${t.status === 'posted' ? ' ok' : ''}">${esc(t.status)}</span></h2>
-      <p class="muted">Frozen ${esc(niceDate(t.frozenAt))} ${esc(niceTime(t.frozenAt))} · ${counted.length} of ${t.itemCount} counted · ${diffs.length} variance${diffs.length === 1 ? '' : 's'} · ${t.varianceQty > 0 ? '+' : ''}${t.varianceQty} units · ${esc(money(t.varianceValueCents))} at cost${uncounted && !done ? ` · <span class="warn">${uncounted} not counted: they stay as they are</span>` : ''}${t.status === 'posted' ? ` · posted ${esc(niceDate(t.postedAt))} by ${esc(t.approvedBy)}, ${t.movementCount} movement${t.movementCount === 1 ? '' : 's'}` : ''}</p></div>
+      <p class="muted">Frozen ${esc(niceDate(t.frozenAt))} ${esc(niceTime(t.frozenAt))} · ${counted.length} of ${t.itemCount} counted · ${diffs.length} variance${diffs.length === 1 ? '' : 's'} · ${t.varianceQty > 0 ? '+' : ''}${t.varianceQty} units · ${esc(money(t.varianceValueCents))} at cost${uncounted && !done ? ` · <span class="warn">${uncounted} not counted: they stay as they are</span>` : ''}${t.status === 'posted' ? ` · posted ${esc(niceDate(t.postedAt))} by ${esc(t.approvedBy)}, ${t.movementCount} movement${t.movementCount === 1 ? '' : 's'}${t.uncountedZeroed ? ` · ${t.uncountedZeroed} not found, taken as 0` : ''}` : ''}</p></div>
       <div class="tk-acts"><button class="btn ghost sm" data-act="st-varonly">${st.varOnly ? 'Show all items' : 'Variances only'}</button><button class="btn ghost sm" data-act="st-take-print">${icon('printer')} Print</button>
         ${!done && sup ? `<button class="btn ghost sm" data-act="st-take-reopen">Back to counting</button><button class="btn ghost sm" data-act="st-take-cancel">Cancel take</button>` : ''}
         ${!done ? `<button class="btn primary sm" data-act="st-take-post"${diffs.length || counted.length ? '' : ' disabled'}>${icon('lock')} Approve and post${mgr ? '' : ' (manager PIN)'}</button>` : ''}
         ${done ? `<button class="btn ghost sm" data-act="st-take-show" data-id="">Back</button>` : ''}</div></div>
     <div class="card" style="padding:0;overflow:auto"><table class="tbl tk-tbl" id="tk-review"><thead><tr><th>Item</th><th>SKU</th><th class="r">System</th><th class="r">Counted</th><th class="r">Variance</th><th class="r">At cost</th><th>By</th></tr></thead>
-      <tbody>${rows.map(x => `<tr class="${x.diff ? (x.diff < 0 ? 'neg' : 'pos') : ''}"><td><strong>${esc(x.name)}</strong></td><td class="muted">${esc(x.sku)}</td><td class="r">${x.frozenQty}</td><td class="r">${x.countedQty == null ? '<span class="muted">not counted</span>' : x.countedQty}</td><td class="r"><strong>${x.diff == null ? '' : (x.diff > 0 ? '+' : '') + x.diff}</strong></td><td class="r">${x.diff ? esc(money(x.diff * (x.costCents || 0))) : ''}</td><td class="muted">${esc(x.countedBy || '')}</td></tr>`).join('') || `<tr><td colspan="7" class="muted">No variances: everything counted matched.</td></tr>`}</tbody></table></div>`;
+      <tbody>${rows.map(x => `<tr class="${x.diff ? (x.diff < 0 ? 'neg' : 'pos') : ''}"><td><strong>${esc(x.name)}</strong></td><td class="muted">${esc(x.sku)}</td><td class="r">${x.frozenQty}</td><td class="r">${x.countedQty == null ? '<span class="muted">not counted</span>' : x.assumedZero ? '0 <span class="muted">(not found)</span>' : x.countedQty}</td><td class="r"><strong>${x.diff == null ? '' : (x.diff > 0 ? '+' : '') + x.diff}</strong></td><td class="r">${x.diff ? esc(money(x.diff * (x.costCents || 0))) : ''}</td><td class="muted">${esc(x.countedBy || '')}</td></tr>`).join('') || `<tr><td colspan="7" class="muted">No variances: everything counted matched.</td></tr>`}</tbody></table></div>`;
 }
 
 // ------------------------------------------------------------ actions --
@@ -136,7 +138,7 @@ export async function action(act, b) {
   if (act === 'st-take-print') return printTake();
 }
 export function onInput(id, value) { if (id === 'st-q') { st.q = value; ctx.repaint(); const q = document.getElementById('st-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } } }
-export function onChange(e) { if (e.target.id === 'st-filter') { st.filter = e.target.value; ctx.repaint(); } if (e.target.id === 'tk-mode') st.mode = e.target.value; }
+export function onChange(e) { if (e.target.id === 'st-filter') { st.filter = e.target.value; ctx.repaint(); } if (e.target.id === 'tk-mode') st.mode = e.target.value; if (e.target.id === 'tk-file' && e.target.files && e.target.files[0]) { const f = e.target.files[0]; e.target.value = ''; importCount(f); } }
 export function onEnter(id, value) { if (id === 'tk-scan') { scanned(value); const i = document.getElementById('tk-scan'); if (i) i.value = ''; return true; } return false; }
 const liveTake = () => (d().takes || []).find(t => t.status === 'open');
 
@@ -212,6 +214,61 @@ function unknownCode(code) {
   });
   setTimeout(() => { const q = wrap.querySelector('#uc-q'); if (q) q.focus(); }, 50);
 }
+// ---- a count file: rows of barcode or SKU and a quantity, from a scanner or a count sheet, set the counts
+const normH = (h) => String(h == null ? '' : h).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+export function planCountFile(text, t, all) {
+  const rows = parseCsv(text, sepOf(text));
+  if (rows.length < 2) throw new Error('The file has no rows under its heading.');
+  const h = rows[0].map(normH);
+  const find = (names) => h.findIndex(x => names.includes(x));
+  const code = find(['barcode', 'barcodes', 'ean', 'upc', 'code', 'scan', 'scanned']), sku = find(['sku', 'itemcode', 'productcode', 'stockcode']), qty = find(['qty', 'quantity', 'count', 'counted', 'countedqty', 'onhand', 'units']);
+  if (code < 0 && sku < 0) throw new Error('Nothing to find the items by: the file needs a Barcode or SKU column.');
+  if (qty < 0) throw new Error('No quantity column: the heading needs Qty, Quantity or Count.');
+  const byId = new Map(); const missing = []; const bad = [];
+  const cell = (r, i) => (i >= 0 ? String(r[i] == null ? '' : r[i]).trim() : '');
+  rows.slice(1).forEach((r, n) => {
+    const line = n + 2;
+    const c = cell(r, code), k = cell(r, sku);
+    if (!c && !k && !cell(r, qty)) return;
+    const q = Number(String(cell(r, qty)).replace(',', '.'));
+    if (!Number.isInteger(q) || q < 0) { bad.push({ line, what: c || k, qty: cell(r, qty) }); return; }
+    const key = (c || k).toLowerCase();
+    const it = (c && all.find(x => x.barcodes.some(b => String(b).toLowerCase() === key))) || (k && all.find(x => x.sku.toLowerCase() === k.toLowerCase())) || (c && all.find(x => x.sku.toLowerCase() === key)) || null;
+    if (!it) { missing.push({ line, what: c || k, qty: q }); return; }
+    const had = byId.get(it.itemId) || { itemId: it.itemId, name: it.name, qty: 0, rows: 0, inTake: t.items.some(x => x.itemId === it.itemId) };
+    had.qty += q; had.rows++; byId.set(it.itemId, had);
+  });
+  return { items: [...byId.values()], missing, bad, rows: rows.length - 1 };
+}
+function importCount(file) {
+  const t = liveTake(); if (!t) return toast('No stock take is being counted.', 'warn');
+  const r = new FileReader();
+  r.onload = async () => {
+    let plan;
+    try { plan = planCountFile(r.result, t, items(d())); } catch (e) { return toast(e.message, 'warn'); }
+    const toAdd = plan.items.filter(x => !x.inTake);
+    const units = plan.items.reduce((n, x) => n + x.qty, 0);
+    openModal('Import a count file', `<p><strong>${plan.items.length} item${plan.items.length === 1 ? '' : 's'}</strong> found in ${plan.rows} row${plan.rows === 1 ? '' : 's'}, ${units} unit${units === 1 ? '' : 's'} in all. Each item's count is <strong>set</strong> to the file's total for it (rows with the same code add up); an item already counted is replaced.</p>
+      ${toAdd.length ? `<p class="muted">${toAdd.length} of them ${toAdd.length === 1 ? 'is' : 'are'} not in this stock take yet and will be added first.</p>` : ''}
+      <div class="pk-list">${plan.items.slice(0, 60).map(x => `<div class="pk-row"><strong>${esc(x.name)}</strong><span>${x.qty}${x.rows > 1 ? ` <span class="muted">(${x.rows} rows)</span>` : ''}</span></div>`).join('')}${plan.items.length > 60 ? `<div class="pk-row muted">… and ${plan.items.length - 60} more</div>` : ''}</div>
+      ${plan.missing.length ? `<details class="ci-miss"><summary class="warn">${plan.missing.length} not found (left out)</summary>${plan.missing.slice(0, 50).map(x => `<div class="muted">Line ${x.line}: ${esc(x.what)} × ${x.qty}</div>`).join('')}</details>` : ''}
+      ${plan.bad.length ? `<details class="ci-miss"><summary class="warn">${plan.bad.length} with a quantity that is not a whole number (left out)</summary>${plan.bad.slice(0, 30).map(x => `<div class="muted">Line ${x.line}: ${esc(x.what)}: “${esc(x.qty)}”</div>`).join('')}</details>` : ''}
+      <p id="tk-imp-progress" class="muted"></p>`, {
+      okLabel: plan.items.length ? 'Set these counts' : 'Close', onOk: async (w) => {
+        if (!plan.items.length) return true;
+        const ok = w.querySelector('#modal-ok'), prog = w.querySelector('#tk-imp-progress');
+        if (ok.disabled) return false; ok.disabled = true;
+        try {
+          for (const x of toAdd) { prog.textContent = `Adding ${x.name} to the stock take…`; const a = await auth.api('takeItem', { takeId: t.id, itemId: x.itemId, ...where() }, API.stock); mergeTake(a.take); }
+          const counts = plan.items.map(x => ({ itemId: x.itemId, qty: x.qty, mode: 'set' }));
+          for (let i = 0; i < counts.length; i += 150) { prog.textContent = `Setting counts… ${Math.min(i + 150, counts.length)} of ${counts.length}`; const c = await auth.api('takeCount', { takeId: t.id, counts: counts.slice(i, i + 150), ...where() }, API.stock); mergeTake(c.take); }
+          st.last = `Count file: ${plan.items.length} item${plan.items.length === 1 ? '' : 's'} set`;
+          toast(st.last); ctx.repaint(); return true;
+        } catch (e) { ok.disabled = false; toast(e.offline ? 'Counting needs the line.' : e.message, 'warn'); return false; }
+      } });
+  };
+  r.readAsText(file);
+}
 function mergeTake(take) { const list = d().takes || []; const i = list.findIndex(x => x.id === take.id); if (i >= 0) list[i] = { ...list[i], ...take }; else list.push(take); }
 async function takeOpen() {
   const w = document.getElementById('screen');
@@ -225,12 +282,22 @@ async function takeStep(action, msg) {
   try { const r = await withPin(action, { takeId: t.id, ...where() }, 'supervisor'); mergeTake(r.take); toast(msg); ctx.repaint(); }
   catch (e) { toast(e.message, 'warn'); }
 }
-async function takePost() {
+// posting: the variances as movements; the items nobody found either left as they are, or taken as nought
+function takePost() {
   const t = (d().takes || []).find(x => x.status === 'review'); if (!t) return;
   const diffs = t.items.filter(x => x.countedQty != null && x.countedQty !== x.frozenQty).length;
-  if (!confirm(`Post ${diffs} variance${diffs === 1 ? '' : 's'} as stock movements? Items not counted stay as they are.`)) return;
-  try { const r = await withPin('takePost', { takeId: t.id, ...where() }, 'manager'); mergeTake(r.take); st.takeId = r.take.id; toast('Posted: ' + r.movements + ' movement' + (r.movements === 1 ? '' : 's')); if (ctx.onChange) ctx.onChange(); ctx.repaint(); }
-  catch (e) { toast(e.message, 'warn'); }
+  const missed = t.items.filter(x => x.countedQty == null);
+  const held = missed.filter(x => x.frozenQty), units = held.reduce((n, x) => n + x.frozenQty, 0), value = held.reduce((n, x) => n + x.frozenQty * (x.costCents || 0), 0);
+  const n = (k, w) => k + ' ' + w + (k === 1 ? '' : 's');
+  openModal('Approve and post', `<p>Post <strong>${n(diffs, 'variance')}</strong> as stock movements against the frozen figures.</p>
+    ${missed.length ? `<p><strong>${n(missed.length, 'item')} not counted.</strong> Left as they are, the system keeps saying ${units} unit${units === 1 ? '' : 's'} (${esc(money(value))} at cost) are on the shelf.</p>
+      <label class="chk"><input type="checkbox" id="tk-zero"> Items not counted: set them to zero${held.length ? ` (${n(held.length, 'item')}, −${units} unit${units === 1 ? '' : 's'}, −${esc(money(value))} at cost)` : ''}</label>
+      <p class="muted">Each becomes a count of 0 against what the system said, as its own movement on this stock take, so the variance report shows what was expected and not found. Items the system already had at nought only get the date.</p>` : '<p class="muted">Every item was counted.</p>'}`, {
+    okLabel: 'Approve and post', onOk: async (w) => {
+      const uncountedAsZero = !!(w.querySelector('#tk-zero') || {}).checked;
+      try { const r = await withPin('takePost', { takeId: t.id, uncountedAsZero, ...where() }, 'manager'); mergeTake(r.take); st.takeId = r.take.id; toast('Posted: ' + n(r.movements, 'movement') + (r.zeroed ? ', ' + n(r.zeroed, 'item') + ' not found taken as 0' : '')); if (ctx.onChange) ctx.onChange(); ctx.repaint(); return true; }
+      catch (e) { toast(e.message, 'warn'); return false; }
+    } });
 }
 // the call, and again with a PIN of the role the server asks for
 async function withPin(action, body, minRole) {
