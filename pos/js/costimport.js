@@ -13,8 +13,10 @@
 // these prices": priceCents on a product without variants, or on the variant
 // itself. A "Frame price" and a "Fabric metres" column (the shops' price lists)
 // set framePriceCents and fabricMetres the same way, under their own tick.
-// Per-store prices, names, barcodes, pictures and VAT classes are never
-// touched, and nothing is created or deleted. One audit row records every
+// A "Supplier" column sets the product's supplier by name, under its own
+// tick: a name not in Buying → Suppliers yet is created there. Per-store
+// prices, names, barcodes, pictures and VAT classes are never touched, and
+// nothing else is created or deleted. One audit row records every
 // change, before and after. Writes go in batches of 100.
 import { batch, setOne, newId } from './db.js';
 import * as auth from './auth.js';
@@ -29,7 +31,9 @@ export const skuKey = (s) => low(s).replace(/^'+/, '');           // Excel and S
 // a supplier's model code in a name (UVL601, LF-T508T, TH32): letters and digits, starting with a letter, 3 or more long
 const codesIn = (name) => (String(name || '').match(/[A-Za-z][A-Za-z0-9-]*\d[A-Za-z0-9-]*/g) || []).map(norm).filter(c => c.length >= 3);
 const vkey = (vals) => Object.keys(vals || {}).sort().map(k => low(k) + '=' + low(vals[k])).join('|');
-const SHEET_HEAD = ['Product', 'Variant', 'SKU', 'Barcode', 'Price', 'Cost', 'Frame price', 'Fabric metres'];
+const SHEET_HEAD = ['Product', 'Variant', 'SKU', 'Barcode', 'Price', 'Cost', 'Frame price', 'Fabric metres', 'Supplier'];
+const supsOf = (d, eid) => (d.suppliers || []).filter(sp => sp.entityId === eid && !sp.archived);
+const supName = (d, p) => (p.supplierId && ((d.suppliers || []).find(sp => sp.id === p.supplierId) || {}).name) || '';
 // metres as people type them: 11, 4.5, 4,5; null when blank, NaN when not a number
 export function metresOf(text) {
   const t = String(text == null ? '' : text).trim().replace(',', '.').replace(/\s*m$/i, '');
@@ -67,7 +71,7 @@ export function sheetCsv(d, eid) {
   const items = itemsOf(d, eid).filter(it => it.v || !d.variants.some(v => v.productId === it.p.id))
     .sort((a, b) => a.label.localeCompare(b.label));
   for (const it of items) {
-    rows.push([it.p.name, it.v ? it.v.name || '' : '', (it.v ? it.v.sku : it.p.sku) || '', ((it.v ? it.v.barcodes : it.p.barcodes) || [])[0] || '', randsOf(it.price), randsOf(it.now), it.frame ? randsOf(it.frame) : '', it.metres ? String(it.metres) : '']);
+    rows.push([it.p.name, it.v ? it.v.name || '' : '', (it.v ? it.v.sku : it.p.sku) || '', ((it.v ? it.v.barcodes : it.p.barcodes) || [])[0] || '', randsOf(it.price), randsOf(it.now), it.frame ? randsOf(it.frame) : '', it.metres ? String(it.metres) : '', supName(d, it.p)]);
   }
   return { text: toCsv(rows), count: rows.length - 1 };
 }
@@ -85,7 +89,7 @@ function columnsOf(head) {
   const frame = find(['frameprice', 'frame', 'framepriceincl', 'framepriceinclvat', 'framer', 'framepricer']);
   const metres = find(['fabricmetres', 'fabricmeters', 'metres', 'meters', 'meter', 'metre', 'meterfabric', 'metrefabric', 'fabricneeded', 'fabricneededmetres', 'fabricm', 'metresneeded']);
   return {
-    cost, price, frame, metres, sku: find(['sku', 'variantsku', 'code', 'itemcode', 'productcode', 'stockcode']), barcode: find(['barcode', 'variantbarcode', 'barcodes', 'ean', 'upc']),
+    cost, price, frame, metres, supplier: find(['supplier', 'suppliername', 'vendor', 'suppliedby']), sku: find(['sku', 'variantsku', 'code', 'itemcode', 'productcode', 'stockcode']), barcode: find(['barcode', 'variantbarcode', 'barcodes', 'ean', 'upc']),
     handle: find(['handle']), name: find(['product', 'productname', 'name', 'title', 'item', 'description']), variant: find(['variant', 'variantname']), opts
   };
 }
@@ -95,7 +99,7 @@ export function planCosts(text, d, eid) {
   const rows = parseCsv(text, sepOf(text));
   if (rows.length < 2) throw new Error('The file has no rows under its heading.');
   const col = columnsOf(rows[0]);
-  if (col.cost < 0 && col.price < 0 && col.frame < 0 && col.metres < 0) throw new Error('No cost column: the heading needs a column called Cost (or Cost per item, Cost price), Price, Frame price or Fabric metres.');
+  if (col.cost < 0 && col.price < 0 && col.frame < 0 && col.metres < 0 && col.supplier < 0) throw new Error('No cost column: the heading needs a column called Cost (or Cost per item, Cost price), Price, Frame price, Fabric metres or Supplier.');
   if (col.sku < 0 && col.barcode < 0 && col.handle < 0 && col.name < 0) throw new Error('Nothing to find the products by: the file needs a SKU, Barcode, Handle or Product column.');
   const items = itemsOf(d, eid);
   const index = (keyOf) => { const m = new Map(); for (const it of items) for (const k of keyOf(it)) if (k) { if (!m.has(k)) m.set(k, []); if (!m.get(k).includes(it)) m.get(k).push(it); } return m; };
@@ -108,7 +112,9 @@ export function planCosts(text, d, eid) {
   const byModel = index(it => codesIn(it.v ? it.v.name : it.p.name));
   const byHandle = index(it => [low(it.p.shopifyHandle || handleOf(it.p.name)) + '|' + (it.v ? vkey(it.v.optionValues) : '')]);
   const cell = (r, i) => (i >= 0 ? String(r[i] == null ? '' : r[i]).trim() : '');
-  const changes = new Map(), prices = new Map(), frames = new Map(), same = [], missing = [], bad = [];
+  const changes = new Map(), prices = new Map(), frames = new Map(), suppliers = new Map(), newSuppliers = new Map(), same = [], missing = [], bad = [];
+  const sups = supsOf(d, eid);
+  const supByName = new Map(sups.map(sp => [norm(sp.name), sp]));
   let blank = 0, lastName = '', lastHandle = '';
   rows.slice(1).forEach((r, n) => {
     const line = n + 2;
@@ -126,7 +132,8 @@ export function planCosts(text, d, eid) {
     if (Number.isNaN(metres)) { bad.push({ line, what, cost: cell(r, col.metres) }); metres = null; }
     if (frame === 0) frame = null; if (metres === 0) metres = null;
     if (costCentsOf(cell(r, col.cost)) === null) blank++;
-    if (cents === null && price === null && frame === null && metres === null) return;
+    const supplier = cell(r, col.supplier);
+    if (cents === null && price === null && frame === null && metres === null && !supplier) return;
     const opts = {}; col.opts.forEach(o => { const k = cell(r, o.name), v = cell(r, o.value); if (v && v !== 'Default Title') opts[k || 'Option'] = v; });
     const tries = [
       bySku.get(skuKey(cell(r, col.sku))), byCode.get(low(cell(r, col.barcode))),
@@ -140,6 +147,16 @@ export function planCosts(text, d, eid) {
     const hit = tries.find(t => t && t.length === 1);
     if (!hit) { missing.push({ line, what, many: tries.some(t => t && t.length > 1) }); return; }
     const it = hit[0];
+    // the supplier is the product's: by name, 'none' clears it, a new name is made under Buying → Suppliers when ticked
+    if (supplier) {
+      const clear = /^(none|-|no supplier)$/i.test(supplier);
+      const found = clear ? null : supByName.get(norm(supplier));
+      const toId = clear ? '' : found ? found.id : null;
+      if (toId !== (it.p.supplierId || '')) {
+        if (toId === null && !newSuppliers.has(norm(supplier))) newSuppliers.set(norm(supplier), supplier);
+        suppliers.set(it.p.id, { p: it.p, from: supName(d, it.p), to: clear ? '' : found ? found.name : newSuppliers.get(norm(supplier)), supplierId: toId, key: clear ? '' : norm(supplier) });
+      }
+    }
     if (price !== null) { if (price === it.price) prices.delete(it.id); else prices.set(it.id, { it, to: price }); }
     if ((frame !== null && frame !== it.frame) || (metres !== null && metres !== it.metres)) frames.set(it.id, { it, frame: frame !== null && frame !== it.frame ? frame : null, metres: metres !== null && metres !== it.metres ? metres : null });
     if (cents === null) return;
@@ -151,12 +168,21 @@ export function planCosts(text, d, eid) {
     const vc = [...changes.values()].filter(c => c.it.v && c.it.p.id === p.id).map(c => c.to);
     if (vc.length) changes.set(p.id, { it: items.find(i => i.id === p.id && !i.v), to: Math.min(...vc), fromVariants: true });
   }
-  return { changes: [...changes.values()], prices: [...prices.values()], frames: [...frames.values()], same: same.length, blank, missing, bad, rows: rows.length - 1 };
+  return { changes: [...changes.values()], prices: [...prices.values()], frames: [...frames.values()], suppliers: [...suppliers.values()], newSuppliers: [...newSuppliers.values()], same: same.length, blank, missing, bad, rows: rows.length - 1 };
 }
 
 // one write per record: its new cost, and its new price when prices are wanted
-async function applyCosts(plan, eid, withPrices, withFrames) {
+async function applyCosts(plan, eid, withPrices, withFrames, withSuppliers) {
   const by = new Map();
+  // the suppliers first: the new ones made, then each product pointed at its supplier
+  const sups = withSuppliers ? (plan.suppliers || []) : [];
+  const made = new Map();
+  for (const name of (withSuppliers ? plan.newSuppliers || [] : [])) {
+    const id = newId('suppliers');
+    await setOne('suppliers', id, { name, contact: '', phone: '', email: '', accountNo: '', termsDays: 0, leadDays: 0, notes: 'Made by the costs import', archived: false, ...auth.stamp(eid, '') });
+    made.set(norm(name), id);
+  }
+  const supId = (c) => c.supplierId !== null ? c.supplierId : made.get(c.key) || '';
   const put = (it, patch) => { const o = by.get(it.id) || { op: 'update', coll: it.coll, id: it.id, data: { ...auth.touch() } }; Object.assign(o.data, patch); by.set(it.id, o); };
   plan.changes.forEach(c => put(c.it, { costCents: c.to }));
   const prices = withPrices ? plan.prices : [];
@@ -165,6 +191,7 @@ async function applyCosts(plan, eid, withPrices, withFrames) {
   const frames = withFrames ? (plan.frames || []) : [];
   const whole = (it) => { const rec = it.v || it.p, out = {}; for (const k of ['priceCents', 'costCents']) { const x = rec[k]; if (x != null && !Number.isInteger(x)) out[k] = Math.round(Number(x) || 0); else if (!it.v && x == null) out[k] = 0; } return out; };
   frames.forEach(c => put(c.it, { ...whole(c.it), ...(c.frame !== null ? { framePriceCents: c.frame } : {}), ...(c.metres !== null ? { fabricMetres: c.metres } : {}) }));
+  sups.forEach(c => put({ id: c.p.id, coll: 'products' }, { supplierId: supId(c) }));
   const ops = [...by.values()];
   let done = 0;
   for (let i = 0; i < ops.length; i += 100) { await batch(ops.slice(i, i + 100)); done = Math.min(ops.length, i + 100); }
@@ -172,9 +199,10 @@ async function applyCosts(plan, eid, withPrices, withFrames) {
     await setOne('auditLog', newId('auditLog'), { action: 'product.costImport', docType: 'product', docId: '', docNo: '', actorUid: auth.session.uid, actorName: auth.session.user.name, overrideUid: '', overrideName: '',
       details: { changed: plan.changes.length, changes: plan.changes.slice(0, 300).map(c => ({ id: c.it.id, coll: c.it.coll, name: c.it.label, fromCents: c.it.stored, toCents: c.to })),
         pricesChanged: prices.length, prices: prices.slice(0, 300).map(c => ({ id: c.it.id, coll: c.it.coll, name: c.it.label, fromCents: c.it.priceStored, toCents: c.to })),
-        framesChanged: frames.length, frames: frames.slice(0, 300).map(c => ({ id: c.it.id, coll: c.it.coll, name: c.it.label, fromFrameCents: c.it.frame, toFrameCents: c.frame, fromMetres: c.it.metres, toMetres: c.metres })) }, ...auth.stamp(eid, '') });
+        framesChanged: frames.length, frames: frames.slice(0, 300).map(c => ({ id: c.it.id, coll: c.it.coll, name: c.it.label, fromFrameCents: c.it.frame, toFrameCents: c.frame, fromMetres: c.it.metres, toMetres: c.metres })),
+        suppliersChanged: sups.length, suppliersCreated: [...made.keys()].length, suppliers: sups.slice(0, 300).map(c => ({ id: c.p.id, name: c.p.name, from: c.from, to: c.to, supplierId: supId(c) })) }, ...auth.stamp(eid, '') });
   } catch (e) { console.error('audit failed', e); }
-  return { costs: plan.changes.length, prices: prices.length, frames: frames.length, records: done };
+  return { costs: plan.changes.length, prices: prices.length, frames: frames.length, suppliers: sups.length, created: made.size, records: done };
 }
 
 // the Import costs window: the sheet to fill in, then the file, a preview and Save
@@ -183,17 +211,17 @@ export function openCostImport(d, eid) {
   const vat = ent.vatRegistered ? 'excluding VAT (you claim the VAT back)' : 'what you pay, VAT included (' + esc(ent.tradingName || ent.legalName || eid) + ' is not VAT registered)';
   let plan = null, busy = false;
   const m = openModal('Import costs and prices · ' + (ent.tradingName || ent.legalName || eid), `
-    <p>The cost changes, and the selling price too if the file has a Price column and you tick it. A <strong>Frame price</strong> and <strong>Fabric metres</strong> column (the shops’ price lists) set the couch’s frame price and the metres it needs, under their own tick. Names, barcodes and pictures stay as they are. Costs are in rands, ${vat}.</p>
-    <ol class="ci-steps"><li><button type="button" class="btn ghost" data-ci="sheet">Download the costs sheet</button> <span class="muted">every product and variant with its SKU, barcode, price and cost now</span></li>
+    <p>The cost changes, and the selling price too if the file has a Price column and you tick it. A <strong>Frame price</strong> and <strong>Fabric metres</strong> column (the shops’ price lists) set the couch’s frame price and the metres it needs, under their own tick. A <strong>Supplier</strong> column sets each product’s supplier by name (a new name is added under Buying → Suppliers), under its own tick. Names, barcodes and pictures stay as they are. Costs are in rands, ${vat}.</p>
+    <ol class="ci-steps"><li><button type="button" class="btn ghost" data-ci="sheet">Download the costs sheet</button> <span class="muted">every product and variant with its SKU, barcode, price, cost and supplier now</span></li>
       <li>Fill in the <strong>Cost</strong> column (and change the <strong>Price</strong> where you want) in Excel or Google Sheets. Leave a cost blank to keep it as it is. Save as CSV.</li>
       <li><label class="btn ghost">Choose the file<input type="file" id="ci-file" accept=".csv,text/csv,.txt" hidden></label> <span class="muted">a supplier’s list or the Shopify product CSV works too, if it has a Cost column and a SKU, barcode or product name</span></li></ol>
     <div id="ci-plan"></div>`, {
     okLabel: 'Save the costs', onOk: async () => {
-      const withPrices = !!(m.wrap.querySelector('#ci-prices') || {}).checked, withFrames = !!(m.wrap.querySelector('#ci-frames') || {}).checked;
-      if (!plan || (!plan.changes.length && !(withPrices && plan.prices.length) && !(withFrames && plan.frames.length))) { toast(plan ? (plan.prices.length ? 'Tick “Also change these prices” to save the prices' : plan.frames.length ? 'Tick “Also set these frame prices and fabric metres” to save them' : 'Nothing to change') : 'Choose the file first', 'warn'); return false; }
+      const withPrices = !!(m.wrap.querySelector('#ci-prices') || {}).checked, withFrames = !!(m.wrap.querySelector('#ci-frames') || {}).checked, withSuppliers = !!(m.wrap.querySelector('#ci-suppliers') || {}).checked;
+      if (!plan || (!plan.changes.length && !(withPrices && plan.prices.length) && !(withFrames && plan.frames.length) && !(withSuppliers && (plan.suppliers || []).length))) { toast(plan ? (plan.prices.length ? 'Tick “Also change these prices” to save the prices' : plan.frames.length ? 'Tick “Also set these frame prices and fabric metres” to save them' : (plan.suppliers || []).length ? 'Tick “Also set these suppliers” to save them' : 'Nothing to change') : 'Choose the file first', 'warn'); return false; }
       if (busy) return false; busy = true;
       const ok = m.wrap.querySelector('#modal-ok'); ok.disabled = true; ok.textContent = 'Saving…';
-      try { const n = await applyCosts(plan, eid, withPrices, withFrames); toast([n.costs ? n.costs + ' cost' + (n.costs === 1 ? '' : 's') : '', n.prices ? n.prices + ' price' + (n.prices === 1 ? '' : 's') : '', n.frames ? n.frames + ' frame price' + (n.frames === 1 ? '' : 's') + ' / fabric metres' : ''].filter(Boolean).join(' and ') + ' saved'); return true; }
+      try { const n = await applyCosts(plan, eid, withPrices, withFrames, withSuppliers); toast([n.costs ? n.costs + ' cost' + (n.costs === 1 ? '' : 's') : '', n.prices ? n.prices + ' price' + (n.prices === 1 ? '' : 's') : '', n.frames ? n.frames + ' frame price' + (n.frames === 1 ? '' : 's') + ' / fabric metres' : '', n.suppliers ? n.suppliers + ' supplier' + (n.suppliers === 1 ? '' : 's') + (n.created ? ' (' + n.created + ' new)' : '') : ''].filter(Boolean).join(' and ') + ' saved'); return true; }
       catch (e) { toast('Saving stopped: ' + e.message + '. Nothing after that was changed; try again.', 'warn'); busy = false; ok.disabled = false; ok.textContent = 'Save the costs'; return false; }
     }
   });
@@ -208,7 +236,7 @@ export function openCostImport(d, eid) {
     r.onload = () => {
       const el = m.wrap.querySelector('#ci-plan');
       try { plan = planCosts(r.result, d, eid); } catch (err) { plan = null; el.innerHTML = `<p class="warn">${esc(err.message)}</p>`; return; }
-      const c = plan.changes, pr = plan.prices, fr = plan.frames || [];
+      const c = plan.changes, pr = plan.prices, fr = plan.frames || [], su = plan.suppliers || [], nu = plan.newSuppliers || [];
       const frTxt = (x) => [x.frame !== null ? 'frame ' + money(x.it.frame || 0) + ' → ' + money(x.frame) : '', x.metres !== null ? (x.it.metres || 0) + ' m → ' + x.metres + ' m' : ''].filter(Boolean).join(' · ');
       el.innerHTML = `<div class="ci-sum"><strong>${c.length} cost${c.length === 1 ? '' : 's'} to change</strong> · ${plan.same} the same · ${plan.blank} left blank${plan.missing.length ? ` · <span class="warn">${plan.missing.length} not found</span>` : ''}${plan.bad.length ? ` · <span class="warn">${plan.bad.length} not a number</span>` : ''}</div>
         ${c.length ? `<div class="pk-list">${c.slice(0, 60).map(x => `<div class="pk-row"><strong>${esc(x.it.label)}</strong><span>${esc(money(x.it.now))} → <strong>${esc(money(x.to))}</strong>${x.fromVariants ? ' <span class="muted">(from its variants)</span>' : ''}</span></div>`).join('')}${c.length > 60 ? `<div class="pk-row muted">… and ${c.length - 60} more</div>` : ''}</div>` : ''}
@@ -216,6 +244,8 @@ export function openCostImport(d, eid) {
           <div class="pk-list">${pr.slice(0, 60).map(x => `<div class="pk-row"><strong>${esc(x.it.label)}</strong><span>${esc(money(x.it.price))} → <strong>${esc(money(x.to))}</strong></span></div>`).join('')}${pr.length > 60 ? `<div class="pk-row muted">… and ${pr.length - 60} more</div>` : ''}</div></div>` : ''}
         ${fr.length ? `<div class="ci-prices"><label class="chk"><input type="checkbox" id="ci-frames"> <strong>Also set these ${fr.length} frame price${fr.length === 1 ? '' : 's'} and fabric metres</strong></label> <span class="muted">the couch without fabric, and the metres the maker needs; the till prices frame + metres × the chosen fabric</span>
           <div class="pk-list">${fr.slice(0, 60).map(x => `<div class="pk-row"><strong>${esc(x.it.label)}</strong><span>${esc(frTxt(x))}</span></div>`).join('')}${fr.length > 60 ? `<div class="pk-row muted">… and ${fr.length - 60} more</div>` : ''}</div></div>` : ''}
+        ${su.length ? `<div class="ci-prices"><label class="chk"><input type="checkbox" id="ci-suppliers"> <strong>Also set these ${su.length} supplier${su.length === 1 ? '' : 's'}</strong></label> <span class="muted">${nu.length ? `${nu.length} new supplier${nu.length === 1 ? '' : 's'} will be added under Buying → Suppliers: ${esc(nu.join(', '))}` : 'all suppliers already under Buying → Suppliers'}</span>
+          <div class="pk-list">${su.slice(0, 60).map(x => `<div class="pk-row"><strong>${esc(x.p.name)}</strong><span>${esc(x.from || 'none')} → <strong>${esc(x.to || 'none')}</strong></span></div>`).join('')}${su.length > 60 ? `<div class="pk-row muted">… and ${su.length - 60} more</div>` : ''}</div></div>` : ''}
         ${plan.missing.length ? `<details class="ci-miss"><summary>Not found (left alone)</summary>${plan.missing.slice(0, 50).map(x => `<div class="muted">Line ${x.line}: ${esc(x.what)}${x.many ? ' (more than one product matches)' : ''}</div>`).join('')}${plan.missing.length > 50 ? `<div class="muted">… and ${plan.missing.length - 50} more</div>` : ''}</details>` : ''}
         ${plan.bad.length ? `<details class="ci-miss"><summary>Cost or price not a number (left alone)</summary>${plan.bad.slice(0, 30).map(x => `<div class="muted">Line ${x.line}: ${esc(x.what)}: “${esc(x.cost)}”</div>`).join('')}</details>` : ''}`;
     };

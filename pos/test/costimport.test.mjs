@@ -71,8 +71,8 @@ R.intro = await txt('#modal .modal-body');
 check('the window says the cost changes (prices only when ticked), and VAT included for a company not registered', /The cost changes, and the selling price too/.test(R.intro) && /VAT included/.test(R.intro) && /not VAT registered/.test(R.intro), R.intro);
 const [dl] = await Promise.all([p.waitForEvent('download'), p.click('[data-ci=sheet]')]);
 R.sheetName = dl.suggestedFilename(); R.sheet = fs.readFileSync(await dl.path(), 'utf8').replace(/^﻿/, '').split('\r\n');
-check('the costs sheet: heading, one row per simple product and per variant (not the kit itself), price and cost now', /^costs-RC-/.test(R.sheetName) && R.sheet[0] === 'Product,Variant,SKU,Barcode,Price,Cost,Frame price,Fabric metres' && R.sheet.length === 9
-  && R.sheet.includes('Gecko Kit,Large,LGK-L,6002,1899.00,0.00,,') && R.sheet.includes('Gecko Kit,Small,LGK-S,,1299.00,0.00,,') && R.sheet.includes('Heat Mat 8W,,HM8,6001,249.00,0.00,,') && R.sheet.includes('Basking Lamp,,,,195.00,100.00,,') && !R.sheet.some(l => /furniture/.test(l)), R.sheet);
+check('the costs sheet: heading, one row per simple product and per variant (not the kit itself), price and cost now', /^costs-RC-/.test(R.sheetName) && R.sheet[0] === 'Product,Variant,SKU,Barcode,Price,Cost,Frame price,Fabric metres,Supplier' && R.sheet.length === 9
+  && R.sheet.includes('Gecko Kit,Large,LGK-L,6002,1899.00,0.00,,,') && R.sheet.includes('Gecko Kit,Small,LGK-S,,1299.00,0.00,,,') && R.sheet.includes('Heat Mat 8W,,HM8,6001,249.00,0.00,,,') && R.sheet.includes('Basking Lamp,,,,195.00,100.00,,,') && !R.sheet.some(l => /furniture/.test(l)), R.sheet);
 
 // ---- a filled-in sheet the way Excel saves it where the decimal mark is a comma
 const filled = ['SKU;Barcode;Product;Variant;Cost', 'HM8;;;;120,50', 'LGK-S;;;;300', ';6002;;;R 1 450.00', ';;Basking Lamp;;100.00', 'DUP;;;;55', 'NOPE;;;;10', ';;Heat Mat 8W;;abc', ';;Basking Lamp;;', ';7002;;;12.5', 'UVL601;;Giangarden UVL601 UVB & UVA LED Fixture Plus;;500,25', 'TH32;;Giangarden TH32 Digital Thermo-hygrometer;;100,05'].join('\r\n');
@@ -132,6 +132,25 @@ await p.check('#ci-frames'); await p.click('#modal-ok'); R.saved4 = await toast(
 const mat4 = await one('products/p_mat'), vl4 = await one('variants/v_l');
 check('saved: the mat R 2 000 frame and 3.5 m, the large kit R 1 850 and 4.5 m, prices and costs untouched', /2 frame prices \/ fabric metres saved/.test(R.saved4) && mat4.framePriceCents === 200000 && mat4.fabricMetres === 3.5 && vl4.framePriceCents === 185000 && vl4.fabricMetres === 4.5 && mat4.priceCents === 125900 && mat4.costCents === 13000 && vl4.priceCents === 199900, [R.saved4, mat4.framePriceCents, mat4.fabricMetres, vl4.framePriceCents, vl4.fabricMetres]);
 check('the audit row has the frame prices and metres before and after', (await coll('auditLog')).some(a => a.action === 'product.costImport' && a.details.framesChanged === 2 && a.details.frames.some(c => c.id === 'p_mat' && c.toFrameCents === 200000 && c.toMetres === 3.5)), '');
+
+// ---- suppliers by name: one already there (any case), one new, one cleared; the product's, also through a variant row
+const supplied = ['SKU,Barcode,Supplier', 'HM8,,akwa', 'LGK-S,,Komodo', 'LGK-L,,KOMODO', ',7002,none'].join('\n');
+await put('pos/retail/products/p_d2', { ...(await one('products/p_d2')), supplierId: 'sup_akwa' });
+await p.waitForTimeout(600);
+await p.click('[data-act=pr-costs]'); await p.waitForSelector('#modal');
+await p.setInputFiles('#ci-file', { name: 'suppliers.csv', mimeType: 'text/csv', buffer: Buffer.from(supplied) });
+await p.waitForSelector('#ci-plan .ci-sum'); R.plan5 = await txt('#ci-plan');
+check('the preview: 3 suppliers to set, Komodo new, Dup B cleared', /0 costs to change/.test(R.plan5) && /Also set these 3 suppliers/.test(R.plan5) && /1 new supplier will be added under Buying → Suppliers: Komodo/.test(R.plan5) && /Heat Mat 8W none → Akwa/.test(R.plan5) && /Gecko Kit none → Komodo/.test(R.plan5) && /Dup B Akwa → none/.test(R.plan5), R.plan5);
+await p.click('#modal-ok'); R.untick5 = await toast(); check('not ticked: it says to tick', /Tick “Also set these suppliers”/.test(R.untick5), R.untick5);
+await p.check('#ci-suppliers'); await p.click('#modal-ok'); R.saved5 = await toast(); await p.waitForTimeout(800);
+check('saved: 3 suppliers, 1 new', /3 suppliers \(1 new\) saved/.test(R.saved5), R.saved5);
+const komodo = (await coll('suppliers')).find(x => x.name === 'Komodo');
+check('Komodo made under the company, the products pointed at their suppliers, Dup B cleared', komodo && komodo.entityId === 'RC' && !komodo.archived && (await one('products/p_mat')).supplierId === 'sup_akwa' && (await one('products/p_kit')).supplierId === komodo.id && (await one('products/p_d2')).supplierId === '', [komodo, (await one('products/p_kit')).supplierId]);
+check('the audit row has the suppliers before and after', (await coll('auditLog')).some(a => a.action === 'product.costImport' && a.details.suppliersChanged === 3 && a.details.suppliersCreated === 1 && a.details.suppliers.some(c => c.id === 'p_kit' && c.to === 'Komodo')), '');
+// back as it was for the checks below
+for (const id of ['p_mat', 'p_kit', 'p_d2']) await put('pos/retail/products/' + id, { ...(await one('products/' + id)), supplierId: '' });
+if (komodo) await fetch(`${docs}/pos/retail/suppliers/${komodo.id}`, { method: 'DELETE', headers: H });
+await p.waitForTimeout(800);
 
 // ---- a file without a cost column
 await p.click('[data-act=pr-costs]'); await p.waitForSelector('#modal');
