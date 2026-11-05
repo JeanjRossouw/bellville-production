@@ -108,17 +108,24 @@ await p.fill('#pf-name', 'Vase'); await p.fill('#pf-cost', '50'); await p.fill('
 await p.waitForTimeout(1500); R.last4 = await p.locator('#tk-last').innerText(); check('the vase is in the take and counted: 1', /Vase: 1/.test(R.last4), R.last4);
 await p.click('.tk-tbl tr:has-text("Desk Lamp") [data-act=st-set]'); await p.waitForSelector('#modal #tk-qty'); await p.fill('#tk-qty', '3'); await p.click('#modal-ok'); await p.waitForTimeout(700);
 R.counted = await screenText(); check('3 of 3 counted', /3 of 3 counted/.test(R.counted), R.counted.slice(0, 200));
+// ---- a count file from a scanner: the same code on two rows adds up, an unknown code is listed, counts are set
+await p.setInputFiles('#tk-file', { name: 'count.csv', mimeType: 'text/csv', buffer: Buffer.from('Barcode,Qty\nCUSH,1\nCUSH,1\nVASE,1\nNOPE2,4\nLAMP,x\n') });
+await p.waitForSelector('#modal .pk-list'); R.impBox = await modalText();
+check('the file box: 2 items, cushion from 2 rows, one not found, one bad quantity', /2 items found in 5 rows, 3 units/.test(R.impBox) && /Scatter Cushion 2 \(2 rows\)/.test(R.impBox) && /Vase 1/.test(R.impBox) && /1 not found/.test(R.impBox) && /1 with a quantity that is not a whole number/.test(R.impBox), R.impBox);
+await p.click('#modal-ok'); R.impToast = await toast(); check('set', /Count file: 2 items set/.test(R.impToast), R.impToast);
+await p.waitForTimeout(600); R.afterImp = await screenText(); check('the counts stand as set: still 3 of 3, cushion 2', /3 of 3 counted/.test(R.afterImp) && /Scatter Cushion Mandla · [\d:]+ CU-1 2/.test(R.afterImp), R.afterImp.slice(0, 500));
 await p.click('[data-act=st-take-review]'); R.rev = await toast(); await p.waitForSelector('#tk-review');
 R.review = await screenText(); check('the review: the cushion −7 at −R 350, the vase +1 at R 50, the lamp matched', /2 variances · -6 units · [−-]R 300\.00 at cost/.test(R.review) && /Scatter Cushion CU-1 9 2 -7 [−-]R 350\.00 Mandla/.test(R.review) && /Vase 0 1 \+1 R 50\.00 Mandla/.test(R.review) && !/Lamp/.test(R.review), R.review.slice(0, 500));
 await p.click('[data-act=st-varonly]'); await p.waitForTimeout(200); R.all = await screenText(); check('all items shows the lamp too', /Desk Lamp LA-1 3 3/.test(R.all), R.all.slice(0, 500));
-await p.click('[data-act=st-take-post]'); R.posted = await toast(); await p.waitForTimeout(1500);
+await p.click('[data-act=st-take-post]'); await p.waitForSelector('#modal'); R.postBox = await modalText(); check('the posting box: every item counted, no zero option', /Every item was counted/i.test(R.postBox) && await p.locator('#tk-zero').count() === 0, R.postBox);
+await p.click('#modal-ok'); R.posted = await toast(); await p.waitForTimeout(1500);
 check('posted by the manager: 2 movements', /Posted: 2 movements/.test(R.posted), R.posted);
 R.after = await screenText(); check('the take shows posted', /posted .* by Mandla, 2 movements/.test(R.after), R.after.slice(0, 300));
 check('the level: 2 on hand', (await getDoc('pos/retail/stockLevels/BF-BELL_p_cushion')).onHandQty === 2);
 const vaseLvl = (await listColl('stockLevels')).find(l => l.productId !== 'p_cushion' && l.productId !== 'p_lamp'); check('the vase made mid-count: 1 on hand', vaseLvl && vaseLvl.onHandQty === 1, vaseLvl);
 await p.click('[data-act=st-sub][data-to=levels]'); await p.waitForTimeout(400);
 R.cushion3 = await rowText('Scatter Cushion'); check('the levels table: cushion 2 on hand, 0 available', /CU-1 2 2 0/.test(R.cushion3), R.cushion3);
-const takes = await listColl('stockTakes'); check('written: posted, the log of every scan and the item added', takes.length === 1 && takes[0].status === 'posted' && takes[0].log.length === 7 && takes[0].log.some(l => l.mode === 'item') && takes[0].movementCount === 2 && takes[0].items.find(x => x.name === 'Vase').addedBy === 'Mandla', takes[0] && [takes[0].status, takes[0].log.length]);
+const takes = await listColl('stockTakes'); check('written: posted, the log of every scan and the item added', takes.length === 1 && takes[0].status === 'posted' && takes[0].log.length === 9 && takes[0].log.some(l => l.mode === 'item') && takes[0].movementCount === 2 && takes[0].items.find(x => x.name === 'Vase').addedBy === 'Mandla', takes[0] && [takes[0].status, takes[0].log.length]);
 
 console.log(JSON.stringify({ fails, errs, ...R }, null, 1).slice(0, 6000));
 await b.close();

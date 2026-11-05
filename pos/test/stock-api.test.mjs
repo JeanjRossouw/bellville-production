@@ -113,6 +113,15 @@ check('the count movement: −7 against the frozen 10, on the stock take', moves
 R.cancelLate = await call('pos-stock', { action: 'takeCancel', takeId: T.id, ...bell }, sup.idToken); check('a posted take cannot be cancelled', R.cancelLate.status === 409, R.cancelLate);
 R.tk3 = await call('pos-stock', { action: 'takeOpen', name: 'Books only', scope: 'category', category: 'Books', ...bell }, sup.idToken); check('a category take holds only that category', R.tk3.ok && R.tk3.take.itemCount === 1 && R.tk3.take.items[0].itemId === 'p_book', R.tk3.error || R.tk3.take);
 R.tk3c = await call('pos-stock', { action: 'takeCancel', takeId: R.tk3.take.id, ...bell }, sup.idToken); check('cancelled', R.tk3c.ok && R.tk3c.take.status === 'cancelled', R.tk3c);
+// ---- items not counted taken as nought: a take where nobody counts anything, posted with uncountedAsZero
+R.tk4 = await call('pos-stock', { action: 'takeOpen', name: 'Clear-out', scope: 'all', ...bell }, sup.idToken); check('a fourth take, everything', R.tk4.ok && R.tk4.take.itemCount === 4, R.tk4.error || R.tk4.take);
+R.tk4r = await call('pos-stock', { action: 'takeReview', takeId: R.tk4.take.id, ...bell }, sup.idToken); check('in review with nothing counted', R.tk4r.ok && R.tk4r.take.countedItems === 0, R.tk4r);
+R.tk4p = await call('pos-stock', { action: 'takePost', takeId: R.tk4.take.id, uncountedAsZero: true, ...bell }, own.idToken);
+check('posted: the three with stock go to nought by a movement each, the book (already nought) only gets the date', R.tk4p.ok && R.tk4p.movements === 3 && R.tk4p.zeroed === 4 && R.tk4p.take.uncountedAsZero === true && R.tk4p.take.uncountedZeroed === 4 && R.tk4p.take.countedItems === 4 && R.tk4p.take.varianceQty === -(2 + 2 + 5) && R.tk4p.take.items.every(x => x.countedQty === 0 && x.assumedZero && x.countedBy === 'Jean'), R.tk4p.error || R.tk4p.take);
+check('nought on hand now', (await lvl('p_cushion')).onHandQty === 0 && (await lvl('p_lamp')).onHandQty === 0 && (await lvl('p_vase')).onHandQty === 0, [await lvl('p_cushion'), await lvl('p_vase')]);
+moves = await listColl('stockMovements');
+check('the movements say not found', moves.filter(m => m.reason === 'count' && /Not found in the count: taken as 0, expected 5/.test(m.note) && m.productId === 'p_vase').length === 1, moves.filter(m => m.reason === 'count').map(m => [m.productId, m.qty, m.note]));
+check('audited with the option', (await listColl('auditLog')).some(a => a.action === 'stock.takePost' && a.details.uncountedAsZero === true && a.details.uncountedZeroed === 4));
 // ---- delete for good: a bad import's blank products go in batches of fifty, ten checked at a time on the
 // server (one at a time ran past the function's time limit); one with stock and one on a quote are refused
 const blank = Array.from({ length: 120 }, (_, i) => 'p_blank' + String(i).padStart(3, '0'));
