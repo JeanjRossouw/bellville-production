@@ -74,12 +74,13 @@ export function productsHtml(d) {
     </div>
     <p class="sub muted" style="margin:0 0 .6rem">${list.length} of ${all.length} product${all.length === 1 ? '' : 's'}</p>
     ${list.length ? `<div class="card" style="padding:0;overflow:auto"><table class="tbl pr-tbl" data-entity="${esc(eid)}">
-      <thead><tr><th><input type="checkbox" id="pr-all" title="Tick all for labels"></th><th></th><th>Product</th><th>SKU · barcodes</th><th>Category · brand</th><th>Type</th><th>VAT</th><th class="r">Cost</th><th class="r">Price</th><th class="r">Margin</th><th></th></tr></thead>
+      <thead><tr><th><input type="checkbox" id="pr-all" title="Tick all for labels"></th><th></th><th>Product</th><th>SKU · barcodes</th><th>Category · brand</th><th>Supplier</th><th>Type</th><th>VAT</th><th class="r">Cost</th><th class="r">Price</th><th class="r">Margin</th><th></th></tr></thead>
       <tbody>${list.map(p => { const vs = itemVariants(d, p.id).filter(v => !v.archived); const m = margin(d, p); return `<tr class="${p.archived ? 'off' : ''}">
         <td><input type="checkbox" data-lbl="${esc(p.id)}"></td><td>${thumb(p)}</td>
         <td><strong>${esc(p.name)}</strong>${p.archived ? ' <span class="chip">archived</span>' : ''}${vs.length ? `<div class="muted">${vs.length} variant${vs.length === 1 ? '' : 's'}: ${esc(vs.slice(0, 4).map(v => v.name).join(', '))}${vs.length > 4 ? '…' : ''}</div>` : ''}${p.trackStock === false && p.type === 'stock' ? '<div class="muted">stock not tracked</div>' : ''}${p.favourite ? ' <span class="chip">favourite</span>' : ''}</td>
         <td class="muted">${esc(p.sku || '')}${(p.barcodes || []).length ? '<br>' + esc((p.barcodes || []).join(', ')) : ''}</td>
         <td class="muted">${esc(p.category || '')}${p.brand ? '<br>' + esc(p.brand) : ''}</td>
+        <td class="muted">${esc(p.supplierId ? ((d.suppliers || []).find(sp => sp.id === p.supplierId) || {}).name || '' : '')}</td>
         <td class="muted">${esc(typeLabel(p.type))}</td><td class="muted">${esc(p.vatClass || 'standard')}</td>
         <td class="r">${esc(money(p.costCents))}</td><td class="r"><strong>${esc(money(p.priceCents))}</strong>${Object.keys(p.storePrices || {}).length ? '<div class="muted">per store</div>' : ''}</td>
         <td class="r ${m != null && m < 0 ? 'warn' : ''}">${m == null ? '' : esc(m + '%')}</td>
