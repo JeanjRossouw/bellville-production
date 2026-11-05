@@ -225,10 +225,11 @@ export const actions = {
     const scan = (docs, label, field = 'lines') => { for (const d of docs) { if (d.status === 'cancelled') continue; for (const l of d[field] || []) { const w = `on ${label} ${d.docNo || d.name || d.id}`; note(l.productId, w); note(l.itemId, w); note(l.variantId, w); } } };
     scan(pos, 'purchase order'); scan(grvs, 'goods received'); scan(trs, 'transfer'); scan(lbs, 'lay-by'); scan(sos, 'sales order'); scan(qts, 'quote'); scan(takes, 'stock take', 'items');
     for (const bp of bundles) for (const c of bp.bundle || []) { note(c.productId, `part of the bundle ${bp.name}`); note(c.variantId, `part of the bundle ${bp.name}`); }
+    // ten products at a time: one at a time, a batch of a hundred ran past the function's time limit (504)
     const deleted = [], refused = [];
-    for (const id of ids) {
+    const one = async (id) => {
       const p = await getDoc('products', id);
-      if (!p || p.entityId !== entityId) { refused.push({ id, name: id, why: 'not found' }); continue; }
+      if (!p || p.entityId !== entityId) { refused.push({ id, name: id, why: 'not found' }); return; }
       const variants = await query('variants', [{ field: 'productId', value: id }], 500);
       const itemIds = [id, ...variants.map(v => v.id)];
       let why = '';
@@ -239,13 +240,18 @@ export const actions = {
       if (!why && sold.length) why = 'sold on ' + (sold[0].docNo || 'a sale');
       if (!why && moves.length) why = 'has stock movements';
       if (!why) { const held = levels.find(l => (l.onHandQty || 0) || (l.quarantineQty || 0) || (l.reservedQty || 0) || (l.onOrderQty || 0)); if (held) why = (held.onHandQty || 0) ? `has ${held.onHandQty} on hand` : (held.onOrderQty || 0) ? `has ${held.onOrderQty} on order` : 'has stock in quarantine or reserved'; }
-      if (why) { refused.push({ id, name: p.name, why }); continue; }
+      if (why) { refused.push({ id, name: p.name, why }); return; }
       const now = nowIso();
       const writes = [{ delete: true, coll: 'products', id }, ...variants.map(v => ({ delete: true, coll: 'variants', id: v.id })), ...levels.map(l => ({ delete: true, coll: 'stockLevels', id: l.id })), ...queue.map(r => ({ delete: true, coll: 'shopifyQueue', id: r.id })),
         { create: true, coll: 'auditLog', id: randomId('au_'), data: { action: 'product.delete', docType: 'product', docId: id, docNo: '', actorUid: user.id, actorName: user.name, overrideUid: '', overrideName: '', details: { name: p.name, sku: p.sku || '', variants: variants.length, shopifyProductId: p.shopifyProductId || '' }, ...serverStamp(entityId, '', user.id, 'web:' + user.id), serverReceivedAt: now } }];
       await commit(writes);
       deleted.push({ id, name: p.name, shopify: !!p.shopifyProductId });
-    }
+    };
+    const todo = [...ids];
+    await Promise.all(Array.from({ length: Math.min(10, todo.length) }, async () => { while (todo.length) await one(todo.shift()); }));
+    // in the order asked, so the caller's list reads the same every time
+    const at = new Map(ids.map((id, i) => [id, i]));
+    deleted.sort((a, b) => at.get(a.id) - at.get(b.id)); refused.sort((a, b) => at.get(a.id) - at.get(b.id));
     return { ok: true, deleted, refused };
   }
 };

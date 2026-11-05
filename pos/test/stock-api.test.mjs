@@ -103,7 +103,27 @@ check('the count movement: −7 against the frozen 10, on the stock take', moves
 R.cancelLate = await call('pos-stock', { action: 'takeCancel', takeId: T.id, ...bell }, sup.idToken); check('a posted take cannot be cancelled', R.cancelLate.status === 409, R.cancelLate);
 R.tk3 = await call('pos-stock', { action: 'takeOpen', name: 'Books only', scope: 'category', category: 'Books', ...bell }, sup.idToken); check('a category take holds only that category', R.tk3.ok && R.tk3.take.itemCount === 1 && R.tk3.take.items[0].itemId === 'p_book', R.tk3.error || R.tk3.take);
 R.tk3c = await call('pos-stock', { action: 'takeCancel', takeId: R.tk3.take.id, ...bell }, sup.idToken); check('cancelled', R.tk3c.ok && R.tk3c.take.status === 'cancelled', R.tk3c);
-const audit = await listColl('auditLog'); check('audited', ['stock.adjust', 'stock.move', 'stock.takeOpen', 'stock.takeReview', 'stock.takePost', 'stock.takeCancel'].every(a => audit.some(x => x.action === a)), audit.map(a => a.action));
+// ---- delete for good: a bad import's blank products go in batches of fifty, ten checked at a time on the
+// server (one at a time ran past the function's time limit); one with stock and one on a quote are refused
+const blank = Array.from({ length: 120 }, (_, i) => 'p_blank' + String(i).padStart(3, '0'));
+await Promise.all(blank.map(id => prod(id, { name: '', trackStock: false })));
+await put('pos/retail/stockLevels/BF-BELL_p_blank005', { productId: 'p_blank005', variantId: '', onHandQty: 1, reservedQty: 0, ...srv('BF', 'BF-BELL') });
+await put('pos/retail/quotes/q_del', { docNo: 'Q-9', status: 'open', lines: [{ productId: 'p_blank007', qty: 1 }], ...srv('BF', 'BF-BELL') });
+R.delCas = await call('pos-stock', { action: 'productDelete', entityId: 'BF', productIds: blank.slice(0, 3) }); check('a cashier cannot delete', R.delCas.status === 403, R.delCas);
+const t0 = Date.now();
+R.del1 = await call('pos-stock', { action: 'productDelete', entityId: 'BF', productIds: blank.slice(0, 50) }, own.idToken);
+R.del2 = await call('pos-stock', { action: 'productDelete', entityId: 'BF', productIds: blank.slice(50, 100) }, own.idToken);
+R.del3 = await call('pos-stock', { action: 'productDelete', entityId: 'BF', productIds: [...blank.slice(100), 'p_nothere'] }, own.idToken);
+R.delMs = Date.now() - t0;
+check('first fifty: 48 gone, 2 refused', R.del1.status === 200 && R.del1.deleted.length === 48 && R.del1.refused.length === 2, R.del1);
+check('refused for stock and for the quote', R.del1.refused.some(x => x.id === 'p_blank005' && /1 on hand/.test(x.why)) && R.del1.refused.some(x => x.id === 'p_blank007' && /quote Q-9/.test(x.why)), R.del1.refused);
+check('in the order asked', R.del1.deleted.map(x => x.id).join() === blank.slice(0, 50).filter(id => id !== 'p_blank005' && id !== 'p_blank007').join(), R.del1.deleted.map(x => x.id));
+check('second fifty gone', R.del2.status === 200 && R.del2.deleted.length === 50 && !R.del2.refused.length, R.del2);
+check('last twenty gone, the unknown one refused', R.del3.status === 200 && R.del3.deleted.length === 20 && R.del3.refused.length === 1 && R.del3.refused[0].why === 'not found', R.del3);
+check('120 in well under the time limit', R.delMs < 8000, R.delMs);
+const left = (await listColl('products')).filter(p => p.id.startsWith('p_blank')).map(p => p.id);
+check('only the two refused remain', left.sort().join() === 'p_blank005,p_blank007', left);
+const audit = await listColl('auditLog'); check('audited', ['stock.adjust', 'stock.move', 'stock.takeOpen', 'stock.takeReview', 'stock.takePost', 'stock.takeCancel', 'product.delete'].every(a => audit.some(x => x.action === a)), audit.map(a => a.action));
 
 console.log(JSON.stringify({ fails, ...R }, null, 1));
 console.log(fails.length ? fails.length + ' FAILED' : 'stock-api: all passed');
