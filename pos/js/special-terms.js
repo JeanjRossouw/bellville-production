@@ -60,6 +60,7 @@ export function updateText(entity, store, so, status) {
   if (status === 'collected') return `Hi ${name}, ${co} here: thank you for collecting your order ${so.docNo}. Enjoy it, and tell us if anything is not right.`;
   if (status === 'booked') return `Hi ${name}, ${co} here: your order ${so.docNo} is booked for ${so.delivery.kind === 'deliver' ? 'delivery' : 'collection'} on ${so.delivery.date}${so.delivery.slot ? ' (' + so.delivery.slot + ')' : ''}${so.delivery.kind === 'deliver' && so.delivery.address ? ' to ' + [so.delivery.address.line1, so.delivery.address.city].filter(Boolean).join(', ') : ''}.${so.balanceCents > 0 ? ' Please settle the balance of ' + rands(so.balanceCents) + ' before then: we deliver once it is paid in full.' : ''}`;
   if (status === 'cancelled') return `Hi ${name}, ${co} here: your order ${so.docNo} has been cancelled${so.refundedCents ? ' and ' + rands(so.refundedCents) + ' refunded' : ''}.`;
+  if (status === 'eta') return `Hi ${name}, ${co} here: the expected date for your order ${so.docNo} (${what}) has moved to ${so.expectedAt}. Sorry for the change; we will let you know as it moves along.`;
   return `Hi ${name}, ${co} here with an update on your order ${so.docNo} (${what}): it is now ${STATUS_LABEL[status] || status}.`;
 }
 // the WhatsApp update on a sales order
@@ -73,5 +74,6 @@ export function salesOrderText(entity, store, so, status) {
   if (status === 'delivered') return `Hi ${name}, ${co} here: your order ${so.docNo} was delivered today. Thank you — enjoy it, and tell us if anything is not right.`;
   if (status === 'collected') return `Hi ${name}, ${co} here: thank you for collecting your order ${so.docNo}. Enjoy it, and tell us if anything is not right.`;
   if (status === 'cancelled') return `Hi ${name}, ${co} here: your order ${so.docNo} has been cancelled.`;
+  if (status === 'eta') return `Hi ${name}, ${co} here: the expected date for your order ${so.docNo} (${what}) has moved to ${so.expectedAt}. Sorry for the change; we will let you know as it moves along.`;
   return `Hi ${name}, ${co} here with an update on your order ${so.docNo} (${what}): it is now ${SALES_LABEL[status] || status}.`;
 }

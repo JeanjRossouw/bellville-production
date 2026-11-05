@@ -244,6 +244,10 @@ export function settingsHtml(d) {
         <p class="muted">The Factory Manager company that builds this company's custom orders. Once a deposit is paid the order goes into that factory's orders by itself, with the <em>store</em> as the customer: the factory sees what to make, for which store and by when, never the retail customer. The factory's status comes back to the till.</p>
         <div id="se-factory" data-entity="${esc(eid)}"><p class="muted">Loading…</p></div>
       </div>` : ''}
+      ${owner ? `<div class="card"><h2>Client messages</h2>
+        <p class="muted">An order's updates sent by themselves: when its status moves at the till or at the factory, when the factory moves the expected date, when it is booked, dispatched or cancelled. The same text as the WhatsApp button, by SMS, email or WhatsApp, logged on the order. Where nobody can be reached the order stays on To do for a person.</p>
+        <div id="se-notify" data-entity="${esc(eid)}"><p class="muted">Loading…</p></div>
+      </div>` : ''}
       ${owner ? `<div class="card"><h2>Shopify</h2>
         <p class="muted">The online shop. The POS is master for stock and pushes what is available per store to the shop's location after every movement; the shop is master for content; orders come in by webhook and take stock; discount codes and consented customers are shared. The app's keys are kept on the server and never shown again.</p>
         <div id="se-shop" data-entity="${esc(eid)}"><p class="muted">Loading…</p></div>

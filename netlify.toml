@@ -36,6 +36,9 @@
 
 [functions."pos-factory-sync"]
   schedule = "*/10 * * * *"
+# Automatic client messages on orders whose status or date moved: every five minutes, where a company switched it on.
+[functions."pos-notify-sweep"]
+  schedule = "*/5 * * * *"
 
 # The old Bellville till inside index.html, on /till (it was /pos, which is
 # now the retail POS app in the pos/ folder).

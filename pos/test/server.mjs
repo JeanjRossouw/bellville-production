@@ -11,6 +11,8 @@ process.env.FACTORY_SERVICE_ACCOUNT = process.env.FACTORY_SERVICE_ACCOUNT || JSO
 process.env.SHOPIFY_API_BASE = process.env.SHOPIFY_API_BASE || 'http://127.0.0.1:8799';
 process.env.ANTHROPIC_API_KEY = 'test-key';                      // the tests' mock Anthropic (pos/test/mock-anthropic.mjs), never the real API
 process.env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:8798';
+process.env.NOTIFY_SINK = 'http://127.0.0.1:8788/__notify';   // the SMS, email and WhatsApp providers land here (lib/notify.mjs); never the real ones
+const notifySink = [];   // every message "sent": { provider, path, headers, body }
 for (const k of Object.keys(process.env)) if (/^ANTHROPIC_/.test(k) && !['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'].includes(k)) delete process.env[k];
 const ROOT = process.argv[2];
 const fns = {};
@@ -18,6 +20,18 @@ async function fn(name) { if (!fns[name]) fns[name] = (await import(path.join(RO
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://localhost');
+  // the providers' stand-in: a body that says FAIL is refused, the rest kept; GET reads them, DELETE clears them
+  if (u.pathname.startsWith('/__notify')) {
+    if (req.method === 'GET') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(notifySink)); }
+    if (req.method === 'DELETE') { notifySink.length = 0; res.writeHead(204); return res.end(); }
+    let body = ''; for await (const c of req) body += c;
+    const provider = /bulksms|\/v1\/messages/.test(u.pathname) ? 'sms' : /\/emails/.test(u.pathname) ? 'email' : /\/messages$/.test(u.pathname) ? 'whatsapp' : 'unknown';
+    const parsed = (() => { try { return JSON.parse(body); } catch (e) { return { raw: body }; } })();
+    if (/FAIL/.test(body)) { res.writeHead(500, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: 'the provider said no (FAIL in the message)' })); }
+    notifySink.push({ provider, path: u.pathname, auth: req.headers.authorization || '', body: parsed, at: new Date().toISOString() });
+    res.writeHead(provider === 'sms' ? 201 : 200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify(provider === 'sms' ? [{ id: 'sms-' + notifySink.length }] : provider === 'email' ? { id: 'em-' + notifySink.length } : { messages: [{ id: 'wamid.' + notifySink.length }] }));
+  }
   if (u.pathname.startsWith('/.netlify/functions/')) {
     const name = u.pathname.split('/').pop();
     let body = ''; for await (const c of req) body += c;

@@ -219,6 +219,7 @@ specialOrder { minDepositPct, leadDays }
 buying { updateCostsOnReceive }
 loyalty { enabled, pointsPerRand, pointValueCents, minRedeemPoints, expiryMonths, tiers }
 xero { autoDaily, accounts {…} }
+notify { auto (bool), channels ['sms'|'email'|'whatsapp' in the order tried], from (the email sender), siteUrl (the client's order page is linked from here), whatsappTemplate, whatsappLang, ready { sms, email, whatsapp } (which keys are there), updatedAt }   // automatic client messages (`pos-notify` setup)
 session { idleLogoutMinutes, pinLength (4..6) }
 numbering { blockSize, refillBelow }
 reports { phone, email }                                               // where the daily summary goes (the owner)
@@ -311,6 +312,7 @@ supervisor) are movements too; stock on hand is never typed over.
 ```
 entityId, name, contact, phone, phoneKey (the cell number as 27…: one customer per number per company), email, emailKey, vatNo, address {…}, dob, tags [string], notes,
 consent { whatsapp|sms|email: { granted (bool), at, byName, source ('till'|'office'|'import'|'customer') } }   // POPIA: their choice per channel, dated
+notifyBy ('sms'|'email'|'whatsapp' first, 'none' for no automatic order updates, '' for the company's order)
 accountEnabled (bool), creditLimitCents, storeCreditCents (server moves this), accountBalanceCents (server moves this: what they owe),
 loyalty { points, lifetimeCents, tier, lots [ { points, left, earnedAt, expiresAt, saleId } ], lastEarnedAt },
 stats { salesCount, spentCents, firstSaleAt, lastSaleAt },
@@ -476,7 +478,8 @@ signoff { text (the specification read back and the no-change-of-mind clause), a
 edits [ { at, byUid, byName, reason, changes [ { field, before, after } ] } ] (the customer's details, the expected date, the note: `edit`; the items, prices and money never change),
 status ('quoted'|'depositPaid'|'inProduction'|'ready'|'delivered'|'collected'|'cancelled'),
 statusHistory [ { status, at, byName, source ('till'|'factory'), note } ], updateDue (bool: a status changed and no message went yet),
-updates [ { at, status, how, byName } ], lastUpdateAt, factoryRef (the factory's order numbers, filled in by the server), expectedAt (date), openedAt,
+updates [ { at, status, how ('whatsapp'|'phone'|'email'|'sms'), byName, to?, auto? (sent by the schedule), reason? ('eta') } ], lastUpdateAt, updateReason ('eta' when the factory moved the date and nothing else), notifyError (why the automatic message did not go), notifyTries,
+factoryRef (the factory's order numbers, filled in by the server), expectedAt (date: the lead-time guess, edited by a supervisor, or the factory's own due date once it is there, see below), openedAt,
 factory { requestedAt, requestedBy, companyId, companyName, customerId, orders [ { id, orderNo, lineNo, status } ], sentAt, lastCheckedAt, error } (once a supervisor sends it),
 onlineOrderId (a Shopify order: the `onlineOrders` record that holds its stock; made by the webhook or Bring in open orders), deliveryKind ('deliver'|'collect', from the shop's shipping line),
 delivery { kind ('deliver'|'collect'), date, slot, address, phone, note, driverName, bookedAt, bookedBy } | null,
@@ -687,6 +690,14 @@ yesterday's for every company with `settings.xero.autoDaily`.
 The POS is master for stock; the shop is master for content; the link
 between them is the SKU. `pos-shopify` holds it all; the schedule
 `pos-shopify-sync` pushes what is still queued every ten minutes.
+
+- **`notifySecrets/{entityId}`** — `bulksmsTokenId, bulksmsTokenSecret, resendApiKey, whatsappToken, whatsappPhoneId` (the owner's keys for automatic client messages, written by `pos-notify` `setup`; no client access at all; `forget` removes them).
+
+### Automatic client messages and the live expected date
+
+A custom order or sales order gets `updateDue` when its status moves (till or factory), the factory moves its date, it is booked, dispatched or cancelled. With `settings.notify.auto` on and keys in `notifySecrets`, the schedule `pos-notify-sweep` (every five minutes; `lib/notify.mjs`) sends the same text the WhatsApp button would, plus the link to the client's order page, by the first channel that is set up and can reach the customer: the customer's own `notifyBy` first, then the company's order (SMS through BulkSMS, email through Resend, WhatsApp through Meta's Cloud API with an approved template of four body parameters). A sent message is an `updates[]` row by "Automatic" with `auto, to`, audited as `specialOrder.update`/`salesOrder.update` by actor `auto`; `updateDue` clears. Where nobody can be reached or the provider refuses, `notifyError` says why, `notifyTries` counts, the document stays due for a person (the To do board lists it; after five tries the schedule leaves it alone), and the WhatsApp button clears it. Quoted orders get nothing. `pos-notify` `send` is the board's "send now" (a manager).
+
+The factory's due date is the live expected date: `syncFromFactory` (`lib/factory-bridge.mjs`, the ten-minute `pos-factory-sync` and "Check factory") takes the latest `dueDate` over the factory orders still being made and, when it differs, writes `expectedAt`, an `edits[]` row by "Factory Manager" (`field 'expected'`), an audit `.expected`, and `updateDue` with `updateReason 'eta'` so the client hears ("the expected date … has moved to …"). A status move in the same read wins: its message carries the new date. Once the order is ready or further, the date is no longer the factory's to move.
 
 - **`shopifySecrets/{entityId}`** — `domain, clientId, clientSecret` (a Dev Dashboard app; the client-credentials grant mints short-lived tokens). No client access at all. Webhooks are verified against the client secret.
 - `settings.shopify { connected, domain, shopName, locations [ { id, name } ], locationByStore { storeId: locationGid }, defaultStoreId, pickupByTitle { shippingTitle: storeId }, pushStock, pullOrders, syncCodes, syncCustomers, linkedAt, lastSyncAt, lastError, customersPushedAt, siteUrl, webhooks [ { topic, id, url } ], setup { at, siteUrl, webhooks, mapped [], unmapped [], linked, seen, unmatched, queued, pushed, codes, errors [] } }`. `connect` (and `setup`, the owner) registers the webhooks on the app (`webhookSubscriptionCreate`/`Update`, signed with the client secret), maps stores to locations by name (`autoMap`), links by SKU, pushes stock and pulls codes, and keeps the outcome in `setup` for the card; `disconnect` deletes the till's webhook subscriptions and clears `webhooks`/`setup`.

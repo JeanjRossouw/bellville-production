@@ -4,7 +4,7 @@
 // Only this function (and the sale core, for credit, points and stats)
 // writes customers.
 //
-//   save         { customerId?, name, contact, phone, email, vatNo, address, dob, tags, notes, consent { whatsapp, sms, email } (booleans), consentSource,
+//   save         { customerId?, name, contact, phone, email, vatNo, address, dob, tags, notes, notifyBy ('sms'|'email'|'whatsapp'|'none'|''), consent { whatsapp, sms, email } (booleans), consentSource,
 //                  accountEnabled?, creditLimitCents? (a manager) }     → the customer; a cell number is one customer per company
 //   consent      { customerId, channel, granted, source }
 //   address      { customerId, address { line1, line2, city, code } }   the address only (from the till: a delivery, a tax invoice over R 5 000)
@@ -108,7 +108,7 @@ export const actions = {
         if (cur && cur.phoneKey) writes.push({ delete: true, coll: 'customerPhones', id: keyId(ctx.entityId, cur.phoneKey) });
       }
       const consent = consentPatch(cur ? cur.consent : null, b.consent, ctx.user.name, clean(b.consentSource, 20) || (ctx.device ? 'till' : 'office'), now);
-      const data = { name, contact: clean(b.contact, 120) || name, phone, phoneKey: pk, email, emailKey: emailKey(email), vatNo: clean(b.vatNo, 20), address, dob: /^\d{4}-\d{2}-\d{2}$/.test(b.dob || '') ? b.dob : (cur ? cur.dob || '' : ''), tags: (Array.isArray(b.tags) ? b.tags : String(b.tags || '').split(',')).map(t => clean(t, 30)).filter(Boolean).slice(0, 20), notes: clean(b.notes, 1000), consent, updatedAt: now, updatedBy: ctx.user.id };
+      const data = { name, contact: clean(b.contact, 120) || name, phone, phoneKey: pk, email, emailKey: emailKey(email), vatNo: clean(b.vatNo, 20), address, dob: /^\d{4}-\d{2}-\d{2}$/.test(b.dob || '') ? b.dob : (cur ? cur.dob || '' : ''), tags: (Array.isArray(b.tags) ? b.tags : String(b.tags || '').split(',')).map(t => clean(t, 30)).filter(Boolean).slice(0, 20), notes: clean(b.notes, 1000), notifyBy: b.notifyBy == null ? (cur && cur.notifyBy) || '' : ['sms', 'email', 'whatsapp', 'none'].includes(b.notifyBy) ? b.notifyBy : '', consent, updatedAt: now, updatedBy: ctx.user.id };
       if (wantsAccount) { data.accountEnabled = !!b.accountEnabled; data.creditLimitCents = Math.max(0, int(b.creditLimitCents) || 0); }
       if (cur) writes.push({ update: true, coll: 'customers', id: cur.id, data });
       else writes.push({ create: true, coll: 'customers', id: newId, data: { ...data, accountEnabled: !!b.accountEnabled && mgr, creditLimitCents: mgr ? Math.max(0, int(b.creditLimitCents) || 0) : 0, storeCreditCents: 0, accountBalanceCents: 0, loyalty: blankLoyalty(), stats: blankStats(), mergedIds: [], altPhones: [], mergedInto: '', anonymised: false, anonymisedAt: '', archived: false, ...stamp } });
