@@ -90,6 +90,11 @@ R.low = await run('lowStock'); check('low stock: cushions at 7 against a level o
 R.mov = await run('movements'); check('movements: sales out, the write-off, the reservation', R.mov.ok && R.mov.rows.length >= 5 && R.mov.rows.some(r => r.reason === 'layby' && r.bucket === 'reserved'), R.mov.rows && R.mov.rows.map(r => [r.reason, r.qty]));
 R.dead = await run('deadStock', { days: 30 }); check('dead stock: nothing sold in 30 days — the lamp and cushion sold today, so none', R.dead.ok && R.dead.rows.length === 0, R.dead.rows);
 R.lbr = await run('laybys'); check('lay-bys: the one opened today, on track, R 350 to come', R.lbr.ok && R.lbr.rows.length === 1 && R.lbr.rows[0].balance === 35000 && R.lbr.rows[0].status === 'on track', R.lbr.rows);
+// a payment row with nobody recorded as taking it (an old row, or one written by the server) must not break the report
+await put('pos/retail/payments/pay_nobody', { docType: 'layby', docId: 'lb_x', docNo: 'BF-LB-000009', method: 'cash', amountCents: 500, status: 'paid', entityId: 'BF', storeId: 'BF-BELL', createdBy: '', createdAt: new Date().toISOString(), deviceId: 'server' });
+R.mi = await run('moneyIn');
+check('a payment with no taker is listed as not recorded, not an error', R.mi.ok && (R.mi.byStaff || []).some(x => x.staff === 'Not recorded' && x.cash === 500), R.mi.error || (R.mi.byStaff || []).map(x => x.staff));
+await fetch(`${docs}/pos/retail/payments/pay_nobody`, { method: 'DELETE', headers: H });   // gone again, so the journal below is as before
 R.mi = await run('moneyIn');
 const MI = R.mi.totals || {};
 check('money in: the three sales less the cash refund plus the lay-by deposit; the methods add up to it; nothing awaiting; Bellville only; who took it', R.mi.ok && MI.sales === 89800 + 17910 + 80000 && MI.refunds === -19900 && MI.laybys > 0 && MI.cash + MI.card + MI.eft + MI.qr === MI.total && MI.total === MI.sales + MI.refunds + MI.laybys && MI.awaiting === 0 && R.mi.rows.length === 1 && R.mi.rows[0].store === 'Bellville' && R.mi.rows[0].total === MI.total && R.mi.awaiting.length === 0 && R.mi.byStaff.length >= 1 && R.mi.byStaff.reduce((n, x) => n + x.total, 0) === MI.total, R.mi.error || [MI, R.mi.rows, R.mi.byStaff]);
