@@ -9,6 +9,7 @@
 //   takeReview { takeId }      counting closed, the variances to look at; a supervisor
 //   takePost   { takeId, approvalToken? }   a manager: one 'count' movement per variance against the frozen figure
 //   takeCancel { takeId }
+//   takeItem { takeId, itemId }   a member of the store: add an item the freeze left out, or refresh one after an edit
 //   productDelete { entityId, productIds: [...] }   a manager: gone for good, only products never used anywhere
 //
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
@@ -141,6 +142,42 @@ export const actions = {
       }
       const patch = { items, log: log.slice(-3000), ...tally(items), updatedAt: now };
       return { writes: [{ update: true, coll: 'stockTakes', id: t.id, data: patch }], result: { take: { ...cur, ...patch, id: t.id } } };
+    } });
+  },
+
+  // an item scanned mid-count that the freeze left out (new product, a barcode just attached, a category
+  // the take was not frozen on): added to the open take with the level as it stands now, so what sold since
+  // the freeze is not counted twice. The same call on an item already in the take refreshes its name, SKU
+  // and barcodes after an edit; the frozen figure and the count stay.
+  async takeItem(event, b) {
+    const ctx = await whoAndWhere(event, b, { noShift: true });
+    const t = await loadTake(ctx, b.takeId);
+    const itemId = clean(b.itemId, 60);
+    if (!itemId) throw new Reject(400, 'Which item?');
+    let v = null, p = await getDoc('products', itemId);
+    if (!p) { v = await getDoc('variants', itemId); p = v ? await getDoc('products', v.productId) : null; }
+    if (!p || p.entityId !== ctx.entityId) throw new Reject(404, 'No such product.');
+    if (p.hasVariants && !v) throw new Reject(400, `${p.name} comes in variants: scan the variant's barcode.`);
+    if (p.type !== 'stock' || p.trackStock === false || p.archived || (v && v.archived)) throw new Reject(400, `${p.name} does not hold stock, so it is not counted.`);
+    if (t.scope === 'category' && (p.category || '') !== t.category) throw new Reject(400, `${p.name} is in ${p.category || 'no category'}; this stock take counts ${t.category}.`);
+    const lv = await getDoc('stockLevels', ctx.storeId + '_' + itemId);
+    const fresh = { name: p.name + (v ? ' · ' + v.name : ''), sku: (v && v.sku) || p.sku || '', barcodes: ((v && v.barcodes) || p.barcodes || []).slice(0, 5), costCents: (v && v.costCents != null ? v.costCents : p.costCents) || 0 };
+    return runSale(ctx, {}, { more: async (tx) => {
+      const cur = await getDoc('stockTakes', t.id, tx);
+      if (!cur || cur.status !== 'open') throw new Reject(409, `Stock take “${t.name}” is ${cur ? cur.status : 'gone'}: no more counting.`);
+      const now = nowIso();
+      const items = cur.items.map(x => ({ ...x }));
+      const have = items.find(x => x.itemId === itemId);
+      let added = false;
+      if (have) Object.assign(have, fresh);
+      else {
+        added = true;
+        items.push({ itemId, productId: p.id, variantId: v ? v.id : '', ...fresh, frozenQty: lv ? lv.onHandQty || 0 : 0, countedQty: null, countedBy: '', countedAt: '', addedBy: ctx.user.name, addedAt: now });
+        items.sort((x, y) => x.name.localeCompare(y.name));
+      }
+      const log = added ? [...(cur.log || []), { at: now, byName: ctx.user.name, itemId, qty: 0, mode: 'item', deviceId: ctx.deviceId }].slice(-3000) : cur.log || [];
+      const patch = { items, log, itemCount: items.length, ...tally(items), updatedAt: now };
+      return { writes: [{ update: true, coll: 'stockTakes', id: t.id, data: patch }], result: { take: { ...cur, ...patch, id: t.id }, added, itemId } };
     } });
   },
 
