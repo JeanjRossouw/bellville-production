@@ -120,7 +120,7 @@ const saved = (p) => p.evaluate(() => JSON.parse((window.__fb.docs['shared-data/
   check('an admin gets the full system', await shown(p, 'main-app'));
   await p.evaluate(() => window.enterStaffPortalMode()); await p.waitForTimeout(600);
   check('the staff portal lists every outsourced order', /3701/.test(await text(p, '#builder-portal-content')) && /3702/.test(await text(p, '#builder-portal-content')));
-  const sel = p.locator('select[onchange^="staffPortalSetSupplier(\'O1\'"]');
+  const sel = p.locator('select[onchange*="staffPortalSetSupplier(\'O1\'"]');
   check('each card has a supplier choice', await sel.count() === 1 && (await sel.inputValue()) === 'Couch Patato');
   answers.push(false);                         // cancel first: nothing moves, the choice goes back
   await sel.selectOption('Legacy Upholstery'); await p.waitForTimeout(600);
@@ -161,7 +161,58 @@ const saved = (p) => p.evaluate(() => JSON.parse((window.__fb.docs['shared-data/
 // ---- 7. a sales login: unchanged, lands on the staff portal with the supplier choice
 {
   const { p, ctx } = await open('/index.html', seed({ uid: 'sales', email: 'sales@bv.test' }));
-  check('a sales login lands on the staff portal with the supplier choice', /staff portal/i.test(await text(p, '#builder-portal-subtitle')) && await p.locator('select[onchange^="staffPortalSetSupplier("]').count() === 2);
+  check('a sales login lands on the staff portal with the supplier choice', /staff portal/i.test(await text(p, '#builder-portal-subtitle')) && await p.locator('select[onchange*="staffPortalSetSupplier("]').count() === 2);
+  await ctx.close();
+}
+// ---- 8. a sales login captures a rug order without a supplier: it waits on the staff portal, first
+{
+  const { p, ctx } = await open('/index.html', seed({ uid: 'sales', email: 'sales@bv.test' }));
+  check('sales does not get the Suppliers button', !(await shown(p, 'staff-portal-suppliers')));
+  await p.evaluate(() => window.openNewOrder()); await p.waitForTimeout(300);
+  R.noSup = await p.locator('#no-supplier').inputValue();
+  check('the new order\'s supplier starts on Allocate later, with every supplier to choose from', R.noSup === 'To allocate' && await p.locator('#no-supplier option').count() === 3, R.noSup);
+  await p.fill('#no-invoice', '3801'); await p.fill('#no-customer', 'Rina Rug'); await p.fill('#no-product', 'Rug 2 × 3 m — Natural jute');
+  await p.click('#no-save'); await p.waitForTimeout(1500);
+  const o = (await saved(p)).bellville.orders.find(x => x.invoice === '3801');
+  check('saved waiting for a supplier, outsourced (not our own build)', o && o.builder === 'To allocate' && o.product.startsWith('Rug'), o);
+  R.cnt8 = await text(p, '#builder-portal-count');
+  check('the header counts it apart', /2 orders with suppliers · 1 to allocate/.test(R.cnt8), R.cnt8);
+  R.first8 = await p.locator('#builder-portal-content > div').first().innerText();
+  check('the waiting order is first, its choice on To allocate', /#3801/.test(R.first8) && (await p.locator('select[onchange*="staffPortalSetSupplier(\'' + o.id + '\'"]').inputValue()) === 'To allocate', R.first8.slice(0, 120));
+  await ctx.close();
+}
+// ---- 9. the admin adds a supplier on the portal and allocates the waiting order in one tap; the planner view too
+{
+  const prod = JSON.parse(production());
+  prod.bellville.orders.push(order('O9', '3801', 'To allocate', { product: 'Rug 2 × 3 m', fabric: '' }));
+  const { p, ctx, answers } = await open('/index.html', seed({ uid: 'admin', email: 'admin@bv.test' }, { production: JSON.stringify(prod) }));
+  await p.evaluate(() => window.enterStaffPortalMode()); await p.waitForTimeout(500);
+  check('an admin gets the Suppliers button', await shown(p, 'staff-portal-suppliers'));
+  await p.click('#staff-portal-suppliers'); await p.waitForTimeout(300);
+  R.sup9 = await text(p, '#sup-list');
+  check('the window lists the suppliers with their actions', /Couch Patato/.test(R.sup9) && /Legacy Upholstery/.test(R.sup9) && /Make login/i.test(R.sup9), R.sup9.slice(0, 200));
+  await p.fill('#sup-name', 'couch patato'); await p.click('button[onclick="addSupplierFromPortal()"]'); await p.waitForTimeout(300);
+  await p.fill('#sup-name', 'To allocate'); await p.click('button[onclick="addSupplierFromPortal()"]'); await p.waitForTimeout(300);
+  check('a name already used, and the waiting name, are refused', (R.dialogs || []).some(m => /couch patato is already a supplier/.test(m)) && (R.dialogs || []).some(m => /kept for orders without a supplier/.test(m)), R.dialogs);
+  await p.fill('#sup-name', 'Rug Co'); await p.fill('#sup-email', 'orders@rugco.test'); await p.click('button[onclick="addSupplierFromPortal()"]'); await p.waitForTimeout(1200);
+  check('Rug Co added, listed', (await saved(p)).bellville.manufacturers.some(m => m.name === 'Rug Co' && m.email === 'orders@rugco.test') && /Rug Co/.test(await text(p, '#sup-list')));
+  await p.click('#suppliers-modal button[onclick="closeSuppliersModal()"]'); await p.waitForTimeout(400);
+  const before = (R.dialogs || []).length;
+  await p.locator('select[onchange*="staffPortalSetSupplier(\'O9\'"]').selectOption('Rug Co'); await p.waitForTimeout(1500);
+  const o9 = (await saved(p)).bellville.orders.find(x => x.id === 'O9');
+  check('allocated in one tap (no question), with the note', o9.builder === 'Rug Co' && (R.dialogs || []).length === before && /Allocated to Rug Co/.test((o9.builderComments || []).at(-1).text), o9);
+  await p.evaluate(() => window.setPortalView ? window.setPortalView('planner') : window.togglePortalView()); await p.waitForTimeout(800);
+  check('the planner view cards carry the supplier choice', await p.locator('.plan-card select[onchange*="staffPortalSetSupplier("]').count() >= 3, await p.locator('.plan-card').count());
+  R.after9 = await saved(p);
+  await ctx.close();
+}
+// ---- 10. suppliers never see an order waiting to be allocated
+{
+  const prod = JSON.parse(production());
+  prod.bellville.orders.push(order('O9', '3801', 'To allocate', { product: 'Rug 2 × 3 m', fabric: '' }));
+  const { p, ctx } = await open('/index.html?builder=1&m=To%20allocate', seed({ uid: 'cp', email: 'cp@cp.test' }, { production: JSON.stringify(prod) }));
+  R.c10 = await text(p, '#builder-portal-content');
+  check('a supplier login, even with ?m=To allocate, sees only its own', /3701/.test(R.c10) && !/3801/.test(R.c10), R.c10.slice(0, 200));
   await ctx.close();
 }
 check('no page errors', errs.length === 0, errs);

@@ -31,9 +31,15 @@ required env vars are in `XERO-SETUP.md` (Phase 2 — accounting) and
   name. An admin makes a locked login from the Couch Manufacturers card
   (🔑 Make login): `users/<uid>` gets `role 'manufacturer', builderId, builder`,
   and that login opens only its own portal whatever the address says (the name
-  follows a rename by id). On the staff portal each order's supplier is a
-  choice: moving an order clears the old supplier's done mark and keeps their
-  message thread in `builderPrevThreads`, for staff only. The lock is in the
+  follows a rename by id). Staff capture any order (a couch, a rug, anything)
+  on the staff portal and may leave the supplier on **Allocate later**
+  (`builder: 'To allocate'`: outsourced, on the staff portal first and counted
+  apart, on no supplier's portal). Each card, in the list and the planner
+  view, has the supplier as a choice: allocating a waiting order is one tap;
+  moving it from one supplier to another asks first, clears the old
+  supplier's done mark and keeps their thread in `builderPrevThreads`, for
+  staff only. Admins add suppliers, make logins and copy links from
+  🏭 Suppliers on the staff portal (the same list as the planner card). The lock is in the
   page: the whole `shared-data/production` doc still downloads to every
   signed-in login, so this stops a partner from seeing the rest of the system,
   not someone determined with the browser's developer tools.
