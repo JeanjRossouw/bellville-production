@@ -437,19 +437,34 @@
     </div>
   </div>
 </div>
+<div id="suppliers-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9600; align-items:flex-start; justify-content:center; padding:1rem; overflow:auto">
+  <div style="background:#fff; color:#111; border-radius:14px; max-width:620px; width:100%; padding:1.25rem; box-shadow:0 20px 60px rgba(0,0,0,0.4); margin:1rem auto; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem">
+      <div style="font-size:16px; font-weight:900">🏭 Suppliers</div>
+      <button onclick="closeSuppliersModal()" style="border:1px solid #d6d3d1; background:#fff; border-radius:6px; padding:4px 10px; cursor:pointer">✕</button>
+    </div>
+    <div style="font-size:12px; color:#78716c; margin:0.3rem 0 0.9rem">Everyone who makes or supplies for you. Allocate an order to one on its card. 🔑 Make login gives them a login that opens only their own portal, with only their orders.</div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.8rem">
+      <div style="flex:2; min-width:160px"><label style="font-size:11px; color:#78716c">Name</label><input id="sup-name" placeholder="e.g. Legacy Upholstery" style="width:100%; padding:8px"></div>
+      <div style="flex:2; min-width:160px"><label style="font-size:11px; color:#78716c">Order email</label><input id="sup-email" placeholder="orders@supplier.co.za" style="width:100%; padding:8px"></div>
+      <div style="flex:0 0 auto; align-self:flex-end"><button onclick="addSupplierFromPortal()" style="padding:9px 16px; border-radius:999px; border:none; background:#111; color:#fff; font-weight:800; cursor:pointer">＋ Add</button></div>
+    </div>
+    <div id="sup-list"></div>
+  </div>
+</div>
 <div id="neworder-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9600; align-items:flex-start; justify-content:center; padding:1rem; overflow:auto">
   <div style="background:#fff; color:#111; border-radius:14px; max-width:560px; width:100%; padding:1.25rem; box-shadow:0 20px 60px rgba(0,0,0,0.4); margin:1rem auto; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif">
     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem">
       <div id="no-title" style="font-size:16px; font-weight:900">＋ New order</div>
       <button onclick="closeNewOrder()" style="border:1px solid #d6d3d1; background:#fff; border-radius:6px; padding:4px 10px; cursor:pointer">✕</button>
     </div>
-    <div style="font-size:12px; color:#78716c; margin:0.3rem 0 0.9rem">Saved orders go straight to the supplier's portal.</div>
+    <div style="font-size:12px; color:#78716c; margin:0.3rem 0 0.9rem">Any order: a couch, a rug, anything. Leave the supplier on <strong>Allocate later</strong> and it waits on the staff portal until a supplier is chosen; once allocated it shows on that supplier's portal only.</div>
     <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem">
       <div style="flex:1; min-width:140px"><label style="font-size:11px; color:#78716c">Business</label>
         <select id="no-biz" style="width:100%; padding:8px"><option value="bellville">Bellville Furniture</option><option value="pinkfoot">PinkFoot Boutique</option><option value="repticube">ReptiCube</option></select></div>
       <div style="flex:1; min-width:140px"><label style="font-size:11px; color:#78716c">Invoice / order no.</label>
         <input id="no-invoice" placeholder="e.g. 3701" style="width:100%; padding:8px"></div>
-      <div id="no-supplier-wrap" style="flex:1; min-width:140px; display:none"><label style="font-size:11px; color:#78716c">Supplier</label>
+      <div id="no-supplier-wrap" style="flex:1; min-width:140px"><label style="font-size:11px; color:#78716c">Supplier</label>
         <select id="no-supplier" style="width:100%; padding:8px"></select></div>
     </div>
     <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem">
@@ -466,8 +481,8 @@
     </div>
     <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.6rem">
       <div style="flex:2; min-width:180px"><label style="font-size:11px; color:#78716c">Product</label>
-        <input id="no-product" placeholder="e.g. 3 Seater Chesterfield" style="width:100%; padding:8px"></div>
-      <div style="flex:2; min-width:160px"><label style="font-size:11px; color:#78716c">Fabric / colour</label>
+        <input id="no-product" placeholder="e.g. 3 Seater Chesterfield, Rug 2 × 3 m" style="width:100%; padding:8px"></div>
+      <div style="flex:2; min-width:160px"><label style="font-size:11px; color:#78716c">Fabric / colour (if any)</label>
         <input id="no-fabric" placeholder="e.g. Moldova : Oatmeal" style="width:100%; padding:8px"></div>
       <div style="flex:0 0 70px"><label style="font-size:11px; color:#78716c">Qty</label>
         <input id="no-qty" type="number" min="1" value="1" style="width:100%; padding:8px"></div>
@@ -506,7 +521,7 @@
       <input id="no-size-note" placeholder="Size note, e.g. arms 200mm wide" style="width:100%; padding:8px; margin-top:0.5rem">
     </div>
     <div id="no-status" style="font-size:12px; color:#991b1b; min-height:1.2em; margin-bottom:0.4rem"></div>
-    <button id="no-save" onclick="saveNewOrder()" style="width:100%; padding:12px; border-radius:8px; border:none; background:#111; color:#fff; font-weight:800; font-size:14px; cursor:pointer">💾 Save & send to supplier</button>
+    <button id="no-save" onclick="saveNewOrder()" style="width:100%; padding:12px; border-radius:8px; border:none; background:#111; color:#fff; font-weight:800; font-size:14px; cursor:pointer">💾 Save order</button>
   </div>
 </div>
 
@@ -565,6 +580,7 @@
       <button id="portal-print-planner" onclick="printPortalPlanner()" style="display:none; padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">🖨️ Print planner</button>
       <button id="portal-bell" onclick="enableCommentNotifications()" title="Get a notification when a message arrives" style="display:none; padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">🔔 Notify me</button>
       <button id="staff-portal-new" onclick="openNewOrder()" style="display:none; padding:0.35rem 1rem; background:#fff; color:#111; border:1px solid #fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:800">＋ New order</button>
+      <button id="staff-portal-suppliers" onclick="openSuppliersModal()" title="Add suppliers, make their portal logins, copy their links" style="display:none; padding:0.35rem 1rem; background:#fff; color:#111; border:1px solid #fff; border-radius:4px; cursor:pointer; font-size:12px; font-weight:800">🏭 Suppliers</button>
       <button id="staff-portal-back" onclick="exitStaffPortalMode()" style="display:none; padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">⬅ Full system</button>
       <button onclick="builderPortalPrintAll()" style="padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">🖨️ Print all job cards</button>
       <button onclick="builderPortalExportCsv()" title="All the job cards as one spreadsheet — opens in Excel" style="padding:0.35rem 1rem; background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); border-radius:4px; cursor:pointer; font-size:12px; font-weight:700">⬇️ Export to Excel</button>
@@ -1458,9 +1474,9 @@
       <div id="planner-grid"></div>
     </div>
     <div class="card" style="margin-top:1rem">
-      <div class="card-title">🏭 COUCH MANUFACTURERS (OUTSOURCE)</div>
+      <div class="card-title">🏭 SUPPLIERS &amp; MANUFACTURERS (OUTSOURCE)</div>
       <p style="font-size:12px; color:var(--text-muted); margin-bottom:0.5rem">
-        Partners who build couches for you (e.g. Couch Potato). Pick a builder on any planner card to place the order with them —
+        Partners who make or supply for you: couches, rugs, anything (e.g. Couch Potato). The same list is on the staff portal (🏭 Suppliers). Pick a supplier on any planner card to place the order with them —
         outsourced orders stay on the plan but are left OUT of your own materials and labour numbers.
       </p>
       <div class="row">
@@ -4922,22 +4938,60 @@ ${_PRODUCTION_PRINT_STYLES}
     if (!Array.isArray(d.manufacturers)) d.manufacturers = [];
     return d.manufacturers;
   }
-  function addManufacturer() {
-    const name = ((document.getElementById('mfg-name') || {}).value || '').trim();
-    const email = ((document.getElementById('mfg-email') || {}).value || '').trim();
-    if (!name) { alert('Give the manufacturer a name (e.g. Couch Potato).'); return; }
+  // the supplier with this id, in whichever business keeps it
+  function _findManufacturer(id) {
+    let hit = null;
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => { if (!hit) { const m = (((data[b] || {}).manufacturers) || []).find(x => x && x.id === id); if (m) hit = { m, biz: b }; } });
+    return hit;
+  }
+  function _supplierNameProblem(name, exceptId) {
+    if (!name) return 'Give the supplier a name (e.g. Legacy Upholstery).';
+    if (name.toLowerCase() === TO_ALLOCATE.toLowerCase()) return '"' + TO_ALLOCATE + '" is kept for orders without a supplier: choose another name.';
+    let taken = false;
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => (((data[b] || {}).manufacturers) || []).forEach(m => { if (m && m.id !== exceptId && String(m.name || '').trim().toLowerCase() === name.toLowerCase()) taken = true; }));
+    return taken ? name + ' is already a supplier.' : '';
+  }
+  function _addManufacturer(name, email) {
+    const why = _supplierNameProblem(name);
+    if (why) { alert(why); return false; }
     snapshotState();
     _manufacturers().push({ id: 'MFG-' + Date.now(), name: name, email: email });
     saveData();
-    ['mfg-name', 'mfg-email'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
     renderManufacturers();
     if (typeof renderPlanner === 'function') renderPlanner();
+    return true;
+  }
+  function addManufacturer() {
+    const name = ((document.getElementById('mfg-name') || {}).value || '').trim();
+    const email = ((document.getElementById('mfg-email') || {}).value || '').trim();
+    if (!_addManufacturer(name, email)) return;
+    ['mfg-name', 'mfg-email'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   }
   window.addManufacturer = addManufacturer;
+  function addSupplierFromPortal() {
+    const name = ((document.getElementById('sup-name') || {}).value || '').trim();
+    const email = ((document.getElementById('sup-email') || {}).value || '').trim();
+    if (!_addManufacturer(name, email)) return;
+    ['sup-name', 'sup-email'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    if (typeof toast === 'function') toast('🏭 ' + name + ' added. Allocate orders to them on the cards; 🔑 Make login gives them their portal.', 'success', 4000);
+    if (typeof renderStaffPortal === 'function' && IS_STAFF_PORTAL_MODE) renderStaffPortal();
+  }
+  window.addSupplierFromPortal = addSupplierFromPortal;
+  function openSuppliersModal() {
+    if (currentRole !== 'admin') return;
+    const md = document.getElementById('suppliers-modal'); if (!md) return;
+    renderManufacturers();
+    md.style.display = 'flex';
+    setTimeout(() => { const f = document.getElementById('sup-name'); if (f) f.focus(); }, 50);
+  }
+  function closeSuppliersModal() { const md = document.getElementById('suppliers-modal'); if (md) md.style.display = 'none'; if (typeof renderStaffPortal === 'function' && IS_STAFF_PORTAL_MODE) renderStaffPortal(); }
+  window.openSuppliersModal = openSuppliersModal;
+  window.closeSuppliersModal = closeSuppliersModal;
   function deleteManufacturer(id) {
-    if (!confirm('Remove this manufacturer? (Orders already placed with them keep their builder name.)')) return;
+    if (!confirm('Remove this supplier? (Orders already placed with them keep their supplier name.)')) return;
+    const hit = _findManufacturer(id); if (!hit) return;
     snapshotState();
-    currentData().manufacturers = _manufacturers().filter(m => m.id !== id);
+    data[hit.biz].manufacturers = data[hit.biz].manufacturers.filter(m => m.id !== id);
     saveData();
     renderManufacturers();
     if (typeof renderPlanner === 'function') renderPlanner();
@@ -4947,12 +5001,13 @@ ${_PRODUCTION_PRINT_STYLES}
   // businesses) whose builder carries the old name — so the lane, the portal
   // link and the wordmark all follow the corrected spelling.
   function renameManufacturer(id) {
-    const m = _manufacturers().find(x => x.id === id);
+    const m = (_findManufacturer(id) || {}).m;
     if (!m) return;
     const newName = prompt('New name for "' + m.name + '":', m.name);
     if (!newName || !newName.trim() || newName.trim() === m.name) return;
     const oldName = m.name;
     const clean = newName.trim();
+    const why = _supplierNameProblem(clean, id); if (why) { alert(why); return; }
     snapshotState();
     m.name = clean;
     let moved = 0;
@@ -4964,13 +5019,13 @@ ${_PRODUCTION_PRINT_STYLES}
     saveData();
     renderManufacturers();
     if (typeof render === 'function') render();
-    if (typeof toast === 'function') toast('✏️ "' + oldName + '" renamed to "' + clean + '" — ' + moved + ' order(s) moved with it. Send them a fresh 🔗 Portal link.', 'success', 6000);
+    if (typeof toast === 'function') toast('✏️ "' + oldName + '" renamed to "' + clean + '" — ' + moved + ' order(s) moved with it. Their 🔑 portal login follows the new name.', 'success', 6000);
   }
   window.renameManufacturer = renameManufacturer;
   // A manufacturer login (an admin makes it): role 'manufacturer', linked by id, so it opens only this
   // manufacturer's portal. The admin stays signed in; the email and password are then passed to the partner.
   async function makeManufacturerLogin(id) {
-    const m = _manufacturers().find(x => x.id === id);
+    const m = (_findManufacturer(id) || {}).m;
     if (!m) return;
     if (currentRole !== 'admin') { alert('Only an admin can make a portal login.'); return; }
     const email = (prompt('Email address for ' + m.name + "'s portal login:", m.email || '') || '').trim().toLowerCase();
@@ -4997,11 +5052,19 @@ ${_PRODUCTION_PRINT_STYLES}
   }
   window.makeManufacturerLogin = makeManufacturerLogin;
   function renderManufacturers() {
+    const sup = document.getElementById('sup-list');
+    if (sup) {
+      const all = [];
+      ['bellville', 'pinkfoot', 'repticube'].forEach(b => (((data[b] || {}).manufacturers) || []).forEach(m => { if (m && !all.some(x => x.id === m.id)) all.push(m); }));
+      sup.innerHTML = all.length ? all.map(_manufacturerRowHtml).join('') : '<div style="color:#78716c; padding:0.5rem 0">No suppliers yet: add the first one above.</div>';
+    }
     const list = document.getElementById('mfg-list');
     if (!list) return;
     const items = _manufacturers();
-    list.innerHTML = items.length
-      ? items.map(m => `
+    list.innerHTML = items.length ? items.map(_manufacturerRowHtml).join('') : '<div class="empty" style="padding:0.5rem">No suppliers yet — add Couch Potato above.</div>';
+  }
+  function _manufacturerRowHtml(m) {
+    return [m].map(m => `
         <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; border:1px solid var(--border,#ddd); border-radius:8px; padding:6px 10px; margin-bottom:4px">
           <div><span style="font-weight:700">🏭 ${_escape(m.name)}</span>${m.email ? ' <span style="font-size:11px; color:var(--text-muted,#888)">· ' + _escape(m.email) + '</span>' : ' <span style="font-size:11px; color:var(--warn,#b45309)">· no email — add one to place orders</span>'}${(m.logins || []).length ? '<div style="font-size:11px; color:var(--text-muted,#888)">🔑 Portal login' + (m.logins.length === 1 ? '' : 's') + ': ' + m.logins.map(l => _escape(l.email)).join(', ') + '</div>' : ''}</div>
           <div style="display:flex; gap:0.4rem; flex-wrap:wrap; justify-content:flex-end">
@@ -5010,8 +5073,7 @@ ${_PRODUCTION_PRINT_STYLES}
             <button class="btn btn-sm" onclick="copyBuilderPortalLink('${_jsq(m.name)}')" title="Copy the portal link — they sign in and see only their orders">🔗 Portal link</button>
             <button class="btn btn-sm btn-danger" onclick="deleteManufacturer('${m.id}')">✕</button>
           </div>
-        </div>`).join('')
-      : '<div class="empty" style="padding:0.5rem">No manufacturers yet — add Couch Potato above.</div>';
+        </div>`).join('');
   }
   window.renderManufacturers = renderManufacturers;
   function copyBuilderPortalLink(name) {
@@ -9493,6 +9555,8 @@ ${_PRODUCTION_PRINT_STYLES}
     if (back) back.style.display = 'none';
     const nb = document.getElementById('staff-portal-new');
     if (nb) nb.style.display = 'none';
+    const sb = document.getElementById('staff-portal-suppliers');
+    if (sb) sb.style.display = 'none';
     const db = document.getElementById('portal-delivery-btn');
     if (db) db.style.display = 'none';
     const rb = document.getElementById('portal-repairs-btn');
@@ -9520,6 +9584,8 @@ ${_PRODUCTION_PRINT_STYLES}
     if (back) back.style.display = 'inline-block';
     const nb = document.getElementById('staff-portal-new');
     if (nb) nb.style.display = 'inline-block';
+    const sb = document.getElementById('staff-portal-suppliers');
+    if (sb) sb.style.display = currentRole === 'admin' ? 'inline-block' : 'none';
     const db = document.getElementById('portal-delivery-btn');
     if (db) db.style.display = 'inline-block';
     const rb = document.getElementById('portal-repairs-btn');
@@ -9543,6 +9609,10 @@ ${_PRODUCTION_PRINT_STYLES}
   }
   window.exitStaffPortalMode = exitStaffPortalMode;
   // ---- ＋ New order from the staff portal: captured once, straight to the supplier ----
+  // An order the staff captured without a supplier yet: it is outsourced (left out of our own materials and
+  // labour), it shows on the staff portal, and no supplier's portal shows it until it is allocated.
+  const TO_ALLOCATE = 'To allocate';
+  window.TO_ALLOCATE = TO_ALLOCATE;
   function _allManufacturerNames() {
     const names = [];
     ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
@@ -9576,8 +9646,9 @@ ${_PRODUCTION_PRINT_STYLES}
     const names = _allManufacturerNames();
     const wrap = document.getElementById('no-supplier-wrap');
     const sel = document.getElementById('no-supplier');
-    sel.innerHTML = names.map(n => '<option value="' + _escape(n) + '">' + _escape(n) + '</option>').join('');
-    wrap.style.display = names.length > 1 ? 'block' : 'none';
+    sel.innerHTML = '<option value="' + TO_ALLOCATE + '">⏳ Allocate later</option>' + names.map(n => '<option value="' + _escape(n) + '">' + _escape(n) + '</option>').join('');
+    sel.value = TO_ALLOCATE;
+    wrap.style.display = 'block';
     const title = document.getElementById('no-title'), saveBtn = document.getElementById('no-save');
     const bizSel = document.getElementById('no-biz');
     if (_editingOrderId) {
@@ -9590,7 +9661,8 @@ ${_PRODUCTION_PRINT_STYLES}
       set('no-address', o.address); set('no-area', o.area); set('no-product', o.product);
       set('no-fabric', o.fabric); set('no-qty', o.qty || 1); set('no-notes', o.notes);
       set('no-paid', o.paidDate || o.orderDate || '');
-      if (o.builder && names.includes(o.builder)) sel.value = o.builder;
+      if (o.builder && !names.includes(o.builder) && o.builder !== TO_ALLOCATE) sel.insertAdjacentHTML('beforeend', '<option value="' + _escape(o.builder) + '">' + _escape(o.builder) + '</option>');
+      sel.value = o.builder || TO_ALLOCATE;
       const cs = o.customSize || {};
       set('no-size-len', cs.lengthMm); set('no-size-depth', cs.depthMm); set('no-size-h', cs.heightMm);
       set('no-size-side', cs.daybedSide || ''); set('no-size-dblen', cs.daybedLengthMm); set('no-size-cushions', cs.cushions); set('no-size-note', cs.note);
@@ -9599,7 +9671,7 @@ ${_PRODUCTION_PRINT_STYLES}
     } else {
       bizSel.disabled = false;
       if (title) title.textContent = '＋ New order';
-      if (saveBtn) saveBtn.textContent = '💾 Save & send to supplier';
+      if (saveBtn) saveBtn.textContent = '💾 Save order';
     }
     _newOrderUpdatePreview();
     m.style.display = 'flex';
@@ -9630,9 +9702,7 @@ ${_PRODUCTION_PRINT_STYLES}
     const status = document.getElementById('no-status');
     if (!invoice || !customer || !product) { status.textContent = 'Fill in the invoice number, customer and product.'; return; }
     if (!paidDate) { status.textContent = 'Fill in the date the order was paid.'; return; }
-    const names = _allManufacturerNames();
-    const supplier = names.length > 1 ? g('no-supplier') : (names[0] || '');
-    if (!supplier) { status.textContent = 'No supplier set up yet — add one under Planner → Manufacturers first.'; return; }
+    const supplier = g('no-supplier') || TO_ALLOCATE;
     const len = parseFloat(g('no-size-len')) || 0, depth = parseFloat(g('no-size-depth')) || 0, h = parseFloat(g('no-size-h')) || 0;
     const side = g('no-size-side'), dblen = parseFloat(g('no-size-dblen')) || 0, cush = parseInt(g('no-size-cushions')) || 0, snote = g('no-size-note');
     const customSize = (len || depth || h || side || cush || snote)
@@ -9646,8 +9716,8 @@ ${_PRODUCTION_PRINT_STYLES}
       o.product = product; o.fabric = fabric; o.qty = qty; o.notes = notes;
       if (paidDate !== (o.paidDate || o.orderDate)) o.dueDate = _dueFourWeeks(paidDate);
       o.paidDate = paidDate; o.orderDate = paidDate;
-      if (names.length > 1) o.builder = supplier;
       if (customSize) o.customSize = customSize; else delete o.customSize;
+      if (supplier !== o.builder) _moveOrderToSupplier(o, supplier);
       saveData();
       _editingOrderId = null;
       closeNewOrder();
@@ -9675,7 +9745,7 @@ ${_PRODUCTION_PRINT_STYLES}
     saveData();
     closeNewOrder();
     if (typeof render === 'function') render();
-    if (typeof toast === 'function') toast('✅ #' + invoice + ' saved and sent to ' + supplier, 'success', 3000);
+    if (typeof toast === 'function') toast(supplier === TO_ALLOCATE ? '✅ #' + invoice + ' saved: it waits on the staff portal to be allocated' : '✅ #' + invoice + ' saved and sent to ' + supplier, 'success', 3000);
   }
   // Supplier orders are due 4 weeks after the client paid.
   function _dueFourWeeks(paidIso) {
@@ -9851,9 +9921,11 @@ ${_PRODUCTION_PRINT_STYLES}
     if (_portalView === 'delivery') { renderDeliveryPortal(); return; }
     if (_portalView === 'repairs') { renderRepairsPortal(); return; }
     const allRows = _staffPortalOrders();
+    const waitingN = allRows.filter(r => r.o.builder === TO_ALLOCATE).length;
+    allRows.sort((a, b) => (a.o.builder === TO_ALLOCATE ? 0 : 1) - (b.o.builder === TO_ALLOCATE ? 0 : 1));
     const rows = _portalQuery() ? allRows.filter(r => _portalFilter([r.o]).length) : allRows;
     const cnt = document.getElementById('builder-portal-count');
-    if (cnt) cnt.textContent = allRows.length + ' order' + (allRows.length === 1 ? '' : 's') + ' with the manufacturer' + (_portalQuery() ? ' · ' + rows.length + ' match' : '');
+    if (cnt) cnt.textContent = (allRows.length - waitingN) + ' order' + (allRows.length - waitingN === 1 ? '' : 's') + ' with suppliers' + (waitingN ? ' · ' + waitingN + ' to allocate' : '') + (_portalQuery() ? ' · ' + rows.length + ' match' : '');
     if (_portalView === 'planner') { renderPortalPlanner(rows.map(r => r.o)); _afterThreadRender(rows.map(r => r.o)); return; }
     if (!rows.length) { host.innerHTML = '<div style="background:#fff; border-radius:14px; padding:2rem; text-align:center; color:#78716c; box-shadow:0 1px 3px rgba(0,0,0,0.07)">' + (_portalQuery() ? 'No orders match your search.' : 'No orders with a manufacturer right now.') + '</div>'; return; }
     host.innerHTML = rows.map(r => {
@@ -9922,33 +9994,52 @@ ${_PRODUCTION_PRINT_STYLES}
   // The order leaves the old supplier's portal and shows on the new one's. What the old supplier did on it
   // (marked done, the order email) is cleared; their message thread is kept for our staff only
   // (o.builderPrevThreads), so the new supplier never reads it.
-  function _supplierPickHtml(o) {
+  function _supplierPickHtml(o, onCard) {
     const names = _allManufacturerNames();
-    if (names.length < 2 && (names.length === 0 || names[0] === o.builder)) return '🏭 ' + _escape(o.builder);
-    const all = names.includes(o.builder) ? names : [o.builder, ...names];
-    return '🏭 <select title="Move this order to another supplier" onchange="staffPortalSetSupplier(\'' + _escape(o.id) + '\', this.value, this)" style="padding:2px 6px; border-radius:6px; border:1px solid #d6d3d1; font-size:12px; font-weight:700; background:#fff">'
-      + all.map(n => '<option value="' + _escape(n) + '"' + (n === o.builder ? ' selected' : '') + '>' + _escape(n) + '</option>').join('') + '</select>';
+    const waiting = !o.builder || o.builder === TO_ALLOCATE;
+    if (!names.length) return waiting ? '<span style="background:#fef3c7; color:#92400e; padding:1px 8px; border-radius:999px; font-weight:800">⏳ To allocate: add a supplier under 🏭 Suppliers</span>' : '🏭 ' + _escape(o.builder);
+    const all = [TO_ALLOCATE, ...names];
+    if (!waiting && !names.includes(o.builder)) all.push(o.builder);
+    const stop = onCard ? ' onmousedown="event.stopPropagation()" onclick="event.stopPropagation()" ondragstart="event.preventDefault(); event.stopPropagation()" draggable="false"' : '';
+    return (waiting ? '⏳' : '🏭') + ' <select title="' + (waiting ? 'Allocate this order to a supplier' : 'Move this order to another supplier') + '" onchange="event.stopPropagation(); staffPortalSetSupplier(\'' + _escape(o.id) + '\', this.value, this)"' + stop
+      + ' style="padding:2px 6px; border-radius:6px; border:1px solid ' + (waiting ? '#f59e0b' : '#d6d3d1') + '; font-size:12px; font-weight:700; background:' + (waiting ? '#fef3c7' : '#fff') + '; max-width:180px">'
+      + all.map(n => '<option value="' + _escape(n) + '"' + ((waiting ? n === TO_ALLOCATE : n === o.builder) ? ' selected' : '') + '>' + (n === TO_ALLOCATE ? '⏳ To allocate' : _escape(n)) + '</option>').join('') + '</select>';
+  }
+  // Moves the order (no saving): a real supplier's thread and progress stay behind with them; notes written
+  // while it waited "to allocate" were ours, so they go with it to the supplier.
+  function _moveOrderToSupplier(o, name) {
+    const from = o.builder || TO_ALLOCATE;
+    if (from !== TO_ALLOCATE) {
+      const thread = Array.isArray(o.builderComments) ? o.builderComments : [];
+      if (thread.length) {
+        if (!Array.isArray(o.builderPrevThreads)) o.builderPrevThreads = [];
+        o.builderPrevThreads.push({ builder: from, until: new Date().toISOString(), comments: thread });
+      }
+      o.builderComments = [];
+      delete o.builderCommentsAck; delete o.commentsSeen;
+    }
+    delete o.builderDone; delete o.builderDoneAt; delete o.builderOrderedAt; delete o.builderReopenedAt;
+    o.builder = name;
+    if (name !== TO_ALLOCATE) _builderPortalLogComment(o, from === TO_ALLOCATE ? 'Allocated to ' + name + '.' : 'Moved to ' + name + ' from ' + from + '.');
+    else _builderPortalLogComment(o, 'Taken back from ' + from + ': to allocate.');
   }
   function staffPortalSetSupplier(orderId, name, sel) {
     const o = _findOrderAnyBiz(orderId);
     if (!o || !name || name === o.builder) return;
-    const from = o.builder || 'no supplier';
-    const warn = o.builderDone ? '\n\n' + from + ' has already marked it DONE: that is cleared, and ' + name + ' starts it fresh.' : '';
-    if (!confirm('Move #' + (o.invoice || o.id) + ' — ' + (o.product || '') + ' from ' + from + ' to ' + name + '?\n\nIt leaves ' + from + "'s portal and shows on " + name + "'s." + warn)) { if (sel) sel.value = o.builder; return; }
-    snapshotState();
-    const thread = Array.isArray(o.builderComments) ? o.builderComments : [];
-    if (thread.length) {
-      if (!Array.isArray(o.builderPrevThreads)) o.builderPrevThreads = [];
-      o.builderPrevThreads.push({ builder: from, until: new Date().toISOString(), comments: thread });
+    const from = o.builder || TO_ALLOCATE;
+    // allocating a waiting order is one tap; taking an order away from a supplier asks first
+    if (from !== TO_ALLOCATE) {
+      const warn = o.builderDone ? '\n\n' + from + ' has already marked it DONE: that is cleared, and ' + name + ' starts it fresh.' : '';
+      const q = name === TO_ALLOCATE
+        ? 'Take #' + (o.invoice || o.id) + ' — ' + (o.product || '') + ' away from ' + from + '?\n\nIt leaves their portal and waits here to be allocated.'
+        : 'Move #' + (o.invoice || o.id) + ' — ' + (o.product || '') + ' from ' + from + ' to ' + name + '?\n\nIt leaves ' + from + "'s portal and shows on " + name + "'s." + warn;
+      if (!confirm(q)) { if (sel) sel.value = o.builder; return; }
     }
-    o.builderComments = [];
-    delete o.builderCommentsAck; delete o.commentsSeen;
-    delete o.builderDone; delete o.builderDoneAt; delete o.builderOrderedAt; delete o.builderReopenedAt;
-    o.builder = name;
-    _builderPortalLogComment(o, 'Moved to ' + name + ' from ' + from + '.');
+    snapshotState();
+    _moveOrderToSupplier(o, name);
     saveData();
     if (typeof render === 'function') render();
-    if (typeof toast === 'function') toast('🏭 #' + (o.invoice || o.id) + ' moved to ' + name, 'success', 3000);
+    if (typeof toast === 'function') toast(name === TO_ALLOCATE ? '⏳ #' + (o.invoice || o.id) + ' is waiting to be allocated' : '🏭 #' + (o.invoice || o.id) + (from === TO_ALLOCATE ? ' allocated to ' : ' moved to ') + name, 'success', 3000);
   }
   window.staffPortalSetSupplier = staffPortalSetSupplier;
   function _prevThreadsHtml(o) {
@@ -11438,6 +11529,7 @@ ${_PRODUCTION_PRINT_STYLES}
       + '<div class="pc-inv">#' + _escape(o.invoice || o.id) + (o.builderDone ? ' <span style="color:#166534">✅ DONE</span>' : '') + '</div>'
       + '<div class="pc-prod">' + _escape(prodLabel) + '</div>'
       + (staffMode && o.customer ? '<div class="pc-cust">👤 ' + _escape(o.customer) + '</div>' : '')
+      + (staffMode ? '<div class="pc-due" style="margin-top:3px">' + _supplierPickHtml(o, true) + '</div>' : '')
       + (o.orderDate ? '<div class="pc-due" style="color:var(--text-muted)">🗓️ Ordered ' + _escape(o.orderDate) + '</div>' : '')
       + '<div class="pc-due" style="display:flex; align-items:center; gap:4px; flex-wrap:wrap"><label style="margin:0; font-size:10px">ETA</label>'
       + '<input type="date" value="' + _escape(o.dueDate || '') + '" title="When this piece will be ready" onchange="event.stopPropagation(); planSetDueDate(\'' + _escape(o.id) + '\', this.value)" onmousedown="event.stopPropagation()" ondragstart="event.preventDefault(); event.stopPropagation()" draggable="false" style="font-size:10px; padding:1px 3px; max-width:118px">'
