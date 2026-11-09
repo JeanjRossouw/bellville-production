@@ -39,7 +39,11 @@ required env vars are in `XERO-SETUP.md` (Phase 2 — accounting) and
   moving it from one supplier to another asks first, clears the old
   supplier's done mark and keeps their thread in `builderPrevThreads`, for
   staff only. Admins add suppliers, make logins and copy links from
-  🏭 Suppliers on the staff portal (the same list as the planner card). The lock is in the
+  🏭 Suppliers on the staff portal (the same list as the planner card).
+  Supplier tabs on the staff portal give each supplier its own list and
+  planner (print, job cards, export and "Move all to Unscheduled" follow the
+  tab), and staff can **✓ Mark done** an order for its supplier: it moves to
+  the Delivery list, as when the supplier marks it. The lock is in the
   page: the whole `shared-data/production` doc still downloads to every
   signed-in login, so this stops a partner from seeing the rest of the system,
   not someone determined with the browser's developer tools.
