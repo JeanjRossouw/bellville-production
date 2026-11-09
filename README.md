@@ -26,6 +26,17 @@ required env vars are in `XERO-SETUP.md` (Phase 2 — accounting) and
   synced via a single Firestore doc at `shared-data/production`.
 - Role-based tab visibility — see `ROLE_PERMISSIONS` near the bottom of the
   script block.
+- **Manufacturer portal** (`?builder=1&m=<name>`): an outsource manufacturer
+  (Couch Patato, Legacy Upholstery) sees only the orders whose `builder` is its
+  name. An admin makes a locked login from the Couch Manufacturers card
+  (🔑 Make login): `users/<uid>` gets `role 'manufacturer', builderId, builder`,
+  and that login opens only its own portal whatever the address says (the name
+  follows a rename by id). On the staff portal each order's supplier is a
+  choice: moving an order clears the old supplier's done mark and keeps their
+  message thread in `builderPrevThreads`, for staff only. The lock is in the
+  page: the whole `shared-data/production` doc still downloads to every
+  signed-in login, so this stops a partner from seeing the rest of the system,
+  not someone determined with the browser's developer tools.
 - **POS** (Phase 1): a `🛒 POS` tab provides a standalone till per business.
   Products & stock are the master here; completed sales decrement stock and
   print a receipt. POS data lives in **its own per-business Firestore docs**
