@@ -202,7 +202,7 @@ const saved = (p) => p.evaluate(() => JSON.parse((window.__fb.docs['shared-data/
   const o9 = (await saved(p)).bellville.orders.find(x => x.id === 'O9');
   check('allocated in one tap (no question), with the note', o9.builder === 'Rug Co' && (R.dialogs || []).length === before && /Allocated to Rug Co/.test((o9.builderComments || []).at(-1).text), o9);
   await p.evaluate(() => window.setPortalView ? window.setPortalView('planner') : window.togglePortalView()); await p.waitForTimeout(800);
-  check('the planner view cards carry the supplier choice', await p.locator('.plan-card select[onchange*="staffPortalSetSupplier("]').count() >= 3, await p.locator('.plan-card').count());
+  check('the planner view cards carry the supplier choice', await p.locator('#builder-portal-content .plan-card select[onchange*="staffPortalSetSupplier("]').count() >= 3, await p.locator('#builder-portal-content .plan-card').count());
   R.after9 = await saved(p);
   await ctx.close();
 }
@@ -213,6 +213,49 @@ const saved = (p) => p.evaluate(() => JSON.parse((window.__fb.docs['shared-data/
   const { p, ctx } = await open('/index.html?builder=1&m=To%20allocate', seed({ uid: 'cp', email: 'cp@cp.test' }, { production: JSON.stringify(prod) }));
   R.c10 = await text(p, '#builder-portal-content');
   check('a supplier login, even with ?m=To allocate, sees only its own', /3701/.test(R.c10) && !/3801/.test(R.c10), R.c10.slice(0, 200));
+  await ctx.close();
+}
+// ---- 11. one planner per supplier: tabs on the staff portal scope the list, the planner and "move all"
+{
+  const prod = JSON.parse(production());
+  prod.bellville.orders.find(o => o.id === 'O1').planWeek = '2026-11-09';
+  prod.bellville.orders.find(o => o.id === 'O2').planWeek = '2026-11-09';
+  prod.bellville.orders.push(order('O9', '3801', 'To allocate', { product: 'Rug 2 × 3 m', fabric: '' }));
+  const { p, ctx, answers } = await open('/index.html', seed({ uid: 'admin', email: 'admin@bv.test' }, { production: JSON.stringify(prod) }));
+  await p.evaluate(() => window.enterStaffPortalMode()); await p.waitForTimeout(500);
+  R.tabs = await text(p, '#portal-supplier-tabs');
+  check('the tabs: every supplier, to allocate, each supplier, with counts', /All suppliers 3/.test(R.tabs) && /To allocate 1/.test(R.tabs) && /Couch Patato 1/.test(R.tabs) && /Legacy Upholstery 1/.test(R.tabs), R.tabs);
+  await p.click('#portal-supplier-tabs button:has-text("Legacy Upholstery")'); await p.waitForTimeout(400);
+  R.l11 = await text(p, '#builder-portal-content');
+  check('Legacy\'s tab: only Legacy\'s order, and the header says so', /3702/.test(R.l11) && !/3701/.test(R.l11) && !/3801/.test(R.l11) && /1 order with Legacy Upholstery/.test(await text(p, '#builder-portal-count')), R.l11.slice(0, 200));
+  await p.evaluate(() => window.setPortalView('planner')); await p.waitForTimeout(500);
+  R.lp = await text(p, '#builder-portal-content');
+  check('Legacy\'s planner: named, only its card', /Legacy Upholstery's planner/.test(R.lp) && await p.locator('#builder-portal-content .plan-card').count() === 1 && /3702/.test(R.lp), R.lp.slice(0, 200));
+  answers.push(true);
+  await p.click('button[onclick="portalUnscheduleAll()"]'); await p.waitForTimeout(1200);
+  const d11 = await saved(p);
+  check('"Move all to Unscheduled" on Legacy\'s planner leaves Couch Patato\'s weeks alone', !d11.bellville.orders.find(o => o.id === 'O2').planWeek && d11.bellville.orders.find(o => o.id === 'O1').planWeek === '2026-11-09' && (R.dialogs || []).some(m => /Legacy Upholstery's scheduled/.test(m)), d11.bellville.orders.map(o => [o.id, o.planWeek]));
+  await p.click('#portal-supplier-tabs button:has-text("All suppliers")'); await p.waitForTimeout(400);
+  check('back to every supplier', await p.locator('#builder-portal-content .plan-card').count() === 3 && /Every supplier/.test(await text(p, '#builder-portal-content')));
+  await ctx.close();
+}
+// ---- 13. staff mark an order done for the supplier: list and planner
+{
+  const { p, ctx, answers } = await open('/index.html', seed({ uid: 'admin', email: 'admin@bv.test' }));
+  await p.evaluate(() => { window.setPortalSupplier(''); window.enterStaffPortalMode(); window.setPortalView('orders'); }); await p.waitForTimeout(500);
+  check('the list card has Mark done for an order with a supplier', await p.locator('button[onclick="builderPortalMarkDone(\'O1\')"]').count() === 1);
+  answers.push(true);
+  await p.click('button[onclick="builderPortalMarkDone(\'O1\')"]'); await p.waitForTimeout(1300);
+  const o1 = (await saved(p)).bellville.orders.find(o => o.id === 'O1');
+  check('done for Couch Patato, said so, stamped by staff, off the list', o1.builderDone === true && !!o1.builderDoneAt && /Marked DONE for Couch Patato/.test(o1.builderComments.at(-1).text) && o1.builderComments.at(-1).by !== 'Couch Patato' && !/#3701/.test(await text(p, '#builder-portal-content')) && (R.dialogs || []).some(m => /goes onto the 🚚 Delivery list/.test(m)), o1);
+  await p.evaluate(() => window.setPortalView('planner')); await p.waitForTimeout(500);
+  check('the planner card has Mark done too', await p.locator('#builder-portal-content .plan-card button[onclick*="builderPortalMarkDone(\'O2\')"]').count() === 1);
+  await ctx.close();
+}
+// ---- 12. a supplier's own portal has no tabs
+{
+  const { p, ctx } = await open('/index.html', seed({ uid: 'cp', email: 'cp@cp.test' }));
+  check('no supplier tabs on a supplier\'s portal', !(await shown(p, 'portal-supplier-tabs')));
   await ctx.close();
 }
 check('no page errors', errs.length === 0, errs);

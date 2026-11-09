@@ -588,6 +588,7 @@
     </div>
   </div>
   <div id="builder-portal-wrap" style="max-width:680px; margin:-1.4rem auto 0; padding:0 1rem 3rem">
+    <div id="portal-supplier-tabs" style="display:none; flex-wrap:wrap; gap:6px; margin:0 0 12px; position:relative"></div>
     <div id="builder-portal-content"><div style="text-align:center; color:#78716c; padding:2.5rem 0">Loading orders…</div></div>
   </div>
 </div>
@@ -9557,6 +9558,8 @@ ${_PRODUCTION_PRINT_STYLES}
     if (nb) nb.style.display = 'none';
     const sb = document.getElementById('staff-portal-suppliers');
     if (sb) sb.style.display = 'none';
+    const tb = document.getElementById('portal-supplier-tabs');
+    if (tb) tb.style.display = 'none';
     const db = document.getElementById('portal-delivery-btn');
     if (db) db.style.display = 'none';
     const rb = document.getElementById('portal-repairs-btn');
@@ -9918,14 +9921,19 @@ ${_PRODUCTION_PRINT_STYLES}
     if (dbtn) { const n = _deliveryGroups().toSchedule.length; dbtn.textContent = '🚚 Delivery' + (n ? ' (' + n + ')' : ''); }
     const rbtn = document.getElementById('portal-repairs-btn');
     if (rbtn) { const n = _repairGroups().toSchedule.length; rbtn.textContent = '🔧 Repairs' + (n ? ' (' + n + ')' : ''); }
+    if (_portalView === 'delivery' || _portalView === 'repairs') { const t = document.getElementById('portal-supplier-tabs'); if (t) t.style.display = 'none'; }
     if (_portalView === 'delivery') { renderDeliveryPortal(); return; }
     if (_portalView === 'repairs') { renderRepairsPortal(); return; }
-    const allRows = _staffPortalOrders();
-    const waitingN = allRows.filter(r => r.o.builder === TO_ALLOCATE).length;
+    const everyRow = _staffPortalOrders();
+    _renderSupplierTabs(everyRow);
+    const allRows = _staffPortalScoped();
+    const waitingN = everyRow.filter(r => r.o.builder === TO_ALLOCATE).length;
     allRows.sort((a, b) => (a.o.builder === TO_ALLOCATE ? 0 : 1) - (b.o.builder === TO_ALLOCATE ? 0 : 1));
     const rows = _portalQuery() ? allRows.filter(r => _portalFilter([r.o]).length) : allRows;
     const cnt = document.getElementById('builder-portal-count');
-    if (cnt) cnt.textContent = (allRows.length - waitingN) + ' order' + (allRows.length - waitingN === 1 ? '' : 's') + ' with suppliers' + (waitingN ? ' · ' + waitingN + ' to allocate' : '') + (_portalQuery() ? ' · ' + rows.length + ' match' : '');
+    if (cnt) cnt.textContent = (_portalSupplier
+      ? allRows.length + ' order' + (allRows.length === 1 ? '' : 's') + (_portalSupplier === TO_ALLOCATE ? ' to allocate' : ' with ' + _portalSupplier)
+      : (everyRow.length - waitingN) + ' order' + (everyRow.length - waitingN === 1 ? '' : 's') + ' with suppliers' + (waitingN ? ' · ' + waitingN + ' to allocate' : '')) + (_portalQuery() ? ' · ' + rows.length + ' match' : '');
     if (_portalView === 'planner') { renderPortalPlanner(rows.map(r => r.o)); _afterThreadRender(rows.map(r => r.o)); return; }
     if (!rows.length) { host.innerHTML = '<div style="background:#fff; border-radius:14px; padding:2rem; text-align:center; color:#78716c; box-shadow:0 1px 3px rgba(0,0,0,0.07)">' + (_portalQuery() ? 'No orders match your search.' : 'No orders with a manufacturer right now.') + '</div>'; return; }
     host.innerHTML = rows.map(r => {
@@ -9953,6 +9961,7 @@ ${_PRODUCTION_PRINT_STYLES}
           ${o.customSize ? `<button onclick="sendSizeConfirmation('${_escape(o.id)}')" title="Send the client the drawing to confirm" style="padding:7px 12px; border-radius:999px; border:1.5px solid #7c3aed; background:#f5f3ff; color:#5b21b6; font-weight:700; font-size:12.5px; cursor:pointer">📤 Size to client</button>` : ''}
           <button onclick="openClientUpdate('${_escape(o.id)}')" title="Tell the client where their order is: pick the message, read it, send it on WhatsApp" style="padding:7px 12px; border-radius:999px; border:1.5px solid #25d366; background:${o.phone ? '#25d366' : '#f0fdf4'}; color:${o.phone ? '#fff' : '#166534'}; font-weight:800; font-size:12.5px; cursor:pointer">📱 Update client</button>
           <button onclick="openNewOrder('${_escape(o.id)}')" title="Edit this order" style="padding:7px 12px; border-radius:999px; border:1.5px solid #d6d3d1; background:#fafaf9; color:#111; font-weight:700; font-size:12.5px; cursor:pointer">✏️ Edit</button>
+          ${!o.builderDone && o.builder && o.builder !== TO_ALLOCATE ? `<button onclick="builderPortalMarkDone('${_escape(o.id)}')" title="Mark it done for ${_escape(o.builder)}: it moves to the Delivery list" style="padding:7px 12px; border-radius:999px; border:1.5px solid #16a34a; background:#f0fdf4; color:#166534; font-weight:800; font-size:12.5px; cursor:pointer">✓ Mark done</button>` : ''}
           <button onclick="staffPortalDeleteOrder('${_escape(o.id)}')" title="Delete this order" style="padding:7px 12px; border-radius:999px; border:1.5px solid #fca5a5; background:#fef2f2; color:#991b1b; font-weight:700; font-size:12.5px; cursor:pointer">🗑</button>
           ${o.builderDone
             ? `<span style="font-size:12px; font-weight:800; color:#166534">✅ DONE by ${_escape(o.builder)}</span>
@@ -10047,6 +10056,38 @@ ${_PRODUCTION_PRINT_STYLES}
     if (!prev.length || (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && !IS_STAFF_PORTAL_MODE)) return '';
     return prev.map(t => '<details style="margin-bottom:6px; font-size:12px; color:#57534e"><summary style="cursor:pointer">Earlier messages with ' + _escape(t.builder) + ' (' + (t.comments || []).length + ', only our staff see these)</summary>'
       + (t.comments || []).map(c => '<div style="margin:3px 0 0 10px"><strong>' + _escape(c.by || '') + '</strong> <span style="color:#a8a29e">' + _escape(String(c.at || '').slice(0, 16).replace('T', ' ')) + '</span><br>' + _escape(c.text || '') + '</div>').join('') + '</details>').join('');
+  }
+  // ---- One planner per supplier: the staff portal shows all suppliers, or one, chosen on the tabs ----
+  let _portalSupplier = (function () { try { return localStorage.getItem('bv-portal-supplier') || ''; } catch (e) { return ''; } })();
+  function _staffPortalScoped() {
+    const rows = _staffPortalOrders();
+    return _portalSupplier ? rows.filter(r => (r.o.builder || TO_ALLOCATE) === _portalSupplier) : rows;
+  }
+  function setPortalSupplier(name) {
+    _portalSupplier = name || '';
+    try { localStorage.setItem('bv-portal-supplier', _portalSupplier); } catch (e) {}
+    renderStaffPortal();
+  }
+  window.setPortalSupplier = setPortalSupplier;
+  function _renderSupplierTabs(allRows) {
+    const host = document.getElementById('portal-supplier-tabs');
+    if (!host) return;
+    const show = IS_STAFF_PORTAL_MODE && _portalView !== 'delivery' && _portalView !== 'repairs';
+    host.style.display = show ? 'flex' : 'none';
+    if (!show) return;
+    const count = (n) => allRows.filter(r => (r.o.builder || TO_ALLOCATE) === n).length;
+    const names = _allManufacturerNames().slice();
+    allRows.forEach(r => { const b = r.o.builder || TO_ALLOCATE; if (b !== TO_ALLOCATE && !names.includes(b)) names.push(b); });
+    // a supplier chosen earlier that is gone shows everyone again
+    if (_portalSupplier && _portalSupplier !== TO_ALLOCATE && !names.includes(_portalSupplier)) _portalSupplier = '';
+    const waiting = count(TO_ALLOCATE);
+    const tab = (value, label, n, warn) => {
+      const on = _portalSupplier === value;
+      return '<button onclick="setPortalSupplier(\'' + _jsq(value) + '\')" style="padding:6px 12px; border-radius:999px; font-size:12px; font-weight:800; cursor:pointer; border:1.5px solid ' + (on ? '#111' : warn ? '#f59e0b' : '#d6d3d1') + '; background:' + (on ? '#111' : warn ? '#fef3c7' : '#fff') + '; color:' + (on ? '#fff' : warn ? '#92400e' : '#111') + '">' + label + ' <span style="opacity:0.7">' + n + '</span></button>';
+    };
+    host.innerHTML = tab('', 'All suppliers', allRows.length)
+      + (waiting || _portalSupplier === TO_ALLOCATE ? tab(TO_ALLOCATE, '⏳ To allocate', waiting, true) : '')
+      + names.map(n => tab(n, '🏭 ' + _escape(n), count(n))).join('');
   }
   function staffPortalMarkDone(orderId) {
     let biz = null;
@@ -11537,7 +11578,9 @@ ${_PRODUCTION_PRINT_STYLES}
       + '</div>'
       + fabricRowHtml
       + (o.customSize ? '<div class="pc-due" style="font-weight:700; color:var(--text)">📐 ' + _escape(_customSizeText(o)) + '</div>' : '')
-      + '<div style="margin-top:5px"><button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px" onclick="event.stopPropagation(); builderPortalPrintCard(\'' + _escape(o.id) + '\')" onmousedown="event.stopPropagation()" ondragstart="event.preventDefault(); event.stopPropagation()" draggable="false">🖨️ Job card</button></div>'
+      + '<div style="margin-top:5px; display:flex; gap:4px; flex-wrap:wrap"><button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px" onclick="event.stopPropagation(); builderPortalPrintCard(\'' + _escape(o.id) + '\')" onmousedown="event.stopPropagation()" ondragstart="event.preventDefault(); event.stopPropagation()" draggable="false">🖨️ Job card</button>'
+      + (staffMode && !o.builderDone && o.builder && o.builder !== TO_ALLOCATE ? '<button type="button" class="btn btn-sm" style="font-size:10px; padding:2px 8px; border-color:#16a34a; color:#166534; background:#f0fdf4" title="Mark it done for ' + _escape(o.builder) + ': it moves to the Delivery list" onclick="event.stopPropagation(); builderPortalMarkDone(\'' + _escape(o.id) + '\')" onmousedown="event.stopPropagation()" ondragstart="event.preventDefault(); event.stopPropagation()" draggable="false">✓ Mark done</button>' : '')
+      + '</div>'
       + '</div>'
       + '<button type="button" class="plan-menu-trigger" title="Schedule" aria-label="Schedule options" onclick="event.stopPropagation(); openPortalPlanMenu(\'' + _escape(o.id) + '\', this)" onmousedown="event.stopPropagation()" ondragstart="event.preventDefault(); event.stopPropagation()" draggable="false">⋮</button>'
       + '</div>';
@@ -11588,7 +11631,7 @@ ${_PRODUCTION_PRINT_STYLES}
     let html = '<div class="portal-planner" style="color:#1c1917">';
     const staffMode = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE);
     const scheduled = orders.filter(o => o.planWeek).length;
-    html += '<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 12px"><div style="font-size:13px; color:#57534e">Drag an order into the week it will be built, or tap ⋮ on the card. Orders whose week has passed drop back into <strong>Unscheduled</strong>.</div>'
+    html += '<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 12px"><div style="font-size:13px; color:#57534e">' + (staffMode ? '<strong style="color:#111">' + (_portalSupplier ? (_portalSupplier === TO_ALLOCATE ? 'Orders to allocate' : _escape(_portalSupplier) + "'s planner") : 'Every supplier') + '.</strong> ' : '') + 'Drag an order into the week it will be built, or tap ⋮ on the card. Orders whose week has passed drop back into <strong>Unscheduled</strong>.</div>'
       + (staffMode && scheduled ? '<button class="btn btn-sm" onclick="portalUnscheduleAll()" title="Clear every week so the supplier plans from scratch">📥 Move all to Unscheduled (' + scheduled + ')</button>' : '') + '</div>';
     html += '<div class="plan-grid">' + colsHtml + '</div>';
     if (b.beyond.length) html += '<div class="card" style="margin-bottom:1rem"><div class="card-title">📆 SCHEDULED BEYOND 3 WEEKS (' + b.beyond.length + ')</div><div class="plan-pool">' + b.beyond.map(_portalPlanCard).join('') + '</div></div>';
@@ -11614,10 +11657,12 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof render === 'function') render();
   }
   function portalUnscheduleAll() {
-    const rows = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE) ? _staffPortalOrders().map(r => r.o) : _builderPortalOrders();
+    const staffMode = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE);
+    const rows = staffMode ? _staffPortalScoped().map(r => r.o) : _builderPortalOrders();
     const n = rows.filter(o => o.planWeek).length;
     if (!n) return;
-    if (!confirm('Move all ' + n + ' scheduled order(s) to Unscheduled? The supplier can then plan the weeks from scratch.')) return;
+    const whose = staffMode && _portalSupplier && _portalSupplier !== TO_ALLOCATE ? _portalSupplier + "'s " : '';
+    if (!confirm('Move all ' + n + ' of ' + whose + 'scheduled order(s) to Unscheduled? The supplier can then plan the weeks from scratch.')) return;
     snapshotState();
     rows.forEach(o => { delete o.planWeek; });
     saveData();
@@ -11628,16 +11673,19 @@ ${_PRODUCTION_PRINT_STYLES}
   window.portalDragStart = portalDragStart; window.portalDragOver = portalDragOver; window.portalDragLeave = portalDragLeave; window.portalDrop = portalDrop; window.portalPlanSet = portalPlanSet;
   function printPortalPlanner(onlyWeek) {
     const staffMode = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE);
-    const orders = staffMode ? _staffPortalOrders().map(r => r.o) : _builderPortalOrders();
+    const orders = staffMode ? _staffPortalScoped().map(r => r.o) : _builderPortalOrders();
     const { weeks, b } = _portalBuckets(orders);
     const labels = ['CURRENT WEEK', 'NEXT WEEK', 'IN 2 WEEKS', 'IN 3 WEEKS'];
+    // the staff's print of every supplier says whose each piece is
+    const withSup = staffMode && !_portalSupplier;
+    const plannerOf = staffMode ? (_portalSupplier === TO_ALLOCATE ? 'To allocate' : _portalSupplier || 'All suppliers') : ((typeof BUILDER_MODE_NAME !== 'undefined' && BUILDER_MODE_NAME) || 'Supplier');
     const esc = _escape;
     const table = (title, items) => '<h2 style="font:800 15px Arial; margin:18px 0 6px; border-bottom:2px solid #000; padding-bottom:4px">' + title + ' <span style="font-weight:400">(' + items.length + ')</span></h2>'
       + (items.length ? '<table style="width:100%; border-collapse:collapse; font:12px Arial">'
-        + '<tr style="background:#eee"><th style="border:1px solid #000; padding:4px; text-align:left">Order #</th><th style="border:1px solid #000; padding:4px; text-align:left">Product</th><th style="border:1px solid #000; padding:4px">Qty</th><th style="border:1px solid #000; padding:4px; text-align:left">Fabric</th><th style="border:1px solid #000; padding:4px; text-align:left">Fabric status</th><th style="border:1px solid #000; padding:4px; text-align:left">Custom size</th><th style="border:1px solid #000; padding:4px">Due</th><th style="border:1px solid #000; padding:4px">Done</th></tr>'
-        + items.map(o => '<tr><td style="border:1px solid #000; padding:4px; font-weight:700">#' + esc(o.invoice || o.id) + '</td><td style="border:1px solid #000; padding:4px">' + esc(o.product || '') + '</td><td style="border:1px solid #000; padding:4px; text-align:center">' + esc(o.qty || 1) + '</td><td style="border:1px solid #000; padding:4px">' + esc(o.fabric || '') + '</td><td style="border:1px solid #000; padding:4px">' + (o.fabric ? (o.fabricStatus === 'received' ? 'Received' : o.fabricOOS ? 'OUT OF STOCK' + (o.fabricStockETA ? ' — ' + esc(o.fabricStockETA) : '') : o.fabricStatus === 'ordered' ? 'Ordered' : 'Not ordered') : '') + '</td><td style="border:1px solid #000; padding:4px">' + esc(_customSizeText(o)) + '</td><td style="border:1px solid #000; padding:4px; text-align:center">' + esc(o.dueDate || '') + '</td><td style="border:1px solid #000; padding:4px; text-align:center">' + (o.builderDone ? '✓' : '☐') + '</td></tr>').join('')
+        + '<tr style="background:#eee"><th style="border:1px solid #000; padding:4px; text-align:left">Order #</th><th style="border:1px solid #000; padding:4px; text-align:left">Product</th>' + (withSup ? '<th style="border:1px solid #000; padding:4px; text-align:left">Supplier</th>' : '') + '<th style="border:1px solid #000; padding:4px">Qty</th><th style="border:1px solid #000; padding:4px; text-align:left">Fabric</th><th style="border:1px solid #000; padding:4px; text-align:left">Fabric status</th><th style="border:1px solid #000; padding:4px; text-align:left">Custom size</th><th style="border:1px solid #000; padding:4px">Due</th><th style="border:1px solid #000; padding:4px">Done</th></tr>'
+        + items.map(o => '<tr><td style="border:1px solid #000; padding:4px; font-weight:700">#' + esc(o.invoice || o.id) + '</td><td style="border:1px solid #000; padding:4px">' + esc(o.product || '') + '</td>' + (withSup ? '<td style="border:1px solid #000; padding:4px">' + esc(o.builder || '') + '</td>' : '') + '<td style="border:1px solid #000; padding:4px; text-align:center">' + esc(o.qty || 1) + '</td><td style="border:1px solid #000; padding:4px">' + esc(o.fabric || '') + '</td><td style="border:1px solid #000; padding:4px">' + (o.fabric ? (o.fabricStatus === 'received' ? 'Received' : o.fabricOOS ? 'OUT OF STOCK' + (o.fabricStockETA ? ' — ' + esc(o.fabricStockETA) : '') : o.fabricStatus === 'ordered' ? 'Ordered' : 'Not ordered') : '') + '</td><td style="border:1px solid #000; padding:4px">' + esc(_customSizeText(o)) + '</td><td style="border:1px solid #000; padding:4px; text-align:center">' + esc(o.dueDate || '') + '</td><td style="border:1px solid #000; padding:4px; text-align:center">' + (o.builderDone ? '✓' : '☐') + '</td></tr>').join('')
         + '</table>' : '<div style="font:12px Arial; color:#666">—</div>');
-    let body = '<div style="font:900 20px Arial; margin-bottom:2px">PRODUCTION PLANNER — ' + esc((typeof BUILDER_MODE_NAME !== 'undefined' && BUILDER_MODE_NAME) || 'Supplier') + '</div><div style="font:11px Arial; color:#555">Printed ' + new Date().toLocaleDateString('en-ZA') + '</div>';
+    let body = '<div style="font:900 20px Arial; margin-bottom:2px">PRODUCTION PLANNER — ' + esc(plannerOf) + '</div><div style="font:11px Arial; color:#555">Printed ' + new Date().toLocaleDateString('en-ZA') + '</div>';
     if (onlyWeek) {
       const i = weeks.indexOf(onlyWeek);
       body += table((i >= 0 ? labels[i] : 'WEEK') + ' — ' + esc(_formatWeekShort(onlyWeek)), b[onlyWeek] || []);
@@ -11757,13 +11805,17 @@ ${_PRODUCTION_PRINT_STYLES}
   function builderPortalMarkDone(orderId) {
     const o = _findOrderAnyBiz(orderId);
     if (!o) return;
-    if (!confirm('Mark #' + (o.invoice || o.id) + ' as DONE and ready for collection?')) return;
+    const staffMode = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE);
+    if (!confirm(staffMode
+      ? 'Mark #' + (o.invoice || o.id) + ' — ' + (o.product || '') + ' as DONE for ' + (o.builder || 'the supplier') + '?\n\nIt leaves this list and goes onto the 🚚 Delivery list. ' + (o.builder || 'The supplier') + ' sees it as done.'
+      : 'Mark #' + (o.invoice || o.id) + ' as DONE and ready for collection?')) return;
     snapshotState();
     o.builderDone = true;
     o.builderDoneAt = new Date().toISOString().split('T')[0];
-    _builderPortalLogComment(o, 'Marked DONE — ready for collection');
+    _builderPortalLogComment(o, staffMode ? 'Marked DONE for ' + (o.builder || 'the supplier') + ' — ready for collection' : 'Marked DONE — ready for collection');
     saveData();
     renderBuilderPortal();
+    if (staffMode && typeof toast === 'function') toast('✅ #' + (o.invoice || o.id) + ' done: it is on the 🚚 Delivery list now', 'success', 3500);
   }
   window.builderPortalMarkDone = builderPortalMarkDone;
   // Marked DONE by mistake: back into production. It leaves the Delivery
@@ -11797,9 +11849,9 @@ ${_PRODUCTION_PRINT_STYLES}
   window.builderPortalPrintCard = builderPortalPrintCard;
   function builderPortalPrintAll() {
     const staffMode = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE);
-    const orders = staffMode ? _staffPortalOrders().map(r => r.o) : _builderPortalOrders();
+    const orders = staffMode ? _staffPortalScoped().map(r => r.o) : _builderPortalOrders();
     if (!orders.length) { alert('No open orders to print.'); return; }
-    _openJobCardWindow('Job cards — ' + (staffMode ? 'all open orders' : (BUILDER_MODE_NAME || 'orders')) + ' (' + orders.length + ')', orders.map(o => _jobCardBodyHtml(o, !staffMode)).join(''), 'PRINT ' + orders.length + ' JOB CARD' + (orders.length === 1 ? '' : 'S'));
+    _openJobCardWindow('Job cards — ' + (staffMode ? (_portalSupplier ? (_portalSupplier === TO_ALLOCATE ? 'to allocate' : _portalSupplier) : 'all open orders') : (BUILDER_MODE_NAME || 'orders')) + ' (' + orders.length + ')', orders.map(o => _jobCardBodyHtml(o, !staffMode)).join(''), 'PRINT ' + orders.length + ' JOB CARD' + (orders.length === 1 ? '' : 'S'));
   }
   window.builderPortalPrintAll = builderPortalPrintAll;
   // All the job cards as ONE spreadsheet — a row per order, columns instead of
@@ -11807,7 +11859,7 @@ ${_PRODUCTION_PRINT_STYLES}
   // cards: sales order number only, no client details.
   function builderPortalExportCsv() {
     const staffMode = (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE);
-    const orders = staffMode ? _staffPortalOrders().map(r => r.o) : _builderPortalOrders();
+    const orders = staffMode ? _staffPortalScoped().map(r => r.o) : _builderPortalOrders();
     if (!orders.length) { alert('No open orders to export.'); return; }
     const rows = [['Order #', 'Product', 'Custom size', 'Qty', 'Fabric', 'Fabric status', 'Order placed', 'ETA (due date)', 'Done', 'Notes', 'Latest comment']];
     orders.forEach(o => {
