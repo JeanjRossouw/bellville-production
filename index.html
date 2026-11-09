@@ -17,7 +17,7 @@
   
   <!-- Firebase SDK -->
   <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+    import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
     import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
     import { getFirestore, doc, setDoc, getDoc, deleteDoc, onSnapshot, collection, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
     
@@ -48,7 +48,18 @@
       signOut,
       onAuthStateChanged,
       signInAnonymously,
-      doc, setDoc, getDoc, deleteDoc, onSnapshot, collection
+      doc, setDoc, getDoc, deleteDoc, onSnapshot, collection,
+      // A login for someone else (a manufacturer) without signing the admin out: a second app instance makes the
+      // account, writes its users/<uid> record as that new account (as sign-up does), signs it out and goes away.
+      makeLogin: async (email, password, profile) => {
+        const second = initializeApp(firebaseConfig, 'make-login-' + Date.now());
+        try {
+          const cred = await createUserWithEmailAndPassword(getAuth(second), email, password);
+          await setDoc(doc(getFirestore(second), 'users', cred.user.uid), { ...profile, email, createdAt: new Date().toISOString() });
+          await signOut(getAuth(second));
+          return cred.user.uid;
+        } finally { deleteApp(second).catch(() => {}); }
+      }
     };
     
     // Trigger app init once Firebase is ready
@@ -4956,6 +4967,35 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof toast === 'function') toast('✏️ "' + oldName + '" renamed to "' + clean + '" — ' + moved + ' order(s) moved with it. Send them a fresh 🔗 Portal link.', 'success', 6000);
   }
   window.renameManufacturer = renameManufacturer;
+  // A manufacturer login (an admin makes it): role 'manufacturer', linked by id, so it opens only this
+  // manufacturer's portal. The admin stays signed in; the email and password are then passed to the partner.
+  async function makeManufacturerLogin(id) {
+    const m = _manufacturers().find(x => x.id === id);
+    if (!m) return;
+    if (currentRole !== 'admin') { alert('Only an admin can make a portal login.'); return; }
+    const email = (prompt('Email address for ' + m.name + "'s portal login:", m.email || '') || '').trim().toLowerCase();
+    if (!email) return;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { alert('That is not an email address.'); return; }
+    const password = prompt('A password for ' + email + ' (at least 6 characters). You pass it on to ' + m.name + ':', '');
+    if (password === null) return;
+    if (password.length < 6) { alert('The password needs at least 6 characters.'); return; }
+    try {
+      const uid = await window.firebaseFns.makeLogin(email, password, { role: 'manufacturer', builderId: m.id, builder: m.name });
+      snapshotState();
+      if (!Array.isArray(m.logins)) m.logins = [];
+      m.logins.push({ email: email, uid: uid, at: new Date().toISOString() });
+      saveData();
+      renderManufacturers();
+      const url = window.location.origin + '/?builder=1&m=' + encodeURIComponent(m.name);
+      prompt('Login made for ' + m.name + '. Send them this link with the email and password. It opens only their portal:', url);
+    } catch (e) {
+      const code = (e && e.code) || '';
+      alert(code === 'auth/email-already-in-use'
+        ? 'That email already has a login. Use another email for ' + m.name + "'s portal (a login that already exists cannot be turned into a manufacturer login from here)."
+        : 'Could not make the login: ' + ((e && e.message) || e));
+    }
+  }
+  window.makeManufacturerLogin = makeManufacturerLogin;
   function renderManufacturers() {
     const list = document.getElementById('mfg-list');
     if (!list) return;
@@ -4963,9 +5003,10 @@ ${_PRODUCTION_PRINT_STYLES}
     list.innerHTML = items.length
       ? items.map(m => `
         <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; border:1px solid var(--border,#ddd); border-radius:8px; padding:6px 10px; margin-bottom:4px">
-          <div><span style="font-weight:700">🏭 ${_escape(m.name)}</span>${m.email ? ' <span style="font-size:11px; color:var(--text-muted,#888)">· ' + _escape(m.email) + '</span>' : ' <span style="font-size:11px; color:var(--warn,#b45309)">· no email — add one to place orders</span>'}</div>
-          <div style="display:flex; gap:0.4rem">
+          <div><span style="font-weight:700">🏭 ${_escape(m.name)}</span>${m.email ? ' <span style="font-size:11px; color:var(--text-muted,#888)">· ' + _escape(m.email) + '</span>' : ' <span style="font-size:11px; color:var(--warn,#b45309)">· no email — add one to place orders</span>'}${(m.logins || []).length ? '<div style="font-size:11px; color:var(--text-muted,#888)">🔑 Portal login' + (m.logins.length === 1 ? '' : 's') + ': ' + m.logins.map(l => _escape(l.email)).join(', ') + '</div>' : ''}</div>
+          <div style="display:flex; gap:0.4rem; flex-wrap:wrap; justify-content:flex-end">
             <button class="btn btn-sm" onclick="renameManufacturer('${m.id}')" title="Rename — also updates every order assigned to this manufacturer">✏️ Rename</button>
+            ${currentRole === 'admin' ? `<button class="btn btn-sm" onclick="makeManufacturerLogin('${m.id}')" title="A login that opens only this manufacturer's portal: never the full system, the staff portal or another supplier's orders">🔑 Make login</button>` : ''}
             <button class="btn btn-sm" onclick="copyBuilderPortalLink('${_jsq(m.name)}')" title="Copy the portal link — they sign in and see only their orders">🔗 Portal link</button>
             <button class="btn btn-sm btn-danger" onclick="deleteManufacturer('${m.id}')">✕</button>
           </div>
@@ -9409,14 +9450,39 @@ ${_PRODUCTION_PRINT_STYLES}
   // The partner signs in and sees ONLY the orders assigned to them (o.builder):
   // tick fabric received, adjust the ETA, comment, and mark items done. Staff
   // then Receive the item on arrival (planner lane), which marks the order DONE.
-  const IS_BUILDER_MODE = (function () {
+  let IS_BUILDER_MODE = (function () {
     try { return new URLSearchParams(window.location.search).get('builder') === '1'; }
     catch (e) { return false; }
   })();
-  const BUILDER_MODE_NAME = (function () {
+  let BUILDER_MODE_NAME = (function () {
     try { return (new URLSearchParams(window.location.search).get('m') || '').trim(); }
     catch (e) { return ''; }
   })();
+  // ---- A manufacturer login (users/<uid>.role 'manufacturer', builderId, builder) ----
+  // Locked to its own portal: the manufacturer comes from the login, never from the link, so changing ?m= in the
+  // address shows nothing more, and the full system, the staff portal, the till and the dashboard never open.
+  // The name is looked up by the manufacturer's id, so a rename in the Couch Manufacturers card follows.
+  let BUILDER_LOCK = null;   // { id, name } while a manufacturer login is signed in
+  function _refreshBuilderLock() {
+    if (!BUILDER_LOCK) return;
+    let m = null;   // each business keeps its own list: look in all of them
+    ['bellville', 'pinkfoot', 'repticube'].forEach(b => { if (!m) m = (((data[b] || {}).manufacturers) || []).find(x => x && x.id === BUILDER_LOCK.id) || null; });
+    const name = m ? m.name : (BUILDER_LOCK.id ? '' : BUILDER_LOCK.name);
+    if (name !== BUILDER_MODE_NAME) {
+      BUILDER_MODE_NAME = name;
+      const nm = document.getElementById('builder-portal-name');
+      if (nm) nm.innerHTML = _builderWordmarkHtml(name || 'Orders', 24, '#fff');
+      document.title = (name || 'Manufacturer') + ' · Orders';
+    }
+  }
+  function lockToManufacturer(lock) {
+    BUILDER_LOCK = lock || BUILDER_LOCK || { id: '', name: '' };
+    IS_BUILDER_MODE = true;
+    IS_STAFF_PORTAL_MODE = false;
+    BUILDER_MODE_NAME = BUILDER_LOCK.name || '';
+    enterBuilderOnlyMode();
+  }
+  window.lockToManufacturer = lockToManufacturer;
   function enterBuilderOnlyMode() {
     ['main-app', 'login-overlay', 'dashboard-only-view', 'reserved-only-view', 'booking-only-view'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
     const view = document.getElementById('builder-only-view');
@@ -9443,6 +9509,7 @@ ${_PRODUCTION_PRINT_STYLES}
   // status, ETA, comments and job cards. No tabs, phone-friendly.
   let IS_STAFF_PORTAL_MODE = false;
   function enterStaffPortalMode() {
+    if (typeof currentRole !== 'undefined' && currentRole === 'manufacturer') { lockToManufacturer(); return; }
     IS_STAFF_PORTAL_MODE = true;
     ['main-app', 'login-overlay', 'dashboard-only-view', 'reserved-only-view', 'booking-only-view'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
     const view = document.getElementById('builder-only-view');
@@ -9464,6 +9531,7 @@ ${_PRODUCTION_PRINT_STYLES}
   }
   window.enterStaffPortalMode = enterStaffPortalMode;
   function exitStaffPortalMode() {
+    if (typeof currentRole !== 'undefined' && currentRole === 'manufacturer') { lockToManufacturer(); return; }
     IS_STAFF_PORTAL_MODE = false;
     const view = document.getElementById('builder-only-view');
     if (view) view.style.display = 'none';
@@ -9805,7 +9873,7 @@ ${_PRODUCTION_PRINT_STYLES}
             <div style="font-size:16px; font-weight:800">#${_escape(o.invoice || o.id)} — ${_escape(o.product || '')}${_unreadCount(o) ? ' <span style="background:#7c3aed; color:#fff; border-radius:999px; padding:1px 8px; font-size:11px; vertical-align:middle">💬 ' + _unreadCount(o) + ' new</span>' : ''}</div>
             <div style="font-size:12px; color:#78716c; margin-top:2px">
               <span style="background:#e7e5e4; border-radius:999px; padding:1px 8px; font-size:10px; font-weight:700">${_escape(r.tag)}</span>
-              · Qty ${_escape(o.qty || 1)}${o.customer ? ' · 👤 ' + _escape(o.customer) : ''}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.builder ? ' · 🏭 ' + _escape(o.builder) : ''}${(o.paidDate || o.orderDate) ? ' · 💰 Paid ' + _escape(o.paidDate || o.orderDate) : ''}${o.phone ? '<br>📱 ' + _escape(o.phone) : ''}${(o.address || o.area) ? ' · 📍 ' + _escape([o.address, o.area].filter(Boolean).join(', ')) : ''}${o.customSize ? '<br>📐 <strong style="color:#111">' + _escape(_customSizeText(o)) + '</strong>' + (o.sizeConfirmedAt ? ' <span style="color:#166534; font-weight:800">✓ confirmed by client ' + _escape(String(o.sizeConfirmedAt).slice(0, 10)) + '</span>' : '') : ''}
+              · Qty ${_escape(o.qty || 1)}${o.customer ? ' · 👤 ' + _escape(o.customer) : ''}${o.fabric ? ' · 🧵 ' + _escape(o.fabric) : ''}${o.builder ? ' · ' + _supplierPickHtml(o) : ''}${(o.paidDate || o.orderDate) ? ' · 💰 Paid ' + _escape(o.paidDate || o.orderDate) : ''}${o.phone ? '<br>📱 ' + _escape(o.phone) : ''}${(o.address || o.area) ? ' · 📍 ' + _escape([o.address, o.area].filter(Boolean).join(', ')) : ''}${o.customSize ? '<br>📐 <strong style="color:#111">' + _escape(_customSizeText(o)) + '</strong>' + (o.sizeConfirmedAt ? ' <span style="color:#166534; font-weight:800">✓ confirmed by client ' + _escape(String(o.sizeConfirmedAt).slice(0, 10)) + '</span>' : '') : ''}
             </div>
           </div>
           <span style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
@@ -9837,6 +9905,7 @@ ${_PRODUCTION_PRINT_STYLES}
           </label>
         </div>
         <div style="border-top:1px solid #e7e5e4; margin-top:10px; padding-top:8px">
+          ${_prevThreadsHtml(o)}
           ${_commentThreadHtml(o, comments)}
           <div style="display:flex; gap:6px; margin-top:4px">
             <input id="bp-comment-${_escape(o.id)}" placeholder="Add a comment…" style="flex:1; padding:6px 8px; border-radius:6px; border:1px solid #d6d3d1; font-size:12px"
@@ -9849,6 +9918,45 @@ ${_PRODUCTION_PRINT_STYLES}
     _afterThreadRender(rows.map(r => r.o));
   }
   window.renderStaffPortal = renderStaffPortal;
+  // ---- Moving an order to another supplier, from the staff portal ----
+  // The order leaves the old supplier's portal and shows on the new one's. What the old supplier did on it
+  // (marked done, the order email) is cleared; their message thread is kept for our staff only
+  // (o.builderPrevThreads), so the new supplier never reads it.
+  function _supplierPickHtml(o) {
+    const names = _allManufacturerNames();
+    if (names.length < 2 && (names.length === 0 || names[0] === o.builder)) return '🏭 ' + _escape(o.builder);
+    const all = names.includes(o.builder) ? names : [o.builder, ...names];
+    return '🏭 <select title="Move this order to another supplier" onchange="staffPortalSetSupplier(\'' + _escape(o.id) + '\', this.value, this)" style="padding:2px 6px; border-radius:6px; border:1px solid #d6d3d1; font-size:12px; font-weight:700; background:#fff">'
+      + all.map(n => '<option value="' + _escape(n) + '"' + (n === o.builder ? ' selected' : '') + '>' + _escape(n) + '</option>').join('') + '</select>';
+  }
+  function staffPortalSetSupplier(orderId, name, sel) {
+    const o = _findOrderAnyBiz(orderId);
+    if (!o || !name || name === o.builder) return;
+    const from = o.builder || 'no supplier';
+    const warn = o.builderDone ? '\n\n' + from + ' has already marked it DONE: that is cleared, and ' + name + ' starts it fresh.' : '';
+    if (!confirm('Move #' + (o.invoice || o.id) + ' — ' + (o.product || '') + ' from ' + from + ' to ' + name + '?\n\nIt leaves ' + from + "'s portal and shows on " + name + "'s." + warn)) { if (sel) sel.value = o.builder; return; }
+    snapshotState();
+    const thread = Array.isArray(o.builderComments) ? o.builderComments : [];
+    if (thread.length) {
+      if (!Array.isArray(o.builderPrevThreads)) o.builderPrevThreads = [];
+      o.builderPrevThreads.push({ builder: from, until: new Date().toISOString(), comments: thread });
+    }
+    o.builderComments = [];
+    delete o.builderCommentsAck; delete o.commentsSeen;
+    delete o.builderDone; delete o.builderDoneAt; delete o.builderOrderedAt; delete o.builderReopenedAt;
+    o.builder = name;
+    _builderPortalLogComment(o, 'Moved to ' + name + ' from ' + from + '.');
+    saveData();
+    if (typeof render === 'function') render();
+    if (typeof toast === 'function') toast('🏭 #' + (o.invoice || o.id) + ' moved to ' + name, 'success', 3000);
+  }
+  window.staffPortalSetSupplier = staffPortalSetSupplier;
+  function _prevThreadsHtml(o) {
+    const prev = Array.isArray(o && o.builderPrevThreads) ? o.builderPrevThreads : [];
+    if (!prev.length || (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && !IS_STAFF_PORTAL_MODE)) return '';
+    return prev.map(t => '<details style="margin-bottom:6px; font-size:12px; color:#57534e"><summary style="cursor:pointer">Earlier messages with ' + _escape(t.builder) + ' (' + (t.comments || []).length + ', only our staff see these)</summary>'
+      + (t.comments || []).map(c => '<div style="margin:3px 0 0 10px"><strong>' + _escape(c.by || '') + '</strong> <span style="color:#a8a29e">' + _escape(String(c.at || '').slice(0, 16).replace('T', ' ')) + '</span><br>' + _escape(c.text || '') + '</div>').join('') + '</details>').join('');
+  }
   function staffPortalMarkDone(orderId) {
     let biz = null;
     ['bellville', 'pinkfoot', 'repticube'].forEach(b => {
@@ -9877,7 +9985,8 @@ ${_PRODUCTION_PRINT_STYLES}
     if (typeof IS_STAFF_PORTAL_MODE !== 'undefined' && IS_STAFF_PORTAL_MODE) { renderStaffPortal(); return; }
     const host = document.getElementById('builder-portal-content');
     if (!host) return;
-    if (!BUILDER_MODE_NAME) { host.innerHTML = '<div style="text-align:center; color:#78716c; padding:2rem">This portal link is missing the manufacturer name — ask for a fresh link.</div>'; return; }
+    _refreshBuilderLock();
+    if (!BUILDER_MODE_NAME) { host.innerHTML = '<div style="text-align:center; color:#78716c; padding:2rem">' + (BUILDER_LOCK ? 'This login is not linked to a manufacturer any more — ask Bellville Furniture to check it.' : 'This portal link is missing the manufacturer name — ask for a fresh link.') + '</div>'; return; }
     const allOrders = _builderPortalOrders();
     const orders = _portalFilter(allOrders);
     const cnt = document.getElementById('builder-portal-count');
@@ -11535,7 +11644,7 @@ ${_PRODUCTION_PRINT_STYLES}
     // Comments are stamped with the manufacturer's name — except when one of OUR
     // staff is signed in on the portal link: then use their own name, and count
     // the comment as read so it doesn't raise a partner-activity alert on our side.
-    const staffSignedIn = (typeof currentRole !== 'undefined' && currentRole && currentRole !== 'fabricrep'
+    const staffSignedIn = (typeof currentRole !== 'undefined' && currentRole && currentRole !== 'fabricrep' && currentRole !== 'manufacturer'
       && typeof currentUser !== 'undefined' && currentUser && currentUser.email);
     const by = byOverride || (staffSignedIn ? _staffDisplayName('staff') : (BUILDER_MODE_NAME || 'Partner'));
     o.builderComments.push({ by: by, at: new Date().toISOString(), text: text });
@@ -11721,6 +11830,7 @@ ${_PRODUCTION_PRINT_STYLES}
   })();
 
   function enterPosOnlyMode() {
+    if (typeof currentRole !== 'undefined' && currentRole === 'manufacturer') { lockToManufacturer(); return; }
     document.body.classList.add('pos-mode');
     document.getElementById('main-app').style.display = 'block';
     const emailEl = document.getElementById('current-user-email');
@@ -15196,6 +15306,11 @@ ${totalsSection}
           const userSnap = await window.firebaseFns.getDoc(userDocRef);
           if (userSnap.exists()) {
             currentRole = userSnap.data().role || 'admin';
+            if (currentRole === 'manufacturer') {
+              const u = userSnap.data();
+              BUILDER_LOCK = { id: String(u.builderId || ''), name: String(u.builder || '') };
+              try { localStorage.setItem('bellville-builder:' + user.uid, JSON.stringify(BUILDER_LOCK)); } catch (e) {}
+            }
           } else {
             // No role record — treat as admin (legacy user)
             currentRole = 'admin';
@@ -15208,10 +15323,14 @@ ${totalsSection}
           let cachedRole = null;
           try { cachedRole = localStorage.getItem(_roleKey); } catch (e) {}
           currentRole = cachedRole || 'admin';
+          if (currentRole === 'manufacturer') { try { BUILDER_LOCK = JSON.parse(localStorage.getItem('bellville-builder:' + user.uid) || 'null'); } catch (e) { BUILDER_LOCK = null; } }
         }
         
         document.getElementById('login-overlay').style.display = 'none';
-        if (IS_BOOKING_MODE) {
+        if (currentRole === 'manufacturer') {
+          // A manufacturer login: its own portal and nothing else, whatever the address says
+          lockToManufacturer(BUILDER_LOCK);
+        } else if (IS_BOOKING_MODE) {
           // Client booking link — full-screen calendar only (works for anonymous sign-ins too)
           enterBookingOnlyMode();
         } else if (typeof IS_CONFIRM_MODE !== 'undefined' && IS_CONFIRM_MODE) {
@@ -15253,6 +15372,7 @@ ${totalsSection}
       } else {
         currentUser = null;
         currentRole = null;
+        BUILDER_LOCK = null;
         if (IS_BOOKING_MODE) {
           // Client with a booking link — no account. Try anonymous sign-in so the
           // calendar can show LIVE availability; if that's disabled in Firebase,
