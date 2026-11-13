@@ -89,13 +89,13 @@ await scan('6001234567890');
 await p.click('[data-act=sl-customer]'); await p.waitForSelector('#modal #cu-q'); await p.fill('#cu-q', 'thandi'); await p.waitForTimeout(200); await p.click('#cu-list .pk-row'); await p.waitForTimeout(300);
 await p.click('[data-act=sl-pay]'); await p.waitForSelector('#modal .pay');
 R.methods2 = await p.$$eval('#modal .pay-m', x => x.map(y => y.dataset.m + (y.disabled ? '!' : ''))); check('with the customer: credit and account on', R.methods2.join() === 'cash,card,eft,voucher,storeCredit,account', R.methods2);
-await p.click('[data-m=card]'); await p.fill('#py-amount', '8799'); await p.fill('#py-last4', '4321'); await p.fill('#py-approval', 'OK77'); await p.click('[data-add=card]'); await p.waitForTimeout(200);
-R.split1 = await payText(); check('card part added, R 200 still to pay', /Card ••4321 R 8,799\.00/.test(R.split1) && /Still to pay R 200\.00/i.test(R.split1), R.split1);
+await p.click('[data-m=card]'); await p.fill('#py-amount', '8799'); await p.click('[data-add=card]'); await p.waitForTimeout(200);
+R.split1 = await payText(); check('card part added, R 200 still to pay', /Card R 8,799\.00/.test(R.split1) && /Still to pay R 200\.00/i.test(R.split1), R.split1);
 await p.click('[data-m=storeCredit]'); await p.waitForTimeout(100); R.creditDefault = await p.inputValue('#py-amount'); check('store credit offers the rest (R 200 of R 200 credit)', R.creditDefault === '200.00', R.creditDefault);
 await p.click('[data-add=storeCredit]'); await p.waitForTimeout(200); R.done2 = await finish();
 check('split sale written', /Sale BF-000002/.test(R.done2), R.done2);
 const c = await getDoc('pos/retail/customers/c_thandi'); check('store credit used up', c.storeCreditCents === 0, c);
-let pays = await listColl('payments'); check('two payment rows on the split sale', pays.filter(x => x.docNo === 'BF-000002').map(x => x.method).sort().join() === 'card,storeCredit' && pays.some(x => x.cardLast4 === '4321' && x.approvalCode === 'OK77'), pays.map(x => [x.docNo, x.method]));
+let pays = await listColl('payments'); check('two payment rows on the split sale', pays.filter(x => x.docNo === 'BF-000002').map(x => x.method).sort().join() === 'card,storeCredit' && !(await p.$('#py-last4')) && !(await p.$('#py-approval')), pays.map(x => [x.docNo, x.method]));
 
 // 3. a voucher sold on account, then used on the next sale
 await scan('GV500'); await p.click('[data-act=sl-customer]'); await p.waitForSelector('#modal #cu-q'); await p.fill('#cu-q', 'thandi'); await p.waitForTimeout(200); await p.click('#cu-list .pk-row'); await p.waitForTimeout(300);

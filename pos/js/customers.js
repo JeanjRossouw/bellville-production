@@ -108,8 +108,8 @@ function accountPay(id) {
     <div class="pay-change-live" id="ap-change"></div>`, { okLabel: 'Take the payment', cancelLabel: 'Back', onOk: () => submit() });
   const live = () => {
     const m = val(wrap, 'ap-method');
-    wrap.querySelector('#ap-given').closest('.fld').hidden = m !== 'cash'; wrap.querySelector('#ap-ref').closest('.fld').hidden = m === 'cash' || m === 'storeCredit'; wrap.querySelector('#ap-last4').closest('.fld').hidden = m !== 'card';
-    wrap.querySelector('#ap-ref').closest('.fld').querySelector('span').textContent = m === 'card' ? 'Approval code (on the slip)' : 'Reference (as on the bank statement)';
+    wrap.querySelector('#ap-given').closest('.fld').hidden = m !== 'cash'; wrap.querySelector('#ap-ref').closest('.fld').hidden = m === 'cash' || m === 'card' || m === 'storeCredit'; wrap.querySelector('#ap-last4').closest('.fld').hidden = true;
+    wrap.querySelector('#ap-ref').closest('.fld').querySelector('span').textContent = 'Reference (as on the bank statement)';
     wrap.querySelector('#ap-ref').placeholder = m === 'card' ? 'e.g. 123456' : m === 'eft' ? 'the EFT reference' : 'the QR reference';
     wrap.querySelector('#ap-paynote').textContent = proofNote(m, cashOk).replace('the order counts it paid', 'the account counts it paid');
     const amt = centsOf(val(wrap, 'ap-amount')), given = centsOf(val(wrap, 'ap-given'));

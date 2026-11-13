@@ -85,7 +85,7 @@ await p.click('#modal-ok'); await p.waitForTimeout(300);
 R.cart2 = await p.locator('.pos-right').innerText(); check('the spec shows on the line', /2\.4 m · Linen look · Charcoal · Oak · deliver Friday/i.test(R.cart2), R.cart2.slice(0, 300));
 await pickThandi();
 await p.click('[data-act=sl-pay]'); await p.waitForSelector('#modal .pay');
-await p.click('[data-m=card]'); await p.fill('#py-amount', '15000'); await p.fill('#py-last4', '4242'); await p.click('[data-add=card]'); await p.waitForTimeout(200);
+await p.click('[data-m=card]'); await p.fill('#py-amount', '15000'); await p.click('[data-add=card]'); await p.waitForTimeout(200);
 R.sold = await finish(); check('sold: BF-000001', /Sale BF-000001/.test(R.sold), R.sold);
 check('the invoice line prints the spec', /Custom Sofa/.test(R.slip || '') && /Fabric Linen look/.test(R.slip || '') && /Colour Charcoal/.test(R.slip || ''), (R.slip || '').slice(0, 400));
 await p.waitForTimeout(1200);

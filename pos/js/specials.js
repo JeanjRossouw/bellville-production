@@ -245,8 +245,8 @@ export function openNew(cart, t, onDone) {
     wrap.querySelector('#so-deprow').hidden = !depNow;
     const m = val(wrap, 'so-method');
     wrap.querySelector('#so-given').closest('.fld').hidden = m !== 'cash';
-    wrap.querySelector('#so-ref').closest('.fld').hidden = m === 'cash' || m === 'storeCredit'; wrap.querySelector('#so-last4').closest('.fld').hidden = m !== 'card';
-    wrap.querySelector('#so-ref').closest('.fld').querySelector('span').textContent = m === 'card' ? 'Approval code (on the slip)' : 'Reference (as on the bank statement)';
+    wrap.querySelector('#so-ref').closest('.fld').hidden = m === 'cash' || m === 'card' || m === 'storeCredit'; wrap.querySelector('#so-last4').closest('.fld').hidden = true;
+    wrap.querySelector('#so-ref').closest('.fld').querySelector('span').textContent = 'Reference (as on the bank statement)';
     wrap.querySelector('#so-paynote').textContent = proofNote(m, methods.includes('cash'));
     wrap.querySelector('#so-terms').textContent = signoffText(dd.entity, draft());
   };
@@ -387,7 +387,7 @@ function pay(id) {
     ${row(field('Cash given (R)', 'sp-given', { value: randsOf(suggested), inputmode: 'decimal' }), '')}${proofFields('sp', methods[0])}<p class="muted" id="sp-paynote"></p>
     <div class="pay-quick"><button class="btn ghost sm" type="button" data-sp="${open}">The whole balance</button>${o.status === 'quoted' && o.minDepositCents > o.paidCents ? `<button class="btn ghost sm" type="button" data-sp="${o.minDepositCents - o.paidCents}">The deposit</button>` : ''}</div>
     <div class="pay-change-live" id="sp-change"></div>`, { okLabel: 'Take payment', cancelLabel: 'Back', onOk: () => submit() });
-  const live = () => { const m = val(wrap, 'sp-method'); wrap.querySelector('#sp-given').closest('.fld').hidden = m !== 'cash'; wrap.querySelector('#sp-ref').closest('.fld').hidden = m === 'cash'; wrap.querySelector('#sp-last4').closest('.fld').hidden = m !== 'card'; wrap.querySelector('#sp-ref').closest('.fld').querySelector('span').textContent = m === 'card' ? 'Approval code (on the slip)' : 'Reference (as on the bank statement)'; wrap.querySelector('#sp-paynote').textContent = proofNote(m, methods.includes('cash')); const a = centsOf(val(wrap, 'sp-amount')), g = centsOf(val(wrap, 'sp-given')); wrap.querySelector('#sp-change').textContent = m === 'cash' && g >= a && a > 0 ? 'Change ' + money(g - a) : m === 'cash' && a > 0 && g < a ? 'Short by ' + money(a - g) : ''; };
+  const live = () => { const m = val(wrap, 'sp-method'); wrap.querySelector('#sp-given').closest('.fld').hidden = m !== 'cash'; wrap.querySelector('#sp-ref').closest('.fld').hidden = m === 'cash' || m === 'card'; wrap.querySelector('#sp-last4').closest('.fld').hidden = true; wrap.querySelector('#sp-ref').closest('.fld').querySelector('span').textContent = 'Reference (as on the bank statement)'; wrap.querySelector('#sp-paynote').textContent = proofNote(m, methods.includes('cash')); const a = centsOf(val(wrap, 'sp-amount')), g = centsOf(val(wrap, 'sp-given')); wrap.querySelector('#sp-change').textContent = m === 'cash' && g >= a && a > 0 ? 'Change ' + money(g - a) : m === 'cash' && a > 0 && g < a ? 'Short by ' + money(a - g) : ''; };
   wrap.addEventListener('input', live); wrap.addEventListener('change', live); live();
   wrap.addEventListener('click', (e) => { const q = e.target.closest('[data-sp]'); if (q) { wrap.querySelector('#sp-amount').value = randsOf(Number(q.dataset.sp)); wrap.querySelector('#sp-given').value = randsOf(Number(q.dataset.sp)); live(); } });
   async function submit() {

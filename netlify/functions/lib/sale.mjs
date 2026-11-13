@@ -143,7 +143,6 @@ export function moneyNow(ctx, tenders, total, customer, what = 'an order') {
   if (bad) throw new Reject(400, `Pay ${what === 'an order' ? 'a special order' : what} with cash, card, EFT, QR or store credit.`);
   for (const p of t.pays) {
     if (p.method === 'cash' && !ctx.shiftId) throw new Reject(400, `Cash on ${what} is taken at an open register, so it is counted in the cash-up. The office takes card or EFT.`);
-    if (p.method === 'card' && !(p.approvalCode && /^\d{4}$/.test(p.cardLast4 || ''))) throw new Reject(400, 'A card payment needs the approval code and the last 4 digits from the slip.');
     if (p.method === 'eft' || p.method === 'qr') { if (!p.ref) throw new Reject(400, `The ${p.method === 'eft' ? 'EFT' : 'QR'} reference, as it will show on the bank statement.`); p.status = 'awaiting'; }
   }
   t.confirmed = t.pays.filter(p => p.status !== 'awaiting').reduce((n, p) => n + p.amountCents, 0);

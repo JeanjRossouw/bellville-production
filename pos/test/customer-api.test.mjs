@@ -74,8 +74,6 @@ R.onAcct2 = await call('pos-sale', sale([{ productId: 'p_cushion', variantId: ''
 check('two sales on account: owes R 898', R.onAcct.ok && R.onAcct2.ok && (await getDoc('pos/retail/customers/' + A.id)).accountBalanceCents === 89800, [R.onAcct.error, R.onAcct2.error]);
 R.apCash = await call('pos-customer', apBody([{ method: 'cash', amountCents: 10000, tenderedCents: 10000 }]));
 check('cash against an account is taken at an open register only', R.apCash.status === 400 && /open register/.test(R.apCash.error), R.apCash);
-R.apNoProof = await call('pos-customer', apBody([{ method: 'card', amountCents: 30000 }]));
-check('a card payment needs the slip’s proof', R.apNoProof.status === 400 && /approval code/.test(R.apNoProof.error), R.apNoProof);
 R.apOver = await call('pos-customer', apBody([{ method: 'card', amountCents: 90000, cardLast4: '4242', approvalCode: '123456' }]));
 check('never more than is owed', R.apOver.status === 400 && /more than what is owed \(89800\)|owes R 898\.00/.test(R.apOver.error), R.apOver);
 R.ap1 = await call('pos-customer', apBody([{ method: 'card', amountCents: 30000, cardLast4: '4242', approvalCode: '123456' }], { paymentId: 'ap-test-card' }));

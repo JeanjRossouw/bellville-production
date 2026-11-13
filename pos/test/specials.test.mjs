@@ -83,9 +83,8 @@ await p.setInputFiles('input[data-photo="0"]', { name: 'sofa.png', mimeType: 'im
 check('the photo is shown', await p.locator('#so-ph-0').isVisible() && (await p.getAttribute('#so-ph-0', 'src')).startsWith('data:image/jpeg'));
 R.terms = await p.locator('#so-terms').innerText(); check('the sign-off reads the spec back', /Size 2\.4 m, Fabric Linen look, Colour Charcoal, Legs Oak, Notes Firm seat \(photo attached\)/.test(R.terms), R.terms.slice(0, 400));
 await p.check('#so-accept'); await sign('#so-pad');
-check('cash is not offered: this till has no open register', !(await p.$$eval('#so-method option', os => os.map(o => o.value))).includes('cash') && /approval code and last 4 digits are on the card slip/i.test(R.newModal), R.newModal.slice(0, 200));
-await p.click('#modal-ok'); R.noProof = await toast(); check('the deposit by card needs the slip\'s proof', /approval code and the last 4/.test(R.noProof), R.noProof);
-await p.fill('#so-ref', '123456'); await p.fill('#so-last4', '4242');
+check('cash is not offered: this till has no open register', !(await p.$$eval('#so-method option', os => os.map(o => o.value))).includes('cash') && !/approval code|last 4/i.test(R.newModal), R.newModal.slice(0, 200));
+check('a card asks for nothing to type', !(await p.isVisible('#so-ref')) && !(await p.isVisible('#so-last4')));
 await p.click('#modal-ok'); R.opened = await toast(); await p.waitForTimeout(1500);
 check('order opened with the deposit', /Sales order BF-SO-000001 opened, deposit paid/.test(R.opened), R.opened);
 await p.waitForSelector('#modal .rc-paper'); R.orderDoc = await paper();
@@ -105,11 +104,9 @@ await p.click('[data-act=so-update]'); R.updToast = await toast(); await p.waitF
 R.opened1 = await p.evaluate(() => window.__opened); check('the WhatsApp update opened with the deposit words', /Update logged/.test(R.updToast) && R.opened1.length === 1 && /wa\.me\/27825550101/.test(R.opened1[0]) && /Thank%20you%20for%20your%20deposit/.test(R.opened1[0]), [R.updToast, R.opened1]);
 await p.click('[data-act=so-pay]'); await p.waitForSelector('#modal #sp-amount');
 check('the whole balance suggested', (await p.inputValue('#sp-amount')) === '7500.00');
-await p.selectOption('#sp-method', 'card'); await p.fill('#sp-ref', '123456'); await p.click('#modal-ok'); R.noLast4 = await toast();
-check('the card slip\'s last 4 digits are asked for', /approval code and the last 4/.test(R.noLast4), R.noLast4);
-await p.fill('#sp-last4', '1234'); await p.click('#modal-ok'); R.paid = await toast(); await p.waitForTimeout(1500);
+await p.selectOption('#sp-method', 'card'); await p.click('#modal-ok'); R.paid = await toast(); await p.waitForTimeout(1500);
 check('paid in full', /Paid R 7,500\.00 on BF-SO-000001/.test(R.paid) && /paid in full/.test(R.paid), R.paid);
-await p.waitForSelector('#modal .rc-paper'); R.payslip = await paper(); check('the payment receipt', /SALES ORDER PAYMENT/.test(R.payslip) && /Paid now R 7,500\.00/.test(R.payslip) && /Balance R 0\.00/.test(R.payslip) && /Card ••1234 R 7,500\.00/.test(R.payslip), R.payslip);
+await p.waitForSelector('#modal .rc-paper'); R.payslip = await paper(); check('the payment receipt', /SALES ORDER PAYMENT/.test(R.payslip) && /Paid now R 7,500\.00/.test(R.payslip) && /Balance R 0\.00/.test(R.payslip) && /Card R 7,500\.00/.test(R.payslip), R.payslip);
 await closeModal();
 await p.click('[data-act=so-open]'); await p.waitForSelector('#modal .lb-detail');
 R.notReady = await modalText(); check('paid but not made: still open, no hand-over until Ready', (await p.locator('[data-act=so-deliver]').count()) === 0 && /Open until it is made/.test(R.notReady), R.notReady.slice(0, 300));
