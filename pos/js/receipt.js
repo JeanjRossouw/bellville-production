@@ -47,7 +47,7 @@ export function receiptModel({ sale, lines, payments, entity, store, settings, c
   const vat = !!entity.vatRegistered;
   const header = (store && store.receiptHeader) || (settings.receipt && settings.receipt.header) || '';
   const footer = (store && store.receiptFooter) || (settings.receipt && settings.receipt.footer) || '';
-  const policy = (settings.receipt && settings.receipt.returnPolicy) || '';
+  const policy = sale.series === 'QT' ? '' : (settings.receipt && settings.receipt.returnPolicy) || '';   // a quotation sells nothing: no returns line
   const cust = sale.customerSnapshot;
   return {
     kind, title: kindTitle(kind) + (copy ? ' · COPY' : ''), copy: !!copy, vat,
