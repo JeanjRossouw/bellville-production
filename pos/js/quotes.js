@@ -45,7 +45,7 @@ export function docOf(q) {
   return { sale: { ...q, id: q.id, series: 'QT', docKind: 'quote', clientCreatedAt: q.quotedAt || q.createdAt, cashierName: q.cashierName,
     refLabel: 'Quotation ' + q.docNo + ((q.revision || 1) > 1 ? ' rev ' + q.revision : '') + (q.customerSnapshot && q.customerSnapshot.name ? ' · ' + q.customerSnapshot.name : ''),
     sections: [{ title: 'This quotation', rows }, ...(specs.length ? [{ title: 'Made to order', rows: specs }] : [])],
-    terms: 'Prices include VAT and hold until ' + niceDate(q.validUntil) + '. Made-to-order items are built once the order is placed and the deposit paid.' + (q.note ? ' ' + q.note : '') },
+    terms: q.note || '' },   // the valid-until date is in the box above; only the quote's own note prints here
     lines: q.lines || [], payments: [], entity: dd.entity, store: dd.store, settings: dd.settings };
 }
 
