@@ -65,7 +65,7 @@ export function openPay(o) {
       <div class="pay-quick"><button class="btn ghost sm" data-q="${cd.roundedCents}">Exact</button>${QUICK.filter(q => q >= cd.roundedCents || true).map(q => `<button class="btn ghost sm" data-q="${q}">${esc(money(q).replace('.00', ''))}</button>`).join('')}</div>
       <div class="pay-change-live" id="py-change"></div>
       <button class="btn primary" data-add="cash">Add cash</button></div>`;
-    if (k === 'card') return amountField() + row(field('Last 4 digits', 'py-last4', { inputmode: 'numeric', placeholder: '1234' }), field('Approval code', 'py-approval', { placeholder: 'from the machine' })) + '<button class="btn primary" data-add="card">Add card payment</button>';
+    if (k === 'card') return amountField() + '<button class="btn primary" data-add="card">Add card payment</button>';
     if (k === 'eft') return amountField() + row(field('Reference', 'py-ref', { placeholder: 'as on the statement' }), field('Status', 'py-status', { type: 'select', value: 'paid', options: [{ value: 'paid', label: 'Paid: seen in the bank' }, { value: 'awaiting', label: 'Awaiting: not yet in the bank' }] })) + '<button class="btn primary" data-add="eft">Add EFT</button>';
     if (k === 'qr') return amountField() + field('Reference', 'py-ref', { placeholder: 'SnapScan / Zapper reference' }) + '<button class="btn primary" data-add="qr">Add QR payment</button>';
     if (k === 'voucher') return field('Voucher code', 'py-code', { placeholder: 'GV…', autocomplete: 'off' }) + '<div class="muted" id="py-vinfo"></div>' + amountField('Amount to use (R)') + '<button class="btn primary" data-add="voucher">Use voucher</button>';
@@ -89,7 +89,7 @@ export function openPay(o) {
     }
     const amount = Math.min(d, centsOf(val(wrap, 'py-amount')));
     if (!(amount > 0)) return toast('How much?', 'warn');
-    if (k === 'card') { const last4 = val(wrap, 'py-last4').replace(/\D/g, ''); tenders.push({ method: 'card', amountCents: amount, cardLast4: last4, approvalCode: val(wrap, 'py-approval'), label: 'Card' + (last4 ? ' ••' + last4 : '') }); }
+    if (k === 'card') tenders.push({ method: 'card', amountCents: amount, label: 'Card' });
     if (k === 'eft') { const status = val(wrap, 'py-status'); tenders.push({ method: 'eft', amountCents: amount, ref: val(wrap, 'py-ref'), status, label: 'EFT' + (status === 'awaiting' ? ' (awaiting)' : '') }); }
     if (k === 'qr') tenders.push({ method: 'qr', amountCents: amount, ref: val(wrap, 'py-ref'), label: 'QR' });
     if (k === 'storeCredit') { if (amount > customer.storeCreditCents) return toast('Not that much credit.', 'warn'); tenders.push({ method: 'storeCredit', amountCents: amount, label: 'Store credit' }); }

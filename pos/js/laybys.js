@@ -96,7 +96,7 @@ export function openNew(cart, t, onDone) {
       <div class="lb-new-left">
         <div class="muted">${t.pieces} item${t.pieces === 1 ? '' : 's'} · <strong>${esc(money(t.totalCents))}</strong>${cart.customer.phone ? ' · ' + esc(cart.customer.phone) : ' · <span class="warn">no phone number for reminders</span>'}</div>
         ${row(field('Deposit (R)', 'lb-dep', { value: randsOf(minDep), inputmode: 'decimal' }), field('Paid by', 'lb-method', { type: 'select', value: methods[0], options: methods.map(k => ({ value: k, label: METHOD[k] })) }))}
-        <div id="lb-cashrow">${row(field('Cash given (R)', 'lb-given', { value: randsOf(minDep), inputmode: 'decimal' }), field('Card last 4 / reference', 'lb-ref', { placeholder: '' }))}</div>
+        <div id="lb-cashrow">${row(field('Cash given (R)', 'lb-given', { value: randsOf(minDep), inputmode: 'decimal' }), field('EFT / QR reference', 'lb-ref', { placeholder: '' }))}</div>
         ${row(field('Term (days, up to ' + ls.termDays + ')', 'lb-term', { value: ls.termDays, type: 'number', min: 7, max: ls.termDays }), field('Instalments', 'lb-freq', { type: 'select', value: ls.frequency, options: [{ value: 'weekly', label: 'Weekly' }, { value: 'fortnightly', label: 'Every two weeks' }, { value: 'monthly', label: 'Monthly' }] }))}
         <div class="card lb-sched" id="lb-sched"></div>
       </div>
@@ -135,7 +135,6 @@ export function openNew(cart, t, onDone) {
     const method = val(wrap, 'lb-method');
     const tender = { method, amountCents: x.dep, ref: val(wrap, 'lb-ref') };
     if (method === 'cash') { tender.tenderedCents = centsOf(val(wrap, 'lb-given')); if (tender.tenderedCents < x.dep) { toast('Cash given is short.', 'warn'); return false; } }
-    if (method === 'card') tender.cardLast4 = val(wrap, 'lb-ref').replace(/\D/g, '').slice(-4);
     busy = true;
     const body = {
       laybyId: newId('lb'), clientCreatedAt: new Date().toISOString(), customerId: cart.customerId,
@@ -203,7 +202,7 @@ function pay(id) {
   const { wrap, close } = openModal('Payment on ' + l.docNo, `
     <div class="muted">${esc(l.customerSnapshot.name)} · balance <strong>${esc(money(l.balanceCents))}</strong>${n ? ' · next ' + esc(money(n.amountCents)) + ' by ' + esc(niceDate(n.dueAt)) : ''}</div>
     ${row(field('Amount (R)', 'lp-amount', { value: randsOf(suggested || l.balanceCents), inputmode: 'decimal' }), field('Paid by', 'lp-method', { type: 'select', value: methods[0], options: methods.map(k => ({ value: k, label: METHOD[k] })) }))}
-    ${row(field('Cash given (R)', 'lp-given', { value: randsOf(suggested || l.balanceCents), inputmode: 'decimal' }), field('Card last 4 / reference', 'lp-ref', {}))}
+    ${row(field('Cash given (R)', 'lp-given', { value: randsOf(suggested || l.balanceCents), inputmode: 'decimal' }), field('EFT / QR reference', 'lp-ref', {}))}
     <div class="pay-quick"><button class="btn ghost sm" type="button" data-lp="${l.balanceCents}">The whole balance</button>${n ? `<button class="btn ghost sm" type="button" data-lp="${n.amountCents}">This instalment</button>` : ''}</div>
     <div class="pay-change-live" id="lp-change"></div>`, { okLabel: 'Take payment', cancelLabel: 'Back', onOk: () => submit() });
   const live = () => { const m = val(wrap, 'lp-method'); wrap.querySelector('#lp-given').closest('.fld').hidden = m !== 'cash'; const a = centsOf(val(wrap, 'lp-amount')), g = centsOf(val(wrap, 'lp-given')); wrap.querySelector('#lp-change').textContent = m === 'cash' && g >= a && a > 0 ? 'Change ' + money(g - a) : m === 'cash' && a > 0 && g < a ? 'Short by ' + money(a - g) : ''; };
@@ -216,7 +215,6 @@ function pay(id) {
     if (amount > l.balanceCents) { toast('Only ' + money(l.balanceCents) + ' is owed.', 'warn'); return false; }
     const tender = { method, amountCents: amount, ref: val(wrap, 'lp-ref') };
     if (method === 'cash') { tender.tenderedCents = centsOf(val(wrap, 'lp-given')); if (tender.tenderedCents < amount) { toast('Cash given is short.', 'warn'); return false; } }
-    if (method === 'card') tender.cardLast4 = val(wrap, 'lp-ref').replace(/\D/g, '').slice(-4);
     busy = true;
     try {
       const r = await auth.api('pay', { laybyId: l.id, paymentId: newId('lp'), tenders: [tender], clientCreatedAt: new Date().toISOString(), ...where() }, API.layby);
