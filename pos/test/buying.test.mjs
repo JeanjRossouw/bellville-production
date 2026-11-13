@@ -87,7 +87,26 @@ check('for open orders only: the lamp (8 wanted, 6 here) → 2; the low cushion 
 await p.selectOption('#po-supplier', supId); await p.click('[data-act=by-po-open-here]'); R.ooHere = await toast();
 check('for one supplier (Foam Co): open orders need nothing more of theirs', /nothing more of this supplier/.test(R.ooHere), R.ooHere);
 await p.click('[data-act=by-po-close]'); await p.waitForTimeout(300);
-await p.click('[data-act=by-po-suggest]'); await p.waitForSelector('#po-supplier');
+R.perf = await p.evaluate(async () => {
+  const { items } = await import('/pos/js/stock.js');
+  const products = [], variants = [], stockLevels = [];
+  for (let i = 0; i < 12000; i++) {
+    const v = i % 10 === 0;
+    products.push({ id: 'P' + i, entityId: 'E', type: 'stock', name: 'Item ' + i, hasVariants: v, reorderLevel: 2, reorderQty: 5, costCents: 100 });
+    if (v) for (let k = 0; k < 3; k++) { variants.push({ id: 'V' + i + '-' + k, productId: 'P' + i, name: 'S' + k }); stockLevels.push({ storeId: 'S', productId: 'P' + i, variantId: 'V' + i + '-' + k, onHandQty: k }); }
+    else stockLevels.push({ storeId: 'S', productId: 'P' + i, variantId: '', onHandQty: i % 4 });
+  }
+  const dd = { store: { id: 'S' }, entity: { id: 'E' }, products, variants, stockLevels };
+  let t = performance.now(); const a = items(dd); const first = performance.now() - t;
+  t = performance.now(); const b = items(dd); const again = performance.now() - t;
+  const lv = a.find(x => x.itemId === 'V10-2'), p3 = a.find(x => x.itemId === 'P3');
+  return { n: a.length, first, again, same: a === b, v: lv && lv.onHand, p: p3 && p3.onHand };
+});
+check('12 000 products with variants and levels: built in under 1.5 s, kept for the next paint, the right levels', R.perf.n === 14400 && R.perf.first < 1500 && R.perf.same && R.perf.again < 5 && R.perf.v === 2 && R.perf.p === 3, R.perf);
+await p.click('[data-act=by-po-suggest]'); await p.waitForSelector('#modal #ls-sup');
+R.lsBox = await p.locator('#modal').innerText();
+check('the suggestion asks whose order it is, with the count per supplier', /Suggest from low stock/i.test(R.lsBox) && /1 item/.test(R.lsBox), R.lsBox.slice(0, 300));
+await p.click('#modal-ok'); await p.waitForSelector('#po-supplier');
 R.edit = await screenText(); check('the cushion suggested: 10 at R 50', /Scatter Cushion/.test(R.edit) && (await p.inputValue('[data-po-qty="0"]')) === '10' && (await p.inputValue('[data-po-cost="0"]')) === '50.00' && /Subtotal \(ex VAT\) R 500\.00/.test(R.edit), R.edit.slice(0, 400));
 await p.fill('#po-add', 'lamp'); await p.waitForTimeout(250); await p.click('#po-hits .pk-row'); await p.waitForTimeout(300);
 await p.fill('[data-po-qty="1"]', '2'); await p.dispatchEvent('[data-po-qty="1"]', 'change'); await p.waitForTimeout(300);
