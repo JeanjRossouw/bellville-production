@@ -7,6 +7,7 @@ import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { createHash, pbkdf2Sync } from 'node:crypto';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const S = REPO + '/pos/test', FBDIR = process.env.FIREBASE_SDK_DIR || '';
@@ -46,7 +47,7 @@ if (!(await fetch('http://localhost:8788/pos/').then(r => r.ok).catch(() => fals
   for (let i = 0; i < 30; i++) { await new Promise(r => setTimeout(r, 300)); if (await fetch('http://localhost:8788/pos/').then(r => r.ok).catch(() => false)) break; }
 }
 const b = await chromium.launch({ ...(process.env.CHROME ? { executablePath: process.env.CHROME } : {}), args: ['--no-sandbox'] });
-const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } });
+const ctx = await b.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true });
 await ctx.route(/fonts\.googleapis|fonts\.gstatic/, r => r.abort());
 if (FBDIR) await ctx.route(/www\.gstatic\.com\/firebasejs\/10\.13\.0\/(firebase-[\w-]+\.js)/, r => r.fulfill({ path: FBDIR + '/' + r.request().url().split('/').pop(), contentType: 'text/javascript' }));
 await ctx.addInitScript((dev) => { if (!localStorage.getItem('pos-device')) localStorage.setItem('pos-device', JSON.stringify(dev)); window.__printed = []; window.__opened = []; window.open = (u) => { if (u) { window.__opened.push(u); return { focus() {}, close() {} }; } const d = { write(h) { window.__printed.push(h); }, close() {} }; return { document: d, focus() {}, print() {}, close() {} }; }; }, { deviceId: 'dev_so', secret, entityId: 'BF', storeId: 'BF-BELL', registerId: '', label: 'Front till' });
@@ -98,6 +99,11 @@ check('written: deposit paid, update due, photo kept', o1 && o1.status === 'depo
 // ---- the tab, the update, the balance, the hand-over
 await nav('orders');
 R.tab = await screenText(); check('listed: deposit paid, update to send', /BF-SO-000001/.test(R.tab) && /1 × Custom Sofa/.test(R.tab) && /Deposit paid/i.test(R.tab) && /update to send/i.test(R.tab) && /1 update to send/.test(R.tab), R.tab.slice(0, 400));
+{ // the list to Excel: one row per order, the totals underneath
+  const [dl] = await Promise.all([p.waitForEvent('download'), p.click('[data-act=so-export]')]);
+  const x = fs.readFileSync(await dl.path()).toString('latin1');
+  check('Export to Excel: an .xlsx with the order, its customer and the total row', /^Sales orders .*\.xlsx$/.test(dl.suggestedFilename()) && x.startsWith('PK') && /BF-SO-000001/.test(x) && /Custom Sofa/.test(x) && /<t>Total<\/t>/.test(x), dl.suggestedFilename());
+}
 await p.click('tr[data-act=so-open] td:nth-child(2)');   // a tap anywhere on the row opens it
  await p.waitForSelector('#modal .lb-detail');
 R.detail = await modalText(); check('the detail: spec, progress, money, no status buttons for a cashier', /Fabric: Linen look/.test(R.detail) && /Deposit paid/.test(R.detail) && /Take a payment/i.test(R.detail) && (await p.locator('[data-act=so-status]').count()) === 0, R.detail.slice(0, 400));

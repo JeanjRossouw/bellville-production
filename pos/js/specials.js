@@ -19,6 +19,8 @@ import { sendLink } from './clientlink.js';
 import { icon } from './icons.js';
 import { METHOD, payMethods, proofFields, proofNote, tenderFrom, PAY_STATE } from './tender.js';
 import { dueChip } from './notify.js';
+import { xlsxBytes, XLSX_TYPE } from './xlsx.js';
+import { download } from './csv.js';
 
 export const so = { filter: 'open', q: '' };
 let ctx = { repaint() {}, data: () => ({}) };
@@ -38,20 +40,25 @@ export function specialsHtml() {
   const dd = d();
   if (!dd.store) return `<div class="page-head"><h1>Sales orders</h1></div><div class="card muted">Pick a store first.</div>`;
   const all = dd.specials || [];
-  const q = so.q.trim().toLowerCase();
-  const rows = all.filter(o => (so.filter === 'all' || (so.filter === 'open' ? OPEN.includes(o.status) : so.filter === 'done' ? /^(delivered|collected)$/.test(o.status) : o.status === so.filter)) && (!q || [o.docNo, o.customerSnapshot && o.customerSnapshot.name, o.customerSnapshot && o.customerSnapshot.phone, o.factoryRef, ...o.lines.map(l => l.name)].some(x => String(x || '').toLowerCase().includes(q))))
-    .sort((a, b) => (OPEN.includes(a.status) ? 0 : 1) - (OPEN.includes(b.status) ? 0 : 1) || (isUrgent(b) ? 1 : 0) - (isUrgent(a) ? 1 : 0) || String(a.expectedAt).localeCompare(String(b.expectedAt)));
+  const rows = soRows(all);
   const open = all.filter(o => OPEN.includes(o.status));
   const due = all.filter(o => o.updateDue && o.status !== 'quoted').length;
   return `<div class="page-head"><h1>Sales orders</h1><p class="sub">${open.length} open · ${esc(money(open.reduce((n, o) => n + o.balanceCents, 0)))} still to come in${due ? ' · ' + due + ' update' + (due === 1 ? '' : 's') + ' to send' : ''}${all.filter(o => o.status === 'ready').length ? ' · ' + all.filter(o => o.status === 'ready').length + ' ready' : ''}</p></div>
     <div class="toolbar">
       <input id="so-q" class="search" type="search" placeholder="Number, customer, phone, item, factory ref" value="${esc(so.q)}">
       <select id="so-filter">${[['open', 'Open'], ['quoted', 'Quoted'], ['depositPaid', 'Deposit paid'], ['inProduction', 'In production'], ['ready', 'Ready'], ['outForDelivery', 'Out for delivery'], ['done', 'Delivered / collected'], ['cancelled', 'Cancelled'], ['all', 'All']].map(x => `<option value="${x[0]}"${so.filter === x[0] ? ' selected' : ''}>${x[1]}</option>`).join('')}</select>
-      <span class="muted">New orders start from the cart under Sell (made-to-order items).</span>
+      <button class="btn ghost sm" data-act="so-export"${rows.length ? '' : ' disabled'}>Export to Excel</button><span class="muted">New orders start from the cart under Sell (made-to-order items).</span>
     </div>
     ${rows.length ? `<div class="card" style="padding:0;overflow:auto"><table class="tbl lb-tbl so-tbl"><thead><tr><th>No</th><th>Customer</th><th>What</th><th>Expected</th><th class="r">Price</th><th class="r">Paid</th><th class="r">Balance</th><th>Status</th><th></th></tr></thead>
       <tbody>${rows.map(o => `<tr class="${OPEN.includes(o.status) ? '' : 'off'}" data-act="so-open" data-id="${esc(o.id)}" title="Open the order"><td><strong>${esc(o.docNo)}</strong>${isUrgent(o) && OPEN.includes(o.status) ? ' <span class="chip urgent">Urgent</span>' : ''}${o.source === 'shopify' ? `<div class="muted">Shopify ${esc((o.shopify || {}).name || '')}</div>` : ''}${o.factoryRef ? `<div class="muted">${esc(o.factoryRef)}</div>` : ''}</td><td>${esc(o.customerSnapshot ? o.customerSnapshot.name : '')}<div class="muted">${esc(o.customerSnapshot ? o.customerSnapshot.phone : '')}</div></td><td>${esc(o.lines.map(l => l.qty + ' × ' + l.name).join(', '))}</td><td class="muted">${esc(niceDate(o.expectedAt))}</td><td class="r">${esc(money(o.totalCents))}</td><td class="r">${esc(money(o.paidCents))}</td><td class="r"><strong>${esc(money(o.balanceCents))}</strong></td><td><span class="chip ${CHIP[o.status] || ''}">${esc(STATUS_LABEL[o.status] || o.status)}</span>${dueChip(d().settings, o)}${o.awaitingCents && OPEN.includes(o.status) ? '<span class="chip late">awaiting bank</span>' : ''}</td><td class="r"><button class="btn ghost sm" data-act="so-open" data-id="${esc(o.id)}">Open</button></td></tr>`).join('')}</tbody></table></div>`
       : empty(so.filter === 'open' ? 'No open sales orders' : 'Nothing here', so.filter === 'open' ? 'Ring a made-to-order item up under Sell, add the customer, and tap Sales order.' : '')}` + salesOrdersHtml();
+}
+
+// the list as shown: the filter and the search applied, open first, urgent first, by expected date
+function soRows(all) {
+  const q = so.q.trim().toLowerCase();
+  return all.filter(o => (so.filter === 'all' || (so.filter === 'open' ? OPEN.includes(o.status) : so.filter === 'done' ? /^(delivered|collected)$/.test(o.status) : o.status === so.filter)) && (!q || [o.docNo, o.customerSnapshot && o.customerSnapshot.name, o.customerSnapshot && o.customerSnapshot.phone, o.factoryRef, ...o.lines.map(l => l.name)].some(x => String(x || '').toLowerCase().includes(q))))
+    .sort((a, b) => (OPEN.includes(a.status) ? 0 : 1) - (OPEN.includes(b.status) ? 0 : 1) || (isUrgent(b) ? 1 : 0) - (isUrgent(a) ? 1 : 0) || String(a.expectedAt).localeCompare(String(b.expectedAt)));
 }
 
 // ---------------------------------------------------------- sales orders --
@@ -141,9 +148,24 @@ function salesHandover(id) {
   }
 }
 
+// the list as shown, to Excel: one row per order, rands as numbers so the sheet adds up
+function exportOrders() {
+  const list = soRows(d().specials || []);
+  if (!list.length) return toast('Nothing in the list to export.', 'warn');
+  const r = (c) => Math.round(c || 0) / 100, cs = (o) => o.customerSnapshot || {}, b = (v) => ({ v, s: 'b' }), m = (c) => ({ v: r(c), s: 'm' });
+  const head = ['Number', 'Order date', 'Shopify order', 'Factory ref', 'Customer', 'Phone', 'Email', 'Items', 'Expected', 'Price', 'Paid', 'Balance', 'Awaiting the bank', 'Status', 'Urgent', 'Update to send'];
+  const rows = [head.map(b), ...list.map(o => [o.docNo || '', niceDate(o.clientCreatedAt || o.createdAt), o.source === 'shopify' ? (o.shopify || {}).name || '' : '', o.factoryRef || '', cs(o).name || '', cs(o).phone || '', cs(o).email || '',
+    (o.lines || []).map(l => l.qty + ' × ' + l.name).join(', '), o.expectedAt ? niceDate(o.expectedAt) : '', m(o.totalCents), m(o.paidCents), m(o.balanceCents), m(o.awaitingCents), STATUS_LABEL[o.status] || o.status, isUrgent(o) ? 'Yes' : '', o.updateDue && o.status !== 'quoted' ? 'Yes' : '']),
+    [], [b('Total'), '', '', '', '', '', '', b(list.length + ' order' + (list.length === 1 ? '' : 's')), '', { v: r(list.reduce((n, o) => n + (o.totalCents || 0), 0)), s: 'bm' }, { v: r(list.reduce((n, o) => n + (o.paidCents || 0), 0)), s: 'bm' }, { v: r(list.reduce((n, o) => n + (o.balanceCents || 0), 0)), s: 'bm' }, { v: r(list.reduce((n, o) => n + (o.awaitingCents || 0), 0)), s: 'bm' }]];
+  const store = (d().store || {}).name || '';
+  download(xlsxBytes({ sheet: 'Sales orders', rows, widths: [22, 12, 12, 14, 24, 15, 26, 70, 12, 12, 12, 12, 12, 16, 8, 10] }), 'Sales orders' + (store ? ' ' + store : '') + ' ' + new Date().toISOString().slice(0, 10) + '.xlsx', XLSX_TYPE);
+  toast(list.length + ' sales order' + (list.length === 1 ? '' : 's') + ' saved to Excel');
+}
+
 // ------------------------------------------------------------ actions --
 export async function action(act, b) {
   const id = b.dataset.id;
+  if (act === 'so-export') return exportOrders();
   if (act === 'so-open') return openDetail(id);
   if (act === 'so-pay') return pay(id);
   if (act === 'so-pay-confirm') return bankPayment(id, b.dataset.pid, true);
