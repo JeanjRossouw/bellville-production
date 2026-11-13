@@ -135,6 +135,20 @@ export async function getDoc(coll, id, tx) {
   if (!res.ok) throw new Error(`Firestore get ${coll}/${id} failed: ${await res.text()}`);
   return docOf(await res.json());
 }
+// many documents in a few round trips (batchGet, 100 a call, the calls side by side); in a transaction when tx is given.
+// A Map of id → the document, or null where there is none.
+export async function getDocs(coll, ids, tx) {
+  const want = [...new Set(ids.filter(Boolean))];
+  const out = new Map(want.map(id => [id, null]));
+  const chunks = []; for (let i = 0; i < want.length; i += 100) chunks.push(want.slice(i, i + 100));
+  const base = `${root().replace(/\/documents$/, '')}/documents:batchGet`;
+  await Promise.all(chunks.map(async (part) => {
+    const res = await call('POST', base, { documents: part.map(id => docName(coll, id)), ...(tx ? { transaction: tx } : {}) });
+    if (!res.ok) throw new Error(`Firestore batch get ${coll} failed: ${await res.text()}`);
+    for (const r of await res.json()) if (r.found) { const d = docOf(r.found); out.set(d.id, d); }
+  }));
+  return out;
+}
 // set only the named fields; the document is created if missing
 export async function patchDoc(coll, id, patch) {
   writable();

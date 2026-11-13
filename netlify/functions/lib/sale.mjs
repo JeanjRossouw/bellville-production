@@ -465,7 +465,7 @@ export const specNote = (sp) => sp ? SPEC_FIELDS.filter(f => sp[f[0]] && f[0] !=
 
 // `more` runs before the sale is numbered (a credit note the sale's tender names); `after` runs once the sale is
 // written and sees its result (a document that carries the invoice number), all in the one transaction
-export async function runSale(ctx, b, { saleId, prep, more, after } = {}) {
+export async function runSale(ctx, b, { saleId, prep, more, after, push = true } = {}) {
   for (let attempt = 0; attempt < 5; attempt++) {
     const tx = await beginTransaction();
     let done = false;
@@ -476,7 +476,7 @@ export async function runSale(ctx, b, { saleId, prep, more, after } = {}) {
       const late = after ? await after(tx, levels, s.result) : { writes: [], result: {} };
       const spent = await spendLineApprovals(ctx, tx);
       await commit(squash([...extra.writes, ...s.writes, ...late.writes, ...spent]), tx); done = true;
-      if (levels.size) await afterStock(ctx, levels);   // the POS is master for stock: Shopify hears of every movement
+      if (push && levels.size) await afterStock(ctx, levels);   // push: false when only the on-order figures moved   // the POS is master for stock: Shopify hears of every movement
       return { ...s.result, ...extra.result, ...late.result, ok: true };
     } catch (e) {
       if (e instanceof Reject && e.status === 409 && /moment ago/.test(e.message) && attempt < 4) continue;   // the transaction lost a race: again

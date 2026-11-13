@@ -121,6 +121,33 @@ check('cancelled: lamps back at Bellville (5)', R.tr2.ok && R.tr2c.ok && R.tr2c.
 R.counters = [await getDoc('pos/retail/counters/BF_PO'), await getDoc('pos/retail/counters/BF_GRV'), await getDoc('pos/retail/counters/BF_TR')]; check('PO 1..2, GRV 1..3, TR 1..2 without a gap', R.counters.every(Boolean) && R.counters[0].next === 3 && R.counters[1].next === 4 && R.counters[2].next === 3, R.counters);
 const audit = await listColl('auditLog'); check('audited', ['po.send', 'po.cancel', 'stock.receive', 'stock.transferSend', 'stock.transferReceive', 'stock.transferCancel'].every(a => audit.some(x => x.action === a)), audit.map(a => a.action));
 
+// ---- a long order (the live one had hundreds of lines and timed out): 250 lines sent, changed and cancelled in one go each
+{
+  const N = 250, w = [];
+  const name = (i) => `projects/${PID}/databases/(default)/documents/pos/retail/`;
+  for (let i = 0; i < N; i++) {
+    w.push({ update: { name: name() + 'products/pb' + i, fields: toFs({ name: 'Bulk ' + i, sku: 'BK-' + i, barcodes: [], category: 'Shop', type: 'stock', vatClass: 'standard', trackStock: true, costCents: 1000 + i, priceCents: 3000, hasVariants: false, ...srv('BF') }).mapValue.fields } });
+    if (i % 2) w.push({ update: { name: name() + 'stockLevels/BF-BELL_pb' + i, fields: toFs({ productId: 'pb' + i, variantId: '', onHandQty: 1, onOrderQty: 2, reservedQty: 0, avgCostCents: 1000, ...srv('BF', 'BF-BELL') }).mapValue.fields } });
+  }
+  const lines = Array.from({ length: N }, (_, i) => ({ productId: 'pb' + i, variantId: '', itemId: 'pb' + i, sku: 'BK-' + i, name: 'Bulk ' + i, qty: 3, unitCostCents: 1000 + i, receivedQty: 0 }));
+  w.push({ update: { name: name() + 'purchaseOrders/po_big', fields: toFs({ status: 'draft', docNo: '', seq: 0, supplierId: 's_foam', supplierName: 'Foam Co', expectedAt: '', note: '', lines, ...srv('BF', 'BF-BELL') }).mapValue.fields } });
+  w.push({ update: { name: name() + 'purchaseOrders/po_huge', fields: toFs({ status: 'draft', docNo: '', seq: 0, supplierId: 's_foam', supplierName: 'Foam Co', expectedAt: '', note: '', lines: Array.from({ length: 401 }, (_, i) => lines[i % N]), ...srv('BF', 'BF-BELL') }).mapValue.fields } });
+  const cr = await fetch(`${docs}:commit`, { method: 'POST', headers: H, body: JSON.stringify({ writes: w }) }); if (!cr.ok) throw new Error('seed: ' + await cr.text());
+  let t = Date.now();
+  R.big = await call('pos-buy', { action: 'poSend', poId: 'po_big', how: 'email', ...bell }, own.idToken); R.bigMs = Date.now() - t;
+  const lv = await Promise.all([0, 1, 248, 249].map(i => lvl('BF-BELL', 'pb' + i)));
+  check('250 lines sent at once: numbered, every line on order (new levels 3, existing 2 + 3)', R.big.ok && R.big.po.docNo === 'BF-PO-000003' && R.big.po.lines.length === N && lv[0].onOrderQty === 3 && lv[1].onOrderQty === 5 && lv[2].onOrderQty === 3 && lv[3].onOrderQty === 5 && lv[1].onHandQty === 1, R.big.error || lv);
+  check('in the order of the draft', R.big.ok && R.big.po.lines.every((l, i) => l.itemId === 'pb' + i), R.big.error);
+  t = Date.now();
+  R.bigRev = await call('pos-buy', { action: 'poRevise', poId: 'po_big', lines: lines.slice(0, 200).map(l => ({ productId: l.productId, qty: 4, unitCostCents: l.unitCostCents })), ...bell }, own.idToken); R.bigRevMs = Date.now() - t;
+  const lv2 = await Promise.all([0, 1, 249].map(i => lvl('BF-BELL', 'pb' + i)));
+  check('changed to 200 lines of 4: on order moved by the difference, the dropped lines released', R.bigRev.ok && R.bigRev.po.revision === 2 && lv2[0].onOrderQty === 4 && lv2[1].onOrderQty === 6 && lv2[2].onOrderQty === 2, R.bigRev.error || lv2);
+  R.bigCancel = await call('pos-buy', { action: 'poCancel', poId: 'po_big', reason: 'test', ...bell }, own.idToken);
+  const lv3 = await Promise.all([0, 1].map(i => lvl('BF-BELL', 'pb' + i)));
+  check('cancelled: back to what was there', R.bigCancel.ok && lv3[0].onOrderQty === 0 && lv3[1].onOrderQty === 2, R.bigCancel.error || lv3);
+  R.huge = await call('pos-buy', { action: 'poSend', poId: 'po_huge', ...bell }, own.idToken); check('over 400 lines: refused with a reason, nothing numbered', R.huge.status === 400 && /400 at most/.test(R.huge.error) && (await getDoc('pos/retail/counters/BF_PO')).next === 4, R.huge);
+}
+
 console.log(JSON.stringify({ fails, ...R, page: undefined }, null, 1));
 console.log(fails.length ? fails.length + ' FAILED' : 'buy-api: all passed');
 if (server) server.kill();
