@@ -50,8 +50,8 @@ export function docOf(q) {
 }
 
 // ---------------------------------------------------------- a new quote --
-// openNew(cart, totals, clear): a new quote from the cart (the sale stays in the cart); or, when the cart was loaded
-// with Edit, the next revision of that quote (the cart is cleared once it is saved)
+// openNew(cart, totals, clear): a new quote from the cart; or, when the cart was loaded with Edit, the next revision
+// of that quote. Either way the cart is cleared once it is saved (Quotes → Load into the sale brings it back to ring up)
 export function openNew(cart, t, clear) {
   const dd = d();
   const was = cart.revising && cart.quoteId ? (dd.quotes || []).find(q => q.id === cart.quoteId) : null;
@@ -75,8 +75,9 @@ export function openNew(cart, t, clear) {
       try {
         const r = await auth.api(revising ? 'quoteRevise' : 'quote', body, API.special);
         close(true);
-        if (revising) { if (clear) clear(); toast('Quote ' + r.quote.docNo + ' saved as revision ' + r.quote.revision + ', valid until ' + niceDate(r.quote.validUntil)); }
-        else toast('Quote ' + r.quote.docNo + ' made, valid until ' + niceDate(r.quote.validUntil) + ' · the sale stays in the cart');
+        if (clear) clear();
+        if (revising) toast('Quote ' + r.quote.docNo + ' saved as revision ' + r.quote.revision + ', valid until ' + niceDate(r.quote.validUntil));
+        else toast('Quote ' + r.quote.docNo + ' made, valid until ' + niceDate(r.quote.validUntil) + ' · the cart is clear: Sales → Quotes → Load into the sale rings it up later');
         const list = dd.quotes || [], i = list.findIndex(q => q.id === r.quote.id); if (i >= 0) list[i] = { ...list[i], ...r.quote };
         openReceipt(docOf(r.quote));
         if (ctx.onChange) ctx.onChange(r);
