@@ -295,6 +295,8 @@ small { font-size: 12px; }
 
 /* ---- lay-bys ---- */
 .lb-tbl td { white-space: nowrap; } .lb-tbl td:nth-child(2) { white-space: normal; }
+/* sales orders: the whole row opens the order; the items wrap so the Open button stays in view */
+.so-tbl tbody tr { cursor: pointer; } .so-tbl tbody tr:hover td { background: #f6f6f3; } .so-tbl td:nth-child(3) { white-space: normal; min-width: 220px; max-width: 420px; }
 .chip.ok { color: #1f5f2f; border-color: #1f5f2f; } .chip.off { color: var(--muted); }
 .lb-new { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; } @media (max-width: 760px) { .lb-new { grid-template-columns: 1fr; } }
 .lb-sched { padding: .6rem .8rem; margin: .4rem 0 .8rem; } .lb-sched .tot { border-top: 1px solid var(--ink); margin-top: .3rem; padding-top: .4rem; font-weight: 600; }
