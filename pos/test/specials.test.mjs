@@ -98,7 +98,8 @@ check('written: deposit paid, update due, photo kept', o1 && o1.status === 'depo
 // ---- the tab, the update, the balance, the hand-over
 await nav('orders');
 R.tab = await screenText(); check('listed: deposit paid, update to send', /BF-SO-000001/.test(R.tab) && /1 × Custom Sofa/.test(R.tab) && /Deposit paid/i.test(R.tab) && /update to send/i.test(R.tab) && /1 update to send/.test(R.tab), R.tab.slice(0, 400));
-await p.click('[data-act=so-open]'); await p.waitForSelector('#modal .lb-detail');
+await p.click('tr[data-act=so-open] td:nth-child(2)');   // a tap anywhere on the row opens it
+ await p.waitForSelector('#modal .lb-detail');
 R.detail = await modalText(); check('the detail: spec, progress, money, no status buttons for a cashier', /Fabric: Linen look/.test(R.detail) && /Deposit paid/.test(R.detail) && /Take a payment/i.test(R.detail) && (await p.locator('[data-act=so-status]').count()) === 0, R.detail.slice(0, 400));
 await p.click('[data-act=so-update]'); R.updToast = await toast(); await p.waitForTimeout(400);
 R.opened1 = await p.evaluate(() => window.__opened); check('the WhatsApp update opened with the deposit words', /Update logged/.test(R.updToast) && R.opened1.length === 1 && /wa\.me\/27825550101/.test(R.opened1[0]) && /Thank%20you%20for%20your%20deposit/.test(R.opened1[0]), [R.updToast, R.opened1]);
