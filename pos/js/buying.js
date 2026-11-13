@@ -30,6 +30,12 @@ const chip = (s) => `<span class="chip ${(STATUS[s] || ['', ''])[1]}">${esc((STA
 const suppliers = () => (d().suppliers || []).filter(s => s.entityId === d().entity.id && !s.archived).sort((a, b) => a.name.localeCompare(b.name));
 const supplierName = (id) => ((d().suppliers || []).find(s => s.id === id) || {}).name || '';
 const stockOf = () => stockItems(d());
+// products by id, kept until the catalogue list changes (a lookup per stock item instead of a search)
+let _prodMap = null, _prodMapFor = null;
+const productById = (id) => { const list = d().products || []; if (_prodMapFor !== list) { _prodMap = new Map(list.map(p => [p.id, p])); _prodMapFor = list; } return _prodMap.get(id); };
+const supOf = (x) => (productById(x.productId) || {}).supplierId || '';
+// one purchase order of thousands of lines cannot be shown or saved: choose a supplier
+const PO_MAX_LINES = 400;
 const subHtml = () => `<div class="subnav">${[['po', 'Purchase orders'], ['receive', 'Receive'], ['transfers', 'Transfers'], ['suppliers', 'Suppliers']].map(x => `<button class="subtab${by.sub === x[0] ? ' on' : ''}" data-act="by-sub" data-to="${x[0]}">${x[1]}</button>`).join('')}</div>`;
 const mgr = () => auth.atLeast('manager');
 
@@ -143,9 +149,11 @@ function poEditHtml(dd) {
     <div class="grid three">${field('Supplier', 'po-supplier', { type: 'select', value: e.supplierId, options: [{ value: '', label: 'Choose…' }, ...sups.map(s => ({ value: s.id, label: s.name }))] })}${field('Expected by', 'po-expected', { type: 'date', value: e.expectedAt })}${field('Note to the supplier', 'po-note', { value: e.note })}</div>
     <div class="tk-scanrow" style="margin:.4rem 0"><label class="pos-search-wrap" style="flex:1 1 260px">${icon('search')}<input id="po-add" class="pos-in" placeholder="Add an item: name, SKU or barcode" autocomplete="off"></label><button class="btn ghost sm" data-act="by-po-open-here" title="What open orders need of this supplier's items">${icon('box')} Open orders</button><button class="btn ghost sm" data-act="by-po-suggest-here">${icon('box')} Suggest from low stock</button></div>
     <div id="po-hits" class="pk-list"></div>
-    ${e.lines.length ? `<table class="tbl po-lines"><thead><tr><th>Item</th><th class="r">Available</th><th class="r">On order</th><th class="r">Qty</th><th class="r">Unit cost (ex VAT)</th><th class="r">Total</th><th></th></tr></thead><tbody>${e.lines.map((l, i) => { const s = stockOf().find(x => x.itemId === l.itemId) || {}; return `<tr><td><strong>${esc(l.name)}</strong><div class="muted">${esc(l.sku || '')}</div></td><td class="r">${s.available == null ? '' : s.available}${s.reorderLevel != null ? ` <span class="muted">/ ${s.reorderLevel}</span>` : ''}</td><td class="r">${s.onOrder || ''}</td><td class="r"><input class="in-sm r" data-po-qty="${i}" type="number" min="1" value="${l.qty}" style="max-width:80px"></td><td class="r"><input class="in-sm r" data-po-cost="${i}" inputmode="decimal" value="${randsOf(l.unitCostCents)}" style="max-width:110px"></td><td class="r">${esc(money(l.qty * l.unitCostCents))}</td><td class="r"><button class="pos-icon-btn light" data-act="by-po-rm" data-i="${i}" title="Remove">${icon('x')}</button></td></tr>`; }).join('')}</tbody><tfoot><tr><td colspan="5" class="r"><strong>Subtotal (ex VAT)</strong></td><td class="r"><strong>${esc(money(sub))}</strong></td><td></td></tr></tfoot></table>` : '<p class="muted">No lines yet: add items above, or suggest them from low stock.</p>'}
+    ${e.lines.length ? `<table class="tbl po-lines"><thead><tr><th>Item</th><th class="r">Available</th><th class="r">On order</th><th class="r">Qty</th><th class="r">Unit cost (ex VAT)</th><th class="r">Total</th><th></th></tr></thead><tbody>${e.lines.map((l, i) => { const s = stockByItem().get(l.itemId) || {}; return `<tr><td><strong>${esc(l.name)}</strong><div class="muted">${esc(l.sku || '')}</div></td><td class="r">${s.available == null ? '' : s.available}${s.reorderLevel != null ? ` <span class="muted">/ ${s.reorderLevel}</span>` : ''}</td><td class="r">${s.onOrder || ''}</td><td class="r"><input class="in-sm r" data-po-qty="${i}" type="number" min="1" value="${l.qty}" style="max-width:80px"></td><td class="r"><input class="in-sm r" data-po-cost="${i}" inputmode="decimal" value="${randsOf(l.unitCostCents)}" style="max-width:110px"></td><td class="r">${esc(money(l.qty * l.unitCostCents))}</td><td class="r"><button class="pos-icon-btn light" data-act="by-po-rm" data-i="${i}" title="Remove">${icon('x')}</button></td></tr>`; }).join('')}</tbody><tfoot><tr><td colspan="5" class="r"><strong>Subtotal (ex VAT)</strong></td><td class="r"><strong>${esc(money(sub))}</strong></td><td></td></tr></tfoot></table>` : '<p class="muted">No lines yet: add items above, or suggest them from low stock.</p>'}
     <div class="card-actions">${e.revise ? `<button class="btn primary" data-act="by-po-revsend"${e.lines.length && e.supplierId ? '' : ' disabled'}>${icon('file')} Send the change</button>` : `<button class="btn" data-act="by-po-save">Save draft</button><button class="btn primary" data-act="by-po-send"${e.lines.length && e.supplierId ? '' : ' disabled'}>${icon('file')} Send to the supplier</button>`}<button class="btn ghost" data-act="by-po-close">Back</button></div></div>`;
 }
+let _stockMap = null, _stockMapFor = null;
+function stockByItem() { const list = stockOf(); if (_stockMapFor !== list) { _stockMap = new Map(list.map(x => [x.itemId, x])); _stockMapFor = list; } return _stockMap; }
 function newEdit(po) { return po ? { id: po.id, supplierId: po.supplierId || '', expectedAt: po.expectedAt || '', note: po.note || '', lines: (po.lines || []).map(l => ({ ...l })) } : { id: '', supplierId: '', expectedAt: '', note: '', lines: [] }; }
 function readEdit() {
   const w = document.getElementById('screen'); const e = by.edit; if (!e || !w.querySelector('#po-supplier')) return e;
@@ -165,22 +173,21 @@ export function forOpenOrders(supplierId) {
   for (const o of dd.specials || []) {
     if (!OPEN_SO.includes(o.status)) continue;
     for (const l of o.lines || []) {
-      const p = l.productId && (dd.products || []).find(x => x.id === l.productId);
+      const p = l.productId && productById(l.productId);
       if (!p || p.type !== 'stock') continue;
       const id = l.variantId || l.productId;
       need.set(id, (need.get(id) || 0) + (Number(l.qty) || 0));
       why.set(id, [...(why.get(id) || []), o.docNo]);
     }
   }
-  const supOf = (x) => ((dd.products || []).find(p => p.id === x.productId) || {}).supplierId || '';
   return stockOf().filter(x => !supplierId || (supplierId === NONE ? !supOf(x) : supOf(x) === supplierId))
     .map(x => ({ ...x, supplierId: supOf(x), need: need.get(x.itemId) || 0, orders: why.get(x.itemId) || [], qty: (need.get(x.itemId) || 0) - x.available - x.onOrder }))
     .filter(x => x.qty > 0);
 }
 // what the low-stock list says to order: items at or under their reorder level counting what is on order, the reorder quantity each
 function suggest(supplierId) {
-  const dd = d();
-  return stockOf().filter(x => x.reorderLevel != null && x.available + x.onOrder <= x.reorderLevel && (!supplierId || ((dd.products || []).find(p => p.id === x.productId) || {}).supplierId === supplierId)).map(x => ({ ...x, qty: Math.max(1, x.reorderQty || (x.reorderLevel - x.available - x.onOrder + 1)) }));
+  return stockOf().filter(x => x.reorderLevel != null && x.available + x.onOrder <= x.reorderLevel && (!supplierId || (supplierId === NONE ? !supOf(x) : supOf(x) === supplierId)))
+    .map(x => ({ ...x, supplierId: supOf(x), qty: Math.max(1, x.reorderQty || (x.reorderLevel - x.available - x.onOrder + 1)) }));
 }
 async function poSave(quiet) {
   const e = readEdit(); const dd = d();
@@ -398,7 +405,25 @@ export async function action(act, b) {
     case 'by-sup-edit': return supplierForm(id);
     case 'by-sup-import': return importSuppliers();
     case 'by-po-new': by.edit = newEdit(null); return ctx.repaint();
-    case 'by-po-suggest': { by.edit = newEdit(null); suggest('').forEach(x => by.edit.lines.push({ productId: x.productId, variantId: x.variantId, itemId: x.itemId, sku: x.sku, name: x.name, barcode: x.barcodes[0] || '', qty: x.qty, unitCostCents: x.costCents, receivedQty: 0 })); if (!by.edit.lines.length) toast('Nothing is low.', 'warn'); return ctx.repaint(); }
+    case 'by-po-suggest': {
+      // one order per supplier: the low items grouped by their product's supplier, the largest group first
+      const all = suggest(''); if (!all.length) return toast('Nothing is low.', 'warn');
+      const groups = new Map(); all.forEach(x => groups.set(x.supplierId || NONE, (groups.get(x.supplierId || NONE) || 0) + 1));
+      const name = (k) => k === NONE ? 'No supplier set' : supplierName(k) || 'Unknown supplier';
+      const opts = [...groups.entries()].sort((a, b) => b[1] - a[1] || name(a[0]).localeCompare(name(b[0]))).map(([k, n]) => ({ value: k, label: name(k) + ' · ' + n + ' item' + (n === 1 ? '' : 's') + (n > PO_MAX_LINES ? ' (too many for one order)' : '') }));
+      const first = (opts.find(o => o.value !== NONE && groups.get(o.value) <= PO_MAX_LINES) || opts[0]).value;
+      openModal('Suggest from low stock', `<p class="muted">Items at or under their reorder level, counting what is on order, the reorder quantity each. One purchase order goes to one supplier: choose whose.</p>${field('Supplier', 'ls-sup', { type: 'select', value: first, options: [...opts, ...(all.length <= PO_MAX_LINES ? [{ value: '', label: 'Every supplier together · ' + all.length + ' item' + (all.length === 1 ? '' : 's') }] : [])] })}${groups.has(NONE) ? `<p class="muted">${groups.get(NONE)} low item${groups.get(NONE) === 1 ? ' has' : 's have'} no supplier set: Products → Set supplier, or the Supplier column of Import costs &amp; prices.</p>` : ''}`, {
+        okLabel: 'Make the order', onOk: (w) => {
+          const sid = val(w, 'ls-sup'), list = suggest(sid);
+          if (!list.length) { toast('Nothing of theirs is low.', 'warn'); return false; }
+          if (list.length > PO_MAX_LINES) { toast(list.length + ' items is too many for one purchase order (' + PO_MAX_LINES + ' at most): set the suppliers on the products, then order per supplier.', 'warn'); return false; }
+          by.edit = newEdit(null); by.edit.supplierId = sid && sid !== NONE ? sid : '';
+          list.forEach(x => by.edit.lines.push({ productId: x.productId, variantId: x.variantId, itemId: x.itemId, sku: x.sku, name: x.name, barcode: x.barcodes[0] || '', qty: x.qty, unitCostCents: x.costCents, receivedQty: 0 }));
+          toast(list.length + ' low item' + (list.length === 1 ? '' : 's') + (sid && sid !== NONE ? ' from ' + supplierName(sid) : ''));
+          ctx.repaint(); return true;
+        } });
+      return;
+    }
     case 'by-po-for-open': {
       const all = forOpenOrders(''); if (!all.length) return toast('Open orders need nothing you do not have.', 'warn');
       const groups = new Map(); all.forEach(x => groups.set(x.supplierId || NONE, (groups.get(x.supplierId || NONE) || 0) + 1));
@@ -415,7 +440,14 @@ export async function action(act, b) {
       return;
     }
     case 'by-po-open-here': { const e = readEdit(); const list = forOpenOrders(e.supplierId); if (!list.length) return toast(e.supplierId ? 'Open orders need nothing more of this supplier’s.' : 'Open orders need nothing you do not have.', 'warn'); let n = 0; list.forEach(x => { if (!e.lines.some(l => l.itemId === x.itemId)) { e.lines.push({ productId: x.productId, variantId: x.variantId, itemId: x.itemId, sku: x.sku, name: x.name, barcode: x.barcodes[0] || '', qty: x.qty, unitCostCents: x.costCents, receivedQty: 0 }); n++; } }); toast(n + ' added for open orders'); return ctx.repaint(); }
-    case 'by-po-suggest-here': { const e = readEdit(); const list = suggest(e.supplierId); if (!list.length) return toast(e.supplierId ? 'Nothing of this supplier’s is low.' : 'Nothing is low.', 'warn'); list.forEach(x => { if (!e.lines.some(l => l.itemId === x.itemId)) e.lines.push({ productId: x.productId, variantId: x.variantId, itemId: x.itemId, sku: x.sku, name: x.name, barcode: x.barcodes[0] || '', qty: x.qty, unitCostCents: x.costCents, receivedQty: 0 }); }); toast(list.length + ' suggested'); return ctx.repaint(); }
+    case 'by-po-suggest-here': {
+      const e = readEdit(); const list = suggest(e.supplierId);
+      if (!list.length) return toast(e.supplierId ? 'Nothing of this supplier’s is low.' : 'Nothing is low.', 'warn');
+      const have = new Set(e.lines.map(l => l.itemId)); const add = list.filter(x => !have.has(x.itemId));
+      if (e.lines.length + add.length > PO_MAX_LINES) return toast(add.length + ' more items would make ' + (e.lines.length + add.length) + ' lines, too many for one purchase order (' + PO_MAX_LINES + ' at most): choose the supplier first.', 'warn');
+      add.forEach(x => e.lines.push({ productId: x.productId, variantId: x.variantId, itemId: x.itemId, sku: x.sku, name: x.name, barcode: x.barcodes[0] || '', qty: x.qty, unitCostCents: x.costCents, receivedQty: 0 }));
+      toast(add.length + ' suggested'); return ctx.repaint();
+    }
     case 'by-po-edit': { const p = openPos(d()).find(x => x.id === id); if (p) { const m = document.getElementById('modal'); if (m) m.remove(); by.edit = newEdit(p); by.sub = 'po'; ctx.repaint(); } return; }
     case 'by-po-rm': { const e = readEdit(); e.lines.splice(Number(b.dataset.i), 1); return ctx.repaint(); }
     case 'by-po-save': { if (await poSave(false)) ctx.repaint(); return; }

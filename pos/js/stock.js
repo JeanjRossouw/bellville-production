@@ -25,20 +25,33 @@ const REASON = { sale: 'Sale', creditNote: 'Return', receive: 'Received', adjust
 
 // ---------------------------------------------------------------- items --
 // every stock item of the store's company joined with its level
+// The lists come from Firestore listeners that replace them whole on every change, so the result is kept until one
+// of them (or the store) is a different list: a catalogue of 12 000 products is joined once, not on every screen
+// paint, and the variants and levels are looked up by id instead of searched for each product (which was
+// products × levels, minutes on a big catalogue).
+let _itemsCache = null;
 export function items(dd) {
   const sid = dd.store.id, eid = dd.entity.id;
+  const c = _itemsCache;
+  if (c && c.products === dd.products && c.variants === dd.variants && c.levels === dd.stockLevels && c.sid === sid && c.eid === eid) return c.out;
+  const byProduct = new Map();
+  for (const v of dd.variants || []) { if (v.archived) continue; if (!byProduct.has(v.productId)) byProduct.set(v.productId, []); byProduct.get(v.productId).push(v); }
+  const levelOf = new Map();   // the first level row for each item at this store, as the old search found it
+  for (const x of dd.stockLevels || []) { if (x.storeId !== sid) continue; const k = x.variantId || x.productId; if (k && !levelOf.has(k)) levelOf.set(k, x); }
   const out = [];
   for (const p of dd.products || []) {
     if (p.entityId !== eid || p.type !== 'stock' || p.trackStock === false || p.archived) continue;
-    const vs = p.hasVariants ? (dd.variants || []).filter(v => v.productId === p.id && !v.archived) : [null];
+    const vs = p.hasVariants ? (byProduct.get(p.id) || []) : [null];
     for (const v of vs) {
       const itemId = v ? v.id : p.id;
-      const lv = (dd.stockLevels || []).find(x => x.storeId === sid && (x.variantId === itemId || (!x.variantId && x.productId === itemId))) || {};
+      const lv = levelOf.get(itemId) || {};
       const onHand = lv.onHandQty || 0, reserved = lv.reservedQty || 0, cost = (lv.avgCostCents > 0 ? lv.avgCostCents : (v && v.costCents != null ? v.costCents : p.costCents)) || 0;
       out.push({ itemId, productId: p.id, variantId: v ? v.id : '', name: p.name + (v ? ' · ' + v.name : ''), sku: (v && v.sku) || p.sku || '', barcodes: (v && v.barcodes) || p.barcodes || [], category: p.category || '', onHand, reserved, available: onHand - reserved, onOrder: lv.onOrderQty || 0, quarantine: lv.quarantineQty || 0, reorderLevel: p.reorderLevel, reorderQty: p.reorderQty, costCents: cost, valueCents: onHand * cost, lastCountedAt: lv.lastCountedAt || '', low: p.reorderLevel != null && onHand - reserved <= p.reorderLevel, negative: onHand < 0 });
     }
   }
-  return out.sort((a, b) => a.name.localeCompare(b.name));
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  _itemsCache = { products: dd.products, variants: dd.variants, levels: dd.stockLevels, sid, eid, out };
+  return out;
 }
 const one = (itemId) => items(d()).find(x => x.itemId === itemId);
 const findCode = (code) => { const c = String(code || '').trim().toLowerCase(); if (!c) return null; const all = items(d()); return all.find(x => x.barcodes.some(b => String(b).toLowerCase() === c)) || all.find(x => x.sku.toLowerCase() === c) || null; };
