@@ -15,23 +15,35 @@
 //   transferCancel  { transferId }                                                             nothing received yet: the stock goes back
 //
 // Env: FACTORY_SERVICE_ACCOUNT, POS_GROUP_ID (optional).
-import { json, Reject, clean, randomId, nowIso, getDoc, query, serverStamp, bodyOf, withGroup } from './lib/pos.mjs';
+import { json, Reject, clean, randomId, nowIso, getDoc, getDocs, query, serverStamp, bodyOf, withGroup } from './lib/pos.mjs';
 import { whoAndWhere, runSale, moveWrites, nextFromCounter, approved, int } from './lib/sale.mjs';
 import { rateOn } from '../../pos/js/money.js';
 
 const idOk = (id) => /^[\w:.-]{8,80}$/.test(id);
 const money = (c) => 'R ' + (c / 100).toFixed(2);
 
-async function itemOf(ctx, b) {
-  const p = await getDoc('products', clean(b.productId, 60));
-  if (!p || p.entityId !== ctx.entityId) throw new Reject(400, 'No such product here.');
-  let v = null;
-  if (b.variantId) { v = await getDoc('variants', clean(b.variantId, 60)); if (!v || v.productId !== p.id) throw new Reject(400, 'No such variant.'); }
-  else if (p.hasVariants) throw new Reject(400, `${p.name} needs a variant.`);
-  if (p.type !== 'stock' || p.trackStock === false) throw new Reject(400, `${p.name} does not hold stock.`);
-  return { p, v, itemId: v ? v.id : p.id, productId: p.id, variantId: v ? v.id : '', name: p.name + (v ? ' · ' + v.name : ''), sku: (v && v.sku) || p.sku || '', barcode: ((v && v.barcodes) || p.barcodes || [])[0] || '', costCents: (v && v.costCents != null ? v.costCents : p.costCents) || 0 };
+// every line's product and variant in a few batched reads (a long order line by line ran past the time limit); the lines' order kept
+async function itemsOf(ctx, list) {
+  const ps = await getDocs('products', list.map(b => clean(b.productId, 60)));
+  const vs = await getDocs('variants', list.map(b => b.variantId ? clean(b.variantId, 60) : ''));
+  return list.map(b => {
+    const p = ps.get(clean(b.productId, 60));
+    if (!p || p.entityId !== ctx.entityId) throw new Reject(400, 'No such product here.');
+    let v = null;
+    if (b.variantId) { v = vs.get(clean(b.variantId, 60)); if (!v || v.productId !== p.id) throw new Reject(400, 'No such variant.'); }
+    else if (p.hasVariants) throw new Reject(400, `${p.name} needs a variant.`);
+    if (p.type !== 'stock' || p.trackStock === false) throw new Reject(400, `${p.name} does not hold stock.`);
+    return { p, v, itemId: v ? v.id : p.id, productId: p.id, variantId: v ? v.id : '', name: p.name + (v ? ' · ' + v.name : ''), sku: (v && v.sku) || p.sku || '', barcode: ((v && v.barcodes) || p.barcodes || [])[0] || '', costCents: (v && v.costCents != null ? v.costCents : p.costCents) || 0 };
+  });
 }
 async function levelFor(tx, ctx, levels, storeId, itemId) { const lid = storeId + '_' + itemId; if (!levels.has(lid)) levels.set(lid, (await getDoc('stockLevels', lid, tx)) || null); return lid; }
+// the levels of many items read together inside the transaction
+async function levelsFor(tx, levels, storeId, itemIds) {
+  const want = [...new Set(itemIds.map(i => storeId + '_' + i))].filter(lid => !levels.has(lid));
+  if (!want.length) return;
+  const got = await getDocs('stockLevels', want, tx);
+  for (const lid of want) levels.set(lid, got.get(lid) || null);
+}
 // the on-order figure moves without a stock movement
 function onOrderWrite(ctx, levels, line, delta, now) {
   const lid = ctx.storeId + '_' + line.itemId; const lv = levels.get(lid);
@@ -63,8 +75,10 @@ const actions = {
     if (po.status !== 'draft') throw new Reject(409, `Purchase order is ${po.status}.`);
     if (po.storeId !== ctx.storeId) throw new Reject(400, 'That order is for another store.');
     if (!Array.isArray(po.lines) || !po.lines.length) throw new Reject(400, 'The order has no lines.');
+    if (po.lines.length > 400) throw new Reject(400, `${po.lines.length} lines is too many for one purchase order (400 at most): split it by supplier.`);
     const lines = [];
-    for (const l of po.lines) { const it = await itemOf(ctx, l); const qty = int(l.qty), cost = int(l.unitCostCents); if (!(qty > 0) || !(cost >= 0)) throw new Reject(400, `${it.name}: quantity and cost must be whole numbers.`); lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, sku: it.sku, name: it.name, barcode: it.barcode, qty, unitCostCents: cost, receivedQty: 0 }); }
+    const its = await itemsOf(ctx, po.lines);
+    for (const [i, l] of po.lines.entries()) { const it = its[i]; const qty = int(l.qty), cost = int(l.unitCostCents); if (!(qty > 0) || !(cost >= 0)) throw new Reject(400, `${it.name}: quantity and cost must be whole numbers.`); lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, sku: it.sku, name: it.name, barcode: it.barcode, qty, unitCostCents: cost, receivedQty: 0 }); }
     const sub = lines.reduce((n, l) => n + l.qty * l.unitCostCents, 0);
     const rateBp = ctx.entity.vatRegistered ? rateOn((ctx.settings.vat || {}).rates, nowIso()) : 0;
     const vat = Math.round(sub * rateBp / 10000);
@@ -75,12 +89,13 @@ const actions = {
       const num = await nextFromCounter(tx, ctx, 'PO', ctx.entity.poPrefix || (ctx.entity.invoicePrefix + '-PO'));
       const now = nowIso(); const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
       const writes = [num.write];
-      for (const l of lines) { await levelFor(tx, ctx, levels, ctx.storeId, l.itemId); writes.push(onOrderWrite(ctx, levels, l, l.qty, now)); }
+      await levelsFor(tx, levels, ctx.storeId, lines.map(l => l.itemId));
+      for (const l of lines) writes.push(onOrderWrite(ctx, levels, l, l.qty, now));
       const patch = { seq: num.seq, docNo: num.docNo, lines, supplierName: supplier ? supplier.name : po.supplierName || '', supplierSnapshot: supplier ? { email: supplier.email || '', phone: supplier.phone || '', contact: supplier.contact || '' } : null, subtotalCents: sub, vatRateBp: rateBp, vatCents: vat, totalCents: sub + vat, status: 'sent', sentAt: now, sentBy: ctx.user.name, sentHow: clean(b.how, 20), grvs: [], updatedAt: now };
       writes.push({ update: true, coll: 'purchaseOrders', id: po.id, data: patch });
       writes.push(auditRow(ctx, 'po.send', { docType: 'purchaseOrder', docId: po.id, docNo: num.docNo }, { lines: lines.length, totalCents: sub + vat, supplier: patch.supplierName }, new Map(), stamp, now));
       return { writes, result: { po: { ...cur, ...patch, id: po.id } } };
-    } });
+    }, push: false });
   },
 
   async poRevise(event, b) {
@@ -91,8 +106,10 @@ const actions = {
     if (po.storeId !== ctx.storeId) throw new Reject(400, 'That order is for another store.');
     const raw = Array.isArray(b.lines) ? b.lines : [];
     if (!raw.length) throw new Reject(400, 'The order needs at least one line (or cancel it).');
+    if (raw.length > 400) throw new Reject(400, `${raw.length} lines is too many for one purchase order (400 at most).`);
     const lines = [];
-    for (const l of raw) { const it = await itemOf(ctx, l); const qty = int(l.qty), cost = int(l.unitCostCents); if (!(qty > 0) || !(cost >= 0)) throw new Reject(400, `${it.name}: quantity and cost must be whole numbers.`); lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, sku: it.sku, name: it.name, barcode: it.barcode, qty, unitCostCents: cost, receivedQty: 0 }); }
+    const its = await itemsOf(ctx, raw);
+    for (const [i, l] of raw.entries()) { const it = its[i]; const qty = int(l.qty), cost = int(l.unitCostCents); if (!(qty > 0) || !(cost >= 0)) throw new Reject(400, `${it.name}: quantity and cost must be whole numbers.`); lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, sku: it.sku, name: it.name, barcode: it.barcode, qty, unitCostCents: cost, receivedQty: 0 }); }
     const sub = lines.reduce((n, l) => n + l.qty * l.unitCostCents, 0);
     const rateBp = ctx.entity.vatRegistered ? rateOn((ctx.settings.vat || {}).rates, nowIso()) : 0;
     const vat = Math.round(sub * rateBp / 10000);
@@ -108,7 +125,8 @@ const actions = {
       for (const l of cur.lines || []) delta.set(l.itemId, { line: l, d: (delta.get(l.itemId) || { d: 0 }).d - l.qty });
       for (const l of lines) delta.set(l.itemId, { line: l, d: (delta.get(l.itemId) || { d: 0 }).d + l.qty });
       const writes = [];
-      for (const { line, d } of delta.values()) if (d) { await levelFor(tx, ctx, levels, ctx.storeId, line.itemId); writes.push(onOrderWrite(ctx, levels, line, d, now)); }
+      await levelsFor(tx, levels, ctx.storeId, [...delta.values()].filter(x => x.d).map(x => x.line.itemId));
+      for (const { line, d } of delta.values()) if (d) writes.push(onOrderWrite(ctx, levels, line, d, now));
       const revision = (cur.revision || 1) + 1;
       const revisions = [...(cur.revisions || []), { revision: cur.revision || 1, at: cur.revisedAt || cur.sentAt, by: cur.revisedBy || cur.sentBy, lines: (cur.lines || []).map(l => ({ name: l.name, qty: l.qty, unitCostCents: l.unitCostCents })), totalCents: cur.totalCents }].slice(-20);
       const patch = { lines, supplierId, supplierName: supplier ? supplier.name : cur.supplierName || '', supplierSnapshot: supplier ? { email: supplier.email || '', phone: supplier.phone || '', contact: supplier.contact || '' } : cur.supplierSnapshot || null,
@@ -117,7 +135,7 @@ const actions = {
       writes.push({ update: true, coll: 'purchaseOrders', id: po.id, data: patch });
       writes.push(auditRow(ctx, 'po.revise', { docType: 'purchaseOrder', docId: po.id, docNo: cur.docNo }, { revision, lines: lines.length, totalCents: sub + vat, was: cur.totalCents }, new Map(), stamp, now));
       return { writes, result: { po: { ...cur, ...patch, id: po.id } } };
-    } });
+    }, push: false });
   },
 
   async poCancel(event, b) {
@@ -130,12 +148,13 @@ const actions = {
       if (!cur || !['draft', 'sent', 'part'].includes(cur.status)) throw new Reject(409, 'The order changed meanwhile.');
       const now = nowIso(); const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
       const writes = [];
-      if (cur.status !== 'draft') for (const l of cur.lines) { const open = l.qty - (l.receivedQty || 0); if (open > 0) { await levelFor(tx, ctx, levels, cur.storeId, l.itemId); writes.push(onOrderWrite({ ...ctx, storeId: cur.storeId }, levels, l, -open, now)); } }
+      if (cur.status !== 'draft') await levelsFor(tx, levels, cur.storeId, cur.lines.filter(l => l.qty - (l.receivedQty || 0) > 0).map(l => l.itemId));
+      if (cur.status !== 'draft') for (const l of cur.lines) { const open = l.qty - (l.receivedQty || 0); if (open > 0) { writes.push(onOrderWrite({ ...ctx, storeId: cur.storeId }, levels, l, -open, now)); } }
       const patch = { status: 'cancelled', cancelledAt: now, cancelledBy: ctx.user.name, cancelReason: clean(b.reason, 200), updatedAt: now };
       writes.push({ update: true, coll: 'purchaseOrders', id: po.id, data: patch });
       writes.push(auditRow(ctx, 'po.cancel', { docType: 'purchaseOrder', docId: po.id, docNo: cur.docNo || '' }, { reason: patch.cancelReason, wasStatus: cur.status }, new Map(), stamp, now));
       return { writes, result: { po: { ...cur, ...patch, id: po.id } } };
-    } });
+    }, push: false });
   },
 
   // goods in: against a PO (part or full) or direct; the landed cost goes into the stock's cost
@@ -155,8 +174,9 @@ const actions = {
     const inLines = Array.isArray(b.lines) ? b.lines : [];
     if (!inLines.length || inLines.length > 300) throw new Reject(400, 'Nothing to receive.');
     const lines = [];
-    for (const l of inLines) {
-      const it = await itemOf(ctx, l); const qty = int(l.qty), cost = int(l.unitCostCents);
+    const its = await itemsOf(ctx, inLines);
+    for (const [i, l] of inLines.entries()) {
+      const it = its[i]; const qty = int(l.qty), cost = int(l.unitCostCents);
       if (!(qty > 0) || qty > 100000) throw new Reject(400, `${it.name}: how many arrived?`);
       if (!(cost >= 0)) throw new Reject(400, `${it.name}: the cost must be whole cents, nought or more.`);
       if (lines.some(x => x.itemId === it.itemId)) throw new Reject(400, `${it.name} is on the receipt twice: add the quantities together.`);
@@ -172,7 +192,7 @@ const actions = {
       const curPo = po ? await getDoc('purchaseOrders', po.id, tx) : null;
       if (po && (!curPo || !['sent', 'part'].includes(curPo.status))) throw new Reject(409, `${po.docNo} changed meanwhile: look again.`);
       const num = await nextFromCounter(tx, ctx, 'GRV', ctx.entity.grvPrefix || (ctx.entity.invoicePrefix + '-GRV'));
-      for (const l of lines) await levelFor(tx, ctx, levels, ctx.storeId, l.itemId);
+      await levelsFor(tx, levels, ctx.storeId, lines.map(l => l.itemId));
       const now = nowIso(); const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
       const writes = [num.write];
       const costChanges = [];
@@ -210,13 +230,15 @@ const actions = {
     const inLines = Array.isArray(b.lines) ? b.lines : [];
     if (!inLines.length || inLines.length > 300) throw new Reject(400, 'Nothing to send.');
     const lines = [];
-    for (const l of inLines) { const it = await itemOf(ctx, l); const qty = int(l.qty); if (!(qty > 0)) throw new Reject(400, `${it.name}: how many?`); if (lines.some(x => x.itemId === it.itemId)) throw new Reject(400, `${it.name} is on the transfer twice.`); lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, name: it.name, sku: it.sku, barcode: it.barcode, qty, receivedQty: 0, lostQty: 0, unitCostCents: it.costCents }); }
+    const its = await itemsOf(ctx, inLines);
+    for (const [i, l] of inLines.entries()) { const it = its[i]; const qty = int(l.qty); if (!(qty > 0)) throw new Reject(400, `${it.name}: how many?`); if (lines.some(x => x.itemId === it.itemId)) throw new Reject(400, `${it.name} is on the transfer twice.`); lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, name: it.name, sku: it.sku, barcode: it.barcode, qty, receivedQty: 0, lostQty: 0, unitCostCents: it.costCents }); }
     return runSale(ctx, {}, { more: async (tx, levels) => {
       const num = await nextFromCounter(tx, ctx, 'TR', ctx.entity.transferPrefix || (ctx.entity.invoicePrefix + '-TR'));
       const now = nowIso(); const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
       const writes = [num.write];
+      await levelsFor(tx, levels, ctx.storeId, lines.map(l => l.itemId));
       for (const l of lines) {
-        const lid = await levelFor(tx, ctx, levels, ctx.storeId, l.itemId); const lv = levels.get(lid) || {};
+        const lid = ctx.storeId + '_' + l.itemId; const lv = levels.get(lid) || {};
         const avail = (lv.onHandQty || 0) - (lv.reservedQty || 0);
         if (l.qty > avail) throw new Reject(400, `${l.name}: only ${avail} available to send (${lv.onHandQty || 0} on hand, ${lv.reservedQty || 0} reserved).`);
         if (lv.avgCostCents > 0) l.unitCostCents = lv.avgCostCents;
@@ -250,7 +272,7 @@ const actions = {
         if (!g.qty) continue;
         const l = lines.find(x => x.itemId === g.itemId); if (!l) throw new Reject(400, 'That item is not on the transfer.');
         const open = l.qty - (l.receivedQty || 0); if (g.qty > open) throw new Reject(400, `${l.name}: only ${open} still on the way.`);
-        await levelFor(tx, ctx, levels, ctx.storeId, l.itemId);
+        await levelFor(tx, ctx, levels, ctx.storeId, l.itemId);   // a transfer's lines are few; got may name one twice
         writes.push(...moveWrites(ctx, levels, { productId: l.productId, variantId: l.variantId, itemId: l.itemId, qty: g.qty, bucket: 'onHand', reason: 'transferIn', unitCostCents: l.unitCostCents, baseCostCents: l.unitCostCents, wac: true, name: l.name, note: 'From ' + cur.fromStoreName, byName: a.name }, { docType: 'transfer', docId: tr.id, docNo: cur.docNo }, stamp, now));
         l.receivedQty = (l.receivedQty || 0) + g.qty;
       }
@@ -277,7 +299,8 @@ const actions = {
       if (!cur || cur.status !== 'inTransit' || cur.lines.some(l => l.receivedQty > 0)) throw new Reject(409, 'The transfer changed meanwhile.');
       const now = nowIso(); const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
       const writes = [];
-      for (const l of cur.lines) { await levelFor(tx, ctx, levels, ctx.storeId, l.itemId); writes.push(...moveWrites(ctx, levels, { productId: l.productId, variantId: l.variantId, itemId: l.itemId, qty: l.qty, bucket: 'onHand', reason: 'transferIn', unitCostCents: l.unitCostCents, baseCostCents: l.unitCostCents, wac: true, name: l.name, note: 'Transfer cancelled', byName: a.name }, { docType: 'transfer', docId: tr.id, docNo: cur.docNo }, stamp, now)); }
+      await levelsFor(tx, levels, ctx.storeId, cur.lines.map(l => l.itemId));
+      for (const l of cur.lines) { writes.push(...moveWrites(ctx, levels, { productId: l.productId, variantId: l.variantId, itemId: l.itemId, qty: l.qty, bucket: 'onHand', reason: 'transferIn', unitCostCents: l.unitCostCents, baseCostCents: l.unitCostCents, wac: true, name: l.name, note: 'Transfer cancelled', byName: a.name }, { docType: 'transfer', docId: tr.id, docNo: cur.docNo }, stamp, now)); }
       const patch = { status: 'cancelled', cancelledAt: now, cancelledBy: ctx.user.name, updatedAt: now };
       writes.push({ update: true, coll: 'transfers', id: tr.id, data: patch });
       writes.push(auditRow(ctx, 'stock.transferCancel', { docType: 'transfer', docId: tr.id, docNo: cur.docNo }, {}, approvers, stamp, now));
