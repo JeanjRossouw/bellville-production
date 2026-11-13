@@ -149,7 +149,7 @@ await p.fill('#qt-name', 'Pieter Visser'); await p.fill('#qt-phone', '0834445555
 await p.waitForSelector('.rc-paper', { timeout: 15000 }); R.rc = await txt('#modal');
 check('the Quotation shows: number, the fabric, valid until', /Quotation BF-QT-000007/i.test(R.rc) && /R 22,041\.00/.test(R.rc) && /Acapella/.test(R.rc) && /Valid until/i.test(R.rc), R.rc.slice(0, 600));
 await p.click('[data-close]'); await p.waitForTimeout(300);
-check('the sale stays in the cart', (await cartLine()).lines.length === 1);
+check('the cart is cleared once the quote is made', (await cartLine()).lines.length === 0);
 await nav('quotes');
 R.list = await txt('#screen');
 check('Quotes: the new one open, the used one under Used', /BF-QT-000007/.test(R.list) && /Pieter Visser/.test(R.list) && /1 × Chesterfield 3 Seater · Acapella/.test(R.list) && !/BF-QT-000001/.test(R.list), R.list.slice(0, 600));
