@@ -278,14 +278,20 @@ const actions = {
     const today = b.day && /^\d{4}-\d{2}-\d{2}$/.test(b.day) ? b.day : new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 10);
     const lastWeek = new Date(Date.parse(today) - 7 * 86400000).toISOString().slice(0, 10);
     const stores = [];
+    // sales orders opened on the day, Shopify orders among them: one query per day on the opening date alone (its
+    // own single-field index, so no composite index to create), sorted out by company and store here
+    const [soT, soL] = await Promise.all([today, lastWeek].map(day => query('specialOrders', range('openedAt', day, day), 5000)));
+    const ordersOf = (rows, e, s) => { const g = rows.filter(o => o.entityId === e && o.storeId === s && o.status !== 'cancelled'), on = g.filter(o => o.source === 'shopify');
+      return { orders: g.length, ordersTotal: sum(g, 'totalCents'), online: on.length, onlineTotal: sum(on, 'totalCents') }; };
     for (const e of ents) {
       for (const s of await storesOf({ ...w, storeId: '' }, e.id)) {
         const [t, l, n, ln, lb] = await Promise.all([query('sales', [{ field: 'entityId', value: e.id }, { field: 'storeId', value: s.id }, ...range('clientCreatedAt', today, today)], 5000), query('sales', [{ field: 'entityId', value: e.id }, { field: 'storeId', value: s.id }, ...range('clientCreatedAt', lastWeek, lastWeek)], 5000), query('creditNotes', [{ field: 'entityId', value: e.id }, { field: 'storeId', value: s.id }, ...range('clientCreatedAt', today, today)], 500), query('creditNotes', [{ field: 'entityId', value: e.id }, { field: 'storeId', value: s.id }, ...range('clientCreatedAt', lastWeek, lastWeek)], 500), query('laybys', [{ field: 'entityId', value: e.id }, { field: 'storeId', value: s.id }, { field: 'status', value: 'open' }], 2000)]);
         const pick = (g, ns) => ({ sales: g.length, total: sum(g, 'totalCents'), basket: g.length ? Math.round(sum(g, 'totalCents') / g.length) : 0, items: sum(g, 'lineCount'), refunds: sum(ns, 'totalCents'), net: sum(g, 'totalCents') - sum(ns, 'totalCents') });
-        stores.push({ entityId: e.id, entity: e.tradingName || e.legalName, storeId: s.id, store: s.name, today: pick(t, n), lastWeek: pick(l, ln), openLaybys: lb.length, laybyBalance: sum(lb, 'balanceCents') });
+        stores.push({ entityId: e.id, entity: e.tradingName || e.legalName, storeId: s.id, store: s.name, today: { ...pick(t, n), ...ordersOf(soT, e.id, s.id) }, lastWeek: { ...pick(l, ln), ...ordersOf(soL, e.id, s.id) }, openLaybys: lb.length, laybyBalance: sum(lb, 'balanceCents') });
       }
     }
-    const all = (k) => ({ sales: sum(stores, s => s[k].sales), total: sum(stores, s => s[k].total), refunds: sum(stores, s => s[k].refunds), net: sum(stores, s => s[k].net), basket: sum(stores, s => s[k].sales) ? Math.round(sum(stores, s => s[k].total) / sum(stores, s => s[k].sales)) : 0 });
+    const all = (k) => ({ sales: sum(stores, s => s[k].sales), total: sum(stores, s => s[k].total), refunds: sum(stores, s => s[k].refunds), net: sum(stores, s => s[k].net), basket: sum(stores, s => s[k].sales) ? Math.round(sum(stores, s => s[k].total) / sum(stores, s => s[k].sales)) : 0,
+      orders: sum(stores, s => s[k].orders), ordersTotal: sum(stores, s => s[k].ordersTotal), online: sum(stores, s => s[k].online), onlineTotal: sum(stores, s => s[k].onlineTotal) });
     return { ok: true, day: today, lastWeek, stores, all: { today: all('today'), lastWeek: all('lastWeek') } };
   }
 };

@@ -472,3 +472,5 @@ button.link { background: none; border: 0; padding: 0; color: var(--ink-2); text
 .seg { display: inline-flex; gap: 4px; }
 .mi-tbl .tot td, .tbl tr.tot td { font-weight: 700; border-top: 2px solid #111; }
 @media (max-width: 900px) { .mi-top { grid-template-columns: 1fr 1fr; } .mi-big { grid-column: 1 / -1; } }
+
+.dash-orders { margin-top: .6rem; padding-top: .6rem; border-top: 1px solid var(--line, #e6e6e1); }

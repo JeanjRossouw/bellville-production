@@ -28,6 +28,7 @@ await put('pos/retail/users/' + own.localId, { email: 'owner@shop.co.za', name: 
 await put('pos/retail/entities/BF', { legalName: 'Bellville Furniture (Pty) Ltd', tradingName: 'Bellville Furniture', vatRegistered: true, vatNo: '4123456789', invoicePrefix: 'BF', active: true, ...srv('BF') });
 await put('pos/retail/settings/BF', { vat: { rates: [{ rateBp: 1500, effectiveFrom: '2018-04-01' }] }, discounts: { maxPctByRole: { cashier: 5, supervisor: 15, manager: 50, owner: 100 } }, session: { idleLogoutMinutes: 10, pinLength: 6 }, ...srv('BF') });
 await put('pos/retail/stores/BF-BELL', { entityId: 'BF', name: 'Bellville', active: true, paymentMethods: ['cash', 'card'], ...srv('BF', 'BF-BELL') });
+await put('pos/retail/specialOrders/shp-home-1', { status: 'depositPaid', source: 'shopify', totalCents: 250000, openedAt: new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 10) + 'T09:30:00.000Z', docNo: 'BF-SO-000801', ...srv('BF', 'BF-BELL') });
 const prod = (id, o) => put('pos/retail/products/' + id, { sku: '', barcodes: [], category: 'Shop', brand: '', type: 'stock', vatClass: 'standard', trackStock: true, costCents: 0, priceCents: 0, images: [], options: [], hasVariants: false, storePrices: {}, bundle: [], archived: false, favourite: true, ...o, ...srv('BF') });
 await prod('p_lamp', { name: 'Lamp', barcodes: ['LAMP'], priceCents: 50000, costCents: 20000 });
 await put('pos/retail/stockLevels/BF-BELL_p_lamp', { productId: 'p_lamp', variantId: '', onHandQty: 5, reservedQty: 0, avgCostCents: 20000, ...srv('BF', 'BF-BELL') });
@@ -58,6 +59,7 @@ await p.waitForSelector('#nav [data-view=reports]', { state: 'attached' }); awai
 
 // ---- the dashboard on Home
 await nav('home'); await p.waitForSelector('.dash-card', { timeout: 15000 }); await p.waitForTimeout(300);
+R.dashOrders = await p.textContent('.dash-orders').catch(() => ''); check('the Shopify order shows on Home as an online order', /Orders R 2,500\.00/.test(R.dashOrders) && /1 order/.test(R.dashOrders) && /1 online R 2,500\.00/.test(R.dashOrders), R.dashOrders);
 R.dash = await screenText(); check('today: R 1 000 over 2 sales, last week nothing', /Today,/i.test(R.dash) && /Bellville/.test(R.dash) && /R 1,000\.00/.test(R.dash) && /2 sales · basket R 500\.00/.test(R.dash) && /Same day last week: R 0\.00/.test(R.dash), R.dash.slice(0, 400));
 
 // ---- Money in: the day screen (managers), today's two card sales
