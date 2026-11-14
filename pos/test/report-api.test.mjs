@@ -63,8 +63,15 @@ R.voidAudit = await put('pos/retail/auditLog/au_void1', { action: 'sale.line.voi
 R.close = await call('pos-shift', { action: 'close', shiftId: R.open.shift.id, counted: { cash: { denoms: { '20000': 5, '10000': 7, '5000': 1, '2000': 1, '1000': 1, '10': 1 }, totalCents: 178010 }, card: 104800 }, note: '', ...till }, mgr.idToken); check('register closed with the cash right', R.close.ok && R.close.shift.varianceCents === 0, R.close.error || R.close.shift);
 
 // ---- the dashboard: today vs the same weekday last week
+{ // sales orders opened today: one from Shopify (online), one at the till, one cancelled (not counted), one at the other company
+  const day = new Date(Date.now() + 2 * 3600000).toISOString().slice(0, 10) + 'T09:30:00.000Z';
+  await put('pos/retail/specialOrders/shp-dash-1', { status: 'depositPaid', source: 'shopify', totalCents: 120000, openedAt: day, docNo: 'BF-SO-000901', ...srv('BF', 'BF-BELL') });
+  await put('pos/retail/specialOrders/so-dash-2', { status: 'depositPaid', totalCents: 500000, openedAt: day, docNo: 'BF-SO-000902', ...srv('BF', 'BF-BELL') });
+  await put('pos/retail/specialOrders/so-dash-3', { status: 'cancelled', source: 'shopify', totalCents: 99900, openedAt: day, docNo: 'BF-SO-000903', ...srv('BF', 'BF-BELL') });
+}
 R.dash = await call('pos-report', { action: 'dashboard' }, own.idToken);
 check('dashboard: both stores, today 3 sales R 1 877.10 less R 199 refunds, nothing last week, a lay-by open', R.dash.ok && R.dash.stores.length === 2 && R.dash.stores[0].today.sales === 3 && R.dash.stores[0].today.total === 89800 + 17910 + 80000 && R.dash.stores[0].today.refunds === 19900 && R.dash.stores[0].lastWeek.sales === 0 && R.dash.stores[0].openLaybys === 1 && R.dash.all.today.net === 187710 - 19900, R.dash.error || R.dash.stores);
+check('dashboard: today’s orders on their own line, the Shopify one counted online, the cancelled one left out', R.dash.ok && R.dash.stores[0].today.orders === 2 && R.dash.stores[0].today.ordersTotal === 620000 && R.dash.stores[0].today.online === 1 && R.dash.stores[0].today.onlineTotal === 120000 && R.dash.all.today.online === 1 && R.dash.stores[0].lastWeek.orders === 0 && R.dash.stores[0].today.net === 187710 - 19900, R.dash.error || R.dash.stores);
 R.dashCas = await call('pos-report', { action: 'dashboard' }, cas.idToken); check('not for a cashier', R.dashCas.status === 403, R.dashCas);
 
 // ---- reports
