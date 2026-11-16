@@ -147,14 +147,14 @@ function poEditHtml(dd) {
   const sub = e.lines.reduce((n, l) => n + l.qty * l.unitCostCents, 0);
   return `<div class="card"><h2>${e.revise ? 'Change ' + esc(e.docNo) + ' (revision ' + (e.revision + 1) + ')' : e.id ? 'Purchase order (draft)' : 'New purchase order'}</h2>${e.revise ? '<p class="muted">Sent already, nothing received yet: change the lines, then send the change. It keeps its number; the supplier gets the new version.</p>' : ''}
     <div class="grid three">${field('Supplier', 'po-supplier', { type: 'select', value: e.supplierId, options: [{ value: '', label: 'Choose…' }, ...sups.map(s => ({ value: s.id, label: s.name }))] })}${field('Expected by', 'po-expected', { type: 'date', value: e.expectedAt })}${field('Note to the supplier', 'po-note', { value: e.note })}</div>
-    <div class="tk-scanrow" style="margin:.4rem 0"><label class="pos-search-wrap" style="flex:1 1 260px">${icon('search')}<input id="po-add" class="pos-in" placeholder="Add an item: name, SKU or barcode" autocomplete="off"></label><button class="btn ghost sm" data-act="by-po-open-here" title="What open orders need of this supplier's items">${icon('box')} Open orders</button><button class="btn ghost sm" data-act="by-po-suggest-here">${icon('box')} Suggest from low stock</button></div>
-    <div id="po-hits" class="pk-list"></div>
+    <div class="tk-scanrow" style="margin:.4rem 0"><label class="pos-search-wrap" style="flex:1 1 260px">${icon('search')}<input id="po-add" class="pos-in" placeholder="Add items: name, SKU or barcode, then tick the ones to buy" autocomplete="off" value="${esc(by.poQ || '')}"></label><button class="btn ghost sm" data-act="by-po-open-here" title="What open orders need of this supplier's items">${icon('box')} Open orders</button><button class="btn ghost sm" data-act="by-po-suggest-here">${icon('box')} Suggest from low stock</button></div>
+    <div id="po-hits" class="pk-list">${poHitsHtml(by.poQ)}</div>
     ${e.lines.length ? `<table class="tbl po-lines"><thead><tr><th>Item</th><th class="r">Available</th><th class="r">On order</th><th class="r">Qty</th><th class="r">Unit cost (ex VAT)</th><th class="r">Total</th><th></th></tr></thead><tbody>${e.lines.map((l, i) => { const s = stockByItem().get(l.itemId) || {}; return `<tr><td><strong>${esc(l.name)}</strong><div class="muted">${esc(l.sku || '')}</div></td><td class="r">${s.available == null ? '' : s.available}${s.reorderLevel != null ? ` <span class="muted">/ ${s.reorderLevel}</span>` : ''}</td><td class="r">${s.onOrder || ''}</td><td class="r"><input class="in-sm r" data-po-qty="${i}" type="number" min="1" value="${l.qty}" style="max-width:80px"></td><td class="r"><input class="in-sm r" data-po-cost="${i}" inputmode="decimal" value="${randsOf(l.unitCostCents)}" style="max-width:110px"></td><td class="r">${esc(money(l.qty * l.unitCostCents))}</td><td class="r"><button class="pos-icon-btn light" data-act="by-po-rm" data-i="${i}" title="Remove">${icon('x')}</button></td></tr>`; }).join('')}</tbody><tfoot><tr><td colspan="5" class="r"><strong>Subtotal (ex VAT)</strong></td><td class="r"><strong>${esc(money(sub))}</strong></td><td></td></tr></tfoot></table>` : '<p class="muted">No lines yet: add items above, or suggest them from low stock.</p>'}
     <div class="card-actions">${e.revise ? `<button class="btn primary" data-act="by-po-revsend"${e.lines.length && e.supplierId ? '' : ' disabled'}>${icon('file')} Send the change</button>` : `<button class="btn" data-act="by-po-save">Save draft</button><button class="btn primary" data-act="by-po-send"${e.lines.length && e.supplierId ? '' : ' disabled'}>${icon('file')} Send to the supplier</button>`}<button class="btn ghost" data-act="by-po-close">Back</button></div></div>`;
 }
 let _stockMap = null, _stockMapFor = null;
 function stockByItem() { const list = stockOf(); if (_stockMapFor !== list) { _stockMap = new Map(list.map(x => [x.itemId, x])); _stockMapFor = list; } return _stockMap; }
-function newEdit(po) { return po ? { id: po.id, supplierId: po.supplierId || '', expectedAt: po.expectedAt || '', note: po.note || '', lines: (po.lines || []).map(l => ({ ...l })) } : { id: '', supplierId: '', expectedAt: '', note: '', lines: [] }; }
+function newEdit(po) { by.poQ = ''; poPick.ids.clear(); poPick.each = 1; return po ? { id: po.id, supplierId: po.supplierId || '', expectedAt: po.expectedAt || '', note: po.note || '', lines: (po.lines || []).map(l => ({ ...l })) } : { id: '', supplierId: '', expectedAt: '', note: '', lines: [] }; }
 function readEdit() {
   const w = document.getElementById('screen'); const e = by.edit; if (!e || !w.querySelector('#po-supplier')) return e;
   e.supplierId = val(w, 'po-supplier'); e.expectedAt = val(w, 'po-expected'); e.note = val(w, 'po-note');
@@ -162,7 +162,7 @@ function readEdit() {
   w.querySelectorAll('[data-po-cost]').forEach(i => { const l = e.lines[Number(i.dataset.poCost)]; if (l) l.unitCostCents = Math.max(0, centsOf(i.value)); });
   return e;
 }
-function addLine(it, qty) { const e = readEdit(); const had = e.lines.find(l => l.itemId === it.itemId); if (had) had.qty += qty || 1; else e.lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, sku: it.sku, name: it.name, barcode: it.barcodes ? it.barcodes[0] || '' : '', qty: qty || 1, unitCostCents: it.costCents || 0, receivedQty: 0 }); ctx.repaint(); }
+function addLine(it, qty) { by.poQ = ''; poPick.ids.clear(); const e = readEdit(); const had = e.lines.find(l => l.itemId === it.itemId); if (had) had.qty += qty || 1; else e.lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, sku: it.sku, name: it.name, barcode: it.barcodes ? it.barcodes[0] || '' : '', qty: qty || 1, unitCostCents: it.costCents || 0, receivedQty: 0 }); ctx.repaint(); }
 // what open customer orders need and the shelf cannot give, reorder levels left out: website orders already
 // hold their stock (available falls below nothing when they are short), sales orders (those brought in from
 // Shopify too) take nothing until they go out, so their stock items count here; less what is on order
@@ -374,9 +374,60 @@ function hits(hostId, q, onPick) {
   host.innerHTML = found.map(x => `<button class="pk-row" data-pick="${esc(x.itemId)}"><strong>${esc(x.name)}</strong><span>${esc(x.sku)} · ${x.available} available · cost ${esc(money(x.costCents))}</span></button>`).join('') || '<div class="muted" style="padding:.4rem .7rem">No stock item matches.</div>';
   host.onclick = (e) => { const b = e.target.closest('[data-pick]'); if (!b) return; const it = stockOf().find(x => x.itemId === b.dataset.pick); if (it) onPick(it); };
 }
+// ---- the purchase order's item search: several ticked and added in one go. Typing a product's code lists every
+// item it matches (the product's own code counts for each of its variants) and, when only a few products match,
+// all their other variants too, so "select all" takes the whole product. A tick stays while the search changes.
+const PO_HITS = 80;
+const poPick = { ids: new Set(), shown: [] };
+function poMatches(q) {
+  const s = q.trim().toLowerCase(); if (!s) return [];
+  const all = stockOf();
+  const hit = all.filter(x => { const p = productById(x.productId) || {}; return [x.name, x.sku, p.sku, ...(x.barcodes || []), ...(p.barcodes || [])].some(v => String(v || '').toLowerCase().includes(s)); });
+  const prods = new Set(hit.map(x => x.productId));
+  // the rest of the product's variants, when the search is narrow enough for that to be what is meant
+  const found = prods.size <= 5 ? all.filter(x => prods.has(x.productId)) : hit;
+  return found.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+}
+function poHitsHtml(q) {
+  q = String(q || '');
+  if (!q.trim()) { poPick.shown = []; return ''; }
+  const found = poMatches(q), list = found.slice(0, PO_HITS), e = by.edit || { lines: [] };
+  poPick.shown = list.map(x => x.itemId);
+  for (const id of [...poPick.ids]) if (!stockByItem().has(id)) poPick.ids.delete(id);
+  const n = poPick.ids.size, allOn = list.length > 0 && list.every(x => poPick.ids.has(x.itemId));
+  return list.length ? `<div class="pk-bar"><label class="chk"><input type="checkbox" data-po-all${allOn ? ' checked' : ''}> Select all ${list.length}${found.length > list.length ? ' shown (of ' + found.length + ': type more to narrow it)' : ''}</label>
+      <span class="pk-bar-r"><label class="pk-each">Qty each <input id="po-each" class="pos-in" type="number" min="1" step="1" value="${Number(poPick.each) || 1}" inputmode="numeric"></label><button class="btn primary sm" data-act="by-po-addsel"${n ? '' : ' disabled'}>Add ${n || ''} selected</button></span></div>
+    ${list.map(x => { const on = poPick.ids.has(x.itemId), has = e.lines.some(l => l.itemId === x.itemId); return `<label class="pk-row pk-check${on ? ' on' : ''}"><input type="checkbox" data-po-tick="${esc(x.itemId)}"${on ? ' checked' : ''}><span class="pk-main"><strong>${esc(x.name)}</strong><span>${esc(x.sku)} · ${x.available} available${x.onOrder ? ' · ' + x.onOrder + ' on order' : ''} · cost ${esc(money(x.costCents))}${has ? ' · <em>on this order</em>' : ''}</span></span></label>`; }).join('')}`
+    : '<div class="muted" style="padding:.4rem .7rem">No stock item matches.</div>';
+}
+// the search as typed is kept (by.poQ), so a redraw of the editor shows the same list and ticks again
+function poHits(q) { by.poQ = String(q || ''); if (!by.poQ.trim()) poPick.ids.clear(); const host = document.getElementById('po-hits'); if (host) host.innerHTML = poHitsHtml(by.poQ); }
+function poTick(t) {
+  if (t.id === 'po-each') { poPick.each = Math.max(1, Math.round(Number(t.value) || 1)); return true; }
+  if (t.dataset.poTick != null) { if (t.checked) poPick.ids.add(t.dataset.poTick); else poPick.ids.delete(t.dataset.poTick); }
+  else if (t.dataset.poAll != null) { for (const id of poPick.shown) { if (t.checked) poPick.ids.add(id); else poPick.ids.delete(id); } }
+  else return false;
+  poHits(by.poQ);
+  return true;
+}
+// the ticked items onto the order together, the quantity each; one already on the order gets that many more
+function addPicked() {
+  const each = Math.max(1, Math.round(Number((document.getElementById('po-each') || {}).value) || Number(poPick.each) || 1));
+  const items = [...poPick.ids].map(id => stockByItem().get(id)).filter(Boolean);
+  if (!items.length) return false;
+  const e = readEdit();
+  const fresh = items.filter(it => !e.lines.some(l => l.itemId === it.itemId)).length;
+  if (e.lines.length + fresh > PO_MAX_LINES) { toast(fresh + ' more items would make ' + (e.lines.length + fresh) + ' lines, too many for one purchase order (' + PO_MAX_LINES + ' at most).', 'warn'); return true; }
+  for (const it of items) { const had = e.lines.find(l => l.itemId === it.itemId); if (had) had.qty += each; else e.lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, sku: it.sku, name: it.name, barcode: it.barcodes ? it.barcodes[0] || '' : '', qty: each, unitCostCents: it.costCents || 0, receivedQty: 0 }); }
+  poPick.ids.clear(); poPick.shown = []; poPick.each = 1; by.poQ = '';
+  toast(items.length + ' item' + (items.length === 1 ? '' : 's') + ' added to the order' + (each > 1 ? ', ' + each + ' each' : ''));
+  ctx.repaint();
+  const box = document.getElementById('po-add'); if (box) box.focus();
+  return true;
+}
 export function onInput(id, value) {
   if (id === 'by-q') { by.q = value; ctx.repaint(); const q = document.getElementById('by-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
-  if (id === 'po-add') hits('po-hits', value, (it) => { addLine(it, 1); });
+  if (id === 'po-add') poHits(value);
   // kept as typed, so a redraw of the editor (a supplier chosen, a line changed) does not lose them
   if ((id === 'po-expected' || id === 'po-note') && by.edit) by.edit[id === 'po-note' ? 'note' : 'expectedAt'] = value;
   if (id === 'rc-add') hits('rc-hits', value, (it) => { const r = readRcv(); if (!r.lines.some(l => l.itemId === it.itemId)) r.lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, name: it.name, sku: it.sku, barcode: it.barcodes[0] || '', qty: 1, unitCostCents: it.costCents }); ctx.repaint(); });
@@ -384,13 +435,15 @@ export function onInput(id, value) {
 }
 export function onEnter(id, value) {
   const pickExact = (fn) => { const s = String(value).trim().toLowerCase(); const it = stockOf().find(x => x.barcodes.some(b => String(b).toLowerCase() === s) || x.sku.toLowerCase() === s); if (it) { fn(it); return true; } return false; };
-  if (id === 'po-add') return pickExact(it => addLine(it, 1));
+  // Enter in the order's search: the ticked ones if any; else a scanned code's exact item; else the only match
+  if (id === 'po-add') { if (poPick.ids.size) return addPicked(); if (pickExact(it => addLine(it, 1))) return true; const m = poMatches(String(value)); if (m.length === 1) { addLine(m[0], 1); return true; } return false; }
   if (id === 'rc-add') return pickExact(it => { const r = readRcv(); const had = r.lines.find(l => l.itemId === it.itemId); if (had) had.qty++; else r.lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, name: it.name, sku: it.sku, barcode: it.barcodes[0] || '', qty: 1, unitCostCents: it.costCents }); ctx.repaint(); });
   if (id === 'tr-add') return pickExact(it => { const t = readTr(); const had = t.lines.find(l => l.itemId === it.itemId); if (had) had.qty++; else t.lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, name: it.name, sku: it.sku, qty: 1 }); ctx.repaint(); });
   return false;
 }
 export function onChange(e) {
   if (e.target.id === 'by-filter') { by.filter = e.target.value; ctx.repaint(); }
+  if (by.edit && poTick(e.target)) return;   // a tick in the order's item search
   // a line's figure changes on blur, often the moment a button is pressed: read now, redraw a beat later so the press still lands
   const later = () => setTimeout(() => ctx.repaint(), 220);
   if (/^rc-(freight|duty|other|method)$/.test(e.target.id) || e.target.dataset.rcQty != null || e.target.dataset.rcCost != null) { readRcv(); later(); }
@@ -399,6 +452,7 @@ export function onChange(e) {
 }
 export async function action(act, b) {
   const id = b.dataset.id;
+  if (act === 'by-po-addsel') return addPicked();
   switch (act) {
     case 'by-sub': by.sub = b.dataset.to; by.q = ''; return ctx.repaint();
     case 'by-sup-new': return supplierForm('');

@@ -36,6 +36,9 @@ const secret = 'by-secret-' + Date.now();
 await put('pos/retail/devices/dev_by', { label: 'Back office', registerId: '', secretHash: createHash('sha256').update(secret).digest('hex'), enrolledBy: 'server', enrolledAt: '2026-10-21T08:00:00.000Z', active: true, ...srv('BF', 'BF-BELL', 'dev_by') });
 const prod = (id, o) => put('pos/retail/products/' + id, { sku: '', barcodes: [], category: 'Shop', brand: '', type: 'stock', vatClass: 'standard', trackStock: true, costCents: 0, priceCents: 0, images: [], options: [], hasVariants: false, storePrices: {}, bundle: [], archived: false, favourite: true, ...o, ...srv('BF') });
 await prod('p_cushion', { name: 'Scatter Cushion', sku: 'CU-1', barcodes: ['CUSH'], priceCents: 19900, costCents: 5000, reorderLevel: 5, reorderQty: 10 });
+// a product with three sizes (its own code HIDE; each size its own), for the order's tick-several search
+await prod('p_hide', { name: 'Reptile Hide', sku: 'HIDE', hasVariants: true, costCents: 6000 });
+for (const [k, n, c] of [['s', 'Small', 4000], ['m', 'Medium', 6000], ['l', 'Large', 9000]]) await put('pos/retail/variants/v_hide_' + k, { productId: 'p_hide', name: n, sku: 'RH-' + k.toUpperCase(), barcodes: [], optionValues: { Size: n }, costCents: c, priceCents: c * 2, archived: false, ...srv('BF') });
 await prod('p_lamp', { name: 'Lamp', sku: 'LA-1', barcodes: ['LAMP'], priceCents: 50000, costCents: 20000 });
 await put('pos/retail/stockLevels/BF-BELL_p_cushion', { productId: 'p_cushion', variantId: '', onHandQty: 3, reservedQty: 0, avgCostCents: 5000, ...srv('BF', 'BF-BELL') });
 await put('pos/retail/stockLevels/BF-BELL_p_lamp', { productId: 'p_lamp', variantId: '', onHandQty: 6, reservedQty: 0, avgCostCents: 20000, ...srv('BF', 'BF-BELL') });
@@ -108,7 +111,7 @@ R.lsBox = await p.locator('#modal').innerText();
 check('the suggestion asks whose order it is, with the count per supplier', /Suggest from low stock/i.test(R.lsBox) && /1 item/.test(R.lsBox), R.lsBox.slice(0, 300));
 await p.click('#modal-ok'); await p.waitForSelector('#po-supplier');
 R.edit = await screenText(); check('the cushion suggested: 10 at R 50', /Scatter Cushion/.test(R.edit) && (await p.inputValue('[data-po-qty="0"]')) === '10' && (await p.inputValue('[data-po-cost="0"]')) === '50.00' && /Subtotal \(ex VAT\) R 500\.00/.test(R.edit), R.edit.slice(0, 400));
-await p.fill('#po-add', 'lamp'); await p.waitForTimeout(250); await p.click('#po-hits .pk-row'); await p.waitForTimeout(300);
+await p.fill('#po-add', 'lamp'); await p.waitForTimeout(250); await p.check('#po-hits [data-po-tick=p_lamp]'); await p.click('[data-act=by-po-addsel]'); await p.waitForTimeout(300);
 await p.fill('[data-po-qty="1"]', '2'); await p.dispatchEvent('[data-po-qty="1"]', 'change'); await p.waitForTimeout(300);
 R.edit2 = await screenText(); check('the lamp added, 2 at R 200: subtotal R 900', /Lamp/.test(R.edit2) && /Subtotal \(ex VAT\) R 900\.00/.test(R.edit2), R.edit2.slice(0, 500));
 await p.selectOption('#po-supplier', supId); await p.fill('#po-expected', '2026-11-01'); await p.fill('#po-note', 'Before 10 please');
@@ -178,6 +181,26 @@ R.sups = await listColl('suppliers');
 const rsk = R.sups.find(x => x.name === 'RSK Reef'), foam = R.sups.filter(x => /foam co/i.test(x.name));
 check('imported: Akwa and RSK Reef added to this company, RSK Reef with what was owed; Foam Co not doubled and kept its own phone', R.sups.some(x => x.name === 'Akwa' && x.email === 'alex@akwa.co.za' && x.entityId === 'BF') && rsk && rsk.openingOwedCents === 596195 && /Owed R ?5[ ,]?961\.95 when moved over/.test(rsk.notes) && foam.length === 1 && foam[0].phone === '0215550001', [R.impToast, R.sups.map(x => [x.name, x.openingOwedCents, x.phone])]);
 check('the list shows the opening balance', /Owed when moved over: R ?5[ ,]?961\.95/.test(await screenText()));
+
+// ---- a purchase order's search: the product's code lists all its sizes, several ticked and added in one go
+await p.click('[data-act=by-sub][data-to=po]'); await p.waitForTimeout(300);
+await p.click('[data-act=by-po-new]'); await p.waitForSelector('#po-add');
+await p.fill('#po-add', 'hide'); await p.waitForSelector('#po-hits [data-po-tick]');
+R.multi = await p.locator('#po-hits').innerText();
+check('the product code lists its three sizes with tick boxes and Select all', (await p.locator('#po-hits [data-po-tick]').count()) === 3 && /Select all 3/.test(R.multi) && /Reptile Hide · Small/.test(R.multi) && /Reptile Hide · Large/.test(R.multi) && (await p.isDisabled('[data-act=by-po-addsel]')), R.multi);
+await p.fill('#po-add', 'RH-M'); await p.waitForTimeout(250);
+check('one size’s own code still shows the other sizes of that product', (await p.locator('#po-hits [data-po-tick]').count()) === 3);
+await p.check('#po-hits [data-po-all]'); await p.waitForTimeout(200);
+check('Select all ticks all three; the button counts them', (await p.locator('#po-hits [data-po-tick]:checked').count()) === 3 && /Add 3 selected/.test(await p.textContent('[data-act=by-po-addsel]')) && (await p.inputValue('#po-add')) === 'RH-M');
+if (process.env.SHOT) await p.screenshot({ path: process.env.SHOT });   // a picture of the tick list, for a person to look at
+await p.uncheck('#po-hits [data-po-tick=v_hide_l]'); await p.waitForTimeout(200);
+await p.fill('#po-each', '5'); await p.dispatchEvent('#po-each', 'change');
+await p.click('[data-act=by-po-addsel]'); R.multiToast = await toast(); await p.waitForTimeout(300);
+R.multiEdit = await screenText();
+check('two sizes added together, 5 each at their own costs, the search cleared', /2 items added to the order, 5 each/.test(R.multiToast) && (await p.locator('.po-lines tbody tr').count()) === 2 && (await p.inputValue('[data-po-qty="0"]')) === '5' && (await p.inputValue('[data-po-qty="1"]')) === '5' && /Reptile Hide · Small/.test(R.multiEdit) && /Reptile Hide · Medium/.test(R.multiEdit) && !/Reptile Hide · Large/.test(R.multiEdit) && /Subtotal \(ex VAT\) R 500\.00/.test(R.multiEdit) && (await p.inputValue('#po-add')) === '', [R.multiToast, R.multiEdit.slice(0, 400)]);
+await p.fill('#po-add', 'hide'); await p.waitForSelector('#po-hits [data-po-tick]'); await p.check('#po-hits [data-po-all]'); await p.press('#po-add', 'Enter'); await p.waitForTimeout(300);
+check('all three again with Enter: the two on the order get one more, the Large is added', (await p.locator('.po-lines tbody tr').count()) === 3 && (await p.inputValue('[data-po-qty="0"]')) === '6' && (await p.inputValue('[data-po-qty="2"]')) === '1');
+await p.click('[data-act=by-po-close]'); await p.waitForTimeout(300);
 
 console.log(JSON.stringify({ fails, errs, ...R, printed: undefined, printed2: undefined, printed3: undefined }, null, 1).slice(0, 6000));
 await b.close();

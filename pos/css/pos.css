@@ -490,3 +490,12 @@ button.link { background: none; border: 0; padding: 0; color: var(--ink-2); text
 @media (max-width: 700px) { .sh-detail-grid { grid-template-columns: 1fr; } }
 
 .dash-split { display: flex; flex-wrap: wrap; gap: .2rem 1.2rem; margin: .45rem 0; font-size: 13px; }
+
+/* the purchase order's item search: tick several, add them together */
+.pk-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; padding: .5rem .7rem; border-bottom: 1px solid var(--line); background: #fafaf8; position: sticky; top: 0; z-index: 1; }
+.pk-bar .chk { margin: 0; } .pk-bar-r { display: flex; align-items: center; gap: .6rem; }
+.pk-each { display: flex; align-items: center; gap: .4rem; font-size: 12px; color: var(--muted); } .pk-each input { width: 4.2rem; padding: .35rem .4rem; text-align: right; }
+.pk-row.pk-check { display: flex; align-items: center; gap: .7rem; } .pk-row.pk-check input { width: 18px; height: 18px; flex: none; } .pk-row.pk-check.on { background: #f3f3ef; }
+.pk-row .pk-main { display: grid; font-size: 14px; color: var(--ink); } .pk-row .pk-main > span { font-size: 12px; color: var(--muted); }
+#po-add { width: 100%; font: inherit; font-size: 15px; padding: .65rem .7rem .65rem 2.6rem; border: 1px solid var(--line-2); border-radius: 4px; background: #fff; } #po-add:focus { outline: none; border-color: var(--ink); }
+#po-hits.pk-list { max-height: 360px; }
