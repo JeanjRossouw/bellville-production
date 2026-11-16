@@ -434,7 +434,8 @@ const actions = {
   async orders(event, b) {
     const ctx = await whoAndWhere(event, b, { noShift: true });
     if (rank(ctx.user.role) < rank('supervisor')) throw new Reject(403, 'Online orders are for supervisors and up.');
-    const rows = (await query('onlineOrders', [{ field: 'entityId', value: ctx.entityId }, { field: 'storeId', value: ctx.storeId }], 500)).sort((x, y) => (x.pickup === y.pickup ? 0 : x.pickup ? -1 : 1) || String(y.orderedAt).localeCompare(String(x.orderedAt)));
+    // newest first, as on Shopify (read them all, then sort: an unsorted page of 500 could miss the newest)
+    const rows = (await query('onlineOrders', [{ field: 'entityId', value: ctx.entityId }, { field: 'storeId', value: ctx.storeId }], 5000)).sort((x, y) => String(y.orderedAt).localeCompare(String(x.orderedAt)));
     return { ok: true, orders: rows.slice(0, 200) };
   },
   async collect(event, b) {

@@ -1,5 +1,5 @@
 // Retail POS — the Online tab (supervisors and up): the shop's orders for
-// this store with click & collect first (mark ready; mark collected, which
+// this store, newest first and laid out like Shopify's order list (mark ready; mark collected, which
 // fulfils the order on Shopify — an order with a sales order is handed over
 // there instead, so its money is taken first), the sync state (queue, linked items,
 // codes), the sync buttons for managers, and the log. The owner's connect
@@ -9,7 +9,7 @@ import * as auth from './auth.js';
 import { esc, toast, field, row, val, openModal, money, niceDate, niceTime, empty } from './ui.js';
 import { icon } from './icons.js';
 
-export const on = { orders: null, status: null, log: null, busy: false, filter: 'open', loading: false, loadedAt: 0 };
+export const on = { orders: null, status: null, log: null, busy: false, filter: 'open', loading: false, loadedAt: 0, open: new Set() };
 let ctx = { repaint() {}, data: () => ({}) };
 export const setContext = (c) => { ctx = { ...ctx, ...c }; };
 const d = () => ctx.data();
@@ -20,14 +20,48 @@ export function onlineHtml() {
   const dd = d();
   if (!dd.store) return `<div class="page-head"><h1>Online</h1></div><div class="card muted">Pick a store first.</div>`;
   const st = on.status;
-  const rows = (on.orders || []).filter(o => on.filter === 'all' || (on.filter === 'open' ? /new|ready/.test(o.status) : on.filter === 'pickup' ? o.pickup && /new|ready/.test(o.status) : o.status === on.filter));
+  const rows = (on.orders || []).filter(o => on.filter === 'all' || (on.filter === 'open' ? /new|ready/.test(o.status) : on.filter === 'pickup' ? o.pickup && /new|ready/.test(o.status) : o.status === on.filter))
+    .sort((a, b) => String(b.orderedAt || '').localeCompare(String(a.orderedAt || '')));   // newest first, as on Shopify
   return `<div class="page-head"><h1>Online · ${esc(dd.store.name)}</h1><p class="sub">${st ? (st.connected ? `Connected to ${esc(st.shopName || st.domain)} · ${st.linked} item${st.linked === 1 ? '' : 's'} linked · ${st.queue.count ? st.queue.count + ' stock update' + (st.queue.count === 1 ? '' : 's') + ' waiting' + (st.queue.failing ? ' (' + st.queue.failing + ' retrying)' : '') : 'stock up to date'}${st.lastSyncAt ? ' · last sync ' + esc(niceDate(st.lastSyncAt)) + ' ' + esc(niceTime(st.lastSyncAt)) : ''}${st.lastError ? ' · <span class="warn">' + esc(st.lastError) + '</span>' : ''}` : 'Not connected: the owner connects Shopify under Admin → Settings.') : 'Loading…'}</p></div>
     <div class="toolbar">
       <select id="on-filter">${[['open', 'Open orders'], ['pickup', 'Click & collect'], ['collected', 'Collected'], ['cancelled', 'Cancelled'], ['all', 'All']].map(x => `<option value="${x[0]}"${on.filter === x[0] ? ' selected' : ''}>${x[1]}</option>`).join('')}</select>
       <button class="btn ghost sm" data-act="on-refresh">${icon('refresh')} Refresh</button>
       ${auth.atLeast('manager') && st && st.connected ? `<button class="btn ghost sm" data-act="on-sync"${on.busy ? ' disabled' : ''}>${icon('refresh')} Sync now</button><button class="btn ghost sm" data-act="on-link"${on.busy ? ' disabled' : ''}>Link products by SKU</button><button class="btn ghost sm" data-act="on-push"${on.busy ? ' disabled' : ''}>Push all stock</button><button class="btn ghost sm" data-act="on-log">Log</button><button class="btn sm" data-act="on-import"${on.busy ? ' disabled' : ''}>Bring in open orders</button>` : ''}</div>
-    ${on.orders === null ? '<div class="card muted">Loading orders…</div>' : rows.length ? `<div class="card" style="padding:0;overflow:auto"><table class="tbl"><thead><tr><th>Order</th><th>Customer</th><th>Lines</th><th class="r">Total</th><th>Delivery</th><th>Stock</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(o => `<tr class="${/cancelled|collected|refunded/.test(o.status) ? 'off' : ''}"><td><strong>${esc(o.orderNo)}</strong><div class="muted">${esc(niceDate(o.orderedAt))} ${esc(niceTime(o.orderedAt))}</div>${o.specialDocNo ? `<div class="muted">Sales order ${esc(o.specialDocNo)}</div>` : ''}</td><td>${esc(o.customer.name)}<div class="muted">${esc([o.customer.phone, o.customer.email].filter(Boolean).join(' · '))}</div></td><td>${o.lines.map(l => `<div>${l.qty} × ${esc(l.name || l.title)}${l.itemId ? '' : ' <span class="warn">(not a POS item)</span>'}</div>`).join('')}</td><td class="r">${esc(money(o.totalCents))}<div class="muted">${esc(o.financialStatus)}</div></td><td>${o.pickup ? '<span class="chip ok">Click &amp; collect</span>' : esc(o.shippingTitle || 'delivery')}${o.address && !o.pickup ? `<div class="muted">${esc(o.address)}</div>` : ''}</td><td class="muted">${esc(o.stock)}</td><td><span class="chip ${(STATE[o.status] || ['', ''])[1]}">${esc((STATE[o.status] || [o.status])[0])}</span></td><td class="r nowrap">${o.status === 'new' && o.pickup ? `<button class="btn ghost sm" data-act="on-ready" data-id="${esc(o.id)}">Ready</button>` : ''}${/new|ready/.test(o.status) ? `<button class="btn primary sm" data-act="on-collected" data-id="${esc(o.id)}">${o.pickup ? 'Collected' : 'Handed over'}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : empty('No online orders here', 'Orders arrive by webhook as the shop takes them; click & collect ones show first.')}
+    ${on.orders === null ? '<div class="card muted">Loading orders…</div>' : rows.length ? ordersTable(rows) : empty('No online orders here', 'Orders arrive by webhook as the shop takes them, newest at the top.')}
     ${on.log ? `<h3 class="st-h3">Sync log</h3><div class="card" style="padding:0;overflow:auto"><table class="tbl"><tbody>${on.log.map(l => `<tr class="${l.status === 'failed' ? 'neg' : ''}"><td class="muted nowrap">${esc(niceDate(l.at))} ${esc(niceTime(l.at))}</td><td>${esc(l.kind)}</td><td><span class="chip${l.status === 'ok' ? ' ok' : l.status === 'failed' ? ' late' : ''}">${esc(l.status)}</span></td><td>${esc(l.message)}</td></tr>`).join('') || '<tr><td class="muted">Nothing yet.</td></tr>'}</tbody></table></div>` : ''}`;
+}
+// ---- the orders list, laid out like Shopify's: one compact row per order (number, date, customer, total, payment and
+// fulfilment badges, items, delivery method), tap a row to see its lines and address underneath
+const PAY = { paid: ['Paid', 'done'], pending: ['Payment pending', 'warn'], authorized: ['Authorized', 'warn'], partially_paid: ['Partially paid', 'warn'], partially_refunded: ['Partially refunded', 'done'], refunded: ['Refunded', 'done'], voided: ['Voided', 'done'], expired: ['Expired', 'done'] };
+const FUL = { new: ['Unfulfilled', 'todo'], ready: ['Ready for pickup', 'info'], collected: ['Fulfilled', 'done'], cancelled: ['Cancelled', 'done'], refunded: ['Refunded', 'done'] };
+const badge = ([label, tone]) => `<span class="sh-badge ${tone}"><i></i>${esc(label)}</span>`;
+function whenOf(iso) {
+  if (!iso) return '';
+  const t = new Date(iso), day = (x) => x.toISOString().slice(0, 10), now = new Date();
+  const time = t.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' });
+  if (day(t) === day(now)) return 'Today at ' + time;
+  if (day(t) === day(new Date(now.getTime() - 86400000))) return 'Yesterday at ' + time;
+  return t.toLocaleDateString('en-ZA', { weekday: 'short', day: '2-digit', month: 'short' }) + ' at ' + time;
+}
+function ordersTable(rows) {
+  const items = (o) => (o.lines || []).reduce((n, l) => n + (Number(l.qty) || 0), 0);
+  return `<div class="card sh-orders" style="padding:0;overflow:auto"><table class="tbl"><thead><tr><th>Order</th><th>Date</th><th>Customer</th><th class="r">Total</th><th>Payment status</th><th>Fulfillment status</th><th>Items</th><th>Delivery method</th><th></th></tr></thead><tbody>${rows.map(o => {
+    const open = on.open.has(o.id), n = items(o), done = /cancelled|collected|refunded/.test(o.status);
+    return `<tr class="sh-row${done ? ' off' : ''}${open ? ' open' : ''}" data-act="on-toggle" data-id="${esc(o.id)}" title="Show the items">
+      <td class="nowrap"><strong>${esc(o.orderNo)}</strong>${o.specialDocNo ? `<div class="muted sm">${esc(o.specialDocNo)}</div>` : ''}</td>
+      <td class="nowrap muted">${esc(whenOf(o.orderedAt))}</td>
+      <td class="nowrap">${esc((o.customer || {}).name || '—')}</td>
+      <td class="r nowrap">${esc(money(o.totalCents))}</td>
+      <td class="nowrap">${badge(PAY[o.financialStatus] || [o.financialStatus || '—', 'warn'])}</td>
+      <td class="nowrap">${badge(FUL[o.status] || [o.status, 'todo'])}</td>
+      <td class="nowrap">${n} item${n === 1 ? '' : 's'} <span class="sh-caret">${open ? '▴' : '▾'}</span></td>
+      <td class="nowrap">${o.pickup ? 'Click &amp; collect' : esc(o.shippingTitle || 'Delivery')}</td>
+      <td class="r nowrap">${o.status === 'new' && o.pickup ? `<button class="btn ghost sm" data-act="on-ready" data-id="${esc(o.id)}">Ready</button>` : ''}${/new|ready/.test(o.status) ? `<button class="btn primary sm" data-act="on-collected" data-id="${esc(o.id)}">${o.pickup ? 'Collected' : 'Handed over'}</button>` : ''}</td></tr>
+      ${open ? `<tr class="sh-detail"><td colspan="9"><div class="sh-detail-grid">
+        <div>${(o.lines || []).map(l => `<div class="sh-line"><span>${esc(l.name || l.title)}${l.itemId ? '' : ' <span class="warn">(not a POS item)</span>'}</span><span class="muted">× ${l.qty}</span></div>`).join('')}</div>
+        <div class="muted">${esc([(o.customer || {}).phone, (o.customer || {}).email].filter(Boolean).join(' · '))}${o.address && !o.pickup ? `<div>${esc(o.address)}</div>` : ''}<div>Stock ${esc(o.stock || '')}</div>${o.specialDocNo ? `<div>Sales order ${esc(o.specialDocNo)}</div>` : ''}</div>
+      </div></td></tr>` : ''}`;
+  }).join('')}</tbody></table></div>`;
 }
 // painting the tab must not fetch on every repaint (load → repaint → load would never end): fetch on entry and when the figures are older than half a minute
 export function ensure() { const dd = d(); if (!on.loading && (on.orders === null || on.loadedFor !== (dd.store && dd.store.id) || Date.now() - on.loadedAt > 30000)) load(); }
@@ -45,6 +79,7 @@ export function onChange(e) { if (e.target.id === 'on-filter') { on.filter = e.t
 export async function action(act, b) {
   const dd = d(); const id = b.dataset.id;
   const run = async (what, body, done) => { on.busy = true; ctx.repaint(); try { const r = await auth.api(what, { entityId: dd.entity.id, ...body }, API.shopify); toast(done(r)); } catch (e) { toast(e.message, 'warn'); } on.busy = false; await load(); };
+  if (act === 'on-toggle') { if (on.open.has(id)) on.open.delete(id); else on.open.add(id); return ctx.repaint(); }
   if (act === 'on-refresh') return load();
   if (act === 'on-sync') return run('syncNow', {}, r => `Synced: ${r.stock.pushed || 0} stock updates${r.codes != null ? ', ' + r.codes + ' codes' : ''}${r.customers ? ', ' + r.customers.pushed + ' customers' : ''}`);
   if (act === 'on-link') return run('link', {}, r => `${r.linked} of ${r.seen} shop variants linked by SKU${r.unmatched.length ? ' · not matched: ' + r.unmatched.slice(0, 5).join(', ') : ''}`);

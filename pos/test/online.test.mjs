@@ -85,14 +85,21 @@ const sale = (await listColl('sales'))[0];
 check('the sale carries the code and no approver; the shop got the new stock (3)', sale && sale.saleDiscountCode === 'TEN' && sale.saleDiscountCents === 5000 && !sale.saleDiscountBy && mock.state.inventory['gid://shopify/InventoryItem/2002|gid://shopify/Location/11'] === 3, [sale && sale.saleDiscountCode, mock.state.inventory]);
 
 // ---- the Online tab: the click & collect order, ready, collected
+// an older delivery order, awaiting payment: it must list under the newer one
+await put('pos/retail/onlineOrders/BF_9001', { shopifyOrderId: '9001', orderNo: '#9001', orderedAt: '2026-10-01T08:00:00.000Z', financialStatus: 'pending', fulfillmentStatus: '', status: 'new', stock: 'reserved', pickup: false, shippingTitle: 'Standard', address: '5 Lane, Parow', totalCents: 120000, customer: { name: 'Old Order', phone: '', email: '' }, lines: [{ qty: 2, name: 'Cushion', itemId: '' }], refunds: [], ...srv('BF', 'BF-BELL') });
 await nav('online'); await p.waitForSelector('.tbl', { timeout: 15000 }); await p.waitForTimeout(500);
-R.online = await screenText(); check('connected, the pickup order listed as new', /Connected to Bellville Online/.test(R.online) && /#9101/.test(R.online) && /Thandi Mokoena/.test(R.online) && /Click & collect/i.test(R.online) && /New/i.test(R.online) && /1 × Lamp/.test(R.online), R.online.slice(0, 500));
+R.online = await screenText(); check('connected, the pickup order listed as new', /Connected to Bellville Online/.test(R.online) && /#9101/.test(R.online) && /Thandi Mokoena/.test(R.online) && /Click & collect/i.test(R.online) && /Unfulfilled/.test(R.online) && /Paid/.test(R.online) && /1 item/.test(R.online), R.online.slice(0, 500));
+check('laid out like Shopify: the newest order on top, the older one under it with its own badges', R.online.indexOf('#9101') > 0 && R.online.indexOf('#9101') < R.online.indexOf('#9001') && /Payment pending/.test(R.online) && /2 items/.test(R.online) && /Standard/.test(R.online) && !/Lamp/.test(R.online), R.online.slice(0, 600));
+await p.click('tr.sh-row >> nth=0'); await p.waitForSelector('.sh-detail'); R.detail = await p.locator('.sh-detail').innerText();
+if (process.env.SHOT) await p.screenshot({ path: process.env.SHOT });   // a picture of the list, for a person to look at
+check('a tap on the row shows its items and the customer', /Lamp/.test(R.detail) && /× 1/.test(R.detail) && /thandi@example\.com/.test(R.detail), R.detail);
+await p.click('tr.sh-row >> nth=0'); await p.waitForTimeout(200); check('and a second tap closes it', !(await p.$('.sh-detail')));
 await p.click('[data-act=on-ready]'); R.ready = await toast(); await p.waitForTimeout(1200);
 check('marked ready', /Marked ready/.test(R.ready), R.ready);
 await p.click('[data-act=on-collected]'); R.coll = await toast(); await p.waitForTimeout(1200);
 check('collected and fulfilled on the shop', /Collected · fulfilled on Shopify/.test(R.coll) && mock.state.fulfilled.length === 1, [R.coll, mock.state.fulfilled]);
 await p.selectOption('#on-filter', 'collected'); await p.waitForTimeout(300);
-R.online2 = await screenText(); check('the collected filter shows it', /#9101/.test(R.online2) && /Collected/i.test(R.online2), R.online2.slice(0, 300));
+R.online2 = await screenText(); check('the collected filter shows it', /#9101/.test(R.online2) && /Fulfilled/.test(R.online2) && !/#9001/.test(R.online2), R.online2.slice(0, 300));
 await p.click('[data-act=on-log]'); await p.waitForTimeout(800);
 R.log = await screenText(); check('the log shows the order and the stock pushes', /Sync log/i.test(R.log) && /#9101/.test(R.log) && /stock/.test(R.log), R.log.slice(-400));
 
