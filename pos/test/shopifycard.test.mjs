@@ -71,7 +71,7 @@ await shot('shopify-2-after-connect');
 R.setup = await p.locator('.sh-setup li').allInnerTexts();
 check('the card shows what Connect did: webhooks, every store matched, 3 of 3 linked, 3 stock figures pushed', R.setup.length >= 4 && /webhooks registered/i.test(R.setup[0]) && /Every store is matched/.test(R.setup[1]) && /3 of 3 shop variants linked/.test(R.setup[2]) && /3 stock figures pushed/.test(R.setup[3]), R.setup);
 check('no step needing the owner', (await p.locator('.sh-setup li.warn').count()) === 0, R.setup);
-check('the webhooks are on the mock app, pointed at this site', mock.state.webhooks.length === 3 && mock.state.webhooks.every(h => h.callbackUrl === 'http://localhost:8788/.netlify/functions/pos-shopify?hook=1&e=BF'), mock.state.webhooks);
+check('the webhooks are on the mock app, pointed at this site', mock.state.webhooks.length === 4 && mock.state.webhooks.every(h => h.callbackUrl === 'http://localhost:8788/.netlify/functions/pos-shopify?hook=1&e=BF'), mock.state.webhooks);
 check('Bellville was matched to the Bellville shop location by name', (await p.inputValue('#sh-loc-BF-BELL')) === 'gid://shopify/Location/11' && (await p.inputValue('#sh-default')) === 'BF-BELL');
 // the select is clicked (the card's listener must survive it), then saved
 await p.click('#sh-loc-BF-BELL'); await p.selectOption('#sh-loc-BF-BELL', 'gid://shopify/Location/11'); await p.selectOption('#sh-default', 'BF-BELL');

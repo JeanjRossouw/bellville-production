@@ -24,14 +24,14 @@
 //   log         { entityId }                                   the last sync entries
 //   openOrders  { + where }                                    a manager: the shop's open, unsent orders and what bringing them in would do
 //   importOpenOrders { + where }                               a manager: bring them in as sales orders (lib/shopify-import.mjs); again skips those here
-//   webhooks: POST ?hook=1&e=<entityId> with X-Shopify-Topic orders/create | orders/cancelled | refunds/create, signed with the client secret
+//   webhooks: POST ?hook=1&e=<entityId> with X-Shopify-Topic orders/create | orders/cancelled | refunds/create | orders/fulfilled, signed with the client secret
 //     orders/create also makes the sales order (specialOrders/shp-<id>, tied to the online order record), so the order is in
 //     To do, on the client's page and in the delivery flow at once; orders/cancelled cancels that sales order too
 //
 // Env: FACTORY_SERVICE_ACCOUNT, SHOPIFY_API_BASE (tests only).
 import { json, Reject, clean, randomId, nowIso, getDoc, query, commit, createDoc, patchDoc, deleteDoc, loginOf, loadUser, inEntity, inStore, rank, serverStamp, bodyOf, audit, withGroup, groupId, DEFAULT_GROUP } from './lib/pos.mjs';
 import { whoAndWhere, runSale, moveWrites, approved } from './lib/sale.mjs';
-import { openShopifyOrders, planShopifyImport, importShopifyOrders, orderFromWebhook, completeOnline } from './lib/shopify-import.mjs';
+import { openShopifyOrders, planShopifyImport, importShopifyOrders, orderFromWebhook, completeOnline, fulfilledOnShopify, syncFulfilled } from './lib/shopify-import.mjs';
 import { cancelAtFactory } from './lib/factory-bridge.mjs';
 import { gql, gidNum, secretsOf, settingsOf, patchShopify, verifyWebhook, logSync, queueStock, flushStock } from './lib/shopify-pos.mjs';
 import { pullCatalogue, planCatalogue, planStock, applyCatalogue } from './lib/shopify-catalogue.mjs';
@@ -49,7 +49,7 @@ async function cfgOf(entityId) { const c = await secretsOf(entityId); if (!c) th
 const money = (c) => 'R ' + (c / 100).toFixed(2);
 // the scopes the Dev Dashboard app needs; shown on the card with a Copy button
 export const SCOPES = ['read_products', 'write_inventory', 'read_inventory', 'read_locations', 'read_orders', 'write_orders', 'write_merchant_managed_fulfillment_orders', 'read_discounts', 'read_customers', 'write_customers'];
-const TOPICS = { 'orders/create': 'ORDERS_CREATE', 'orders/cancelled': 'ORDERS_CANCELLED', 'refunds/create': 'REFUNDS_CREATE' };
+const TOPICS = { 'orders/create': 'ORDERS_CREATE', 'orders/cancelled': 'ORDERS_CANCELLED', 'refunds/create': 'REFUNDS_CREATE', 'orders/fulfilled': 'ORDERS_FULFILLED' };
 // a customer's own space is named in the address too (the webhook then proves itself with that space's shop secret)
 const hookPath = (entityId) => '/.netlify/functions/pos-shopify?hook=1&e=' + entityId + (groupId() === DEFAULT_GROUP ? '' : '&g=' + groupId());
 // where the webhooks must call: the site the owner is on (sent by the page), else the host this request came to
@@ -311,6 +311,8 @@ async function handleWebhook(entityId, topic, raw, o) {
     await logSync(entityId, 'refund', 'ok', `${rec.orderNo} refund: ${items.reduce((n, l) => n + l.qty, 0)} restocked`, { storeId: rec.storeId, docNo: rec.orderNo });
     return { ok: true, restocked: items.length };
   }
+  // sent out on Shopify: done here too (the online order completed, its sales order delivered or collected)
+  if (topic === 'orders/fulfilled') return fulfilledOnShopify(entityId, String(o.id), { financialStatus: o.financial_status || '' });
   return { skipped: 'topic ' + topic };
 }
 
@@ -428,13 +430,29 @@ const actions = {
     await patchShopify(w.entityId, { lastSyncAt: nowIso() });
     return { ok: true, ...out };
   },
+  // orders the shop has fulfilled, completed here (a few dozen a call: the page calls again while any are left). The
+  // first call on a shop connected before this existed also registers the orders/fulfilled webhook.
+  async syncFulfilled(event, b) {
+    const w = await who(event, b);
+    const cfg = await cfgOf(w.entityId);
+    const sh = await settingsOf(w.entityId);
+    let hook = '';
+    // registered to the address setup used (not whatever page asked now)
+    if (!(sh.webhooks || []).some(h => h.topic === 'orders/fulfilled')) {
+      try { const hooks = await registerWebhooks(w.entityId, cfg, siteOf(event, { siteUrl: sh.siteUrl || b.siteUrl }, sh)); await patchShopify(w.entityId, { webhooks: hooks }); hook = 'registered'; await logSync(w.entityId, 'setup', 'ok', 'webhook for orders fulfilled on Shopify registered'); }
+      catch (e) { hook = 'not registered: ' + e.message; await logSync(w.entityId, 'setup', 'retry', 'orders/fulfilled webhook not registered: ' + e.message); }
+    }
+    let r; try { r = await syncFulfilled(w.entityId, cfg, { budgetMs: 7000, max: 40 }); } catch (e) { throw new Reject(502, 'Shopify did not answer about the fulfilled orders: ' + String(e.message).slice(0, 200)); }
+    return { ok: true, ...r, hook };
+  },
   async pullCodes(event, b) { const w = await who(event, b); const cfg = await cfgOf(w.entityId); try { const n = await pullCodes(w.entityId, cfg); await logSync(w.entityId, 'codes', 'ok', n + ' discount codes'); return { ok: true, codes: n }; } catch (e) { await logSync(w.entityId, 'codes', 'failed', e.message); throw new Reject(502, e.message); } },
   async pushCustomers(event, b) { const w = await who(event, b); const cfg = await cfgOf(w.entityId); const r = await pushCustomers(w.entityId, cfg, { all: !!b.all }); await logSync(w.entityId, 'customers', r.failed ? 'retry' : 'ok', `${r.pushed} of ${r.of} consented customers pushed`); return { ok: true, ...r }; },
   // the till's view: the online orders of a store (click & collect first), supervisors and up
   async orders(event, b) {
     const ctx = await whoAndWhere(event, b, { noShift: true });
     if (rank(ctx.user.role) < rank('supervisor')) throw new Reject(403, 'Online orders are for supervisors and up.');
-    const rows = (await query('onlineOrders', [{ field: 'entityId', value: ctx.entityId }, { field: 'storeId', value: ctx.storeId }], 500)).sort((x, y) => (x.pickup === y.pickup ? 0 : x.pickup ? -1 : 1) || String(y.orderedAt).localeCompare(String(x.orderedAt)));
+    // newest first, as on Shopify (read them all, then sort: an unsorted page of 500 could miss the newest)
+    const rows = (await query('onlineOrders', [{ field: 'entityId', value: ctx.entityId }, { field: 'storeId', value: ctx.storeId }], 5000)).sort((x, y) => String(y.orderedAt).localeCompare(String(x.orderedAt)));
     return { ok: true, orders: rows.slice(0, 200) };
   },
   async collect(event, b) {
