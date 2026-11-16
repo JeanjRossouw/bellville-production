@@ -144,7 +144,7 @@ export function orderFromWebhook(o) {
 
 // the online order record completed: reserved stock becomes sold, the order fulfilled on Shopify (the customer
 // is told), the record marked collected. From the sales order's hand-over, or the Online tab's Collected.
-export async function completeOnline(entityId, onlineOrderId, byName, how = 'handed over') {
+export async function completeOnline(entityId, onlineOrderId, byName, how = 'handed over', { alreadyFulfilled = false } = {}) {
   const rec = await getDoc('onlineOrders', onlineOrderId);
   if (!rec || rec.entityId !== entityId) return { skipped: 'no online order' };
   if (rec.status === 'collected') return { again: true, fulfilled: rec.fulfillmentStatus === 'fulfilled' ? 'fulfilled on Shopify' : '' };
@@ -152,7 +152,8 @@ export async function completeOnline(entityId, onlineOrderId, byName, how = 'han
   const now = nowIso();
   const patch = { status: 'collected', collectedAt: now, collectedBy: byName, updatedAt: now };
   let fulfilled = '';
-  if (rec.fulfillmentStatus !== 'fulfilled') {
+  if (alreadyFulfilled) { patch.fulfillmentStatus = 'fulfilled'; fulfilled = 'fulfilled on Shopify'; }   // the shop sent it out: nothing to tell Shopify
+  else if (rec.fulfillmentStatus !== 'fulfilled') {
     try {
       const cfg = await secretsOf(entityId); if (!cfg) throw new Error('Shopify is not connected');
       const d = await gql(cfg, `query($id: ID!) { order(id: $id) { fulfillmentOrders(first: 5) { nodes { id status } } } }`, { id: 'gid://shopify/Order/' + rec.shopifyOrderId });
@@ -179,4 +180,72 @@ export async function completeOnline(entityId, onlineOrderId, byName, how = 'han
   } else await patchDoc('onlineOrders', onlineOrderId, patch);
   await audit({ action: 'online.collected', docType: 'onlineOrder', docId: onlineOrderId, docNo: rec.orderNo, actorUid: 'server', actorName: byName, details: { fulfilled, how, sold: held.length }, entityId, storeId: rec.storeId || '', deviceId: 'shopify' });
   return { ok: true, fulfilled, orderNo: rec.orderNo };
+}
+
+// ---- an order fulfilled on Shopify is done here too (the orders/fulfilled webhook; syncFulfilled catches up on what
+// was missed). The online order record is completed the way the Collected button does it (stock held for an unpaid
+// order is sold), and its sales order is closed as delivered (collected, for click & collect). A balance still owed
+// on the sales order: when Shopify says the order is paid, the rest counts as paid via Shopify; when it does not,
+// the sales order stays open so the money is not lost sight of.
+const SO_OPEN = ['quoted', 'depositPaid', 'inProduction', 'ready', 'outForDelivery'];
+export async function fulfilledOnShopify(entityId, shopifyOrderId, { financialStatus = '', how = 'fulfilled on Shopify' } = {}) {
+  const sid = String(shopifyOrderId).replace(/^gid:\/\/shopify\/Order\//, '');
+  const onlineId = entityId + '_' + sid;
+  const rec = await getDoc('onlineOrders', onlineId);
+  if (rec && rec.entityId !== entityId) return { skipped: 'not this company' };
+  if (rec && rec.status === 'cancelled') return { skipped: 'cancelled' };
+  const soId = (rec && rec.specialOrderId) || 'shp-' + sid;
+  const so = await getDoc('specialOrders', soId);
+  const soMine = so && so.entityId === entityId;
+  if (!rec && !soMine) return { skipped: 'order unknown' };
+  const out = { ok: true, orderNo: (rec && rec.orderNo) || (soMine && so.shopify && so.shopify.name) || '', online: '', salesOrder: '' };
+  if (rec && rec.status !== 'collected') { await completeOnline(entityId, onlineId, 'Shopify', how, { alreadyFulfilled: true }); out.online = 'completed'; }
+  else if (rec && rec.fulfillmentStatus !== 'fulfilled') await patchDoc('onlineOrders', onlineId, { fulfillmentStatus: 'fulfilled', updatedAt: nowIso() });
+  if (soMine && SO_OPEN.includes(so.status)) {
+    const now = nowIso(), paidOnShopify = /^paid$/i.test(financialStatus || ''), owed = so.balanceCents || 0;
+    if (owed > 0 && (!paidOnShopify || so.awaitingCents > 0)) {
+      out.salesOrder = 'left open: ' + (owed / 100).toFixed(2) + ' still owed';
+      // said once (the schedule looks again every ten minutes): the sales order remembers the shop sent it out
+      if (!so.shopifyFulfilledAt) { await patchDoc('specialOrders', soId, { shopifyFulfilledAt: now, updatedAt: now }); await logSync(entityId, 'order', 'retry', `${out.orderNo}: fulfilled on Shopify, but R ${(owed / 100).toFixed(2)} is still owed on sales order ${so.docNo}, so it stays open`, { storeId: so.storeId, docNo: out.orderNo }); }
+    } else {
+      const status = rec && rec.pickup ? 'collected' : 'delivered';
+      const patch = { status, completedAt: now, completedDocNo: 'Shopify ' + out.orderNo, updateDue: false, shopifyFulfilledAt: so.shopifyFulfilledAt || now, updatedAt: now,
+        statusHistory: [...(so.statusHistory || []), { status, at: now, byName: 'Shopify', source: 'shopify', note: 'Fulfilled on Shopify' }].slice(-50) };
+      if (owed > 0) Object.assign(patch, { paidCents: so.totalCents, balanceCents: 0, history: [...(so.history || []), { at: now, amountCents: owed, methods: ['shopify'], n: (so.history || []).length, storeId: so.storeId, ref: out.orderNo }] });
+      await patchDoc('specialOrders', soId, patch);
+      await audit({ action: 'specialOrder.deliver', docType: 'specialOrder', docId: soId, docNo: so.docNo, actorUid: 'server', actorName: 'Shopify', details: { status, invoice: 'shopify', how: 'Fulfilled on Shopify', paidViaShopifyCents: owed }, entityId, storeId: so.storeId || '', deviceId: 'shopify' });
+      out.salesOrder = status;
+    }
+  }
+  if (out.online || /^(delivered|collected)$/.test(out.salesOrder)) await logSync(entityId, 'order', 'ok', `${out.orderNo}: fulfilled on Shopify${/^(delivered|collected)$/.test(out.salesOrder) ? ', sales order ' + so.docNo + ' ' + out.salesOrder : ''}`, { storeId: (rec && rec.storeId) || (soMine && so.storeId) || '', docNo: out.orderNo });
+  return out;
+}
+
+// what is still open here, asked of Shopify in one go per 100: the ones the shop has fulfilled are completed here.
+// Bounded by time and count, so a long backlog is cleared over a few calls (left says how many remain).
+export async function syncFulfilled(entityId, cfg, { budgetMs = 6000, max = 40 } = {}) {
+  const started = Date.now();
+  const eq = (field, value) => ({ field, value });
+  const [olNew, olReady, ...sos] = await Promise.all([
+    query('onlineOrders', [eq('entityId', entityId), eq('status', 'new')], 2000), query('onlineOrders', [eq('entityId', entityId), eq('status', 'ready')], 2000),
+    ...SO_OPEN.map(st => query('specialOrders', [eq('entityId', entityId), eq('source', 'shopify'), eq('status', st)], 2000))]);
+  const ids = new Set();
+  for (const o of [...olNew, ...olReady]) if (o.shopifyOrderId) ids.add(String(o.shopifyOrderId));
+  for (const o of sos.flat()) { const id = o.shopify && o.shopify.id ? gidNum(o.shopify.id) : String(o.id || '').replace(/^shp-/, ''); if (/^\d+$/.test(id)) ids.add(id); }
+  const all = [...ids], done = [], kept = [];
+  let checked = 0, fulfilled = 0;
+  for (let i = 0; i < all.length; i += 100) {
+    if (Date.now() - started > budgetMs) break;
+    const part = all.slice(i, i + 100);
+    const d = await gql(cfg, `query($ids: [ID!]!) { nodes(ids: $ids) { ... on Order { id name displayFulfillmentStatus displayFinancialStatus } } }`, { ids: part.map(x => 'gid://shopify/Order/' + x) });
+    checked += part.length;
+    for (const o of (d.nodes || []).filter(Boolean)) {
+      if (o.displayFulfillmentStatus !== 'FULFILLED') continue;
+      fulfilled++;
+      if (done.length >= max || Date.now() - started > budgetMs) continue;
+      const r = await fulfilledOnShopify(entityId, gidNum(o.id), { financialStatus: o.displayFinancialStatus, how: 'fulfilled on Shopify' });
+      if (/^left open/.test(r.salesOrder || '')) kept.push(o.name); else done.push(o.name);
+    }
+  }
+  return { open: all.length, checked, done: done.length, owed: kept.length, left: Math.max(0, all.length - checked) + Math.max(0, fulfilled - done.length - kept.length), names: done.slice(0, 20) };
 }

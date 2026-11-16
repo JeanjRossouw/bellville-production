@@ -90,17 +90,17 @@ check('connected: the shop named, the locations listed', R.conn.ok && R.conn.sho
 check('the secret lives server-side', (await getDoc('pos/retail/shopifySecrets/BF')).clientSecret === 'shpss_secret' && (await getDoc('pos/retail/settings/BF')).shopify.connected === true);
 // ---- one tap: Connect set the rest up by itself
 const HOOK_URL = 'http://localhost:8788/.netlify/functions/pos-shopify?hook=1&e=BF';
-check('connect set up: 3 webhooks on the app at this site, Bellville mapped to the Bellville shop location by name, 2 of 3 linked, 2 stock figures pushed, 2 codes pulled, no errors', R.conn.setup && R.conn.setup.webhooks === 3 && mock.state.webhooks.length === 3 && mock.state.webhooks.every(h => h.callbackUrl === HOOK_URL) && mock.state.webhooks.map(h => h.topic).sort().join() === 'ORDERS_CANCELLED,ORDERS_CREATE,REFUNDS_CREATE' && R.conn.setup.mapped.join() === 'Bellville → Bellville shop' && R.conn.setup.unmapped.length === 0 && R.conn.setup.linked === 2 && R.conn.setup.seen === 3 && R.conn.setup.pushed === 2 && R.conn.setup.codes === 2 && R.conn.setup.errors.length === 0, [R.conn.setup, mock.state.webhooks]);
+check('connect set up: 4 webhooks on the app at this site, Bellville mapped to the Bellville shop location by name, 2 of 3 linked, 2 stock figures pushed, 2 codes pulled, no errors', R.conn.setup && R.conn.setup.webhooks === 4 && mock.state.webhooks.length === 4 && mock.state.webhooks.every(h => h.callbackUrl === HOOK_URL) && mock.state.webhooks.map(h => h.topic).sort().join() === 'ORDERS_CANCELLED,ORDERS_CREATE,ORDERS_FULFILLED,REFUNDS_CREATE' && R.conn.setup.mapped.join() === 'Bellville → Bellville shop' && R.conn.setup.unmapped.length === 0 && R.conn.setup.linked === 2 && R.conn.setup.seen === 3 && R.conn.setup.pushed === 2 && R.conn.setup.codes === 2 && R.conn.setup.errors.length === 0, [R.conn.setup, mock.state.webhooks]);
 R.shAfter = (await getDoc('pos/retail/settings/BF')).shopify;
-check('the mapping, default store, webhooks, site and outcome kept in settings', R.shAfter.locationByStore['BF-BELL'] === 'gid://shopify/Location/11' && R.shAfter.defaultStoreId === 'BF-BELL' && R.shAfter.webhooks.length === 3 && R.shAfter.siteUrl === 'http://localhost:8788' && R.shAfter.setup.linked === 2, R.shAfter);
+check('the mapping, default store, webhooks, site and outcome kept in settings', R.shAfter.locationByStore['BF-BELL'] === 'gid://shopify/Location/11' && R.shAfter.defaultStoreId === 'BF-BELL' && R.shAfter.webhooks.length === 4 && R.shAfter.siteUrl === 'http://localhost:8788' && R.shAfter.setup.linked === 2, R.shAfter);
 check('stock on the shop straight after connect: 10 cushions, 4 lamps (5 less 1 reserved)', mock.state.inventory['gid://shopify/InventoryItem/2001|gid://shopify/Location/11'] === 10 && mock.state.inventory['gid://shopify/InventoryItem/2002|gid://shopify/Location/11'] === 4, mock.state.inventory);
 check('TEN is on the till already', (await getDoc('pos/retail/discountCodes/BF_TEN')) !== null);
 // setup again: nothing duplicated; a webhook that points at an old site address is pointed back
 mock.state.webhooks[0].callbackUrl = 'https://old-site.example/.netlify/functions/pos-shopify?hook=1&e=BF';
 R.setupMgr = await call('pos-shopify', { action: 'setup', entityId: 'BF' }); check('only the owner runs setup', R.setupMgr.status === 403, R.setupMgr);
 R.setup2 = await call('pos-shopify', { action: 'setup', entityId: 'BF' }, own.idToken);
-check('setup again (site remembered): still 3 webhooks, the moved one pointed back, none duplicated', R.setup2.ok && R.setup2.setup.webhooks === 3 && mock.state.webhooks.length === 3 && mock.state.webhooks.every(h => h.callbackUrl === HOOK_URL) && ops('hookUpdate').length === 1 && ops('hookCreate').length === 3 && R.setup2.setup.errors.length === 0, [R.setup2, mock.state.webhooks]);
-R.stAfter = await call('pos-shopify', { action: 'status', entityId: 'BF' }); check('status carries the webhooks, the site, the setup outcome and the scopes to copy', R.stAfter.webhooks.length === 3 && R.stAfter.siteUrl === 'http://localhost:8788' && R.stAfter.setup.webhooks === 3 && /^read_products,write_inventory,.*write_customers$/.test(R.stAfter.scopes), R.stAfter);
+check('setup again (site remembered): still 4 webhooks, the moved one pointed back, none duplicated', R.setup2.ok && R.setup2.setup.webhooks === 4 && mock.state.webhooks.length === 4 && mock.state.webhooks.every(h => h.callbackUrl === HOOK_URL) && ops('hookUpdate').length === 1 && ops('hookCreate').length === 4 && R.setup2.setup.errors.length === 0, [R.setup2, mock.state.webhooks]);
+R.stAfter = await call('pos-shopify', { action: 'status', entityId: 'BF' }); check('status carries the webhooks, the site, the setup outcome and the scopes to copy', R.stAfter.webhooks.length === 4 && R.stAfter.siteUrl === 'http://localhost:8788' && R.stAfter.setup.webhooks === 4 && /^read_products,write_inventory,.*write_customers$/.test(R.stAfter.scopes), R.stAfter);
 R.set = await call('pos-shopify', { action: 'settings', entityId: 'BF', locationByStore: { 'BF-BELL': 'gid://shopify/Location/11' }, defaultStoreId: 'BF-BELL', pickupByTitle: { 'Collect at Bellville': 'BF-BELL' }, pushStock: true, pullOrders: true, syncCodes: true, syncCustomers: true }, own.idToken); check('store mapped to a location', R.set.ok && R.set.locationByStore['BF-BELL'] === 'gid://shopify/Location/11', R.set);
 
 // ---- link by SKU (case-insensitive); content comes across; the unknown SKU is reported
@@ -248,7 +248,43 @@ check('handed over: collected, the Shopify order is the invoice, no POS sale wri
 R.refund = await call('pos-special', { action: 'cancel', orderId: 'shp-9101', kind: 'customer', reason: 'x', feeCents: 0, refunds: [{ method: 'cash', amountCents: 800000 }], ...bell }, own.idToken);
 check('a Shopify-paid order: refund it on Shopify, not at the till', R.refund.status === 400 && /refund it there/.test(R.refund.error), R.refund);
 
-R.disc = await call('pos-shopify', { action: 'disconnect', entityId: 'BF' }, own.idToken); check('disconnected: our webhooks removed from the app, the secret gone, a webhook refused', R.disc.ok && R.disc.webhooksRemoved === 3 && mock.state.webhooks.length === 0 && (await getDoc('pos/retail/shopifySecrets/BF')) === null && (await hook('orders/create', order(9009))).status === 401, [R.disc, mock.state.webhooks]);
+// ---- fulfilled on Shopify: done here too. A paid delivery order: the webhook completes the online record and delivers the sales order
+{
+  const so = (id) => getDoc('pos/retail/specialOrders/shp-' + id), ol = (id) => getDoc('pos/retail/onlineOrders/BF_' + id);
+  const sentBefore = mock.state.fulfilled.length;
+  R.f1 = await hook('orders/create', order(9011));
+  R.f1done = await hook('orders/fulfilled', { ...order(9011), fulfillment_status: 'fulfilled' });
+  const [o11, s11] = [await ol(9011), await so(9011)];
+  check('fulfilled on Shopify: the online order is completed and its sales order delivered, with nothing sent back to Shopify', R.f1.ok && R.f1done.ok && o11.status === 'collected' && o11.fulfillmentStatus === 'fulfilled' && o11.collectedBy === 'Shopify' && s11.status === 'delivered' && s11.updateDue === false && s11.statusHistory.at(-1).source === 'shopify' && mock.state.fulfilled.length === sentBefore, [R.f1done, o11 && o11.status, s11 && s11.status]);
+  R.f1again = await hook('orders/fulfilled', { ...order(9011), fulfillment_status: 'fulfilled' });
+  check('told again: nothing more happens', R.f1again.ok && !R.f1again.online && !R.f1again.salesOrder && (await so(9011)).statusHistory.length === s11.statusHistory.length, R.f1again);
+  // an order not paid yet (its lamp reserved): fulfilled on the shop sells the lamp, but the sales order stays open while money is owed
+  const lampBefore = await lvl('p_lamp');
+  R.f2 = await hook('orders/create', order(9012, { financial_status: 'pending', line_items: [{ id: 70012, variant_id: 1002, sku: 'LA-1', title: 'Lamp', quantity: 1, price: '500.00' }], total_price: '500.00' }));
+  R.f2done = await hook('orders/fulfilled', { ...order(9012), financial_status: 'pending', fulfillment_status: 'fulfilled' });
+  const [o12, s12, lampAfter] = [await ol(9012), await so(9012), await lvl('p_lamp')];
+  check('unpaid and fulfilled: the reserved lamp is sold, the online order completed, the sales order left open with its balance', R.f2.ok && R.f2.stock === 'reserved' && o12.status === 'collected' && o12.stock === 'deducted' && lampAfter.onHandQty === lampBefore.onHandQty - 1 && lampAfter.reservedQty === lampBefore.reservedQty && s12.status === 'quoted' && s12.balanceCents === 50000 && !!s12.shopifyFulfilledAt && /left open/.test(R.f2done.salesOrder), [R.f2done, o12 && o12.stock, s12 && s12.status, lampBefore, lampAfter]);
+  R.f2paid = await hook('orders/fulfilled', { ...order(9012), financial_status: 'paid', fulfillment_status: 'fulfilled' });
+  const s12b = await so(9012);
+  check('once Shopify says it is paid: the balance counts as paid via Shopify and the sales order is delivered', R.f2paid.salesOrder === 'delivered' && s12b.status === 'delivered' && s12b.balanceCents === 0 && s12b.paidCents === 50000 && s12b.history.at(-1).methods[0] === 'shopify' && s12b.history.at(-1).amountCents === 50000, [R.f2paid, s12b && s12b.status, s12b && s12b.balanceCents]);
+  // the catch-up (Sync now, and the schedule): an open order the shop has fulfilled without telling us
+  R.f3 = await hook('orders/create', order(9013));
+  R.f4 = await hook('orders/create', order(9014));
+  mock.state.orderStates = { '9013': { fulfillment: 'FULFILLED', financial: 'PAID' } };
+  R.sync = await call('pos-shopify', { action: 'syncFulfilled', entityId: 'BF' }, own.idToken);
+  const [s13, s14] = [await so(9013), await so(9014)];
+  check('Sync now asks Shopify about the open orders: the fulfilled one is completed, the unfulfilled one stays open', R.sync.ok && R.sync.done === 1 && R.sync.left === 0 && R.sync.names.includes('#9013') && s13.status === 'delivered' && (await ol(9013)).status === 'collected' && s14.status === 'depositPaid' && (await ol(9014)).status === 'new', [R.sync, s13 && s13.status, s14 && s14.status]);
+  R.syncAgain = await call('pos-shopify', { action: 'syncFulfilled', entityId: 'BF' }, own.idToken); check('again: nothing left to do', R.syncAgain.ok && R.syncAgain.done === 0, R.syncAgain);
+  R.syncSup = await call('pos-shopify', { action: 'syncFulfilled', entityId: 'BF' }, sup.idToken); check('for managers and up, not a supervisor', R.syncSup.status === 403, R.syncSup);
+  // a shop connected before this existed has no orders/fulfilled webhook: the first sync registers it, at the address setup used
+  mock.state.webhooks = mock.state.webhooks.filter(h => h.topic !== 'ORDERS_FULFILLED');
+  const set0 = await getDoc('pos/retail/settings/BF'), sh0 = set0.shopify;
+  await put('pos/retail/settings/BF', { ...set0, shopify: { ...sh0, webhooks: sh0.webhooks.filter(h => h.topic !== 'orders/fulfilled') } });
+  R.syncHook = await call('pos-shopify', { action: 'syncFulfilled', entityId: 'BF', siteUrl: 'https://somewhere-else.example' }, own.idToken);
+  check('the missing webhook is registered by the sync, at the site setup used', R.syncHook.hook === 'registered' && mock.state.webhooks.some(h => h.topic === 'ORDERS_FULFILLED' && h.callbackUrl === sh0.siteUrl + '/.netlify/functions/pos-shopify?hook=1&e=BF') && mock.state.webhooks.length === 4 && (await getDoc('pos/retail/settings/BF')).shopify.webhooks.length === 4, [R.syncHook, mock.state.webhooks]);
+}
+
+R.disc = await call('pos-shopify', { action: 'disconnect', entityId: 'BF' }, own.idToken); check('disconnected: our webhooks removed from the app, the secret gone, a webhook refused', R.disc.ok && R.disc.webhooksRemoved === 4 && mock.state.webhooks.length === 0 && (await getDoc('pos/retail/shopifySecrets/BF')) === null && (await hook('orders/create', order(9009))).status === 401, [R.disc, mock.state.webhooks]);
 
 console.log(JSON.stringify({ fails, ...R, log: undefined, list: undefined }, null, 1).slice(0, 10000));
 console.log(fails.length ? fails.length + ' FAILED' : 'shopify-api: all passed');

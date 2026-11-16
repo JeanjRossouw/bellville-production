@@ -1,8 +1,10 @@
 // Retail POS — the Shopify schedule: every ten minutes, for every company
 // connected, push the stock still queued (with its back-off), pull the
-// discount codes and push customers who said yes to marketing.
+// discount codes and push customers who said yes to marketing; and complete
+// here the orders the shop has fulfilled.
 import { json, query, nowIso, allGroups, inGroup, groupStanding } from './lib/pos.mjs';
 import { secretsOf, settingsOf, flushStock, logSync } from './lib/shopify-pos.mjs';
+import { syncFulfilled } from './lib/shopify-import.mjs';
 
 export const config = { schedule: '*/10 * * * *' };
 
@@ -22,6 +24,9 @@ export const handler = async (event) => {
         const r = await flushStock(e.id, { budgetMs: 8000, max: 150 });
         out.push(`${e.id}: stock ${r.pushed || 0} pushed, ${r.failed || 0} failed, ${r.left || 0} left`);
       } catch (err) { out.push(`${e.id}: ${err.message}`); await logSync(e.id, 'stock', 'failed', err.message); }
+      // orders the shop fulfilled that no webhook told us about: completed here too, a few a run
+      try { const f = await syncFulfilled(e.id, cfg, { budgetMs: 5000, max: 20 }); if (f.done || f.owed) out.push(`${e.id}: ${f.done} fulfilled order(s) completed${f.owed ? ', ' + f.owed + ' left open (money owed)' : ''}`); }
+      catch (err) { out.push(`${e.id}: fulfilled orders: ${err.message}`); }
     }
     });
     return json(200, { ok: true, at: nowIso(), done: out });

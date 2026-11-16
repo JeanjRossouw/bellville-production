@@ -81,7 +81,15 @@ export async function action(act, b) {
   const run = async (what, body, done) => { on.busy = true; ctx.repaint(); try { const r = await auth.api(what, { entityId: dd.entity.id, ...body }, API.shopify); toast(done(r)); } catch (e) { toast(e.message, 'warn'); } on.busy = false; await load(); };
   if (act === 'on-toggle') { if (on.open.has(id)) on.open.delete(id); else on.open.add(id); return ctx.repaint(); }
   if (act === 'on-refresh') return load();
-  if (act === 'on-sync') return run('syncNow', {}, r => `Synced: ${r.stock.pushed || 0} stock updates${r.codes != null ? ', ' + r.codes + ' codes' : ''}${r.customers ? ', ' + r.customers.pushed + ' customers' : ''}`);
+  if (act === 'on-sync') {
+    // then the orders the shop has fulfilled: completed here too, a few dozen a call until none are left
+    on.busy = true; ctx.repaint();
+    let done = 0, owed = 0, err = '';
+    try { for (let i = 0; i < 12; i++) { const f = await auth.api('syncFulfilled', { entityId: dd.entity.id, siteUrl: location.origin }, API.shopify); done += f.done || 0; owed += f.owed || 0; if (!f.left || !(f.done || f.owed)) break; } }
+    catch (e) { err = e.message; }
+    const said = err ? 'Fulfilled orders not checked: ' + err + ' · ' : (done || owed) ? `${done} order${done === 1 ? '' : 's'} fulfilled on Shopify marked done here${owed ? ', ' + owed + ' left open (money still owed)' : ''} · ` : '';
+    return run('syncNow', {}, r => said + `Synced: ${r.stock.pushed || 0} stock updates${r.codes != null ? ', ' + r.codes + ' codes' : ''}${r.customers ? ', ' + r.customers.pushed + ' customers' : ''}`);
+  }
   if (act === 'on-link') return run('link', {}, r => `${r.linked} of ${r.seen} shop variants linked by SKU${r.unmatched.length ? ' · not matched: ' + r.unmatched.slice(0, 5).join(', ') : ''}`);
   if (act === 'on-push') return run('pushStock', {}, r => `${r.queued} items queued, ${r.pushed || 0} pushed now${r.failed ? ', ' + r.failed + ' retrying' : ''}`);
   if (act === 'on-import') return importOpen();
@@ -191,7 +199,7 @@ function setupHtml(st, mine) {
   const su = st.setup; const hooks = st.webhooks || [];
   const unmapped = mine.filter(s => !(st.locationByStore || {})[s.id]);
   const rows = [];
-  rows.push(hooks.length === 3 ? `<li class="ok">Order webhooks registered on the app (new, cancelled, refunded) → <code>${esc((st.siteUrl || location.origin) + st.webhookUrl)}</code></li>` : `<li class="warn">Webhooks: ${hooks.length} of 3 registered. Press <em>Run setup again</em>; if it still fails, register <code>orders/create</code>, <code>orders/cancelled</code> and <code>refunds/create</code> on the app to <code>${esc(location.origin + st.webhookUrl)}</code>.</li>`);
+  rows.push(hooks.length >= 4 ? `<li class="ok">Order webhooks registered on the app (new, cancelled, refunded, fulfilled) → <code>${esc((st.siteUrl || location.origin) + st.webhookUrl)}</code></li>` : `<li class="warn">Webhooks: ${hooks.length} of 4 registered. Press <em>Run setup again</em>; if it still fails, register <code>orders/create</code>, <code>orders/cancelled</code>, <code>refunds/create</code> and <code>orders/fulfilled</code> on the app to <code>${esc(location.origin + st.webhookUrl)}</code>.</li>`);
   rows.push(unmapped.length ? `<li class="warn">${esc(unmapped.map(s => s.name).join(', '))}: no Shopify location matched by name. Choose one below and save.</li>` : `<li class="ok">Every store is matched to a Shopify location.</li>`);
   if (su) {
     rows.push(su.seen ? `<li class="${su.linked ? 'ok' : 'warn'}">${su.linked} of ${su.seen} shop variants linked by SKU${su.unmatched ? ` · ${su.unmatched} on the shop with no matching SKU here (the Online tab's <em>Link by SKU</em> after you add them)` : ''}.</li>` : '<li class="warn">The shop has no variants with SKUs to link. Give the shop\'s products the same SKUs as the till, then <em>Run setup again</em>.</li>');
