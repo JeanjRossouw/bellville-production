@@ -59,8 +59,8 @@ await p.waitForSelector('#nav [data-view=reports]', { state: 'attached' }); awai
 
 // ---- the dashboard on Home
 await nav('home'); await p.waitForSelector('.dash-card', { timeout: 15000 }); await p.waitForTimeout(300);
-R.dashOrders = await p.textContent('.dash-orders').catch(() => ''); check('the Shopify order shows on Home as an online order', /Orders R 2,500\.00/.test(R.dashOrders) && /1 order/.test(R.dashOrders) && /1 online R 2,500\.00/.test(R.dashOrders), R.dashOrders);
-R.dash = await screenText(); check('today: R 1 000 over 2 sales, last week nothing', /Today,/i.test(R.dash) && /Bellville/.test(R.dash) && /R 1,000\.00/.test(R.dash) && /2 sales · basket R 500\.00/.test(R.dash) && /Same day last week: R 0\.00/.test(R.dash), R.dash.slice(0, 400));
+R.dashSplit = await p.textContent('.dash-split').catch(() => ''); check('where it came from: the till and online', /Till R 1,000\.00 · 2 sales/.test(R.dashSplit) && /Online R 2,500\.00 · 1 order/.test(R.dashSplit) && !(await p.$('.dash-orders')), R.dashSplit);
+R.dash = await screenText(); check('today: R 1 000 at the till over 2 sales and R 2 500 online make R 3 500 over 3 sales, last week nothing', /Today,/i.test(R.dash) && /Bellville/.test(R.dash) && /R 3,500\.00/.test(R.dash) && /3 sales · basket R 1,166\.67/.test(R.dash) && /Same day last week: R 0\.00/.test(R.dash), R.dash.slice(0, 400));
 
 // ---- Money in: the day screen (managers), today's two card sales
 await nav('money'); await p.waitForSelector('.mi-big', { timeout: 15000 }); await p.waitForTimeout(300);
