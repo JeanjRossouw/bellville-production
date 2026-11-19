@@ -407,6 +407,8 @@ export function labelPage(cells, size, nudge = { dx: 0, dy: 0 }) {
         .lbl-bar svg { width: ${barW}mm; height: ${bar.toFixed(1)}mm; display: block; margin: .3mm auto 0; } .lbl-code { font-size: ${code}pt; letter-spacing: .06em; line-height: 1.1; }
         @media screen { body { background: #ddd; } .lbl { background: #fff; margin: 3mm auto; box-shadow: 0 0 0 1px #bbb; } }` };
 }
+// the price on a label: whole rands without the .00 (R 2,500), the cents kept when there are any (R 49.95)
+export const labelPrice = (cents) => { const c = Math.round(Number(cents) || 0); return c % 100 === 0 ? money(c).replace(/\.00$/, '') : money(c); };
 // labels for a list of { name, code, priceCents, copies? }
 export function printLabelItems(items, dflt = 1) {
   const missing = items.filter(i => !i.code || !encodable(i.code));
@@ -422,7 +424,7 @@ export function printLabelItems(items, dflt = 1) {
       const copies = Math.max(1, Math.min(500, Number(val(wrap, 'lb-copies')) || 1));
       const size = labelSizeOf(val(wrap, 'lb-size'));
       try { localStorage.setItem('pos.labelSize', size.key); } catch (e) { /* remembered only where storage is allowed */ }
-      const cells = list.flatMap(i => Array.from({ length: Math.min(500, i.copies || copies) }, () => `<div class="lbl"><div class="lbl-top"><div class="lbl-name">${esc(i.name)}</div><div class="lbl-price">${esc(money(i.priceCents))}</div></div><div class="lbl-bar">${barcodeSvg(i.code, 40)}</div><div class="lbl-code">${esc(i.code)}</div></div>`));
+      const cells = list.flatMap(i => Array.from({ length: Math.min(500, i.copies || copies) }, () => `<div class="lbl"><div class="lbl-top"><div class="lbl-name">${esc(i.name)}</div><div class="lbl-price">${esc(labelPrice(i.priceCents))}</div></div><div class="lbl-bar">${barcodeSvg(i.code, 40)}</div><div class="lbl-code">${esc(i.code)}</div></div>`));
       const nudge = size.sheet ? { dx: 0, dy: 0 } : { dx: clampNudge(val(wrap, 'lb-dx')), dy: clampNudge(val(wrap, 'lb-dy')) };
       if (!size.sheet) { try { localStorage.setItem('pos.labelNudge.' + size.key, JSON.stringify(nudge)); } catch (e) { /* as above */ } }
       const page = labelPage(cells, size, nudge);
