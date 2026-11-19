@@ -47,9 +47,9 @@ export async function readInvoice(list, where, { onWait } = {}) {
     const r = await auth.api('result', { readId: start.readId, ...where }, API.invoice);
     if (r.status === 'done') return r.result;
     if (r.status === 'failed') throw new Error(r.error || 'The invoice could not be read.');
-    if (Date.now() - began > 240000) throw new Error('The invoice is taking too long to read. Try again, or type it in.');
+    if (Date.now() - began > 600000) throw new Error('The invoice is taking too long to read. Try again with fewer pages, or type it in.');
     if (onWait) onWait(Math.round((Date.now() - began) / 1000));
-    await new Promise(res => setTimeout(res, Date.now() - began < 20000 ? 1500 : 3000));
+    await new Promise(res => setTimeout(res, Date.now() - began < 20000 ? 1500 : Date.now() - began < 120000 ? 3000 : 6000));
   }
 }
 

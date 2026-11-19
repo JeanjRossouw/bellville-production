@@ -133,16 +133,22 @@ function importSuppliers() {
 
 // ------------------------------------------------- purchase orders --
 const openPos = (dd) => (dd.pos || []).filter(p => p.storeId === dd.store.id);
-function poListHtml(dd) {
+// the orders as listed: the filter and the search applied, newest first
+function poRows(dd = d()) {
   const all = openPos(dd).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   const q = by.q.trim().toLowerCase();
-  const rows = all.filter(p => (by.filter === 'all' || (by.filter === 'open' ? ['draft', 'sent', 'part'].includes(p.status) : p.status === by.filter)) && (!q || [p.docNo, p.supplierName, supplierName(p.supplierId), ...(p.lines || []).map(l => l.name)].some(x => String(x || '').toLowerCase().includes(q))));
+  return all.filter(p => (by.filter === 'all' || (by.filter === 'open' ? ['draft', 'sent', 'part'].includes(p.status) : p.status === by.filter)) && (!q || [p.docNo, p.supplierName, supplierName(p.supplierId), ...(p.lines || []).map(l => l.name)].some(x => String(x || '').toLowerCase().includes(q))));
+}
+function poListHtml(dd) {
+  const rows = poRows(dd);
   const low = stockOf().filter(x => x.low).length, short = mgr() ? forOpenOrders('').length : 0;
   return `<div class="toolbar"><input id="by-q" class="search" type="search" placeholder="Number, supplier, item" value="${esc(by.q)}">
       <select id="by-filter">${[['open', 'Open'], ['draft', 'Drafts'], ['sent', 'Sent'], ['part', 'Part received'], ['received', 'Received'], ['cancelled', 'Cancelled'], ['all', 'All']].map(x => `<option value="${x[0]}"${by.filter === x[0] ? ' selected' : ''}>${x[1]}</option>`).join('')}</select>
-      ${mgr() ? `<button class="btn primary sm" data-act="by-po-new">${icon('plus')} New purchase order</button>${low ? `<button class="btn ghost sm" data-act="by-po-suggest">${icon('box')} Suggest from low stock (${low})</button>` : ''}${short ? `<button class="btn ghost sm" data-act="by-po-for-open" title="Only what open website orders and sales orders need that you do not have; reorder levels left out">${icon('box')} Order for open orders only (${short})</button>` : ''}` : ''}</div>
-    ${rows.length ? `<div class="card" style="padding:0;overflow:auto"><table class="tbl"><thead><tr><th>No</th><th>Supplier</th><th>Lines</th><th>Expected</th><th class="r">Total</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(p => `<tr class="${/cancelled|received/.test(p.status) ? 'off' : ''}"><td><strong>${esc(p.docNo || 'Draft')}</strong>${p.revision > 1 ? ` <span class="chip">rev ${p.revision}</span>` : ''}<div class="muted">${esc(niceDate(p.sentAt || p.createdAt))}</div></td><td>${esc(p.supplierName || supplierName(p.supplierId))}</td><td>${(p.lines || []).length} · ${(p.lines || []).reduce((n, l) => n + (l.qty || 0), 0)} units${p.status === 'part' ? ` · ${(p.lines || []).reduce((n, l) => n + (l.receivedQty || 0), 0)} in` : ''}</td><td class="muted">${esc(niceDate(p.expectedAt))}</td><td class="r">${esc(money(p.totalCents || (p.lines || []).reduce((n, l) => n + l.qty * l.unitCostCents, 0)))}</td><td>${chip(p.status)}</td><td class="r nowrap">${p.status === 'draft' && mgr() ? `<button class="btn ghost sm" data-act="by-po-edit" data-id="${esc(p.id)}">Edit</button>` : ''}<button class="btn ghost sm" data-act="by-po-open" data-id="${esc(p.id)}">Open</button></td></tr>`).join('')}</tbody></table></div>` : empty('No purchase orders', mgr() ? 'Start one, or let the low-stock list suggest it.' : '')}`;
+      ${mgr() ? `${by.filter === 'draft' && rows.filter(neverSent).length > 1 ? `<button class="btn ghost sm" data-act="by-po-delete-all">Delete all ${rows.filter(neverSent).length} drafts shown</button>` : ''}<button class="btn primary sm" data-act="by-po-new">${icon('plus')} New purchase order</button>${low ? `<button class="btn ghost sm" data-act="by-po-suggest">${icon('box')} Suggest from low stock (${low})</button>` : ''}${short ? `<button class="btn ghost sm" data-act="by-po-for-open" title="Only what open website orders and sales orders need that you do not have; reorder levels left out">${icon('box')} Order for open orders only (${short})</button>` : ''}` : ''}</div>
+    ${rows.length ? `<div class="card" style="padding:0;overflow:auto"><table class="tbl"><thead><tr><th>No</th><th>Supplier</th><th>Lines</th><th>Expected</th><th class="r">Total</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(p => `<tr class="${/cancelled|received/.test(p.status) ? 'off' : ''}"><td><strong>${esc(p.docNo || 'Draft')}</strong>${p.revision > 1 ? ` <span class="chip">rev ${p.revision}</span>` : ''}<div class="muted">${esc(niceDate(p.sentAt || p.createdAt))}</div></td><td>${esc(p.supplierName || supplierName(p.supplierId))}</td><td>${(p.lines || []).length} · ${(p.lines || []).reduce((n, l) => n + (l.qty || 0), 0)} units${p.status === 'part' ? ` · ${(p.lines || []).reduce((n, l) => n + (l.receivedQty || 0), 0)} in` : ''}</td><td class="muted">${esc(niceDate(p.expectedAt))}</td><td class="r">${esc(money(p.totalCents || (p.lines || []).reduce((n, l) => n + l.qty * l.unitCostCents, 0)))}</td><td>${chip(p.status)}</td><td class="r nowrap">${p.status === 'draft' && mgr() ? `<button class="btn ghost sm" data-act="by-po-edit" data-id="${esc(p.id)}">Edit</button>` : ''}<button class="btn ghost sm" data-act="by-po-open" data-id="${esc(p.id)}">Open</button>${neverSent(p) && mgr() ? `<button class="btn ghost sm" data-act="by-po-delete" data-id="${esc(p.id)}" title="Never sent: delete it">Delete</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : empty('No purchase orders', mgr() ? 'Start one, or let the low-stock list suggest it.' : '')}`;
 }
+// never sent: no number, nothing on order. Such an order can be deleted; a sent one is cancelled and keeps its number
+const neverSent = (p) => !p.docNo && ['draft', 'cancelled'].includes(p.status);
 function poEditHtml(dd) {
   const e = by.edit; const sups = suppliers();
   const sub = e.lines.reduce((n, l) => n + l.qty * l.unitCostCents, 0);
@@ -151,7 +157,7 @@ function poEditHtml(dd) {
     <div class="tk-scanrow" style="margin:.4rem 0"><label class="pos-search-wrap" style="flex:1 1 260px">${icon('search')}<input id="po-add" class="pos-in" placeholder="Add items: name, SKU or barcode, then tick the ones to buy" autocomplete="off" value="${esc(by.poQ || '')}"></label><button class="btn ghost sm" data-act="by-po-open-here" title="What open orders need of this supplier's items">${icon('box')} Open orders</button><button class="btn ghost sm" data-act="by-po-suggest-here">${icon('box')} Suggest from low stock</button></div>
     <div id="po-hits" class="pk-list">${poHitsHtml(by.poQ)}</div>
     ${e.lines.length ? `<table class="tbl po-lines"><thead><tr><th>Item</th><th class="r">Available</th><th class="r">On order</th><th class="r">Qty</th><th class="r">Unit cost (ex VAT)</th><th class="r">Total</th><th></th></tr></thead><tbody>${e.lines.map((l, i) => { const s = stockByItem().get(l.itemId) || {}; return `<tr><td><strong>${esc(l.name)}</strong><div class="muted">${esc(l.sku || '')}</div></td><td class="r">${s.available == null ? '' : s.available}${s.reorderLevel != null ? ` <span class="muted">/ ${s.reorderLevel}</span>` : ''}</td><td class="r">${s.onOrder || ''}</td><td class="r"><input class="in-sm r" data-po-qty="${i}" type="number" min="1" value="${l.qty}" style="max-width:80px"></td><td class="r"><input class="in-sm r" data-po-cost="${i}" inputmode="decimal" value="${randsOf(l.unitCostCents)}" style="max-width:110px"></td><td class="r">${esc(money(l.qty * l.unitCostCents))}</td><td class="r"><button class="pos-icon-btn light" data-act="by-po-rm" data-i="${i}" title="Remove">${icon('x')}</button></td></tr>`; }).join('')}</tbody><tfoot><tr><td colspan="5" class="r"><strong>Subtotal (ex VAT)</strong></td><td class="r"><strong>${esc(money(sub))}</strong></td><td></td></tr></tfoot></table>` : '<p class="muted">No lines yet: add items above, or suggest them from low stock.</p>'}
-    <div class="card-actions">${e.revise ? `<button class="btn primary" data-act="by-po-revsend"${e.lines.length && e.supplierId ? '' : ' disabled'}>${icon('file')} Send the change</button>` : `<button class="btn" data-act="by-po-save">Save draft</button><button class="btn primary" data-act="by-po-send"${e.lines.length && e.supplierId ? '' : ' disabled'}>${icon('file')} Send to the supplier</button>`}<button class="btn ghost" data-act="by-po-close">Back</button></div></div>`;
+    <div class="card-actions">${e.revise ? `<button class="btn primary" data-act="by-po-revsend"${e.lines.length && e.supplierId ? '' : ' disabled'}>${icon('file')} Send the change</button>` : `<button class="btn" data-act="by-po-save">Save draft</button><button class="btn primary" data-act="by-po-send"${e.lines.length && e.supplierId ? '' : ' disabled'}>${icon('file')} Send to the supplier</button>`}<button class="btn ghost" data-act="by-po-close">Back</button>${e.id && !e.revise ? `<button class="btn ghost" data-act="by-po-delete" data-id="${esc(e.id)}">Delete draft</button>` : ''}</div></div>`;
 }
 let _stockMap = null, _stockMapFor = null;
 function stockByItem() { const list = stockOf(); if (_stockMapFor !== list) { _stockMap = new Map(list.map(x => [x.itemId, x])); _stockMapFor = list; } return _stockMap; }
@@ -222,7 +228,8 @@ function poView(id) {
       ${p.status === 'sent' && mgr() && !(p.lines || []).some(l => l.receivedQty > 0) ? `<button class="btn primary" data-act="by-po-revise" data-id="${esc(p.id)}">Change and resend</button>` : ''}
       ${p.status !== 'draft' ? `<button class="btn" data-act="by-po-share" data-id="${esc(p.id)}">${icon('user')} Send again</button>` : ''}
       <button class="btn ghost" data-act="by-po-print" data-id="${esc(p.id)}">${icon('printer')} Print / PDF</button>
-      ${['draft', 'sent', 'part'].includes(p.status) && mgr() ? `<button class="btn ghost" data-act="by-po-cancel" data-id="${esc(p.id)}">Cancel order</button>` : ''}
+      ${['sent', 'part'].includes(p.status) && mgr() ? `<button class="btn ghost" data-act="by-po-cancel" data-id="${esc(p.id)}">Cancel order</button>` : ''}
+      ${neverSent(p) && mgr() ? `<button class="btn ghost" data-act="by-po-delete" data-id="${esc(p.id)}">Delete</button>` : ''}
     </div>`, { okLabel: 'Close', cancelLabel: '', onOk: () => true });
   wrap.querySelector('.modal-card').classList.add('wide');
 }
@@ -293,12 +300,12 @@ async function invoiceDrop(files) {
   const r = readRcv(); if (!r || r.reading || !files || !files.length) return;
   r.reading = true; ctx.repaint();
   let result = null, err = '';
-  try { result = await readInvoice(files, where(), { onWait: (s) => { const w = document.getElementById('iv-wait'); if (w) w.textContent = 'This takes up to a minute (' + s + ' s so far). Carry on once it is done.'; } }); }
+  try { result = await readInvoice(files, where(), { onWait: (s) => { const w = document.getElementById('iv-wait'); if (w) w.textContent = (s < 60 ? 'This takes up to a minute' : 'A long invoice takes a few minutes') + ' (' + (s < 90 ? s + ' s' : Math.round(s / 60) + ' min') + ' so far). Leave this open until it is done.'; } }); }
   catch (e) { err = e.message || 'The invoice could not be read.'; }
   if (by.rcv !== r) return;            // the receipt was closed meanwhile
   readRcv(); r.reading = false; ctx.repaint();
   if (err) return toast(err, 'warn');
-  if (!result.readable) return toast('That could not be read as an invoice' + (result.note ? ': ' + result.note : '.') + ' Try a clearer photo or the PDF, or type it in.', 'warn');
+  if (!result.readable) return toast('The invoice was not read in. ' + (result.note || 'The reader found no item lines on it.') + ' Try it again, or type it in.', 'warn');
   reviewInvoice({ result, items: stockOf(), productOf: productById, suppliers: suppliers(), vatRegistered: !!d().entity.vatRegistered, onFill: (f) => fillFromInvoice(r, f) });
 }
 function fillFromInvoice(r, f) {
@@ -566,6 +573,28 @@ export async function action(act, b) {
       return;
     }
     case 'by-po-share': { const p = openPos(d()).find(x => x.id === id); if (p) shareModal(p); return; }
+    case 'by-po-delete': {
+      const p = openPos(d()).find(x => x.id === id); if (!p) return;
+      if (!confirm('Delete this ' + (p.status === 'cancelled' ? 'cancelled draft' : 'draft purchase order') + (p.supplierName ? ' for ' + p.supplierName : '') + ' (' + (p.lines || []).length + ' line' + ((p.lines || []).length === 1 ? '' : 's') + ')? It cannot be brought back.')) return;
+      try { await withPin('poDelete', { poId: id, ...where() }, 'manager'); const m = document.getElementById('modal'); if (m) m.remove(); if (by.edit && by.edit.id === id) by.edit = null; toast('Draft deleted'); ctx.repaint(); if (ctx.onChange) ctx.onChange(); }
+      catch (e) { toast(e.message, 'warn'); }
+      return;
+    }
+    case 'by-po-delete-all': {
+      const list = poRows().filter(neverSent); if (!list.length) return;
+      if (!confirm('Delete all ' + list.length + ' draft purchase orders shown? They were never sent. They cannot be brought back.')) return;
+      let done = 0, token = '';
+      try {
+        for (const p of list) {
+          try { await auth.api('poDelete', { poId: p.id, ...(token ? { approvalToken: token } : {}), ...where() }, API.buy); }
+          catch (e) { if (e.status === 403 && /PIN/.test(e.message) && !token) { const a = await auth.requireOverride({ minRole: 'manager', action: 'buy', details: { what: 'poDelete', count: list.length }, text: e.message }); token = a.token; await auth.api('poDelete', { poId: p.id, approvalToken: token, ...where() }, API.buy); } else throw e; }
+          done++; if (done % 5 === 0) toast('Deleting drafts: ' + done + ' of ' + list.length);
+        }
+        toast(done + ' draft' + (done === 1 ? '' : 's') + ' deleted');
+      } catch (e) { toast((done ? done + ' deleted, then: ' : '') + e.message, 'warn'); }
+      ctx.repaint(); if (ctx.onChange) ctx.onChange();
+      return;
+    }
     case 'by-po-cancel': { const p = openPos(d()).find(x => x.id === id); if (!p) return; const reason = prompt('Cancel ' + (p.docNo || 'this draft') + '? Why?', ''); if (reason === null) return; try { await withPin('poCancel', { poId: id, reason, ...where() }, 'manager'); const m = document.getElementById('modal'); if (m) m.remove(); toast('Cancelled'); if (ctx.onChange) ctx.onChange(); } catch (e) { toast(e.message, 'warn'); } return; }
     case 'by-po-receive': { const p = openPos(d()).find(x => x.id === id); const m = document.getElementById('modal'); if (m) m.remove(); if (p) startReceive(p); return; }
     case 'by-rcv-po': { const p = openPos(d()).find(x => x.id === id); if (p) startReceive(p); return; }

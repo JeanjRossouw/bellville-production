@@ -148,6 +148,23 @@ const audit = await listColl('auditLog'); check('audited', ['po.send', 'po.cance
   R.huge = await call('pos-buy', { action: 'poSend', poId: 'po_huge', ...bell }, own.idToken); check('over 400 lines: refused with a reason, nothing numbered', R.huge.status === 400 && /400 at most/.test(R.huge.error) && (await getDoc('pos/retail/counters/BF_PO')).next === 4, R.huge);
 }
 
+// ---- a purchase order never sent is deleted outright; one that was sent keeps its number and is cancelled instead
+{
+  const draft = (id) => put('pos/retail/purchaseOrders/' + id, { status: 'draft', docNo: '', seq: 0, supplierId: 's_foam', supplierName: 'Foam Co', expectedAt: '', note: '', lines: [{ productId: 'p_cushion', variantId: '', itemId: 'p_cushion', sku: 'CU-1', name: 'Scatter Cushion', qty: 4, unitCostCents: 5000, receivedQty: 0 }], ...srv('BF', 'BF-BELL') });
+  await draft('po_del1'); await draft('po_del2');
+  const onOrderBefore = (await lvl('BF-BELL', 'p_cushion')).onOrderQty, counterBefore = (await getDoc('pos/retail/counters/BF_PO')).next;
+  R.delSup = await call('pos-buy', { action: 'poDelete', poId: 'po_del1', ...bell }, sup.idToken); check('a supervisor cannot delete a purchase order', R.delSup.status === 403 && /manager/.test(R.delSup.error), R.delSup);
+  R.del = await call('pos-buy', { action: 'poDelete', poId: 'po_del1', ...bell }, own.idToken);
+  check('a draft is deleted: gone, nothing on order moved, no number used', R.del.ok && R.del.deleted === true && (await getDoc('pos/retail/purchaseOrders/po_del1')) === null && (await lvl('BF-BELL', 'p_cushion')).onOrderQty === onOrderBefore && (await getDoc('pos/retail/counters/BF_PO')).next === counterBefore, R.del);
+  const au = (await listColl('auditLog')).find(x => x.action === 'po.delete');
+  check('the audit log keeps what was deleted', au && au.docId === 'po_del1' && au.details.supplier === 'Foam Co' && au.details.lines === 1 && au.details.totalCents === 20000 && au.details.items[0] === '4 × Scatter Cushion' && au.actorName === 'Jean', au);
+  R.delAgain = await call('pos-buy', { action: 'poDelete', poId: 'po_del1', ...bell }, own.idToken); check('deleting it again: no such order', R.delAgain.status === 404, R.delAgain);
+  R.delSent = await call('pos-buy', { action: 'poDelete', poId: 'po1', ...bell }, own.idToken); check('an order that was sent is not deleted: cancel it instead', R.delSent.status === 409 && /keeps its number/.test(R.delSent.error) && (await getDoc('pos/retail/purchaseOrders/po1')) !== null, R.delSent);
+  R.delCancelled = await call('pos-buy', { action: 'poDelete', poId: 'po2', ...bell }, own.idToken); check('nor a cancelled order that has a number', R.delCancelled.status === 409 && (await getDoc('pos/retail/purchaseOrders/po2')) !== null, R.delCancelled);
+  await call('pos-buy', { action: 'poCancel', poId: 'po_del2', reason: 'not needed', ...bell }, own.idToken);
+  R.delCancelledDraft = await call('pos-buy', { action: 'poDelete', poId: 'po_del2', ...bell }, own.idToken); check('a draft that was cancelled (never numbered) can be deleted', R.delCancelledDraft.ok && R.delCancelledDraft.deleted && (await getDoc('pos/retail/purchaseOrders/po_del2')) === null, R.delCancelledDraft);
+}
+
 console.log(JSON.stringify({ fails, ...R, page: undefined }, null, 1));
 console.log(fails.length ? fails.length + ' FAILED' : 'buy-api: all passed');
 if (server) server.kill();
