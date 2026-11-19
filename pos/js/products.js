@@ -372,15 +372,20 @@ export function printLabels(d, ids, eid) {
 // window. The size last used is remembered on the device.
 export const LABEL_SIZES = [
   { key: 'a4', label: 'A4 sheet · 3 across, 70 × 37 mm', sheet: true },
-  { key: 'r62x29', label: 'Label roll · 62 × 29 mm (Brother DK-11209, or 62 mm continuous)', w: 62, h: 29 },
-  { key: 'r90x29', label: 'Label roll · 29 × 90 mm (Brother DK-11201)', w: 90, h: 29 },
-  { key: 'r90x38', label: 'Label roll · 38 × 90 mm (Brother DK-11208)', w: 90, h: 38 },
-  { key: 'r54x17', label: 'Label roll · 17 × 54 mm (Brother DK-11204)', w: 54, h: 17 }
+  { key: 'r62x29', label: 'Label roll · 62 × 29 mm (Brother DK-11209, or 62 mm continuous)', w: 62, h: 29, mx: 2, my: 3.2 },
+  { key: 'r90x29', label: 'Label roll · 29 × 90 mm (Brother DK-11201)', w: 90, h: 29, mx: 3.5, my: 1.8 },
+  { key: 'r90x38', label: 'Label roll · 38 × 90 mm (Brother DK-11208)', w: 90, h: 38, mx: 3.5, my: 1.8 },
+  { key: 'r54x17', label: 'Label roll · 17 × 54 mm (Brother DK-11204)', w: 54, h: 17, mx: 3.5, my: 1.6 }
 ];
+// mx, my: a label printer cannot print to the edge of a label: about 3 mm is lost at the two ends the label feeds
+// by and 1.5 mm at the sides, so the print is kept that far in (what is nearer the edge is simply cut off)
 const labelSizeOf = (key) => LABEL_SIZES.find(x => x.key === key) || LABEL_SIZES[0];
 const lastLabelSize = () => { try { return localStorage.getItem('pos.labelSize') || 'a4'; } catch (e) { return 'a4'; } };
+// a nudge for a printer that prints a little off: millimetres to the right and down (minus for left and up), kept per size
+const nudgeOf = (key) => { try { const n = JSON.parse(localStorage.getItem('pos.labelNudge.' + key) || 'null'); return { dx: Number(n && n.dx) || 0, dy: Number(n && n.dy) || 0 }; } catch (e) { return { dx: 0, dy: 0 }; } };
+const clampNudge = (v) => Math.max(-5, Math.min(5, Math.round((Number(v) || 0) * 2) / 2));
 // the print page for a list of label cells on the chosen stock
-export function labelPage(cells, size) {
+export function labelPage(cells, size, nudge = { dx: 0, dy: 0 }) {
   if (size.sheet) return { body: `<div class="lbl-sheet">${cells.join('')}</div>`, css: `
         @page { size: A4; margin: 10mm 5mm; } .lbl-sheet { display: grid; grid-template-columns: repeat(3, 70mm); gap: 0; }
         .lbl { width: 70mm; height: 37mm; padding: 2mm 3mm; box-sizing: border-box; text-align: center; overflow: hidden; font-family: Arial, sans-serif; break-inside: avoid; }
@@ -388,12 +393,13 @@ export function labelPage(cells, size) {
         .lbl-bar svg { width: 58mm; height: 11mm; display: block; margin: 0 auto; } .lbl-code { font-size: 8pt; letter-spacing: .08em; }` };
   // a roll: each label its own page, the size of the label, with no margin; the type and the barcode sized to its height.
   // A low label (17 mm) has the name and the price side by side on one line, so the barcode keeps its height.
-  const { w, h } = size, small = h < 22, pad = small ? 1 : 1.5;
+  const { w, h } = size, small = h < 22, mx = size.mx || 2, my = size.my || 1.5;
+  const dx = clampNudge(nudge.dx), dy = clampNudge(nudge.dy), side = (m, d) => Math.max(0, m + d).toFixed(1);
   const name = small ? 7 : h < 34 ? 8.5 : 10, price = small ? 8 : h < 34 ? 11 : 13, code = small ? 5.5 : 7;
-  const bar = Math.max(4.5, h - 2 * pad - (small ? 6.2 : h < 34 ? 14.6 : 17)), barW = Math.min(w - 2 * pad - 3, 58);
+  const bar = Math.max(4.5, h - 2 * my - (small ? 6.2 : h < 34 ? 14.6 : 17)), barW = Math.min(w - 2 * mx - 2, 58);
   return { body: `<div class="lbl-roll">${cells.join('')}</div>`, css: `
         @page { size: ${w}mm ${h}mm; margin: 0; } html, body { margin: 0; padding: 0; }
-        .lbl { width: ${w}mm; height: ${h}mm; padding: ${pad}mm ${pad + 0.5}mm; box-sizing: border-box; text-align: center; overflow: hidden; font-family: Arial, sans-serif; display: flex; flex-direction: column; justify-content: center; break-after: page; page-break-after: always; }
+        .lbl { width: ${w}mm; height: ${h}mm; padding: ${side(my, dy)}mm ${side(mx, -dx)}mm ${side(my, -dy)}mm ${side(mx, dx)}mm; box-sizing: border-box; text-align: center; overflow: hidden; font-family: Arial, sans-serif; display: flex; flex-direction: column; justify-content: center; break-after: page; page-break-after: always; }
         .lbl:last-child { break-after: auto; page-break-after: auto; } .lbl > * { flex: none; }
         ${small ? `.lbl-top { display: flex; align-items: baseline; justify-content: space-between; gap: 1.5mm; line-height: 1.15; }
         .lbl-name { font-size: ${name}pt; font-weight: 700; flex: 1 1 auto; min-width: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .lbl-price { font-size: ${price}pt; font-weight: 700; flex: none; white-space: nowrap; }`
@@ -409,19 +415,23 @@ export function printLabelItems(items, dflt = 1) {
   const list = items.filter(i => i.code && encodable(i.code));
   if (!list.length) return;
   const { wrap } = openModal('Print labels', field('Labels on', 'lb-size', { type: 'select', value: labelSizeOf(lastLabelSize()).key, options: LABEL_SIZES.map(x => ({ value: x.key, label: x.label })) }) + field('Copies of each (blank = as received)', 'lb-copies', { type: 'number', value: dflt, min: 1, max: 500 })
-    + `<p class="muted">${list.length} label${list.length === 1 ? '' : 's'}: the name, the price and the barcode.</p><p class="muted" id="lb-how"></p>`, {
+    + `<p class="muted">${list.length} label${list.length === 1 ? '' : 's'}: the name, the price and the barcode.</p><p class="muted" id="lb-how"></p>
+      <div id="lb-nudge" hidden><div class="fld-row">${field('Move the print right (mm)', 'lb-dx', { type: 'number', value: 0, min: -5, max: 5, step: 0.5 })}${field('Move the print down (mm)', 'lb-dy', { type: 'number', value: 0, min: -5, max: 5, step: 0.5 })}</div>
+      <p class="muted">If the print sits off-centre on the label, move it: 1 moves it one millimetre right or down, -1 left or up (halves work too). Kept for this label size.</p></div>`, {
     okLabel: 'Print', onOk: (wrap) => {
       const copies = Math.max(1, Math.min(500, Number(val(wrap, 'lb-copies')) || 1));
       const size = labelSizeOf(val(wrap, 'lb-size'));
       try { localStorage.setItem('pos.labelSize', size.key); } catch (e) { /* remembered only where storage is allowed */ }
       const cells = list.flatMap(i => Array.from({ length: Math.min(500, i.copies || copies) }, () => `<div class="lbl"><div class="lbl-top"><div class="lbl-name">${esc(i.name)}</div><div class="lbl-price">${esc(money(i.priceCents))}</div></div><div class="lbl-bar">${barcodeSvg(i.code, 40)}</div><div class="lbl-code">${esc(i.code)}</div></div>`));
-      const page = labelPage(cells, size);
+      const nudge = size.sheet ? { dx: 0, dy: 0 } : { dx: clampNudge(val(wrap, 'lb-dx')), dy: clampNudge(val(wrap, 'lb-dy')) };
+      if (!size.sheet) { try { localStorage.setItem('pos.labelNudge.' + size.key, JSON.stringify(nudge)); } catch (e) { /* as above */ } }
+      const page = labelPage(cells, size, nudge);
       openPrint('Labels', page.body, page.css);
       return true;
     }
   });
   // what to choose in the print window for the stock picked
-  const how = () => { const size = labelSizeOf(val(wrap, 'lb-size')); wrap.querySelector('#lb-how').textContent = size.sheet ? 'In the print window: A4, margins Default, scale 100.' : `In the print window choose the label printer, then More settings: Paper size ${Math.min(size.w, size.h)} mm × ${Math.max(size.w, size.h)} mm (the same label as in the printer), Margins None, Scale 100. Each label prints on its own.`; };
+  const how = () => { const size = labelSizeOf(val(wrap, 'lb-size')); const nb = wrap.querySelector('#lb-nudge'); nb.hidden = !!size.sheet; if (!size.sheet) { const n = nudgeOf(size.key); wrap.querySelector('#lb-dx').value = n.dx; wrap.querySelector('#lb-dy').value = n.dy; } wrap.querySelector('#lb-how').textContent = size.sheet ? 'In the print window: A4, margins Default, scale 100.' : `In the print window choose the label printer, then More settings: Paper size ${Math.min(size.w, size.h)} mm × ${Math.max(size.w, size.h)} mm (the same label as in the printer), Margins None, Scale 100. Each label prints on its own.`; };
   wrap.querySelector('#lb-size').addEventListener('change', how); how();
 }
 
