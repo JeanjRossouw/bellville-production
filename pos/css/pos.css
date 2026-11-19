@@ -497,5 +497,14 @@ button.link { background: none; border: 0; padding: 0; color: var(--ink-2); text
 .pk-each { display: flex; align-items: center; gap: .4rem; font-size: 12px; color: var(--muted); } .pk-each input { width: 4.2rem; padding: .35rem .4rem; text-align: right; }
 .pk-row.pk-check { display: flex; align-items: center; gap: .7rem; } .pk-row.pk-check input { width: 18px; height: 18px; flex: none; } .pk-row.pk-check.on { background: #f3f3ef; }
 .pk-row .pk-main { display: grid; font-size: 14px; color: var(--ink); } .pk-row .pk-main > span { font-size: 12px; color: var(--muted); }
-#po-add { width: 100%; font: inherit; font-size: 15px; padding: .65rem .7rem .65rem 2.6rem; border: 1px solid var(--line-2); border-radius: 4px; background: #fff; } #po-add:focus { outline: none; border-color: var(--ink); }
+#po-add, #rc-add, #tr-add { width: 100%; font: inherit; font-size: 15px; padding: .65rem .7rem .65rem 2.6rem; border: 1px solid var(--line-2); border-radius: 4px; background: #fff; } #po-add:focus, #rc-add:focus, #tr-add:focus { outline: none; border-color: var(--ink); }
 #po-hits.pk-list { max-height: 360px; }
+
+/* Receive: the box a supplier's invoice is dropped on, and the window that shows what was read */
+.iv-drop { display: grid; gap: .25rem; padding: .9rem 1rem; margin: .2rem 0 .7rem; border: 1.5px dashed var(--line-2); border-radius: 6px; background: #fafaf8; cursor: pointer; text-align: center; }
+.iv-drop strong { font-size: 14px; display: inline-flex; gap: .4rem; align-items: center; justify-content: center; } .iv-drop strong .ico { width: 16px; height: 16px; }
+.iv-drop span { font-size: 12.5px; color: var(--muted); }
+.iv-drop:hover, .iv-drop.over { border-color: var(--ink); background: #f3f3ef; }
+.iv-drop.busy { cursor: progress; border-style: solid; }
+.iv-tbl td { vertical-align: top; } .iv-tbl tr.off td { opacity: .5; }
+.iv-pick { margin-top: .35rem; } .iv-pick input { width: 100%; } .iv-pick .pk-list { max-height: 180px; margin-top: .25rem; } .iv-pick .pk-list:empty { display: none; }

@@ -13,6 +13,7 @@ import { A4_CSS, whatsappUrl } from './receipt.js';
 import { emailModal } from './email.js';
 import { poHtml, poEmailText, poSheet, grvHtml, transferHtml } from './buying-doc.js';
 import { xlsxBytes, XLSX_TYPE } from './xlsx.js';
+import { readInvoice, reviewInvoice, INVOICE_ACCEPT } from './invoiceread.js';
 import { printLabelItems } from './products.js';
 import { items as stockItems } from './stock.js';
 import { icon } from './icons.js';
@@ -261,6 +262,8 @@ function receiveHtml(dd) {
   const extra = (r.freightCents || 0) + (r.dutyCents || 0) + (r.otherCents || 0);
   return `<div class="card"><h2>${r.po ? 'Receive against ' + esc(r.po.docNo) + ' · ' + esc(r.po.supplierName) : 'Direct receipt'}</h2>
     <div class="grid three">${r.po ? '' : field('Supplier', 'rc-supplier', { type: 'select', value: r.supplierId, options: [{ value: '', label: 'None / unknown' }, ...suppliers().map(s => ({ value: s.id, label: s.name }))] })}${field('Supplier invoice no', 'rc-inv', { value: r.supplierInvoiceNo })}${field('Invoice date', 'rc-invdate', { type: 'date', value: r.invoiceDate })}</div>
+    ${r.reading ? `<div class="iv-drop busy"><strong>Reading the invoice…</strong><span id="iv-wait">This takes up to a minute. Carry on once it is done.</span></div>`
+      : `<label class="iv-drop" data-inv-drop><strong>${icon('file')} Drop the supplier’s invoice here</strong><span>A PDF or a photo of it: the till reads it and fills in the invoice number, the date and the items for you to check. Or tap to choose the file.</span><input type="file" id="rc-invfile" accept="${INVOICE_ACCEPT}" multiple hidden></label>`}
     ${r.po ? '' : `<div class="tk-scanrow" style="margin:.4rem 0"><label class="pos-search-wrap" style="flex:1 1 260px">${icon('search')}<input id="rc-add" class="pos-in" placeholder="Add an item: name, SKU or barcode" autocomplete="off"></label></div><div id="rc-hits" class="pk-list"></div>`}
     ${r.lines.length ? `<table class="tbl po-lines"><thead><tr><th>Item</th>${r.po ? '<th class="r">Ordered</th><th class="r">Still open</th>' : ''}<th class="r">Received now</th><th class="r">Unit cost (ex VAT)</th><th class="r">Landed each</th><th class="r">Total</th><th></th></tr></thead><tbody>${r.lines.map((l, i) => `<tr><td><strong>${esc(l.name)}</strong><div class="muted">${esc(l.sku || '')}</div></td>${r.po ? `<td class="r">${l.ordered}</td><td class="r">${l.open}</td>` : ''}<td class="r"><input class="in-sm r" data-rc-qty="${i}" type="number" min="0" value="${l.qty}" style="max-width:80px"></td><td class="r"><input class="in-sm r" data-rc-cost="${i}" inputmode="decimal" value="${randsOf(l.unitCostCents)}" style="max-width:110px"></td><td class="r">${esc(money(landedEach(r, i)))}</td><td class="r">${esc(money(l.qty * l.unitCostCents))}</td><td class="r">${r.po ? '' : `<button class="pos-icon-btn light" data-act="by-rcv-rm" data-i="${i}" title="Remove">${icon('x')}</button>`}</td></tr>`).join('')}</tbody><tfoot><tr><td colspan="${r.po ? 6 : 4}" class="r">Goods (ex VAT)</td><td class="r">${esc(money(sub))}</td><td></td></tr>${extra ? `<tr><td colspan="${r.po ? 6 : 4}" class="r">Landed costs</td><td class="r">${esc(money(extra))}</td><td></td></tr><tr><td colspan="${r.po ? 6 : 4}" class="r"><strong>Into stock</strong></td><td class="r"><strong>${esc(money(sub + extra))}</strong></td><td></td></tr>` : ''}</tfoot></table>` : '<p class="muted">Add the items that arrived.</p>'}
     <h3 class="st-h3">Landed costs (imports, courier)</h3>
@@ -283,6 +286,49 @@ function readRcv() {
   w.querySelectorAll('[data-rc-qty]').forEach(i => { const l = r.lines[Number(i.dataset.rcQty)]; if (l) l.qty = Math.max(0, Math.round(Number(i.value) || 0)); });
   w.querySelectorAll('[data-rc-cost]').forEach(i => { const l = r.lines[Number(i.dataset.rcCost)]; if (l) l.unitCostCents = Math.max(0, centsOf(i.value)); });
   return r;
+}
+// ---- a supplier's invoice dropped on the receipt: read on the server, shown to check, then the receipt filled in.
+// Nothing is received by this: the person still looks the receipt over and taps Receive into stock.
+async function invoiceDrop(files) {
+  const r = readRcv(); if (!r || r.reading || !files || !files.length) return;
+  r.reading = true; ctx.repaint();
+  let result = null, err = '';
+  try { result = await readInvoice(files, where(), { onWait: (s) => { const w = document.getElementById('iv-wait'); if (w) w.textContent = 'This takes up to a minute (' + s + ' s so far). Carry on once it is done.'; } }); }
+  catch (e) { err = e.message || 'The invoice could not be read.'; }
+  if (by.rcv !== r) return;            // the receipt was closed meanwhile
+  readRcv(); r.reading = false; ctx.repaint();
+  if (err) return toast(err, 'warn');
+  if (!result.readable) return toast('That could not be read as an invoice' + (result.note ? ': ' + result.note : '.') + ' Try a clearer photo or the PDF, or type it in.', 'warn');
+  reviewInvoice({ result, items: stockOf(), productOf: productById, suppliers: suppliers(), vatRegistered: !!d().entity.vatRegistered, onFill: (f) => fillFromInvoice(r, f) });
+}
+function fillFromInvoice(r, f) {
+  if (by.rcv !== r) return;
+  readRcv();
+  if (f.invoiceNo) r.supplierInvoiceNo = f.invoiceNo;
+  if (f.invoiceDate) r.invoiceDate = f.invoiceDate;
+  if (f.deliveryCents && !r.freightCents) r.freightCents = f.deliveryCents;
+  const notes = [];
+  if (r.po) {
+    // against an order: what the invoice lists is what arrived (never more than is still open); the order's other lines are not received now
+    const got = new Map(); for (const l of f.lines) { const g = got.get(l.item.itemId); if (g) g.qty += l.qty; else got.set(l.item.itemId, { ...l }); }
+    let over = 0;
+    for (const l of r.lines) { const g = got.get(l.itemId); if (g) { if (g.qty > l.open) over++; l.qty = Math.min(g.qty, l.open); l.unitCostCents = g.unitCostCents; got.delete(l.itemId); } else l.qty = 0; }
+    if (got.size) notes.push(got.size + ' item' + (got.size === 1 ? ' is' : 's are') + ' not on ' + r.po.docNo + ' (' + [...got.values()].slice(0, 3).map(g => g.item.name).join(', ') + (got.size > 3 ? '…' : '') + '): receive ' + (got.size === 1 ? 'it' : 'them') + ' as a direct receipt');
+    if (over) notes.push(over + ' line' + (over === 1 ? '' : 's') + ' invoiced for more than is still open: only the open quantity is received here');
+  } else {
+    if (f.supplier && !r.supplierId) r.supplierId = f.supplier.id;
+    for (const l of f.lines) { const it = l.item, had = r.lines.find(x => x.itemId === it.itemId); if (had) { had.qty += l.qty; had.unitCostCents = l.unitCostCents; } else r.lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, name: it.name, sku: it.sku, barcode: (it.barcodes || [])[0] || '', qty: l.qty, unitCostCents: l.unitCostCents }); }
+    if (f.supplierName && !f.supplier && !r.supplierId) notes.push(f.supplierName + ' is not on your supplier list: add them under Suppliers, or leave the supplier as it is');
+  }
+  ctx.repaint();
+  toast('Receipt filled in from the invoice: ' + f.lines.length + ' line' + (f.lines.length === 1 ? '' : 's') + (f.skipped ? ', ' + f.skipped + ' left out' : '') + '. Check it, then tap Receive into stock.' + (notes.length ? ' ' + notes.join('. ') + '.' : ''), notes.length ? 'warn' : undefined);
+}
+// a file dragged over or dropped on the invoice box (the box is redrawn with the screen, so these listen on the page)
+if (typeof document !== 'undefined') {
+  const box = (e) => e.target && e.target.closest ? e.target.closest('[data-inv-drop]') : null;
+  document.addEventListener('dragover', (e) => { const b = box(e); if (b) { e.preventDefault(); b.classList.add('over'); } });
+  document.addEventListener('dragleave', (e) => { const b = box(e); if (b) b.classList.remove('over'); });
+  document.addEventListener('drop', (e) => { const b = box(e); if (!b) return; e.preventDefault(); b.classList.remove('over'); invoiceDrop(e.dataTransfer && e.dataTransfer.files); });
 }
 function startReceive(po) {
   const dd = d();
@@ -444,6 +490,7 @@ export function onEnter(id, value) {
 export function onChange(e) {
   if (e.target.id === 'by-filter') { by.filter = e.target.value; ctx.repaint(); }
   if (by.edit && poTick(e.target)) return;   // a tick in the order's item search
+  if (e.target.id === 'rc-invfile') return invoiceDrop(e.target.files);   // the invoice chosen with the file picker
   // a line's figure changes on blur, often the moment a button is pressed: read now, redraw a beat later so the press still lands
   const later = () => setTimeout(() => ctx.repaint(), 220);
   if (/^rc-(freight|duty|other|method)$/.test(e.target.id) || e.target.dataset.rcQty != null || e.target.dataset.rcCost != null) { readRcv(); later(); }

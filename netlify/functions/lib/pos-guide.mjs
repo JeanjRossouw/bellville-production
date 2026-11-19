@@ -45,6 +45,7 @@ One app for a group of retail companies ("companies"), each with its own stores,
 
 ## Buying (supervisor and up)
 - Suppliers; purchase orders (suggested from low stock), sent as a PDF link by email or WhatsApp; receive in full or part against the PO, or directly without one (a numbered GRV); landed costs (freight, duty) spread into the average cost; labels for what came in. Store-to-store transfers: sent → in transit → received (closed short with the loss recorded).
+- Reading a supplier's invoice in (supervisors and up): Stock → Buying → Receive → open the receipt (against the PO, or Direct receipt) → drop the invoice's PDF or a photo of it on the box, or tap the box to choose the file. The till reads it (up to a minute) and shows each line matched to an item here: check the quantities and costs, pick the item for any line not matched, untick what should not come in, then Fill in the receipt. Nothing is received until Receive into stock is tapped. PDFs and photos up to about 3.5 MB; costs come in excluding VAT for a VAT-registered company, including it otherwise.
 
 ## Online (supervisor and up)
 - Shopify: the POS is master for stock and pushes what is available per store to the shop after every movement; the shop is master for product content; online orders come in and take or reserve stock; click & collect list per store; discount codes shared with the till; a sync log. Set up under Admin → Settings → Shopify (owner).

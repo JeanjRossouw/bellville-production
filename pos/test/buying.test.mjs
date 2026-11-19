@@ -7,6 +7,8 @@ import { spawn } from 'node:child_process';
 import { createHash, pbkdf2Sync } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { startMockAnthropic } from './mock-anthropic.mjs';
+const aiMock = await startMockAnthropic(8798).catch(() => null);   // the invoice reader's model, stood in for
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const S = REPO + '/pos/test', FBDIR = process.env.FIREBASE_SDK_DIR || '';
 const PID = 'factory-manager-ece82', FS = 'http://127.0.0.1:8085', AU = 'http://127.0.0.1:9099';
@@ -202,7 +204,39 @@ await p.fill('#po-add', 'hide'); await p.waitForSelector('#po-hits [data-po-tick
 check('all three again with Enter: the two on the order get one more, the Large is added', (await p.locator('.po-lines tbody tr').count()) === 3 && (await p.inputValue('[data-po-qty="0"]')) === '6' && (await p.inputValue('[data-po-qty="2"]')) === '1');
 await p.click('[data-act=by-po-close]'); await p.waitForTimeout(300);
 
+// ---- Receive: the supplier's invoice dropped on a direct receipt is read, shown to check, and fills the receipt in
+await p.click('[data-act=by-sub][data-to=receive]'); await p.waitForTimeout(300);
+await p.click('[data-act=by-rcv-direct]'); await p.waitForSelector('[data-inv-drop]');
+R.dropBox = await p.locator('[data-inv-drop]').innerText();
+check('the receipt has a box to drop the invoice on', /Drop the supplier.s invoice here/i.test(R.dropBox) && /PDF or a photo/.test(R.dropBox), R.dropBox);
+if (process.env.SHOT_DROP) await p.screenshot({ path: process.env.SHOT_DROP });   // pictures for a person to look at
+const INV = { supplierName: 'Foam Co', invoiceNo: 'INV-77', invoiceDate: '2026-11-12', vatCharged: true, pricesIncludeVat: false, vatRatePct: 15, deliveryCharge: 100, subtotal: 1352, vatAmount: 202.8, total: 1554.8,
+  lines: [{ code: 'cu 1', description: 'Scatter cushion 45cm', qty: 10, unitPrice: 52, lineTotal: 520 }, { code: '', description: 'Lamp', qty: 2, unitPrice: 210, lineTotal: 420 }, { code: 'X-9', description: 'Mystery widget', qty: 1, unitPrice: 12, lineTotal: 12 }, { code: 'RH-S', description: 'Hide S', qty: 6, unitPrice: 50, lineTotal: 300 }] };
+await p.setInputFiles('#rc-invfile', { name: 'foam-inv-77.pdf', mimeType: 'application/pdf', buffer: Buffer.from('MOCKINVOICE' + JSON.stringify(INV)) });
+await p.waitForSelector('#modal #iv-body', { timeout: 20000 });
+R.ivModal = await p.locator('#modal').innerText();
+check('what was read is shown to check: the supplier found on the list, the number, the date, the total and the delivery', /Invoice read: check it/i.test(R.ivModal) && /Foam Co/.test(R.ivModal) && /on your list/i.test(R.ivModal) && /INV-77/.test(R.ivModal) && /12 Nov 2026/.test(R.ivModal) && /R 1,554\.80/.test(R.ivModal) && /delivery R 100\.00/.test(R.ivModal) && /excluding VAT/.test(R.ivModal), R.ivModal.slice(0, 500));
+check('the lines matched to the till’s items: by code (however it is spaced), by name (marked to check), a size by its own code; the unknown one not matched and unticked', (await p.locator('#iv-body .chip:has-text("code matched")').count()) === 2 && (await p.locator('#iv-body .chip:has-text("matched by name")').count()) === 1 && (await p.locator('#iv-body .chip:has-text("not matched")').count()) === 1 && /Scatter Cushion/.test(R.ivModal) && /Reptile Hide · Small/.test(R.ivModal) && !(await p.isChecked('[data-iv-on="2"]')) && (await p.isChecked('[data-iv-on="0"]')) && (await p.inputValue('[data-iv-cost="0"]')) === '52.00', R.ivModal.slice(0, 900));
+check('the ticked lines are added up against the invoice', /3 lines ticked, adding up to R 1,240\.00/.test(await p.textContent('#iv-sum')) && /goods come to R 1,252\.00/.test(await p.textContent('#iv-sum')), await p.textContent('#iv-sum'));
+// the unknown line: found by hand; the lamp's quantity corrected
+await p.fill('[data-iv-q="2"]', 'RH-L'); await p.waitForSelector('[data-iv-pick=v_hide_l]'); await p.click('[data-iv-pick=v_hide_l]'); await p.waitForTimeout(200);
+check('an item chosen by hand ticks the line', (await p.isChecked('[data-iv-on="2"]')) && (await p.locator('#iv-body .chip:has-text("chosen by you")').count()) === 1 && /lines ticked, adding up to R 1,252\.00/.test(await p.textContent('#iv-sum')), await p.textContent('#iv-sum'));
+if (process.env.SHOT_INV) await p.screenshot({ path: process.env.SHOT_INV });
+await p.fill('[data-iv-qty="1"]', '3'); await p.dispatchEvent('[data-iv-qty="1"]', 'change'); await p.waitForTimeout(200);
+check('a changed quantity shows the sum no longer agrees with the invoice', /adding up to R 1,462\.00/.test(await p.textContent('#iv-sum')) && /they differ/.test(await p.textContent('#iv-sum')), await p.textContent('#iv-sum'));
+await p.click('#modal-ok'); R.ivToast = await toast(); await p.waitForTimeout(400);
+R.rcFilled = { inv: await p.inputValue('#rc-inv'), date: await p.inputValue('#rc-invdate'), sup: await p.inputValue('#rc-supplier'), freight: await p.inputValue('#rc-freight'), rows: await p.locator('.po-lines tbody tr').count(), q: [await p.inputValue('[data-rc-qty="0"]'), await p.inputValue('[data-rc-qty="1"]'), await p.inputValue('[data-rc-qty="2"]'), await p.inputValue('[data-rc-qty="3"]')], c: [await p.inputValue('[data-rc-cost="0"]'), await p.inputValue('[data-rc-cost="1"]'), await p.inputValue('[data-rc-cost="2"]'), await p.inputValue('[data-rc-cost="3"]')] };
+check('the receipt is filled in: the invoice number, date, supplier and freight, four lines with their quantities and costs; nothing received yet', /Receipt filled in from the invoice: 4 lines/.test(R.ivToast) && /Check it, then tap Receive into stock/.test(R.ivToast) && R.rcFilled.inv === 'INV-77' && R.rcFilled.date === '2026-11-12' && R.rcFilled.sup === supId && R.rcFilled.freight === '100.00' && R.rcFilled.rows === 4 && R.rcFilled.q.join() === '10,3,1,6' && R.rcFilled.c.join() === '52.00,210.00,12.00,50.00' && !(await listColl('goodsReceived')).some(g => g.supplierInvoiceNo === 'INV-77'), [R.ivToast, R.rcFilled]);
+// a file that is not an invoice: said so, the receipt untouched
+await p.setInputFiles('#rc-invfile', { name: 'beach.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('a holiday photo') });
+R.notInv = await toast(); await p.waitForTimeout(300);
+check('not an invoice: said so, the receipt as it was', /could not be read as an invoice/.test(R.notInv) && (await p.locator('.po-lines tbody tr').count()) === 4 && !(await p.$('#modal #iv-body')), R.notInv);
+await p.click('[data-act=by-rcv-go]'); R.ivRecv = await toast(); await p.waitForTimeout(800);
+const ivGrv = (await listColl('goodsReceived')).find(g => g.supplierInvoiceNo === 'INV-77');
+check('received by the person as usual: the GRV carries the invoice number, the supplier and the freight', /Received: BF-GRV-/.test(R.ivRecv) && ivGrv && ivGrv.supplierName === 'Foam Co' && ivGrv.invoiceDate === '2026-11-12' && ivGrv.lineCount === 4 && ivGrv.landed.freightCents === 10000, [R.ivRecv, ivGrv && ivGrv.docNo]);
+
 console.log(JSON.stringify({ fails, errs, ...R, printed: undefined, printed2: undefined, printed3: undefined }, null, 1).slice(0, 6000));
 await b.close();
+if (aiMock) await aiMock.close();
 if (server) server.kill();
 process.exit(fails.length || errs.length ? 1 : 0);
