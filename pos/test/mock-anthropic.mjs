@@ -19,6 +19,17 @@ export function startMockAnthropic(port = 8798) {
         const lastUser = msgs.length ? msgs[msgs.length - 1] : { content: '' };
         const blocks = Array.isArray(lastUser.content) ? lastUser.content : [];
         const reply = (content, stop) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ id: 'msg_mock', type: 'message', role: 'assistant', model: j.model, content, stop_reason: stop, stop_sequence: null, usage: { input_tokens: 100, output_tokens: 10 } })); };
+        // the invoice reader (lib/invoice-read.mjs): a file whose bytes are MOCKINVOICE{json} is "read" as that json; any
+        // other file is not an invoice; MOCKINVOICE-FAIL makes the API fail
+        if (Array.isArray(j.tools) && j.tools.some(t => t.name === 'record_invoice')) {
+          const docs = blocks.filter(b => (b.type === 'document' || b.type === 'image') && b.source && b.source.data).map(b => Buffer.from(b.source.data, 'base64').toString('utf8'));
+          const all = docs.join('\n');
+          if (/MOCKINVOICE-FAIL/.test(all)) { res.writeHead(500, { 'content-type': 'application/json' }); res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'mock failure' } })); return; }
+          const m = /MOCKINVOICE(\{[\s\S]*\})/.exec(all);
+          let input = { readable: false, supplierName: '', invoiceNo: '', invoiceDate: '', vatCharged: false, pricesIncludeVat: false, vatRatePct: 0, lines: [], deliveryCharge: 0, subtotal: 0, vatAmount: 0, total: 0, note: 'This is not an invoice.' };
+          if (m) { try { input = { ...input, readable: true, note: '', ...JSON.parse(m[1]) }; } catch {} }
+          return reply([{ type: 'tool_use', id: 'toolu_inv', name: 'record_invoice', input }], 'tool_use');
+        }
         // after a tool round: a text answer that quotes the results, so a test can see what the tool returned
         const results = blocks.filter(b => b.type === 'tool_result');
         if (results.length) return reply([{ type: 'text', text: 'Mock answer after tools: ' + results.map(r => (r.is_error ? 'ERROR ' : '') + String(r.content).slice(0, 400)).join(' | ') }], 'end_turn');
