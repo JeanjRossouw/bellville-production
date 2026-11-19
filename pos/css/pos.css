@@ -508,3 +508,7 @@ button.link { background: none; border: 0; padding: 0; color: var(--ink-2); text
 .iv-drop.busy { cursor: progress; border-style: solid; }
 .iv-tbl td { vertical-align: top; } .iv-tbl tr.off td { opacity: .5; }
 .iv-pick { margin-top: .35rem; } .iv-pick input { width: 100%; } .iv-pick .pk-list { max-height: 180px; margin-top: .25rem; } .iv-pick .pk-list:empty { display: none; }
+
+/* a saved receipt or a read invoice waiting to be carried on with */
+.iv-saved { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .6rem 1rem; padding: .7rem .9rem; margin: 0 0 .7rem; border: 1px solid var(--line-2); border-left: 3px solid var(--ink); border-radius: 6px; background: #fff; font-size: 13.5px; }
+.card.iv-saved { margin-top: .7rem; }

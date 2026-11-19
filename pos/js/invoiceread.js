@@ -39,12 +39,16 @@ export async function filesToPayload(list) {
   return out;
 }
 // read it: queued on the server, then asked for until it is done (a long invoice takes a minute or so)
-export async function readInvoice(list, where, { onWait } = {}) {
+export async function readInvoice(list, where, { onWait, onStart } = {}) {
   const files = await filesToPayload(list);
   const start = await auth.api('start', { files, ...where }, API.invoice);
-  const began = Date.now();
+  if (onStart) onStart(start.readId);
+  return waitForRead(start.readId, where, { onWait });
+}
+// a read already started (this one, or one begun before the page was left): asked for until it is done
+export async function waitForRead(readId, where, { onWait, began = Date.now() } = {}) {
   for (;;) {
-    const r = await auth.api('result', { readId: start.readId, ...where }, API.invoice);
+    const r = await auth.api('result', { readId, ...where }, API.invoice);
     if (r.status === 'done') return r.result;
     if (r.status === 'failed') throw new Error(r.error || 'The invoice could not be read.');
     if (Date.now() - began > 600000) throw new Error('The invoice is taking too long to read. Try again with fewer pages, or type it in.');
@@ -83,18 +87,25 @@ export const supplierMatch = (name, suppliers) => { const n = norm(name); if (n.
 
 // ---- what was read, for the person to check: each line with the item it was matched to (changed with a search), the
 // quantity and the cost; then onFill gets the supplier, the number, the date, the delivery charge and the chosen lines
-export function reviewInvoice({ result, items, productOf, suppliers, vatRegistered, onFill }) {
+// `saved` is what onState was last given for this same invoice (the person's choices so far), so a window closed by
+// mistake, or a page left, opens again as it was
+export function reviewInvoice({ result, items, productOf, suppliers, vatRegistered, onFill, saved, onState }) {
   const rows = matchInvoice(result, items, productOf).map(m => ({ ...m, on: !!m.item || !!m.near, qty: m.line.qty, costCents: vatRegistered ? m.line.unitExCents : m.line.unitInclCents, picking: !m.item, q: '' }));
+  if (Array.isArray(saved) && saved.length === rows.length) saved.forEach((sv, i) => { const r = rows[i]; if (!sv) return; const it = sv.itemId ? items.find(x => x.itemId === sv.itemId) : null; r.item = it || null; r.how = it ? sv.how || 'you' : ''; r.picking = !it; r.on = !!sv.on; r.qty = Math.max(0, Math.round(Number(sv.qty) || 0)); r.costCents = Math.max(0, Math.round(Number(sv.costCents) || 0)); });
+  const keep = () => { if (onState) onState(rows.map(r => ({ itemId: r.item ? r.item.itemId : '', how: r.how, on: r.on, qty: r.qty, costCents: r.costCents }))); };
   const sup = supplierMatch(result.supplierName, suppliers);
   const delivery = vatRegistered ? result.deliveryExCents : result.deliveryInclCents;
   const goods = vatRegistered ? (result.subtotalCents ? result.subtotalCents - result.deliveryExCents : 0) : (result.totalCents ? result.totalCents - result.deliveryInclCents : 0);
   const find = (q) => { const s = q.trim().toLowerCase(); if (!s) return []; return items.filter(x => [x.name, x.sku, ...(x.barcodes || [])].some(v => String(v || '').toLowerCase().includes(s))).slice(0, 6); };
+  const sumLine = () => {
+    const picked = rows.filter(r => r.on), sum = picked.reduce((n, r) => n + r.qty * r.costCents, 0), noItem = picked.filter(r => !r.item).length, off = goods && Math.abs(sum - goods) > 100;
+    return { cls: off ? 'warn' : 'muted', html: `${picked.length} line${picked.length === 1 ? '' : 's'} ticked, adding up to <strong>${esc(money(sum))}</strong>${goods ? ' · the invoice’s goods come to ' + esc(money(goods)) + (off ? ': they differ, so check the quantities and costs' : '') : ''}${noItem ? ` · <span class="warn">${noItem} ticked line${noItem === 1 ? ' has' : 's have'} no item chosen</span>` : ''} · <span class="muted">saved as you go</span>` };
+  };
   const body = () => {
-    const picked = rows.filter(r => r.on), sum = picked.reduce((n, r) => n + r.qty * r.costCents, 0), noItem = picked.filter(r => !r.item).length;
     return `<p><strong>${esc(result.supplierName || 'Supplier not shown')}</strong>${sup ? ` <span class="chip ok">on your list${sup.name !== result.supplierName ? ' as ' + esc(sup.name) : ''}</span>` : result.supplierName ? ' <span class="chip">not on your supplier list</span>' : ''}
       ${result.invoiceNo ? ' · invoice <strong>' + esc(result.invoiceNo) + '</strong>' : ''}${result.invoiceDate ? ' · ' + esc(niceDate(result.invoiceDate)) : ''}${result.totalCents ? ' · total ' + esc(money(result.totalCents)) : ''}${delivery ? ' · delivery ' + esc(money(delivery)) : ''}</p>
       <p class="muted">Check each line against the invoice before you fill in the receipt. Costs are ${vatRegistered ? 'excluding VAT' : result.vatCharged ? 'including VAT (this company is not VAT registered, so the VAT is part of what the stock cost)' : 'as on the invoice (no VAT charged)'}.${result.note ? ' <span class="warn">' + esc(result.note) + '</span>' : ''}</p>
-      <div style="max-height:52vh;overflow:auto"><table class="tbl iv-tbl"><thead><tr><th></th><th>On the invoice</th><th class="r">Qty</th><th class="r">Cost each</th><th>Item here</th></tr></thead><tbody>
+      <div id="iv-scroll" style="max-height:52vh;overflow:auto"><table class="tbl iv-tbl"><thead><tr><th></th><th>On the invoice</th><th class="r">Qty</th><th class="r">Cost each</th><th>Item here</th></tr></thead><tbody>
       ${rows.map((r, i) => `<tr class="${r.on ? '' : 'off'}"><td><input type="checkbox" data-iv-on="${i}"${r.on ? ' checked' : ''} aria-label="Take this line"></td>
         <td>${r.line.code ? '<strong>' + esc(r.line.code) + '</strong> ' : ''}${esc(r.line.description)}${r.line.qtyAsPrinted !== r.line.qty ? `<div class="warn">quantity on the invoice: ${esc(String(r.line.qtyAsPrinted))}</div>` : ''}</td>
         <td class="r"><input class="in-sm r" data-iv-qty="${i}" type="number" min="0" step="1" value="${r.qty}" style="max-width:70px"></td>
@@ -102,7 +113,7 @@ export function reviewInvoice({ result, items, productOf, suppliers, vatRegister
         <td>${r.item ? `<strong>${esc(r.item.name)}</strong><div class="muted">${esc(r.item.sku || '')} ${r.how === 'code' ? '<span class="chip ok">code matched</span>' : r.how === 'name' ? '<span class="chip late">matched by name: check</span>' : '<span class="chip">chosen by you</span>'} <button class="btn ghost sm" type="button" data-iv-change="${i}">Change</button></div>` : '<span class="chip late">not matched</span>'}
           ${r.picking ? `<div class="iv-pick"><input class="in-sm" data-iv-q="${i}" placeholder="Find the item: name, SKU or barcode" value="${esc(r.q)}" autocomplete="off">
             <div class="pk-list" data-iv-hits="${i}">${hitsHtml(r, i)}</div></div>` : ''}</td></tr>`).join('')}</tbody></table></div>
-      <p id="iv-sum" class="${goods && Math.abs(sum - goods) > 100 ? 'warn' : 'muted'}">${picked.length} line${picked.length === 1 ? '' : 's'} ticked, adding up to <strong>${esc(money(sum))}</strong>${goods ? ' · the invoice’s goods come to ' + esc(money(goods)) + (Math.abs(sum - goods) > 100 ? ': they differ, so check the quantities and costs' : '') : ''}${noItem ? ` · <span class="warn">${noItem} ticked line${noItem === 1 ? ' has' : 's have'} no item chosen</span>` : ''}</p>`;
+      <p id="iv-sum" class="${sumLine().cls}">${sumLine().html}</p>`;
   };
   const hitsHtml = (r, i) => { const list = r.q.trim() ? find(r.q) : r.near ? [r.near] : []; return list.map(x => `<button class="pk-row" type="button" data-iv-pick="${esc(x.itemId)}" data-i="${i}"><strong>${esc(x.name)}</strong><span>${esc(x.sku || '')} · cost ${esc(money(x.costCents))}</span></button>`).join('') || (r.q.trim() ? '<div class="muted" style="padding:.4rem .7rem">No item matches. Add the product under Products first, or untick this line.</div>' : ''); };
   const { wrap, close } = openModal('Invoice read: check it', `<div id="iv-body">${body()}</div>`, {
@@ -115,14 +126,27 @@ export function reviewInvoice({ result, items, productOf, suppliers, vatRegister
       return true;
     } });
   wrap.querySelector('.modal-card').classList.add('wide');
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) e.stopImmediatePropagation(); }, true);   // a tap beside the window does not close it: only Back, ✕ or Fill in
   const host = wrap.querySelector('#iv-body');
   const read = () => { host.querySelectorAll('[data-iv-qty]').forEach(x => { rows[Number(x.dataset.ivQty)].qty = Math.max(0, Math.round(Number(x.value) || 0)); }); host.querySelectorAll('[data-iv-cost]').forEach(x => { rows[Number(x.dataset.ivCost)].costCents = Math.max(0, centsOf(x.value)); }); };
-  const paint = () => { read(); host.innerHTML = body(); };
-  host.addEventListener('change', (e) => { const t = e.target; if (t.dataset.ivOn != null) { rows[Number(t.dataset.ivOn)].on = t.checked; paint(); } else if (t.dataset.ivQty != null || t.dataset.ivCost != null) paint(); });
+  const sumNow = () => { const p = host.querySelector('#iv-sum'), x = sumLine(); if (p) { p.className = x.cls; p.innerHTML = x.html; } };
+  // a redraw (an item chosen, Change tapped) puts the list back where it was scrolled to and the cursor back in its box
+  const paint = () => {
+    read();
+    const sc = host.querySelector('#iv-scroll'), top = sc ? sc.scrollTop : 0, a = document.activeElement;
+    const d = a && host.contains(a) ? [...a.attributes].find(x => x.name.startsWith('data-iv-')) : null;
+    host.innerHTML = body();
+    const sc2 = host.querySelector('#iv-scroll'); if (sc2) sc2.scrollTop = top;
+    if (d) { const el = host.querySelector(`[${d.name}="${d.value}"]`); if (el) el.focus({ preventScroll: true }); }
+    keep();
+  };
+  // a tick or a changed figure: the row and the sum, nothing else moves
+  host.addEventListener('change', (e) => { const t = e.target; if (t.dataset.ivOn != null) { rows[Number(t.dataset.ivOn)].on = t.checked; const tr = t.closest('tr'); if (tr) tr.classList.toggle('off', !t.checked); read(); sumNow(); keep(); } else if (t.dataset.ivQty != null || t.dataset.ivCost != null) { read(); sumNow(); keep(); } });
   host.addEventListener('input', (e) => { const t = e.target; if (t.dataset.ivQ == null) return; const i = Number(t.dataset.ivQ); rows[i].q = t.value; const h = host.querySelector(`[data-iv-hits="${i}"]`); if (h) h.innerHTML = hitsHtml(rows[i], i); });
   host.addEventListener('click', (e) => {
     const ch = e.target.closest('[data-iv-change]'); if (ch) { const r = rows[Number(ch.dataset.ivChange)]; r.picking = true; r.q = ''; paint(); const q = host.querySelector(`[data-iv-q="${ch.dataset.ivChange}"]`); if (q) q.focus(); return; }
     const pk = e.target.closest('[data-iv-pick]'); if (pk) { const r = rows[Number(pk.dataset.i)], it = items.find(x => x.itemId === pk.dataset.ivPick); if (it) { r.item = it; r.how = 'you'; r.picking = false; r.on = true; paint(); } }
   });
+  keep();
   return { close };
 }

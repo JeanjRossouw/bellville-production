@@ -13,7 +13,7 @@ import { A4_CSS, whatsappUrl } from './receipt.js';
 import { emailModal } from './email.js';
 import { poHtml, poEmailText, poSheet, grvHtml, transferHtml } from './buying-doc.js';
 import { xlsxBytes, XLSX_TYPE } from './xlsx.js';
-import { readInvoice, reviewInvoice, INVOICE_ACCEPT } from './invoiceread.js';
+import { readInvoice, waitForRead, reviewInvoice, INVOICE_ACCEPT } from './invoiceread.js';
 import { printLabelItems } from './products.js';
 import { items as stockItems } from './stock.js';
 import { icon } from './icons.js';
@@ -263,14 +263,17 @@ function receiveHtml(dd) {
     const open = openPos(dd).filter(p => ['sent', 'part'].includes(p.status));
     return `<div class="card"><h2>Receive stock</h2><p class="muted">Against a purchase order (part or all of it), or a direct receipt with no order. The cost that goes into stock is the landed cost: the goods plus freight, duty and other charges, spread over the lines.</p>
       <div class="card-actions">${open.map(p => `<button class="btn" data-act="by-rcv-po" data-id="${esc(p.id)}">${icon('inbox')} ${esc(p.docNo)} · ${esc(p.supplierName)}</button>`).join('')}<button class="btn ghost" data-act="by-rcv-direct">Direct receipt (no PO)</button></div></div>
+      ${savedCardHtml()}
       ${grvs.length ? `<div class="card" style="padding:0;overflow:auto"><table class="tbl"><thead><tr><th>GRV</th><th>Supplier</th><th>Against</th><th>Lines</th><th class="r">Into stock</th><th>By</th><th></th></tr></thead><tbody>${grvs.map(g => `<tr><td><strong>${esc(g.docNo)}</strong><div class="muted">${esc(niceDate(g.createdAt))}</div></td><td>${esc(g.supplierName || '—')}${g.supplierInvoiceNo ? `<div class="muted">inv ${esc(g.supplierInvoiceNo)}</div>` : ''}</td><td>${esc(g.purchaseOrderDocNo || 'direct')}</td><td>${g.lineCount} · ${g.lines.reduce((n, l) => n + l.qty, 0)} units</td><td class="r">${esc(money(g.totalCostCents))}</td><td class="muted">${esc(g.receivedBy)}</td><td class="r nowrap"><button class="btn ghost sm" data-act="by-grv-print" data-id="${esc(g.id)}">Print</button><button class="btn ghost sm" data-act="by-grv-labels" data-id="${esc(g.id)}">Labels</button></td></tr>`).join('')}</tbody></table></div>` : ''}`;
   }
+  saveRcv(); resumePendingRead(r);
   const sub = r.lines.reduce((n, l) => n + l.qty * l.unitCostCents, 0);
   const extra = (r.freightCents || 0) + (r.dutyCents || 0) + (r.otherCents || 0);
   return `<div class="card"><h2>${r.po ? 'Receive against ' + esc(r.po.docNo) + ' · ' + esc(r.po.supplierName) : 'Direct receipt'}</h2>
     <div class="grid three">${r.po ? '' : field('Supplier', 'rc-supplier', { type: 'select', value: r.supplierId, options: [{ value: '', label: 'None / unknown' }, ...suppliers().map(s => ({ value: s.id, label: s.name }))] })}${field('Supplier invoice no', 'rc-inv', { value: r.supplierInvoiceNo })}${field('Invoice date', 'rc-invdate', { type: 'date', value: r.invoiceDate })}</div>
     ${r.reading ? `<div class="iv-drop busy"><strong>Reading the invoice…</strong><span id="iv-wait">This takes up to a minute. Carry on once it is done.</span></div>`
       : `<label class="iv-drop" data-inv-drop><strong>${icon('file')} Drop the supplier’s invoice here</strong><span>A PDF or a photo of it: the till reads it and fills in the invoice number, the date and the items for you to check. Or tap to choose the file.</span><input type="file" id="rc-invfile" accept="${INVOICE_ACCEPT}" multiple hidden></label>`}
+    ${savedReadHtml(r)}
     ${r.po ? '' : `<div class="tk-scanrow" style="margin:.4rem 0"><label class="pos-search-wrap" style="flex:1 1 260px">${icon('search')}<input id="rc-add" class="pos-in" placeholder="Add an item: name, SKU or barcode" autocomplete="off"></label></div><div id="rc-hits" class="pk-list"></div>`}
     ${r.lines.length ? `<table class="tbl po-lines"><thead><tr><th>Item</th>${r.po ? '<th class="r">Ordered</th><th class="r">Still open</th>' : ''}<th class="r">Received now</th><th class="r">Unit cost (ex VAT)</th><th class="r">Landed each</th><th class="r">Total</th><th></th></tr></thead><tbody>${r.lines.map((l, i) => `<tr><td><strong>${esc(l.name)}</strong><div class="muted">${esc(l.sku || '')}</div></td>${r.po ? `<td class="r">${l.ordered}</td><td class="r">${l.open}</td>` : ''}<td class="r"><input class="in-sm r" data-rc-qty="${i}" type="number" min="0" value="${l.qty}" style="max-width:80px"></td><td class="r"><input class="in-sm r" data-rc-cost="${i}" inputmode="decimal" value="${randsOf(l.unitCostCents)}" style="max-width:110px"></td><td class="r">${esc(money(landedEach(r, i)))}</td><td class="r">${esc(money(l.qty * l.unitCostCents))}</td><td class="r">${r.po ? '' : `<button class="pos-icon-btn light" data-act="by-rcv-rm" data-i="${i}" title="Remove">${icon('x')}</button>`}</td></tr>`).join('')}</tbody><tfoot><tr><td colspan="${r.po ? 6 : 4}" class="r">Goods (ex VAT)</td><td class="r">${esc(money(sub))}</td><td></td></tr>${extra ? `<tr><td colspan="${r.po ? 6 : 4}" class="r">Landed costs</td><td class="r">${esc(money(extra))}</td><td></td></tr><tr><td colspan="${r.po ? 6 : 4}" class="r"><strong>Into stock</strong></td><td class="r"><strong>${esc(money(sub + extra))}</strong></td><td></td></tr>` : ''}</tfoot></table>` : '<p class="muted">Add the items that arrived.</p>'}
     <h3 class="st-h3">Landed costs (imports, courier)</h3>
@@ -292,21 +295,94 @@ function readRcv() {
   r.freightCents = centsOf(val(w, 'rc-freight')); r.dutyCents = centsOf(val(w, 'rc-duty')); r.otherCents = centsOf(val(w, 'rc-other')); r.updateCosts = !!w.querySelector('#rc-updcost').checked;
   w.querySelectorAll('[data-rc-qty]').forEach(i => { const l = r.lines[Number(i.dataset.rcQty)]; if (l) l.qty = Math.max(0, Math.round(Number(i.value) || 0)); });
   w.querySelectorAll('[data-rc-cost]').forEach(i => { const l = r.lines[Number(i.dataset.rcCost)]; if (l) l.unitCostCents = Math.max(0, centsOf(i.value)); });
+  saveRcv();
   return r;
+}
+// ---- the receipt being worked on is kept on this device as it changes (per store), so a page reloaded, a tab closed
+// or Back tapped by mistake loses nothing: Receive offers to carry on with it. The same for an invoice that is still
+// being read, and for one that was read but not yet filled in (with the choices made in its window so far).
+const lsKey = (k) => 'pos.' + k + '.' + ((d().store || {}).id || '');
+const lsGet = (k) => { try { return JSON.parse(localStorage.getItem(lsKey(k)) || 'null'); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(lsKey(k)); else localStorage.setItem(lsKey(k), JSON.stringify(v)); } catch (e) { /* storage full or off: the work is still on the screen */ } };
+const rcvContent = (r) => { const { reading, po, base, ...rest } = r; return { ...rest, poId: po ? po.id : '', poDocNo: po ? po.docNo : '' }; };
+function saveRcv() {
+  const r = by.rcv; if (!r) return;
+  const c = JSON.stringify(rcvContent(r));
+  if (r.base == null) { r.base = c; return; }          // as it was opened: nothing to keep yet
+  if (c !== r.base || r.kept) { r.kept = true; lsSet('rcv', { ...rcvContent(r), at: new Date().toISOString() }); }
+}
+const savedRcv = () => { const sv = lsGet('rcv'); return sv && Array.isArray(sv.lines) ? sv : null; };
+const sameTarget = (sv, r) => sv && (sv.poId || '') === (r && r.po ? r.po.id : '');
+const whenText = (iso) => { const t = new Date(iso); return isNaN(t) ? '' : (t.toDateString() === new Date().toDateString() ? 'today' : niceDate(iso)) + ' at ' + niceTime(iso); };
+function savedCardHtml() {
+  const sv = savedRcv(), rd = lsGet('ivread'), pend = lsGet('ivpending');
+  const bits = [];
+  if (sv) bits.push(`<div class="card iv-saved"><div><strong>A receipt you were busy with is saved</strong><div class="muted">${sv.poDocNo ? 'Against ' + esc(sv.poDocNo) : 'Direct receipt'}${sv.supplierInvoiceNo ? ' · invoice ' + esc(sv.supplierInvoiceNo) : ''} · ${sv.lines.length} line${sv.lines.length === 1 ? '' : 's'} · saved ${esc(whenText(sv.at))}</div></div>
+      <div class="btn-row" style="margin:0"><button class="btn primary sm" data-act="by-rcv-resume">Continue</button><button class="btn ghost sm" data-act="by-rcv-discard">Discard it</button></div></div>`);
+  else if (rd || pend) bits.push(`<div class="card iv-saved"><div><strong>${rd ? 'An invoice was read and is waiting to be checked' : 'An invoice you dropped is being read'}</strong><div class="muted">${rd ? esc((rd.result.supplierName || 'Supplier not shown') + (rd.result.invoiceNo ? ' · invoice ' + rd.result.invoiceNo : '')) + ' · ' : ''}Open ${(rd || pend).poDocNo ? 'the receipt against ' + esc((rd || pend).poDocNo) : 'Direct receipt'} to carry on.</div></div></div>`);
+  return bits.join('');
+}
+function savedReadHtml(r) {
+  const rd = lsGet('ivread');
+  if (r.reading || !rd || !sameTarget(rd, r)) return '';
+  return `<div class="iv-saved"><div><strong>Invoice ${esc(rd.result.invoiceNo || '')}${rd.result.supplierName ? ' from ' + esc(rd.result.supplierName) : ''}</strong> was read ${esc(whenText(rd.at))} and is not filled in yet. What you chose in its window is saved.</div>
+    <div class="btn-row" style="margin:0"><button class="btn primary sm" data-act="by-iv-continue">Continue checking it</button><button class="btn ghost sm" data-act="by-iv-forget">Forget it</button></div></div>`;
+}
+function resumeRcv() {
+  const sv = savedRcv(); if (!sv) return false;
+  let po = null;
+  if (sv.poId) {
+    po = openPos(d()).find(p => p.id === sv.poId && ['sent', 'part'].includes(p.status));
+    if (!po) { lsSet('rcv', null); toast((sv.poDocNo || 'That order') + ' is no longer open to receive against, so the saved receipt was dropped.', 'warn'); ctx.repaint(); return false; }
+  }
+  const { poId, poDocNo, at, kept, ...rest } = sv;
+  const r = { ...rest, po, kept: true, base: '' };
+  // against an order: what is still open may have changed since it was saved
+  if (po) r.lines = r.lines.map(l => { const pl = po.lines.find(x => x.itemId === l.itemId); const open = pl ? pl.qty - (pl.receivedQty || 0) : 0; return open > 0 ? { ...l, ordered: pl.qty, open, qty: Math.min(l.qty, open) } : null; }).filter(Boolean);
+  by.rcv = r; by.sub = 'receive'; ctx.repaint();
+  return true;
+}
+function openReview(r, rd) {
+  reviewInvoice({ result: rd.result, items: stockOf(), productOf: productById, suppliers: suppliers(), vatRegistered: !!d().entity.vatRegistered, saved: rd.rows,
+    onState: (rows) => lsSet('ivread', { ...rd, rows }),
+    onFill: (f) => { lsSet('ivread', null); fillFromInvoice(r, f); } });
 }
 // ---- a supplier's invoice dropped on the receipt: read on the server, shown to check, then the receipt filled in.
 // Nothing is received by this: the person still looks the receipt over and taps Receive into stock.
+const waitText = (s) => (s < 60 ? 'This takes up to a minute' : 'A long invoice takes a few minutes') + ' (' + (s < 90 ? s + ' s' : Math.round(s / 60) + ' min') + ' so far). You can leave this page: it carries on, and Receive shows it when you come back.';
+const showWait = (s) => { const w = document.getElementById('iv-wait'); if (w) w.textContent = waitText(s); };
 async function invoiceDrop(files) {
   const r = readRcv(); if (!r || r.reading || !files || !files.length) return;
   r.reading = true; ctx.repaint();
+  const target = { poId: r.po ? r.po.id : '', poDocNo: r.po ? r.po.docNo : '' };
   let result = null, err = '';
-  try { result = await readInvoice(files, where(), { onWait: (s) => { const w = document.getElementById('iv-wait'); if (w) w.textContent = (s < 60 ? 'This takes up to a minute' : 'A long invoice takes a few minutes') + ' (' + (s < 90 ? s + ' s' : Math.round(s / 60) + ' min') + ' so far). Leave this open until it is done.'; } }); }
+  try { result = await readInvoice(files, where(), { onWait: showWait, onStart: (readId) => lsSet('ivpending', { readId, at: new Date().toISOString(), ...target }) }); }
   catch (e) { err = e.message || 'The invoice could not be read.'; }
-  if (by.rcv !== r) return;            // the receipt was closed meanwhile
+  afterRead(r, target, result, err);
+}
+// what the read gave: kept (so it is not lost if the window is closed), then shown to check
+function afterRead(r, target, result, err) {
+  lsSet('ivpending', null);
+  if (result && result.readable) lsSet('ivread', { result, rows: null, at: new Date().toISOString(), ...target });
+  if (by.rcv !== r) return;            // the receipt was closed meanwhile: Receive offers the invoice when it is opened again
   readRcv(); r.reading = false; ctx.repaint();
   if (err) return toast(err, 'warn');
   if (!result.readable) return toast('The invoice was not read in. ' + (result.note || 'The reader found no item lines on it.') + ' Try it again, or type it in.', 'warn');
-  reviewInvoice({ result, items: stockOf(), productOf: productById, suppliers: suppliers(), vatRegistered: !!d().entity.vatRegistered, onFill: (f) => fillFromInvoice(r, f) });
+  openReview(r, lsGet('ivread') || { result, rows: null, ...target });
+}
+// a read begun before the page was left (or the receipt closed): picked up again when its receipt is open
+function resumePendingRead(r) {
+  const pend = lsGet('ivpending');
+  if (!pend || r.reading || !sameTarget(pend, r)) return;
+  if (Date.now() - Date.parse(pend.at) > 20 * 60000) { lsSet('ivpending', null); return; }
+  r.reading = true;                   // the box shows "Reading…" on this same redraw
+  setTimeout(async () => {
+    let result = null, err = '';
+    try { result = await waitForRead(pend.readId, where(), { onWait: showWait, began: Date.parse(pend.at) }); }
+    catch (e) { err = e.status === 404 ? '' : e.message || 'The invoice could not be read.'; }
+    if (!result && !err) { lsSet('ivpending', null); if (by.rcv === r) { r.reading = false; ctx.repaint(); } return; }   // it was someone else's, or is gone
+    afterRead(r, { poId: pend.poId || '', poDocNo: pend.poDocNo || '' }, result, err);
+  }, 0);
 }
 function fillFromInvoice(r, f) {
   if (by.rcv !== r) return;
@@ -339,6 +415,7 @@ if (typeof document !== 'undefined') {
 }
 function startReceive(po) {
   const dd = d();
+  if (sameTarget(savedRcv(), { po }) && resumeRcv()) { toast('Carrying on with the receipt you had saved.'); return; }
   by.rcv = { po: po || null, supplierId: po ? po.supplierId : '', supplierInvoiceNo: '', invoiceDate: today(), note: '', method: 'value', freightCents: 0, dutyCents: 0, otherCents: 0, updateCosts: (dd.settings.buying || {}).updateCostsOnReceive !== false,
     lines: po ? po.lines.filter(l => (l.receivedQty || 0) < l.qty).map(l => ({ ...l, ordered: l.qty, open: l.qty - (l.receivedQty || 0), qty: l.qty - (l.receivedQty || 0) })) : [] };
   by.sub = 'receive'; ctx.repaint();
@@ -349,6 +426,7 @@ async function receiveGo() {
   const body = { grvId: mkId('grv'), purchaseOrderId: r.po ? r.po.id : '', supplierId: r.supplierId, supplierInvoiceNo: r.supplierInvoiceNo, invoiceDate: r.invoiceDate, lines: lines.map(l => ({ productId: l.productId, variantId: l.variantId, qty: l.qty, unitCostCents: l.unitCostCents })), landed: { freightCents: r.freightCents, dutyCents: r.dutyCents, otherCents: r.otherCents, method: r.method }, updateCosts: r.updateCosts, note: r.note, ...where() };
   try {
     const res = await withPin('receive', body, 'supervisor');
+    lsSet('rcv', null); if (sameTarget(lsGet('ivread'), r)) lsSet('ivread', null);
     by.rcv = null; ctx.repaint();
     toast('Received: ' + res.grv.docNo + (res.poStatus ? ' · ' + (res.poStatus === 'received' ? 'order complete' : 'order part received') : '') + (res.grv.costChanges.length ? ' · ' + res.grv.costChanges.length + ' cost' + (res.grv.costChanges.length === 1 ? '' : 's') + ' updated' : ''));
     if (ctx.onChange) ctx.onChange();
@@ -483,6 +561,7 @@ export function onInput(id, value) {
   if (id === 'po-add') poHits(value);
   // kept as typed, so a redraw of the editor (a supplier chosen, a line changed) does not lose them
   if ((id === 'po-expected' || id === 'po-note') && by.edit) by.edit[id === 'po-note' ? 'note' : 'expectedAt'] = value;
+  if (by.rcv && /^rc-(inv|invdate|note|freight|duty|other)$/.test(id)) readRcv();   // kept as typed (saved on this device)
   if (id === 'rc-add') hits('rc-hits', value, (it) => { const r = readRcv(); if (!r.lines.some(l => l.itemId === it.itemId)) r.lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, name: it.name, sku: it.sku, barcode: it.barcodes[0] || '', qty: 1, unitCostCents: it.costCents }); ctx.repaint(); });
   if (id === 'tr-add') hits('tr-hits', value, (it) => { const t = readTr(); if (!t.lines.some(l => l.itemId === it.itemId)) t.lines.push({ productId: it.productId, variantId: it.variantId, itemId: it.itemId, name: it.name, sku: it.sku, qty: 1 }); ctx.repaint(); });
 }
@@ -601,7 +680,11 @@ export async function action(act, b) {
     case 'by-rcv-direct': return startReceive(null);
     case 'by-rcv-rm': { const r = readRcv(); r.lines.splice(Number(b.dataset.i), 1); return ctx.repaint(); }
     case 'by-rcv-go': return receiveGo();
-    case 'by-rcv-close': by.rcv = null; return ctx.repaint();
+    case 'by-rcv-close': { const r = readRcv(); const kept = r && r.kept; by.rcv = null; ctx.repaint(); if (kept) toast('Saved: carry on with it from Receive whenever you like.'); return; }
+    case 'by-rcv-resume': return void resumeRcv();
+    case 'by-rcv-discard': { if (!confirm('Discard the saved receipt? What you filled in is lost; nothing was received.')) return; lsSet('rcv', null); return ctx.repaint(); }
+    case 'by-iv-continue': { const r = readRcv(), rd = lsGet('ivread'); if (r && rd) openReview(r, rd); return; }
+    case 'by-iv-forget': { if (!confirm('Forget the invoice that was read? You can drop it again.')) return; readRcv(); lsSet('ivread', null); return ctx.repaint(); }
     case 'by-grv-print': { const g = (d().grvs || []).find(x => x.id === id); if (g) openPrint('Goods received ' + g.docNo, grvHtml({ grv: g, entity: d().entity, store: d().store }), A4_CSS); return; }
     case 'by-grv-labels': { const g = (d().grvs || []).find(x => x.id === id); if (g) grvLabels(g); return; }
     case 'by-tr-new': by.tr = { toStoreId: '', note: '', lines: [] }; return ctx.repaint();
