@@ -48,16 +48,35 @@ which is where profit and trend live, is manager-only.
 
 ## What this does and does not protect
 
-It stops casual looking, which is what a shop floor needs: a cashier cannot
-wander into the dashboard, see what stock cost you, or read the margin on a
-purchase order.
+**The server enforces the roles, not just the screens.** Every call the till
+makes to the `reptipos-shopify` function carries two things, and the function
+checks both before it touches Shopify or the cost prices:
 
-**Cost prices are now genuinely not there.** They were moved out of Shopify and
-into the POS, and they are fetched only by the manager-only screens that need
-them. A cashier's till never downloads a buying price, so there is nothing to
-find in the developer tools either.
+1. the till's Firebase sign-in token, and
+2. the PIN of whoever is signed in. The server looks the PIN up in the shared
+   staff list and applies that person's role and permissions.
 
-The rest is still only hiding. Retail prices, stock and sales figures do come
-down with the catalogue, and anyone who knows a manager PIN can simply sign in
-as a manager. Treat the PINs as real credentials: give each person their own,
-and change one when somebody leaves.
+So a cashier's PIN cannot read or change cost prices, open the dashboard or
+sales history, edit or retire products, reconcile a stock take or import
+history — even by calling the server directly. Refunds and store credit need
+**refunds ✓**, receiving needs **📥 receive ✓** (and a cashier's GRV never
+overwrites cost prices), adding products needs **🗂 add products ✓**. When a
+manager types their PIN into an "Admin PIN needed" prompt, the next few minutes
+of calls go out under the manager's PIN. Without a valid PIN the server refuses
+everything, apart from saying whether a staff list exists.
+
+**The PIN is now the real key.** The Firebase sign-in is anonymous, so it proves
+"this is the POS", not who is using it. That makes the staff PINs the actual
+credentials for the shop's stock, gift cards and store credit:
+
+- Give each person their own PIN, and change or remove it when somebody leaves.
+- Prefer 6-digit PINs. The server blocks an address after 20 wrong PINs in 15
+  minutes, but a 4-digit PIN is still the weakest link.
+- Change the built-in `0000` before the till goes on the floor.
+
+**New till, or a PIN added on another till.** The staff list only downloads to a
+till after a valid PIN has been entered. On a new till, just type your PIN: the
+till asks the server, and the list comes down with the sign-in. The catalogue,
+any queued sales and the web-order import start after that first sign-in, not
+at page load. A locked till keeps syncing queued sales in the background under
+the last PIN that was used on it.
