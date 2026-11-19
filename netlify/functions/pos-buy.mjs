@@ -5,6 +5,7 @@
 //
 //   poSend          { poId, how }                                 a manager: the number, status 'sent', stock on order
 //   poCancel        { poId, reason }                              a manager: what was still on order is released
+//   poDelete        { poId }                                      a manager: a draft never sent (no number) is deleted; a sent one is cancelled instead
 //   poRevise        { poId, supplierId, expectedAt, note, lines [ { productId, variantId, qty, unitCostCents } ] }
 //                   a manager: a sent order nothing has been received on, changed: the same number, revision + 1,
 //                   the on-order figures moved by the difference; then sent to the supplier again
@@ -154,6 +155,26 @@ const actions = {
       writes.push({ update: true, coll: 'purchaseOrders', id: po.id, data: patch });
       writes.push(auditRow(ctx, 'po.cancel', { docType: 'purchaseOrder', docId: po.id, docNo: cur.docNo || '' }, { reason: patch.cancelReason, wasStatus: cur.status }, new Map(), stamp, now));
       return { writes, result: { po: { ...cur, ...patch, id: po.id } } };
+    }, push: false });
+  },
+
+  // a purchase order never sent (a draft, or a draft that was cancelled) is deleted outright: it has no number and
+  // put nothing on order. One that was sent keeps its number for good: it is cancelled, not deleted.
+  async poDelete(event, b) {
+    const ctx = await whoAndWhere(event, b, { noShift: true });
+    approved(ctx, b.approvalToken, 'buy', 'manager', 'Deleting a purchase order');
+    const po = await loadPo(ctx, b.poId);
+    const never = (x) => !x.docNo && ['draft', 'cancelled'].includes(x.status);
+    if (!never(po)) throw new Reject(409, `${po.docNo || 'That order'} was sent, so it keeps its number: cancel it instead (Open → Cancel order).`);
+    return runSale(ctx, {}, { more: async (tx) => {
+      const cur = await getDoc('purchaseOrders', po.id, tx);
+      if (!cur) return { writes: [], result: { deleted: false, again: true } };
+      if (!never(cur)) throw new Reject(409, 'The order was sent meanwhile: look again.');
+      const now = nowIso(); const stamp = serverStamp(ctx.entityId, ctx.storeId, ctx.user.id, ctx.deviceId);
+      const total = (cur.lines || []).reduce((n, l) => n + (l.qty || 0) * (l.unitCostCents || 0), 0);
+      return { writes: [{ delete: true, coll: 'purchaseOrders', id: po.id },
+        auditRow(ctx, 'po.delete', { docType: 'purchaseOrder', docId: po.id, docNo: '' }, { wasStatus: cur.status, supplier: cur.supplierName || '', lines: (cur.lines || []).length, totalCents: total, items: (cur.lines || []).slice(0, 30).map(l => l.qty + ' × ' + l.name) }, new Map(), stamp, now)],
+        result: { deleted: true } };
     }, push: false });
   },
 

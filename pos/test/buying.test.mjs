@@ -204,6 +204,21 @@ await p.fill('#po-add', 'hide'); await p.waitForSelector('#po-hits [data-po-tick
 check('all three again with Enter: the two on the order get one more, the Large is added', (await p.locator('.po-lines tbody tr').count()) === 3 && (await p.inputValue('[data-po-qty="0"]')) === '6' && (await p.inputValue('[data-po-qty="2"]')) === '1');
 await p.click('[data-act=by-po-close]'); await p.waitForTimeout(300);
 
+// ---- purchase orders never sent can be deleted: one from its row, the rest of the drafts in one go; a sent one has no Delete
+await p.click('[data-act=by-sub][data-to=po]'); await p.waitForTimeout(300);
+for (const sku of ['CU-1', 'LA-1', 'RH-S']) { await p.click('[data-act=by-po-new]'); await p.waitForSelector('#po-add'); await p.fill('#po-add', sku); await p.press('#po-add', 'Enter'); await p.waitForTimeout(250); await p.click('[data-act=by-po-save]'); await p.waitForTimeout(500); await p.click('[data-act=by-po-close]'); await p.waitForTimeout(300); }
+await p.selectOption('#by-filter', 'all'); await p.waitForTimeout(300);
+const draftsBefore = (await listColl('purchaseOrders')).filter(x => x.status === 'draft').length;
+check('three drafts saved; a draft row has Delete, a sent order’s row has none', draftsBefore >= 3 && (await p.locator('[data-act=by-po-delete]').count()) === draftsBefore && (await p.locator('tr:has-text("BF-PO-000001") [data-act=by-po-delete]').count()) === 0, draftsBefore);
+p.once('dialog', dg => { R.delAsk = dg.message(); });   // the test's own handler says yes
+await p.click('[data-act=by-po-delete] >> nth=0'); R.delToast = await toast(); await p.waitForTimeout(600);
+check('Delete on a draft asks first, then it is gone', /Delete this draft purchase order/.test(R.delAsk || '') && /cannot be brought back/.test(R.delAsk || '') && /Draft deleted/.test(R.delToast) && (await listColl('purchaseOrders')).filter(x => x.status === 'draft').length === draftsBefore - 1, [R.delAsk, R.delToast]);
+await p.selectOption('#by-filter', 'draft'); await p.waitForSelector('[data-act=by-po-delete-all]');
+p.once('dialog', dg => { R.delAllAsk = dg.message(); });
+await p.click('[data-act=by-po-delete-all]'); await p.waitForTimeout(2500); R.delAllToast = await toast();
+check('Delete all drafts shown: every draft gone in one go, the sent orders untouched', new RegExp('Delete all ' + (draftsBefore - 1) + ' draft purchase orders shown').test(R.delAllAsk || '') && /drafts? deleted/.test(R.delAllToast) && (await listColl('purchaseOrders')).filter(x => x.status === 'draft').length === 0 && (await listColl('purchaseOrders')).some(x => x.docNo === 'BF-PO-000001'), [R.delAllAsk, R.delAllToast]);
+await p.selectOption('#by-filter', 'open'); await p.waitForTimeout(300);
+
 // ---- Receive: the supplier's invoice dropped on a direct receipt is read, shown to check, and fills the receipt in
 await p.click('[data-act=by-sub][data-to=receive]'); await p.waitForTimeout(300);
 await p.click('[data-act=by-rcv-direct]'); await p.waitForSelector('[data-inv-drop]');
@@ -230,7 +245,7 @@ check('the receipt is filled in: the invoice number, date, supplier and freight,
 // a file that is not an invoice: said so, the receipt untouched
 await p.setInputFiles('#rc-invfile', { name: 'beach.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('a holiday photo') });
 R.notInv = await toast(); await p.waitForTimeout(300);
-check('not an invoice: said so, the receipt as it was', /could not be read as an invoice/.test(R.notInv) && (await p.locator('.po-lines tbody tr').count()) === 4 && !(await p.$('#modal #iv-body')), R.notInv);
+check('not an invoice: said so with the reason, the receipt as it was', /The invoice was not read in\. This is not an invoice/.test(R.notInv) && (await p.locator('.po-lines tbody tr').count()) === 4 && !(await p.$('#modal #iv-body')), R.notInv);
 await p.click('[data-act=by-rcv-go]'); R.ivRecv = await toast(); await p.waitForTimeout(800);
 const ivGrv = (await listColl('goodsReceived')).find(g => g.supplierInvoiceNo === 'INV-77');
 check('received by the person as usual: the GRV carries the invoice number, the supplier and the freight', /Received: BF-GRV-/.test(R.ivRecv) && ivGrv && ivGrv.supplierName === 'Foam Co' && ivGrv.invoiceDate === '2026-11-12' && ivGrv.lineCount === 4 && ivGrv.landed.freightCents === 10000, [R.ivRecv, ivGrv && ivGrv.docNo]);
