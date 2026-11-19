@@ -386,15 +386,18 @@ export function labelPage(cells, size) {
         .lbl { width: 70mm; height: 37mm; padding: 2mm 3mm; box-sizing: border-box; text-align: center; overflow: hidden; font-family: Arial, sans-serif; break-inside: avoid; }
         .lbl-name { font-size: 10pt; font-weight: 700; line-height: 1.15; max-height: 2.3em; overflow: hidden; } .lbl-price { font-size: 12pt; font-weight: 700; margin: .5mm 0; }
         .lbl-bar svg { width: 58mm; height: 11mm; display: block; margin: 0 auto; } .lbl-code { font-size: 8pt; letter-spacing: .08em; }` };
-  // a roll: each label its own page, the size of the label, with no margin; the type and the barcode sized to its height
+  // a roll: each label its own page, the size of the label, with no margin; the type and the barcode sized to its height.
+  // A low label (17 mm) has the name and the price side by side on one line, so the barcode keeps its height.
   const { w, h } = size, small = h < 22, pad = small ? 1 : 1.5;
-  const name = small ? 6.5 : h < 34 ? 8.5 : 10, price = small ? 7.5 : h < 34 ? 11 : 13, code = small ? 5.5 : 7;
-  const bar = Math.max(4.5, h - 2 * pad - (small ? 7.2 : h < 34 ? 13.5 : 17)), barW = Math.min(w - 2 * pad - 3, 58);
+  const name = small ? 7 : h < 34 ? 8.5 : 10, price = small ? 8 : h < 34 ? 11 : 13, code = small ? 5.5 : 7;
+  const bar = Math.max(4.5, h - 2 * pad - (small ? 6.2 : h < 34 ? 14.6 : 17)), barW = Math.min(w - 2 * pad - 3, 58);
   return { body: `<div class="lbl-roll">${cells.join('')}</div>`, css: `
         @page { size: ${w}mm ${h}mm; margin: 0; } html, body { margin: 0; padding: 0; }
         .lbl { width: ${w}mm; height: ${h}mm; padding: ${pad}mm ${pad + 0.5}mm; box-sizing: border-box; text-align: center; overflow: hidden; font-family: Arial, sans-serif; display: flex; flex-direction: column; justify-content: center; break-after: page; page-break-after: always; }
-        .lbl:last-child { break-after: auto; page-break-after: auto; }
-        .lbl-name { font-size: ${name}pt; font-weight: 700; line-height: 1.1; max-height: ${small ? 1.1 : 2.2}em; overflow: hidden; } .lbl-price { font-size: ${price}pt; font-weight: 700; line-height: 1.15; }
+        .lbl:last-child { break-after: auto; page-break-after: auto; } .lbl > * { flex: none; }
+        ${small ? `.lbl-top { display: flex; align-items: baseline; justify-content: space-between; gap: 1.5mm; line-height: 1.15; }
+        .lbl-name { font-size: ${name}pt; font-weight: 700; flex: 1 1 auto; min-width: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .lbl-price { font-size: ${price}pt; font-weight: 700; flex: none; white-space: nowrap; }`
+    : `.lbl-name { font-size: ${name}pt; font-weight: 700; line-height: 1.1; max-height: 2.2em; overflow: hidden; } .lbl-price { font-size: ${price}pt; font-weight: 700; line-height: 1.15; }`}
         .lbl-bar svg { width: ${barW}mm; height: ${bar.toFixed(1)}mm; display: block; margin: .3mm auto 0; } .lbl-code { font-size: ${code}pt; letter-spacing: .06em; line-height: 1.1; }
         @media screen { body { background: #ddd; } .lbl { background: #fff; margin: 3mm auto; box-shadow: 0 0 0 1px #bbb; } }` };
 }
@@ -411,7 +414,7 @@ export function printLabelItems(items, dflt = 1) {
       const copies = Math.max(1, Math.min(500, Number(val(wrap, 'lb-copies')) || 1));
       const size = labelSizeOf(val(wrap, 'lb-size'));
       try { localStorage.setItem('pos.labelSize', size.key); } catch (e) { /* remembered only where storage is allowed */ }
-      const cells = list.flatMap(i => Array.from({ length: Math.min(500, i.copies || copies) }, () => `<div class="lbl"><div class="lbl-name">${esc(i.name)}</div><div class="lbl-price">${esc(money(i.priceCents))}</div><div class="lbl-bar">${barcodeSvg(i.code, 40)}</div><div class="lbl-code">${esc(i.code)}</div></div>`));
+      const cells = list.flatMap(i => Array.from({ length: Math.min(500, i.copies || copies) }, () => `<div class="lbl"><div class="lbl-top"><div class="lbl-name">${esc(i.name)}</div><div class="lbl-price">${esc(money(i.priceCents))}</div></div><div class="lbl-bar">${barcodeSvg(i.code, 40)}</div><div class="lbl-code">${esc(i.code)}</div></div>`));
       const page = labelPage(cells, size);
       openPrint('Labels', page.body, page.css);
       return true;
