@@ -354,7 +354,28 @@ const adminData = () => ({ entities, stores, registers, users, devices, settings
 const prData = () => ({ entities, stores, settings, products: catalogue, variants, suppliers, prEntity, prFilter });
 // the company whose products are on screen
 const prEntityId = () => { const t = document.querySelector('.pr-tbl'); if (t) return t.dataset.entity; const sel = document.getElementById('pr-entity'); if (sel) return sel.value; const mine = entities.filter(e => auth.inEntity(e.id)); return prEntity && mine.some(e => e.id === prEntity) ? prEntity : (mine[0] || {}).id || ''; };
-function paint() {
+// A redraw replaces the whole screen, so the box being typed in and the place scrolled to are put back after it:
+// changing a figure half-way down a long list must not throw the person back to the top or out of the box.
+function keepPlace() {
+  const screen = $('screen'), a = document.activeElement;
+  const mine = a && screen && screen.contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName);
+  const data = mine && !a.id ? [...a.attributes].find(x => x.name.startsWith('data-')) : null;
+  const sel = mine ? (a.id ? '#' + CSS.escape(a.id) : data ? `${a.tagName.toLowerCase()}[${data.name}="${CSS.escape(data.value)}"]` : '') : '';
+  const typing = mine && a.tagName !== 'SELECT' && !/^(checkbox|radio|file|date|number)$/.test(a.type || '');
+  const was = mine ? { value: a.value, start: typing ? a.selectionStart : null, end: typing ? a.selectionEnd : null } : null;
+  const x = window.scrollX, y = window.scrollY;
+  const inner = screen ? [...screen.querySelectorAll('[data-keep-scroll]')].map(el => [el.dataset.keepScroll, el.scrollTop]) : [];
+  return () => {
+    for (const [k, top] of inner) { const el = screen.querySelector(`[data-keep-scroll="${CSS.escape(k)}"]`); if (el) el.scrollTop = top; }
+    if (Math.abs(window.scrollY - y) > 1 || Math.abs(window.scrollX - x) > 1) window.scrollTo(x, y);
+    if (!sel || (document.activeElement && document.activeElement !== document.body && screen.contains(document.activeElement))) return;   // the redraw put the cursor somewhere itself
+    const el = screen.querySelector(sel); if (!el || el.disabled) return;
+    el.focus({ preventScroll: true });
+    if (was.start != null && el.value === was.value) { try { el.setSelectionRange(was.start, was.end); } catch (e) { /* not a text box */ } }
+  };
+}
+function paint() { const back = keepPlace(); try { paintNow(); } finally { back(); } }
+function paintNow() {
   if (!auth.session.user) return;
   const items = navItems();
   $('nav').innerHTML = navHtml(items);

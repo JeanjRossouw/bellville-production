@@ -237,11 +237,31 @@ check('the ticked lines are added up against the invoice', /3 lines ticked, addi
 await p.fill('[data-iv-q="2"]', 'RH-L'); await p.waitForSelector('[data-iv-pick=v_hide_l]'); await p.click('[data-iv-pick=v_hide_l]'); await p.waitForTimeout(200);
 check('an item chosen by hand ticks the line', (await p.isChecked('[data-iv-on="2"]')) && (await p.locator('#iv-body .chip:has-text("chosen by you")').count()) === 1 && /lines ticked, adding up to R 1,252\.00/.test(await p.textContent('#iv-sum')), await p.textContent('#iv-sum'));
 if (process.env.SHOT_INV) await p.screenshot({ path: process.env.SHOT_INV });
+await p.evaluate(() => { document.querySelector('[data-iv-qty="0"]').__same = true; });   // to see the list is not redrawn by a changed figure
 await p.fill('[data-iv-qty="1"]', '3'); await p.dispatchEvent('[data-iv-qty="1"]', 'change'); await p.waitForTimeout(200);
 check('a changed quantity shows the sum no longer agrees with the invoice', /adding up to R 1,462\.00/.test(await p.textContent('#iv-sum')) && /they differ/.test(await p.textContent('#iv-sum')), await p.textContent('#iv-sum'));
+check('a changed figure does not redraw the list (so it stays where it was scrolled to and the cursor stays put)', await p.evaluate(() => document.querySelector('[data-iv-qty="0"]').__same === true) && /saved as you go/.test(await p.textContent('#iv-sum')));
+// the window closed by mistake: the invoice and the choices made in it are still there
+await p.mouse.click(5, 300); await p.waitForTimeout(200);
+check('a tap beside the window does not close it', !!(await p.$('#modal #iv-body')));
+await p.click('#modal [data-close] >> nth=0'); await p.waitForTimeout(300);
+R.ivStrip = await p.locator('.iv-saved').innerText().catch(() => '');
+check('closed with the ✕: the receipt says the invoice was read and offers to carry on', !(await p.$('#modal #iv-body')) && /Invoice INV-77 from Foam Co was read/.test(R.ivStrip) && /What you chose in its window is saved/.test(R.ivStrip), R.ivStrip);
+await p.click('[data-act=by-iv-continue]'); await p.waitForSelector('#modal #iv-body');
+check('carried on: the item chosen by hand and the changed quantity are as they were left', (await p.locator('#iv-body .chip:has-text("chosen by you")').count()) === 1 && (await p.isChecked('[data-iv-on="2"]')) && (await p.inputValue('[data-iv-qty="1"]')) === '3' && /adding up to R 1,462\.00/.test(await p.textContent('#iv-sum')), await p.textContent('#iv-sum'));
 await p.click('#modal-ok'); R.ivToast = await toast(); await p.waitForTimeout(400);
 R.rcFilled = { inv: await p.inputValue('#rc-inv'), date: await p.inputValue('#rc-invdate'), sup: await p.inputValue('#rc-supplier'), freight: await p.inputValue('#rc-freight'), rows: await p.locator('.po-lines tbody tr').count(), q: [await p.inputValue('[data-rc-qty="0"]'), await p.inputValue('[data-rc-qty="1"]'), await p.inputValue('[data-rc-qty="2"]'), await p.inputValue('[data-rc-qty="3"]')], c: [await p.inputValue('[data-rc-cost="0"]'), await p.inputValue('[data-rc-cost="1"]'), await p.inputValue('[data-rc-cost="2"]'), await p.inputValue('[data-rc-cost="3"]')] };
 check('the receipt is filled in: the invoice number, date, supplier and freight, four lines with their quantities and costs; nothing received yet', /Receipt filled in from the invoice: 4 lines/.test(R.ivToast) && /Check it, then tap Receive into stock/.test(R.ivToast) && R.rcFilled.inv === 'INV-77' && R.rcFilled.date === '2026-11-12' && R.rcFilled.sup === supId && R.rcFilled.freight === '100.00' && R.rcFilled.rows === 4 && R.rcFilled.q.join() === '10,3,1,6' && R.rcFilled.c.join() === '52.00,210.00,12.00,50.00' && !(await listColl('goodsReceived')).some(g => g.supplierInvoiceNo === 'INV-77'), [R.ivToast, R.rcFilled]);
+// the receipt itself is saved as it changes: Back keeps it, Receive offers to carry on, a changed figure keeps the cursor
+check('once filled in, the read invoice is done with and the receipt is saved on the device', !(await p.$('.iv-saved')) && await p.evaluate(() => { const v = JSON.parse(localStorage.getItem('pos.rcv.BF-BELL') || 'null'); return !!v && v.supplierInvoiceNo === 'INV-77' && v.lines.length === 4 && localStorage.getItem('pos.ivread.BF-BELL') === null; }));
+await p.focus('[data-rc-qty="2"]'); await p.fill('[data-rc-qty="2"]', '2'); await p.focus('[data-rc-cost="2"]'); await p.waitForTimeout(700);
+check('a changed quantity redraws the receipt without losing the box the cursor moved to', await p.evaluate(() => document.activeElement && document.activeElement.getAttribute('data-rc-cost') === '2') && (await p.inputValue('[data-rc-qty="2"]')) === '2');
+await p.fill('[data-rc-qty="2"]', '1'); await p.dispatchEvent('[data-rc-qty="2"]', 'change'); await p.waitForTimeout(500);
+await p.click('[data-act=by-rcv-close]'); R.backToast = await toast(); await p.waitForTimeout(300);
+R.savedCard = await p.locator('.iv-saved').innerText().catch(() => '');
+check('Back keeps it: Receive shows the saved receipt with Continue and Discard', /Saved: carry on with it from Receive/.test(R.backToast) && /A receipt you were busy with is saved/.test(R.savedCard) && /Direct receipt · invoice INV-77 · 4 lines · saved today at/.test(R.savedCard) && (await p.locator('[data-act=by-rcv-discard]').count()) === 1, [R.backToast, R.savedCard]);
+await p.click('[data-act=by-rcv-resume]'); await p.waitForSelector('#rc-inv');
+check('Continue brings it back as it was', (await p.inputValue('#rc-inv')) === 'INV-77' && (await p.inputValue('#rc-invdate')) === '2026-11-12' && (await p.inputValue('#rc-supplier')) === supId && (await p.inputValue('#rc-freight')) === '100.00' && (await p.locator('.po-lines tbody tr').count()) === 4 && (await p.inputValue('[data-rc-qty="1"]')) === '3' && (await p.inputValue('[data-rc-cost="0"]')) === '52.00');
 // a file that is not an invoice: said so, the receipt untouched
 await p.setInputFiles('#rc-invfile', { name: 'beach.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('a holiday photo') });
 R.notInv = await toast(); await p.waitForTimeout(300);
@@ -249,6 +269,7 @@ check('not an invoice: said so with the reason, the receipt as it was', /The inv
 await p.click('[data-act=by-rcv-go]'); R.ivRecv = await toast(); await p.waitForTimeout(800);
 const ivGrv = (await listColl('goodsReceived')).find(g => g.supplierInvoiceNo === 'INV-77');
 check('received by the person as usual: the GRV carries the invoice number, the supplier and the freight', /Received: BF-GRV-/.test(R.ivRecv) && ivGrv && ivGrv.supplierName === 'Foam Co' && ivGrv.invoiceDate === '2026-11-12' && ivGrv.lineCount === 4 && ivGrv.landed.freightCents === 10000, [R.ivRecv, ivGrv && ivGrv.docNo]);
+check('once received, nothing is left saved', await p.evaluate(() => localStorage.getItem('pos.rcv.BF-BELL') === null && localStorage.getItem('pos.ivread.BF-BELL') === null && localStorage.getItem('pos.ivpending.BF-BELL') === null) && !(await p.$('.iv-saved')));
 
 console.log(JSON.stringify({ fails, errs, ...R, printed: undefined, printed2: undefined, printed3: undefined }, null, 1).slice(0, 6000));
 await b.close();
