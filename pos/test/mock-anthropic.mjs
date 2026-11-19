@@ -18,13 +18,33 @@ export function startMockAnthropic(port = 8798) {
         const msgs = j.messages || [];
         const lastUser = msgs.length ? msgs[msgs.length - 1] : { content: '' };
         const blocks = Array.isArray(lastUser.content) ? lastUser.content : [];
-        const reply = (content, stop) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ id: 'msg_mock', type: 'message', role: 'assistant', model: j.model, content, stop_reason: stop, stop_sequence: null, usage: { input_tokens: 100, output_tokens: 10 } })); };
+        // a streamed request (stream: true) gets the same answer as server-sent events, the way the API streams it;
+        // a tool call's input goes as JSON text (o.partial: only that much of it, as when the answer is cut off)
+        const reply = (content, stop, o = {}) => {
+          if (!j.stream) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ id: 'msg_mock', type: 'message', role: 'assistant', model: j.model, content, stop_reason: stop, stop_sequence: null, usage: { input_tokens: 100, output_tokens: 10 } })); return; }
+          res.writeHead(200, { 'content-type': 'text/event-stream' });
+          const ev = (type, data) => res.write('event: ' + type + '\ndata: ' + JSON.stringify({ type, ...data }) + '\n\n');
+          ev('message_start', { message: { id: 'msg_mock', type: 'message', role: 'assistant', model: j.model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 100, output_tokens: 0 } } });
+          content.forEach((b, index) => {
+            if (b.type === 'tool_use') { const text = o.partial != null ? o.partial : JSON.stringify(b.input); ev('content_block_start', { index, content_block: { type: 'tool_use', id: b.id, name: b.name, input: {} } }); for (let k = 0; k < text.length; k += 40) ev('content_block_delta', { index, delta: { type: 'input_json_delta', partial_json: text.slice(k, k + 40) } }); }
+            else { ev('content_block_start', { index, content_block: { type: 'text', text: '' } }); ev('content_block_delta', { index, delta: { type: 'text_delta', text: b.text || '' } }); }
+            ev('content_block_stop', { index });
+          });
+          ev('message_delta', { delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: 10 } });
+          ev('message_stop', {});
+          res.end();
+        };
         // the invoice reader (lib/invoice-read.mjs): a file whose bytes are MOCKINVOICE{json} is "read" as that json; any
         // other file is not an invoice; MOCKINVOICE-FAIL makes the API fail
         if (Array.isArray(j.tools) && j.tools.some(t => t.name === 'record_invoice')) {
           const docs = blocks.filter(b => (b.type === 'document' || b.type === 'image') && b.source && b.source.data).map(b => Buffer.from(b.source.data, 'base64').toString('utf8'));
           const all = docs.join('\n');
           if (/MOCKINVOICE-FAIL/.test(all)) { res.writeHead(500, { 'content-type': 'application/json' }); res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'mock failure' } })); return; }
+          // MOCKINVOICE-TEXT: the model answers in words, with no tool call; MOCKINVOICE-CUT<n>{json}: the answer runs
+          // out of room n characters into the tool call
+          if (/MOCKINVOICE-TEXT/.test(all)) return reply([{ type: 'text', text: 'I am not able to open this file.' }], 'end_turn');
+          const cutM = /MOCKINVOICE-CUT(\d+)(\{[\s\S]*\})/.exec(all);
+          if (cutM) return reply([{ type: 'tool_use', id: 'toolu_inv', name: 'record_invoice', input: {} }], 'max_tokens', { partial: cutM[2].slice(0, Number(cutM[1])) });
           const m = /MOCKINVOICE(\{[\s\S]*\})/.exec(all);
           let input = { readable: false, supplierName: '', invoiceNo: '', invoiceDate: '', vatCharged: false, pricesIncludeVat: false, vatRatePct: 0, lines: [], deliveryCharge: 0, subtotal: 0, vatAmount: 0, total: 0, note: 'This is not an invoice.' };
           if (m) { try { input = { ...input, readable: true, note: '', ...JSON.parse(m[1]) }; } catch {} }

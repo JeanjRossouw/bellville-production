@@ -77,6 +77,21 @@ check('prices including VAT: the excluding figure is worked back', R.incl.result
 R.novat = await done([file('MOCKINVOICE' + JSON.stringify({ ...INV, vatCharged: false, vatRatePct: 0, lines: [{ code: 'A', description: 'Thing', qty: 1, unitPrice: 80, lineTotal: 80 }] }))]);
 check('no VAT charged: the same either way', R.novat.result.lines[0].unitInclCents === 8000 && R.novat.result.lines[0].unitExCents === 8000 && R.novat.result.vatRatePct === 0, R.novat.result && R.novat.result.lines);
 
+// ---- a long invoice: 150 lines read whole (the answer is streamed); one cut off part-way keeps the whole lines it got
+const many = { ...INV, lines: Array.from({ length: 150 }, (_, i) => ({ code: 'L' + i, description: 'Item number ' + i, qty: i + 1, unitPrice: 10, lineTotal: 10 * (i + 1) })) };
+R.long = await done([file('MOCKINVOICE' + JSON.stringify(many))]);
+check('150 lines come back whole, in order', R.long.status === 'done' && R.long.result.readable && R.long.result.lines.length === 150 && R.long.result.lines[149].code === 'L149' && R.long.result.lines[149].qty === 150 && R.long.result.note === '', R.long.result && R.long.result.lines.length);
+check('the request was streamed, with room for a long answer', mock.last().body.stream === true && mock.last().body.max_tokens >= 30000, [mock.last().body.stream, mock.last().body.max_tokens]);
+const cutAt = JSON.stringify(many).indexOf('"code":"L3"') + 25;   // part-way into the fourth line
+R.cut = await done([file('MOCKINVOICE-CUT' + cutAt + JSON.stringify(many))]);
+check('cut off part-way: the three whole lines are kept, with the header, and the person is told it is not all of it', R.cut.status === 'done' && R.cut.result.readable === true && R.cut.result.lines.length === 3 && R.cut.result.lines[2].code === 'L2' && R.cut.result.supplierName === 'Foam Co (Pty) Ltd' && R.cut.result.invoiceNo === 'INV-4411' && /only its first 3 lines were read/.test(R.cut.result.note), R.cut.result);
+const cutRec = (await listColl('invoiceReads')).find(x => x.diag && x.diag.cut);
+check('the read keeps how the answer ended, for when one goes wrong', cutRec && cutRec.diag.stopReason === 'max_tokens' && cutRec.diag.toolUsed === true && cutRec.diag.lines === 3, cutRec && cutRec.diag);
+R.words = await done([file('MOCKINVOICE-TEXT')]);
+check('an answer in words instead of the record: not read, and the reason is passed on', R.words.status === 'done' && R.words.result.readable === false && /answered without the invoice.s details: I am not able to open this file/.test(R.words.result.note), R.words.result);
+R.empty = await done([file('MOCKINVOICE' + JSON.stringify({ ...INV, lines: [] }))]);
+check('an invoice with no item lines: said so', R.empty.result.readable === false && /no item lines/.test(R.empty.result.note), R.empty.result);
+
 // ---- not an invoice; the reader failing; the daily limit
 R.not = await done([file('a holiday photo', 'beach.jpg', 'image/jpeg')]);
 check('not an invoice: said so, no lines', R.not.status === 'done' && R.not.result.readable === false && R.not.result.lines.length === 0 && /not an invoice/i.test(R.not.result.note), R.not);

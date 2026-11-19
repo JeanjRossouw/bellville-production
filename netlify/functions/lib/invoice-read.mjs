@@ -83,29 +83,57 @@ export function normalise(raw) {
   };
 }
 
-// the files to the model, its record back
+// a tool call cut off part-way (the answer ran out of room): the header fields and every whole line written so far
+export function salvage(buf) {
+  const out = { lines: [] };
+  const at = buf.indexOf('"lines"'), head = at < 0 ? buf : buf.slice(0, at), rest = at < 0 ? '' : buf.slice(at);
+  for (const k of ['supplierName', 'invoiceNo', 'invoiceDate']) { const m = new RegExp('"' + k + '"\\s*:\\s*("(?:[^"\\\\]|\\\\.)*")').exec(head); if (m) { try { out[k] = JSON.parse(m[1]); } catch (e) { /* skip */ } } }
+  for (const k of ['readable', 'vatCharged', 'pricesIncludeVat']) { const m = new RegExp('"' + k + '"\\s*:\\s*(true|false)').exec(head); if (m) out[k] = m[1] === 'true'; }
+  const r = /"vatRatePct"\s*:\s*(-?[\d.]+)/.exec(head); if (r) out.vatRatePct = Number(r[1]);
+  for (const m of rest.matchAll(/\{[^{}]*\}/g)) { try { const l = JSON.parse(m[0]); if (l && typeof l === 'object' && ('description' in l || 'code' in l)) out.lines.push(l); } catch (e) { /* a line cut off: left out */ } }
+  return out;
+}
+
+// the files to the model, its record back. Streamed, so a long invoice (hundreds of lines) has the room and the
+// time it needs; `diag` says how the answer ended, kept on the read for when one goes wrong.
+const MAX_TOKENS = () => Math.max(2000, Math.min(60000, Number(process.env.POS_INVOICE_MAX_TOKENS) || 32000));
 export async function readInvoiceFiles(files) {
   const content = files.map(f => f.type === 'application/pdf'
     ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: f.data } }
     : { type: 'image', source: { type: 'base64', media_type: f.type, data: f.data } });
-  content.push({ type: 'text', text: 'Record this supplier invoice.' + (files.length > 1 ? ' The ' + files.length + ' files are the pages of one invoice, in order.' : '') });
+  content.push({ type: 'text', text: 'Record this supplier invoice by calling record_invoice.' + (files.length > 1 ? ' The ' + files.length + ' files are the pages of one invoice, in order.' : '') });
   const client = new Anthropic();
-  const response = await client.beta.messages.create({
+  const stream = client.beta.messages.stream({
     model: 'claude-opus-5-5',
-    max_tokens: 8000,
+    max_tokens: MAX_TOKENS(),
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
     output_config: { effort: 'medium' },
     system: SYSTEM, tools: [TOOL], messages: [{ role: 'user', content }]
   });
-  if (response.stop_reason === 'refusal') return normalise({ readable: false, lines: [], note: 'The reader would not read this file.' });
+  let buf = '';
+  stream.on('inputJson', (delta) => { buf += delta; });
+  const response = await stream.finalMessage();
   const use = (response.content || []).find(x => x.type === 'tool_use' && x.name === 'record_invoice');
-  if (use) return normalise(use.input);
-  // no tool call: the same record written out as JSON, if it did that instead
   const text = (response.content || []).filter(x => x.type === 'text').map(x => x.text).join('\n');
+  const cut = response.stop_reason === 'max_tokens';
+  const diag = { stopReason: response.stop_reason || '', model: response.model || '', inputTokens: (response.usage || {}).input_tokens || 0, outputTokens: (response.usage || {}).output_tokens || 0, toolUsed: !!use, cut, text: clean(text, 300) };
+  const done = (raw, note) => { const r = normalise(raw); if (note && !r.note) r.note = note; diag.lines = r.lines.length; return { result: r, diag }; };
+  if (response.stop_reason === 'refusal') return done({ readable: false, lines: [] }, 'The reader would not read this file.');
+  if (use) {
+    let input = {}; try { input = use.input && typeof use.input === 'object' ? use.input : {}; } catch (e) { input = {}; }
+    // cut off, or the call did not come through whole: what was written so far
+    // (only whole lines: a line cut off mid-figure must never reach the receipt)
+    if (cut) input = { ...input, ...salvage(buf) };
+    else if (!Array.isArray(input.lines)) { const s = salvage(buf); if (s.lines.length) input = { ...input, ...s }; }
+    const n = Array.isArray(input.lines) ? input.lines.length : 0;
+    if (cut) return done({ ...input, readable: n > 0 }, n ? `The invoice is very long: only its first ${n} lines were read. Check the last one against the invoice, receive these, then drop the remaining pages as their own file.` : 'The invoice is too long to read in one go: drop it a few pages at a time.');
+    return done(input, n ? '' : input.readable === false ? '' : 'The reader found no item lines on it.');
+  }
+  // no tool call: the same record written out as JSON, if it did that instead
   const m = /\{[\s\S]*\}/.exec(text);
-  if (m) { try { return normalise(JSON.parse(m[0])); } catch (e) { /* not JSON */ } }
-  return normalise({ readable: false, lines: [], note: 'The invoice could not be read.' });
+  if (m) { try { return done(JSON.parse(m[0])); } catch (e) { /* not JSON */ } }
+  return done({ readable: false, lines: [] }, cut ? 'The invoice is too long to read in one go: drop it a few pages at a time.' : 'The reader answered without the invoice\'s details' + (text ? ': ' + clean(text, 160) : '.'));
 }
 
 const errorText = (e) => e instanceof Anthropic.RateLimitError ? 'The invoice reader is busy. Try again in a minute.'
@@ -129,8 +157,9 @@ export async function runRead(readId, key) {
     let at = 0;
     const files = (rec.files || []).map(f => { const data = all.slice(at, at + f.len); at += f.len; return { type: f.type, data }; });
     if (!files.length || files.some(f => !f.data)) throw new Error('the file did not arrive whole');
-    const result = await readInvoiceFiles(files);
-    out = { status: 'done', result, finishedAt: nowIso(), error: '' };
+    const { result, diag } = await readInvoiceFiles(files);
+    console.log('invoice read', readId, JSON.stringify({ ...diag, text: undefined, readable: result.readable }));
+    out = { status: 'done', result, diag, finishedAt: nowIso(), error: '' };
   } catch (e) {
     console.error('invoice read', readId, (e && e.status) || '', e && e.message);
     out = { status: 'failed', error: errorText(e), finishedAt: nowIso() };
