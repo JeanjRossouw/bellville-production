@@ -168,8 +168,19 @@ await p.click('#modal-ok'); await p.waitForTimeout(300);
 R.printed17 = await p.evaluate(() => window.__printed[window.__printed.length - 1]);
 if (process.env.LABEL_HTML_17) (await import('node:fs')).writeFileSync(process.env.LABEL_HTML_17, R.printed17);
 check('17 × 54 mm: a page of that size, the name cut with … rather than squashed, the price beside it', /@page \{ size: 54mm 17mm; margin: 0; \}/.test(R.printed17) && /Paper size 17 mm × 54 mm/.test(R.lblHow17) && /\.lbl-top \{ display: flex/.test(R.printed17) && /text-overflow: ellipsis/.test(R.printed17) && (R.printed17.match(/class="lbl-top"/g) || []).length === 3, R.printed17.replace(/<svg[\s\S]*?<\/svg>/g, '[svg]').slice(0, 900));
+check('the print is kept in from the ends of the label, where a label printer cannot print (3.5 mm) and from the sides (1.6 mm)', /padding: 1\.6mm 3\.5mm 1\.6mm 3\.5mm/.test(R.printed17), (R.printed17.match(/padding: [^;]*;/) || [''])[0]);
+// a printer that prints a little off: the print moved 1 mm right and half a millimetre up, and kept for this size
 await p.click('[data-act=pr-labels]'); await p.waitForSelector('#modal #lb-size');
-await p.selectOption('#lb-size', 'a4'); await p.click('#modal-ok'); await p.waitForTimeout(300);
+check('a roll shows the two boxes that move the print; an A4 sheet does not', (await p.inputValue('#lb-size')) === 'r54x17' && (await p.isVisible('#lb-dx')) && (await p.inputValue('#lb-dx')) === '0');
+await p.fill('#lb-dx', '1'); await p.fill('#lb-dy', '-0.5'); await p.click('#modal-ok'); await p.waitForTimeout(300);
+R.printedNudged = await p.evaluate(() => window.__printed[window.__printed.length - 1]);
+check('moved: 1 mm more at the left and less at the right, half a millimetre less at the top', /padding: 1\.1mm 2\.5mm 2\.1mm 4\.5mm/.test(R.printedNudged), (R.printedNudged.match(/padding: [^;]*;/) || [''])[0]);
+await p.click('[data-act=pr-labels]'); await p.waitForSelector('#modal #lb-size');
+check('the move is remembered for that label size', (await p.inputValue('#lb-dx')) === '1' && (await p.inputValue('#lb-dy')) === '-0.5');
+await p.fill('#lb-dx', '0'); await p.fill('#lb-dy', '0'); await p.click('#modal-ok'); await p.waitForTimeout(300);
+await p.click('[data-act=pr-labels]'); await p.waitForSelector('#modal #lb-size');
+await p.selectOption('#lb-size', 'a4'); await p.waitForTimeout(150); check('the A4 sheet has no move boxes', !(await p.isVisible('#lb-dx')));
+await p.click('#modal-ok'); await p.waitForTimeout(300);
 
 // ---- archive
 await p.click('[data-act=pr-edit][data-id="' + ch.id + '"]'); await p.waitForSelector('#modal .pf'); await p.check('#pf-archived'); await p.click('#modal-ok'); await toast(); await p.waitForTimeout(500);
