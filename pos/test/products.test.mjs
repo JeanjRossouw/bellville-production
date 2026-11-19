@@ -162,6 +162,13 @@ check('choosing a roll says what to pick in the print window', /choose the label
 check('a roll prints one label a page, the page the size of the label, no margin, with the same name, price and barcode', /@page \{ size: 62mm 29mm; margin: 0; \}/.test(R.printedRoll) && /break-after: page/.test(R.printedRoll) && /width: 62mm; height: 29mm/.test(R.printedRoll) && (R.printedRoll.match(/class="lbl"/g) || []).length === 3 && (R.printedRoll.match(/<svg/g) || []).length === 3 && /R 9,500\.00/.test(R.printedRoll) && !/lbl-sheet/.test(R.printedRoll), R.printedRoll.replace(/<svg[\s\S]*?<\/svg>/g, '[svg]').slice(0, 700));
 await p.click('[data-act=pr-labels]'); await p.waitForSelector('#modal #lb-size');
 check('the roll size is remembered for next time', (await p.inputValue('#lb-size')) === 'r62x29');
+// the low 17 × 54 mm label: the name and the price share the top line so the barcode keeps its height
+await p.selectOption('#lb-size', 'r54x17'); await p.waitForTimeout(150); R.lblHow17 = await p.textContent('#lb-how');
+await p.click('#modal-ok'); await p.waitForTimeout(300);
+R.printed17 = await p.evaluate(() => window.__printed[window.__printed.length - 1]);
+if (process.env.LABEL_HTML_17) (await import('node:fs')).writeFileSync(process.env.LABEL_HTML_17, R.printed17);
+check('17 × 54 mm: a page of that size, the name cut with … rather than squashed, the price beside it', /@page \{ size: 54mm 17mm; margin: 0; \}/.test(R.printed17) && /Paper size 17 mm × 54 mm/.test(R.lblHow17) && /\.lbl-top \{ display: flex/.test(R.printed17) && /text-overflow: ellipsis/.test(R.printed17) && (R.printed17.match(/class="lbl-top"/g) || []).length === 3, R.printed17.replace(/<svg[\s\S]*?<\/svg>/g, '[svg]').slice(0, 900));
+await p.click('[data-act=pr-labels]'); await p.waitForSelector('#modal #lb-size');
 await p.selectOption('#lb-size', 'a4'); await p.click('#modal-ok'); await p.waitForTimeout(300);
 
 // ---- archive
