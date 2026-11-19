@@ -149,6 +149,20 @@ R.printed = await p.evaluate(() => window.__printed.length ? window.__printed[0]
 R.lblCounts = { labels: (R.printed.match(/class="lbl"/g) || []).length, svgs: (R.printed.match(/<svg/g) || []).length, p9500: /R 9,500\.00/.test(R.printed), navyBlack: /Wingback Chair · Navy \/ Black/.test(R.printed), p3799: /R 3,799\.00/.test(R.printed), sample: R.printed.replace(/<svg[\s\S]*?<\/svg>/g, '[svg]').slice(-500) };
 // the chesterfield and two of the four variants carry a code; the other two have none and are left off the sheet
 check('label sheet printed: 3 coded items × 2 copies, barcodes as SVG, prices', R.lblCounts.labels === 6 && R.lblCounts.svgs === 6 && R.lblCounts.p9500 && R.lblCounts.navyBlack && R.lblCounts.p3799, R.lblCounts);
+check('the sheet is A4, 3 across, and says what to choose in the print window', /@page \{ size: A4/.test(R.printed) && /lbl-sheet/.test(R.printed));
+// the same labels on a label printer's roll (a Brother QL, 62 × 29 mm): one label a page, the page the size of the label
+await p.click('[data-act=pr-labels]'); await p.waitForSelector('#modal #lb-size');
+R.lblSizes = await p.$$eval('#lb-size option', os => os.map(o => o.textContent));
+await p.selectOption('#lb-size', 'r62x29'); await p.waitForTimeout(150); R.lblHow = await p.textContent('#lb-how');
+await p.click('#modal-ok'); await p.waitForTimeout(300);
+R.printedRoll = await p.evaluate(() => window.__printed[window.__printed.length - 1]);
+if (process.env.LABEL_HTML) (await import('node:fs')).writeFileSync(process.env.LABEL_HTML, R.printedRoll);   // the label page, for a person to look at
+check('Print labels offers the roll sizes of a label printer', R.lblSizes.length === 5 && /A4 sheet/.test(R.lblSizes[0]) && R.lblSizes.some(x => /62 × 29 mm \(Brother DK-11209/.test(x)) && R.lblSizes.some(x => /29 × 90 mm \(Brother DK-11201/.test(x)), R.lblSizes);
+check('choosing a roll says what to pick in the print window', /choose the label printer/.test(R.lblHow) && /Paper size 29 mm × 62 mm/.test(R.lblHow) && /Margins None/.test(R.lblHow), R.lblHow);
+check('a roll prints one label a page, the page the size of the label, no margin, with the same name, price and barcode', /@page \{ size: 62mm 29mm; margin: 0; \}/.test(R.printedRoll) && /break-after: page/.test(R.printedRoll) && /width: 62mm; height: 29mm/.test(R.printedRoll) && (R.printedRoll.match(/class="lbl"/g) || []).length === 3 && (R.printedRoll.match(/<svg/g) || []).length === 3 && /R 9,500\.00/.test(R.printedRoll) && !/lbl-sheet/.test(R.printedRoll), R.printedRoll.replace(/<svg[\s\S]*?<\/svg>/g, '[svg]').slice(0, 700));
+await p.click('[data-act=pr-labels]'); await p.waitForSelector('#modal #lb-size');
+check('the roll size is remembered for next time', (await p.inputValue('#lb-size')) === 'r62x29');
+await p.selectOption('#lb-size', 'a4'); await p.click('#modal-ok'); await p.waitForTimeout(300);
 
 // ---- archive
 await p.click('[data-act=pr-edit][data-id="' + ch.id + '"]'); await p.waitForSelector('#modal .pf'); await p.check('#pf-archived'); await p.click('#modal-ok'); await toast(); await p.waitForTimeout(500);

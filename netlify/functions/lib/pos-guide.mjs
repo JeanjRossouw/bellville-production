@@ -57,7 +57,7 @@ One app for a group of retail companies ("companies"), each with its own stores,
 - The dashboard: today against the same weekday last week per store (sales, basket, refunds, net), open lay-bys and their balance.
 
 ## Products (manager and up to change)
-- Products, variants, barcodes, categories, brands, type (stock, non-stock, made to order, voucher, bundle), VAT class, cost and price with the margin, per-store prices, reorder levels, favourites, labels (Code 128), CSV in and out.
+- Products, variants, barcodes, categories, brands, type (stock, non-stock, made to order, voucher, bundle), VAT class, cost and price with the margin, per-store prices, reorder levels, favourites, labels (Code 128: tick the products → Labels; on A4 sheets 3 across, or on a label printer's roll such as a Brother QL: choose the roll's size under "Labels on", and in the print window pick the label printer, the same paper size, Margins None, Scale 100), CSV in and out.
 
 ## Reports (manager and up)
 - Filters: company, store, dates, staff, channel; CSV and print/PDF. Daily sales, Z-reports, VAT per company, sales by product/category/brand with gross profit, by staff, by hour, discounts and voids, refunds, stock value, low stock, movements, dead stock, lay-bys, custom orders, customers. Xero: one balanced sales journal per company per day, posted by hand or every morning.
