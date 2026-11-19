@@ -367,25 +367,59 @@ export function printLabels(d, ids, eid) {
   }
   printLabelItems(items);
 }
-// labels for a list of { name, code, priceCents, copies? }: 3 across on A4, 70 × 37 mm
+// ---- label stock: A4 sheets (3 across), or a roll in a label printer (a Brother QL), one label a page. A roll's
+// size is given as it is read, wide × high; the printer's own paper size must be set to the same label in the print
+// window. The size last used is remembered on the device.
+export const LABEL_SIZES = [
+  { key: 'a4', label: 'A4 sheet · 3 across, 70 × 37 mm', sheet: true },
+  { key: 'r62x29', label: 'Label roll · 62 × 29 mm (Brother DK-11209, or 62 mm continuous)', w: 62, h: 29 },
+  { key: 'r90x29', label: 'Label roll · 29 × 90 mm (Brother DK-11201)', w: 90, h: 29 },
+  { key: 'r90x38', label: 'Label roll · 38 × 90 mm (Brother DK-11208)', w: 90, h: 38 },
+  { key: 'r54x17', label: 'Label roll · 17 × 54 mm (Brother DK-11204)', w: 54, h: 17 }
+];
+const labelSizeOf = (key) => LABEL_SIZES.find(x => x.key === key) || LABEL_SIZES[0];
+const lastLabelSize = () => { try { return localStorage.getItem('pos.labelSize') || 'a4'; } catch (e) { return 'a4'; } };
+// the print page for a list of label cells on the chosen stock
+export function labelPage(cells, size) {
+  if (size.sheet) return { body: `<div class="lbl-sheet">${cells.join('')}</div>`, css: `
+        @page { size: A4; margin: 10mm 5mm; } .lbl-sheet { display: grid; grid-template-columns: repeat(3, 70mm); gap: 0; }
+        .lbl { width: 70mm; height: 37mm; padding: 2mm 3mm; box-sizing: border-box; text-align: center; overflow: hidden; font-family: Arial, sans-serif; break-inside: avoid; }
+        .lbl-name { font-size: 10pt; font-weight: 700; line-height: 1.15; max-height: 2.3em; overflow: hidden; } .lbl-price { font-size: 12pt; font-weight: 700; margin: .5mm 0; }
+        .lbl-bar svg { width: 58mm; height: 11mm; display: block; margin: 0 auto; } .lbl-code { font-size: 8pt; letter-spacing: .08em; }` };
+  // a roll: each label its own page, the size of the label, with no margin; the type and the barcode sized to its height
+  const { w, h } = size, small = h < 22, pad = small ? 1 : 1.5;
+  const name = small ? 6.5 : h < 34 ? 8.5 : 10, price = small ? 7.5 : h < 34 ? 11 : 13, code = small ? 5.5 : 7;
+  const bar = Math.max(4.5, h - 2 * pad - (small ? 7.2 : h < 34 ? 13.5 : 17)), barW = Math.min(w - 2 * pad - 3, 58);
+  return { body: `<div class="lbl-roll">${cells.join('')}</div>`, css: `
+        @page { size: ${w}mm ${h}mm; margin: 0; } html, body { margin: 0; padding: 0; }
+        .lbl { width: ${w}mm; height: ${h}mm; padding: ${pad}mm ${pad + 0.5}mm; box-sizing: border-box; text-align: center; overflow: hidden; font-family: Arial, sans-serif; display: flex; flex-direction: column; justify-content: center; break-after: page; page-break-after: always; }
+        .lbl:last-child { break-after: auto; page-break-after: auto; }
+        .lbl-name { font-size: ${name}pt; font-weight: 700; line-height: 1.1; max-height: ${small ? 1.1 : 2.2}em; overflow: hidden; } .lbl-price { font-size: ${price}pt; font-weight: 700; line-height: 1.15; }
+        .lbl-bar svg { width: ${barW}mm; height: ${bar.toFixed(1)}mm; display: block; margin: .3mm auto 0; } .lbl-code { font-size: ${code}pt; letter-spacing: .06em; line-height: 1.1; }
+        @media screen { body { background: #ddd; } .lbl { background: #fff; margin: 3mm auto; box-shadow: 0 0 0 1px #bbb; } }` };
+}
+// labels for a list of { name, code, priceCents, copies? }
 export function printLabelItems(items, dflt = 1) {
   const missing = items.filter(i => !i.code || !encodable(i.code));
   if (!items.length) return toast('Nothing to print labels for.', 'warn');
   if (missing.length) toast(missing.length + ' item(s) have no barcode or SKU to print; give them one first.', 'warn');
   const list = items.filter(i => i.code && encodable(i.code));
   if (!list.length) return;
-  openModal('Print labels', field('Copies of each (blank = as received)', 'lb-copies', { type: 'number', value: dflt, min: 1, max: 500 }) + `<p class="muted">${list.length} label${list.length === 1 ? '' : 's'}, 3 across on A4 (70 × 37 mm).</p>`, {
+  const { wrap } = openModal('Print labels', field('Labels on', 'lb-size', { type: 'select', value: labelSizeOf(lastLabelSize()).key, options: LABEL_SIZES.map(x => ({ value: x.key, label: x.label })) }) + field('Copies of each (blank = as received)', 'lb-copies', { type: 'number', value: dflt, min: 1, max: 500 })
+    + `<p class="muted">${list.length} label${list.length === 1 ? '' : 's'}: the name, the price and the barcode.</p><p class="muted" id="lb-how"></p>`, {
     okLabel: 'Print', onOk: (wrap) => {
       const copies = Math.max(1, Math.min(500, Number(val(wrap, 'lb-copies')) || 1));
+      const size = labelSizeOf(val(wrap, 'lb-size'));
+      try { localStorage.setItem('pos.labelSize', size.key); } catch (e) { /* remembered only where storage is allowed */ }
       const cells = list.flatMap(i => Array.from({ length: Math.min(500, i.copies || copies) }, () => `<div class="lbl"><div class="lbl-name">${esc(i.name)}</div><div class="lbl-price">${esc(money(i.priceCents))}</div><div class="lbl-bar">${barcodeSvg(i.code, 40)}</div><div class="lbl-code">${esc(i.code)}</div></div>`));
-      openPrint('Labels', `<div class="lbl-sheet">${cells.join('')}</div>`, `
-        @page { size: A4; margin: 10mm 5mm; } .lbl-sheet { display: grid; grid-template-columns: repeat(3, 70mm); gap: 0; }
-        .lbl { width: 70mm; height: 37mm; padding: 2mm 3mm; box-sizing: border-box; text-align: center; overflow: hidden; font-family: Arial, sans-serif; break-inside: avoid; }
-        .lbl-name { font-size: 10pt; font-weight: 700; line-height: 1.15; max-height: 2.3em; overflow: hidden; } .lbl-price { font-size: 12pt; font-weight: 700; margin: .5mm 0; }
-        .lbl-bar svg { width: 58mm; height: 11mm; display: block; margin: 0 auto; } .lbl-code { font-size: 8pt; letter-spacing: .08em; }`);
+      const page = labelPage(cells, size);
+      openPrint('Labels', page.body, page.css);
       return true;
     }
   });
+  // what to choose in the print window for the stock picked
+  const how = () => { const size = labelSizeOf(val(wrap, 'lb-size')); wrap.querySelector('#lb-how').textContent = size.sheet ? 'In the print window: A4, margins Default, scale 100.' : `In the print window choose the label printer, then More settings: Paper size ${Math.min(size.w, size.h)} mm × ${Math.max(size.w, size.h)} mm (the same label as in the printer), Margins None, Scale 100. Each label prints on its own.`; };
+  wrap.querySelector('#lb-size').addEventListener('change', how); how();
 }
 
 // the reorder level (and, if given, the reorder quantity) on every stock item of a company at once:
